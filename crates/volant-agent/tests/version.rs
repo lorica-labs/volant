@@ -9,5 +9,8 @@ fn version_shows_name_and_semver() {
         .expect("binary runs");
     assert!(out.status.success());
     let text = String::from_utf8(out.stdout).expect("utf-8");
-    assert_eq!(text.trim(), format!("volant-agent {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        text.trim(),
+        format!("volant-agent {}", env!("CARGO_PKG_VERSION"))
+    );
 }

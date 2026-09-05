@@ -15,7 +15,9 @@ fn version_shows_semver_sha_and_date() {
     assert_eq!(parts.next(), Some(env!("CARGO_PKG_VERSION")));
     let rest = parts.next().expect("build info");
     assert!(rest.starts_with('(') && rest.ends_with(')'), "{rest}");
-    let (sha, date) = rest[1..rest.len() - 1].split_once(' ').expect("sha and date");
+    let (sha, date) = rest[1..rest.len() - 1]
+        .split_once(' ')
+        .expect("sha and date");
     assert!(!sha.is_empty());
     assert_eq!(date.len(), 10, "{date}");
     assert_eq!(&date[4..5], "-");

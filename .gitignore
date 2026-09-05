@@ -1,0 +1,6 @@
+/target/
+
+# planning notes and local assistant files stay out of the repository
+/docs/superpowers/
+/.claude/*
+!/.claude/skills/

@@ -1,0 +1,15 @@
+[package]
+name = "volant-agent"
+description = "Remote agent for the Volant engine, uploaded to managed hosts"
+readme = "../../README.md"
+keywords = ["ansible", "automation", "ssh"]
+categories = ["command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]

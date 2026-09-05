@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/lorica-labs/volant"
+homepage = "https://github.com/lorica-labs/volant"
+authors = ["Hugo Planque"]
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

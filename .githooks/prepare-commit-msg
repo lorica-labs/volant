@@ -1,0 +1,3 @@
+#!/bin/sh
+git interpret-trailers --if-exists doNothing --in-place \
+  --trailer "Signed-off-by: $(git config user.name) <$(git config user.email)>" "$1"

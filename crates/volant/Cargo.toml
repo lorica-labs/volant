@@ -2,7 +2,7 @@
 name = "volant"
 description = "Fast, drop-in engine for Ansible playbooks"
 readme = "../../README.md"
-keywords = ["ansible", "automation", "ssh", "configuration-management"]
+keywords = ["ansible", "automation", "ssh", "config-management"]
 categories = ["command-line-utilities"]
 version.workspace = true
 edition.workspace = true

@@ -1,0 +1,17 @@
+[workspace]
+changelog_update = true
+dependencies_update = false
+git_release_enable = false
+git_tag_enable = true
+pr_labels = ["release"]
+semver_check = false
+
+[[package]]
+name = "volant"
+git_tag_name = "v{{ version }}"
+version_group = "volant"
+
+[[package]]
+name = "volant-agent"
+git_tag_enable = false
+version_group = "volant"

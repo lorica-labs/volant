@@ -1,0 +1,30 @@
+name: Ansible compatibility gap
+description: A playbook behaves differently under Volant and ansible-playbook
+labels: ["type/compat", "area/compat", "status/needs-triage"]
+body:
+  - type: input
+    id: volant
+    attributes:
+      label: Volant version
+    validations:
+      required: true
+  - type: input
+    id: ansible
+    attributes:
+      label: ansible-core version used for comparison
+    validations:
+      required: true
+  - type: textarea
+    id: playbook
+    attributes:
+      label: Minimal playbook
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: diff
+    attributes:
+      label: What differs
+      description: Output of both tools, or a description of the difference
+    validations:
+      required: true

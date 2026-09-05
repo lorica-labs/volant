@@ -1,0 +1,12 @@
+[book]
+title = "Volant"
+authors = ["Hugo Planque"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/lorica-labs/volant"
+edit-url-template = "https://github.com/lorica-labs/volant/edit/main/docs/{path}"

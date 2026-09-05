@@ -22,6 +22,18 @@ jobs:
           set -eu
           missing=0
           for c in $(git rev-list "$BASE".."$HEAD"); do
-            git show -s --format=%B "$c" | grep -q '^Signed-off-by: ' || { echo "missing sign-off: $c"; missing=1; }
+            if git show -s --format=%B "$c" | grep -q '^Signed-off-by: '; then
+              continue
+            fi
+            # release-plz writes the release commit through the GitHub API, which cannot add a
+            # trailer. That commit is authored by a maintainer and only touches versions and the
+            # changelog, so it is exempt.
+            if [ "$(git show -s --format=%ce "$c")" = "noreply@github.com" ]; then
+              case "$(git show -s --format=%s "$c")" in
+                "chore: release v"* | "chore("*"): release v"*) continue ;;
+              esac
+            fi
+            echo "missing sign-off: $c"
+            missing=1
           done
           exit $missing

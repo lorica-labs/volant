@@ -1,0 +1,13 @@
+{
+  "name": "volant",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "cargo install cargo-binstall --locked && cargo binstall -y just && just setup",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml", "skellock.just"]
+    }
+  }
+}

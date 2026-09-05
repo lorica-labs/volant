@@ -1,0 +1,12 @@
+area/controller:
+  - changed-files:
+      - any-glob-to-any-file: crates/volant/**
+area/agent:
+  - changed-files:
+      - any-glob-to-any-file: crates/volant-agent/**
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: .github/**
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "*.md"]

@@ -1,0 +1,22 @@
+[package]
+name = "volant"
+description = "Fast, drop-in engine for Ansible playbooks"
+readme = "../../README.md"
+keywords = ["ansible", "automation", "ssh", "configuration-management"]
+categories = ["command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[dependencies]
+clap.workspace = true
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.xz"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"

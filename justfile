@@ -7,7 +7,16 @@ default:
 # Install git hooks, sign-off, and the tools the other recipes need
 setup:
     git config core.hooksPath .githooks
-    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook
+    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta
+
+# Accept pending insta snapshots after reading them
+insta-accept:
+    cargo insta accept --workspace
+
+# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION)
+golden:
+    test "$(ansible-playbook --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" = "$(cat crates/volant/tests/golden/ANSIBLE_VERSION)"
+    @echo "golden generator arrives with the templating task"
 
 # Everything CI runs, in the same order
 check: fmt lint test

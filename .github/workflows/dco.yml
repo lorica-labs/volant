@@ -21,7 +21,9 @@ jobs:
         run: |
           set -eu
           missing=0
-          for c in $(git rev-list "$BASE".."$HEAD"); do
+          # Merge commits are skipped. The Update branch button writes one with no trailer, and it
+          # introduces no authored content of its own: everything it merges is checked on its own.
+          for c in $(git rev-list --no-merges "$BASE".."$HEAD"); do
             if git show -s --format=%B "$c" | grep -q '^Signed-off-by: '; then
               continue
             fi

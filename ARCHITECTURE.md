@@ -14,8 +14,12 @@ This document is the map for contributors. It describes the shape of the code, n
 3. The controller opens one connection per host (SSH by default), uploads the agent if it is not cached, and sends batches. Templating happens on the controller; execution happens in the agent.
 4. Results stream back task by task. The controller applies `register`, `set_fact`, `changed_when`, `failed_when`, queues handlers and renders output.
 
-## Where things will live
+## Where things live
 
-- `crates/volant/src`: loading, variables, templating, compilation, transports, rendering.
-- `crates/volant-agent/src`: protocol handling, native modules, facts, Python supervisor.
+- `crates/volant-protocol`: frames and messages shared by both binaries. Changing a message means bumping `PROTOCOL_VERSION`.
+- `crates/volant/src/inventory.rs`, `playbook.rs`: loading Ansible content.
+- `crates/volant/src/transport.rs`, `agent.rs`: reaching a host and talking to its agent.
+- `crates/volant/src/executor.rs`: the linear strategy and the task-by-task coordinator.
+- `crates/volant/src/render.rs`, `stats.rs`: console output, recap, exit codes.
+- `crates/volant-agent/src/runner.rs`: batch execution. `modules/`: native modules.
 - `docs/adr/`: decisions that affect users, with their reasoning.

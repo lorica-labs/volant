@@ -24,6 +24,13 @@ tokio.workspace = true
 volant-protocol.workspace = true
 yaml-rust2.workspace = true
 
+[dev-dependencies]
+insta.workspace = true
+
+[[bin]]
+name = "volant-playbook"
+path = "src/bin/volant-playbook.rs"
+
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.xz"
 bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"

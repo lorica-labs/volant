@@ -219,6 +219,12 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::String(s) if RAW_PARAM_MODULES.contains(&short) => {
             args.insert("_raw_params".into(), Value::String(s.clone()));
         }
+        // YAML's core schema resolves an unquoted `true`/`false` as a boolean, a well-known
+        // Ansible gotcha for `command: false`: the free-form value is still the command line,
+        // so it is taken back to the text it was written as.
+        Yaml::Boolean(b) if RAW_PARAM_MODULES.contains(&short) => {
+            args.insert("_raw_params".into(), Value::String(b.to_string()));
+        }
         Yaml::String(s) => {
             for word in shlex::split(s).ok_or_else(|| anyhow!("unbalanced quotes in '{s}'"))? {
                 let (k, v) = word
@@ -364,6 +370,12 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("two modules"));
+    }
+
+    #[test]
+    fn an_unquoted_boolean_command_is_taken_as_its_literal_text() {
+        let pb = parse("- hosts: all\n  tasks:\n    - command: false\n", "x.yml").unwrap();
+        assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "false");
     }
 
     #[test]

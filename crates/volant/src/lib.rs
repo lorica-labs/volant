@@ -4,6 +4,8 @@
 pub mod agent;
 pub mod inventory;
 pub mod playbook;
+pub mod render;
+pub mod stats;
 pub mod transport;
 
 /// Version string shown by `--version`: semver, git sha and build date.

@@ -22,7 +22,7 @@ lint:
     cargo deny check
     cargo machete
     typos
-    actionlint
+    actionlint .github/workflows/*.yml
     zizmor .github/workflows
 
 test:
@@ -31,3 +31,8 @@ test:
 # Run the CI workflow locally (needs Docker)
 ci-local:
     gh act pull_request -W .github/workflows/ci.yml
+
+# Copy the working tree to the machine named by VOLANT_DEV_HOST and run a recipe there
+remote +recipe:
+    tar -C . --exclude=./target --exclude=./.git --exclude=./docs/superpowers --exclude=./docs/book -czf - . | ssh "$VOLANT_DEV_HOST" 'mkdir -p volant && tar -xzf - -C volant'
+    ssh "$VOLANT_DEV_HOST" '. ~/.cargo/env && export PATH=$HOME/.local/bin:$PATH && cd volant && just {{recipe}}'

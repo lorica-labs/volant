@@ -1,2 +1,6 @@
+# Line length is left to the author.
 MD013: false
+# Inline HTML is needed to centre the mark in the readme.
 MD033: false
+# The readme opens with the mark, so its first line is not the heading.
+MD041: false

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" color="#0D9488" viewBox="0 0 256 256" role="img" aria-label="Volant">
+  <g transform="translate(128 128)" fill="currentColor">
+    <circle r="104.5" fill="none" stroke="currentColor" stroke-width="23.0"/>
+    <rect x="18.0" y="-8.0" width="77.0" height="16.0" transform="rotate(-9)"/>
+    <rect x="18.0" y="-8.0" width="77.0" height="16.0" transform="rotate(-81)"/>
+    <rect x="18.0" y="-8.0" width="77.0" height="16.0" transform="rotate(-153)"/>
+    <rect x="18.0" y="-8.0" width="77.0" height="16.0" transform="rotate(-225)"/>
+    <rect x="18.0" y="-8.0" width="77.0" height="16.0" transform="rotate(-297)"/>
+    <circle r="25.0"/>
+  </g>
+</svg>

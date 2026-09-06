@@ -25,7 +25,10 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let chdir = args.get("chdir").and_then(Value::as_str);
-    let stdin_data = args.get("stdin").and_then(Value::as_str);
+    let stdin_data = args
+        .get("stdin")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let raw = args
         .get("_raw_params")
@@ -83,13 +86,22 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
     }
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(err) => return Run::Done(spawn_failure(display, &err)),
+        Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
     };
-    if let (Some(data), Some(mut stdin)) = (stdin_data, child.stdin.take()) {
-        let _ = stdin.write_all(data.as_bytes());
-    }
+    // Drain stdout and stderr on their own threads before writing stdin: the child may
+    // start writing output while it is still reading input, and if nobody is reading
+    // that output yet, both sides block once a pipe buffer fills up. Writing stdin from
+    // its own thread, joined below, keeps that write off the thread that has to reach
+    // the cancellation check further down.
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
+    let stdin_writer = child.stdin.take().map(|mut stdin| {
+        thread::spawn(move || {
+            if let Some(data) = stdin_data {
+                let _ = stdin.write_all(data.as_bytes());
+            }
+        })
+    });
 
     let status = loop {
         match child.try_wait() {
@@ -100,12 +112,15 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
                 return Run::Cancelled;
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(err) => return Run::Done(spawn_failure(display, &err)),
+            Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
         }
     };
     let rc = status.code().unwrap_or(-1);
     let mut stdout = stdout.join().unwrap_or_default();
     let mut stderr = stderr.join().unwrap_or_default();
+    if let Some(stdin_writer) = stdin_writer {
+        let _ = stdin_writer.join();
+    }
     if strip_empty_ends {
         stdout.truncate(stdout.trim_end_matches(['\r', '\n']).len());
         stderr.truncate(stderr.trim_end_matches(['\r', '\n']).len());
@@ -164,15 +179,15 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
     TaskResult(result)
 }
 
-fn spawn_failure(cmd: Value, err: &std::io::Error) -> TaskResult {
+fn spawn_failure(cmd: Value, chdir: Option<&str>, err: &std::io::Error) -> TaskResult {
     let (rc, msg) = match err.kind() {
-        std::io::ErrorKind::NotFound => (
-            2,
-            format!(
-                "[Errno 2] No such file or directory: {}",
-                program_name(&cmd)
-            ),
-        ),
+        std::io::ErrorKind::NotFound => {
+            let missing = match chdir {
+                Some(dir) if !Path::new(dir).exists() => format!("b'{dir}'"),
+                _ => program_name(&cmd),
+            };
+            (2, format!("[Errno 2] No such file or directory: {missing}"))
+        }
         _ => (err.raw_os_error().unwrap_or(1), err.to_string()),
     };
     let mut result = Map::new();
@@ -316,6 +331,22 @@ mod tests {
     }
 
     #[test]
+    fn large_stdin_does_not_deadlock() {
+        let payload: String = "abcdefghijklmnopqrstuvwxyz0123456789\n"
+            .chars()
+            .cycle()
+            .take(1_048_576)
+            .collect();
+        let r = done(run(
+            &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),
+            true,
+            &|| false,
+        ));
+        assert_eq!(r.0["rc"], 0);
+        assert_eq!(r.0["stdout"], payload);
+    }
+
+    #[test]
     fn a_missing_program_reports_errno_2() {
         let r = done(run(
             &args(json!({"_raw_params": "volant-no-such-program"})),
@@ -328,6 +359,24 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .starts_with("[Errno 2] No such file or directory")
+        );
+        assert!(r.failed());
+    }
+
+    #[test]
+    fn a_missing_chdir_reports_the_directory_not_the_program() {
+        let r = done(run(
+            &args(json!({
+                "_raw_params": "echo never",
+                "chdir": "/definitely/not/here",
+            })),
+            false,
+            &|| false,
+        ));
+        assert_eq!(r.0["rc"], 2);
+        assert_eq!(
+            r.0["msg"],
+            "[Errno 2] No such file or directory: b'/definitely/not/here'"
         );
         assert!(r.failed());
     }

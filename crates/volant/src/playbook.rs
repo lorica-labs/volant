@@ -219,9 +219,10 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::String(s) if RAW_PARAM_MODULES.contains(&short) => {
             args.insert("_raw_params".into(), Value::String(s.clone()));
         }
-        // YAML's core schema resolves an unquoted `true`/`false` as a boolean, a well-known
-        // Ansible gotcha for `command: false`: the free-form value is still the command line,
-        // so it is taken back to the text it was written as.
+        // A deliberate divergence: YAML's core schema resolves an unquoted `true`/`false` as a
+        // boolean, and ansible-playbook refuses it with "unexpected parameter type in action".
+        // Volant takes the value back to the text it was written as and runs it, so
+        // `command: false` runs `/bin/false` where Ansible would stop on an error.
         Yaml::Boolean(b) if RAW_PARAM_MODULES.contains(&short) => {
             args.insert("_raw_params".into(), Value::String(b.to_string()));
         }

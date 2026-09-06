@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant controller: loads Ansible content and drives agents.
 
+pub mod agent;
 pub mod inventory;
 pub mod playbook;
+pub mod transport;
 
 /// Version string shown by `--version`: semver, git sha and build date.
 pub const VERSION: &str = concat!(

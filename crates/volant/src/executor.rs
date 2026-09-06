@@ -4,9 +4,10 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 
-use tokio::sync::mpsc;
-use volant_protocol::{FromAgent, Task, TaskResult, ToAgent};
+use tokio::sync::{mpsc, watch};
+use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::AgentLink;
 use crate::inventory::Host;
@@ -15,14 +16,31 @@ use crate::render::Renderer;
 use crate::stats::{Outcome, Stats};
 use crate::transport::Transport;
 
+/// Ansible's default `timeout`: seconds to establish a connection.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a host gets to confirm a cancel before it is abandoned.
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// Settings shared by every play of a run.
+#[derive(Clone)]
+pub struct RunOptions {
+    pub connect_timeout: Duration,
+    /// Flips to `true` once when the user interrupts the run.
+    pub stop: watch::Receiver<bool>,
+}
+
 enum Event {
     Result {
         host: String,
         index: usize,
         result: TaskResult,
     },
+    /// The batch ended. `stopped_at` is the index of the task that failed or was cancelled,
+    /// `None` when every task ran. Not read by the coordinator yet; a later task uses it.
     Finished {
         host: String,
+        #[allow(dead_code)]
+        stopped_at: Option<usize>,
     },
     Unreachable {
         host: String,
@@ -34,6 +52,7 @@ pub async fn run_play(
     play: &Play,
     hosts: Vec<Host>,
     agent: &Path,
+    options: &RunOptions,
     out: &mut Renderer,
     stats: &mut Stats,
 ) -> anyhow::Result<()> {
@@ -70,8 +89,9 @@ pub async fn run_play(
         let name = host.name.clone();
         let agent = agent.to_path_buf();
         let tasks = tasks.clone();
+        let options = options.clone();
         workers.push(tokio::spawn(async move {
-            drive_host(name, transport, agent, tasks, tx).await
+            drive_host(name, transport, agent, tasks, options, tx).await
         }));
     }
     drop(tx);
@@ -105,7 +125,7 @@ pub async fn run_play(
                     }) => {
                         pending.entry(host).or_default().insert(index, result);
                     }
-                    Some(Event::Finished { host }) => {
+                    Some(Event::Finished { host, .. }) => {
                         finished.insert(host);
                     }
                     Some(Event::Unreachable { host, msg }) => {
@@ -161,9 +181,11 @@ async fn drive_host(
     transport: Transport,
     agent: std::path::PathBuf,
     tasks: Vec<Task>,
+    options: RunOptions,
     tx: mpsc::Sender<Event>,
 ) {
-    let mut link: AgentLink = match connect(&transport, &agent).await {
+    let mut stop = options.stop.clone();
+    let mut link: AgentLink = match connect(&transport, &agent, options.connect_timeout).await {
         Ok(link) => link,
         Err(err) => {
             let _ = tx
@@ -187,7 +209,15 @@ async fn drive_host(
     // An end that is not a `BatchDone` means the agent died, the pipe closed or a frame
     // failed to decode: the host is unreachable from here on, not quietly done.
     let ended = loop {
-        match link.recv().await {
+        let received = tokio::select! {
+            received = link.recv() => received,
+            _ = stop.changed() => {
+                // The user asked to stop: give the agent a chance to end cleanly.
+                let confirmed = link.cancel(1, CANCEL_GRACE).await;
+                break Ok(if confirmed { Some(0) } else { None });
+            }
+        };
+        match received {
             Ok(Some(FromAgent::TaskResult { index, result, .. })) => {
                 let _ = tx
                     .send(Event::Result {
@@ -197,7 +227,12 @@ async fn drive_host(
                     })
                     .await;
             }
-            Ok(Some(FromAgent::BatchDone { .. })) => break Ok(()),
+            Ok(Some(FromAgent::BatchDone { outcome, .. })) => {
+                break Ok(match outcome {
+                    BatchOutcome::Completed => None,
+                    BatchOutcome::Failed { at } | BatchOutcome::Cancelled { at } => Some(at),
+                });
+            }
             Ok(Some(FromAgent::Log { message, .. })) => eprintln!("[{host}] {message}"),
             Ok(Some(FromAgent::Ready { .. })) => {}
             Ok(None) => break Err("agent stopped before the batch finished".to_string()),
@@ -207,14 +242,25 @@ async fn drive_host(
     link.shutdown().await;
     let _ = tx
         .send(match ended {
-            Ok(()) => Event::Finished { host },
+            Ok(stopped_at) => Event::Finished { host, stopped_at },
             Err(msg) => Event::Unreachable { host, msg },
         })
         .await;
 }
 
-async fn connect(transport: &Transport, agent: &Path) -> anyhow::Result<AgentLink> {
+async fn connect(
+    transport: &Transport,
+    agent: &Path,
+    timeout: Duration,
+) -> anyhow::Result<AgentLink> {
     let mut link = transport.connect(agent).await?;
-    link.handshake().await?;
+    tokio::time::timeout(timeout, link.handshake())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "no answer from the agent after {} seconds",
+                timeout.as_secs()
+            )
+        })??;
     Ok(link)
 }

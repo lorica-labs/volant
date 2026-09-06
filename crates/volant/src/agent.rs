@@ -32,10 +32,14 @@ pub fn locate() -> anyhow::Result<PathBuf> {
 }
 
 /// A running agent reached through a transport: frames in, frames out.
+///
+/// Field order is drop order: our end of the pipe closes first so the agent sees end of stream
+/// and stops the task it is running (it kills the process group), then `kill_on_drop` reaps the
+/// agent if it is still alive.
 pub struct AgentLink {
-    child: Child,
     stdin: ChildStdin,
     frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    child: Child,
 }
 
 impl AgentLink {
@@ -48,9 +52,9 @@ impl AgentLink {
         let (tx, rx) = mpsc::channel(1);
         tokio::spawn(read_frames(stdout, tx));
         Ok(Self {
-            child,
             stdin,
             frames: rx,
+            child,
         })
     }
 
@@ -100,6 +104,26 @@ impl AgentLink {
                 None => bail!("agent exited before answering"),
             }
         }
+    }
+
+    /// Asks the agent to stop batch `id` and waits for it to say so, at most `grace`.
+    /// Returns `false` when the agent went away or did not answer in time.
+    pub async fn cancel(&mut self, id: u64, grace: std::time::Duration) -> bool {
+        if self.send(&ToAgent::Cancel { id }).await.is_err() {
+            return false;
+        }
+        let confirmed = async {
+            loop {
+                match self.recv().await {
+                    Ok(Some(FromAgent::BatchDone { batch, .. })) if batch == id => return true,
+                    Ok(Some(_)) => continue,
+                    Ok(None) | Err(_) => return false,
+                }
+            }
+        };
+        tokio::time::timeout(grace, confirmed)
+            .await
+            .unwrap_or(false)
     }
 
     /// Kills the agent process if it is still running.

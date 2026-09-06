@@ -60,7 +60,10 @@ fn is_cancelled(
 ) -> bool {
     match control.try_recv() {
         Ok(Ok(ToAgent::Cancel { id: cancelled })) => cancelled == id,
-        Ok(Ok(_)) => false,
+        Ok(Ok(other)) => {
+            eprintln!("volant-agent: ignoring unexpected message during batch {id}: {other:?}");
+            false
+        }
         Ok(Err(err)) => {
             broken.set(Some(err));
             true

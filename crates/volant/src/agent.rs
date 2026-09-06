@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::sync::mpsc;
 use volant_protocol::frame::MAX_FRAME_LEN;
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
@@ -34,17 +35,22 @@ pub fn locate() -> anyhow::Result<PathBuf> {
 pub struct AgentLink {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
 }
 
 impl AgentLink {
     pub fn new(mut child: Child) -> anyhow::Result<Self> {
         let stdin = child.stdin.take().context("agent stdin is not piped")?;
         let stdout = BufReader::new(child.stdout.take().context("agent stdout is not piped")?);
+        // Owning the stdout reader in its own task, rather than reading it directly inside
+        // `recv`, is what makes `recv` cancellation-safe: dropping its future only drops a
+        // channel receive, never a partially read frame.
+        let (tx, rx) = mpsc::channel(1);
+        tokio::spawn(read_frames(stdout, tx));
         Ok(Self {
             child,
             stdin,
-            stdout,
+            frames: rx,
         })
     }
 
@@ -57,24 +63,14 @@ impl AgentLink {
         self.stdin.flush().await
     }
 
-    /// `Ok(None)` when the agent closed its stdout.
+    /// `Ok(None)` when the agent closed its stdout cleanly. Awaits a channel fed by a
+    /// dedicated reader task, so a dropped `recv` future never desyncs the stream.
     pub async fn recv(&mut self) -> std::io::Result<Option<FromAgent>> {
-        let mut len = [0u8; 4];
-        match self.stdout.read_exact(&mut len).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e),
+        match self.frames.recv().await {
+            Some(Ok(payload)) => Ok(Some(serde_json::from_slice(&payload)?)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
         }
-        let len = u32::from_be_bytes(len) as usize;
-        if len > MAX_FRAME_LEN {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "frame too large",
-            ));
-        }
-        let mut payload = vec![0u8; len];
-        self.stdout.read_exact(&mut payload).await?;
-        Ok(Some(serde_json::from_slice(&payload)?))
     }
 
     pub async fn handshake(&mut self) -> anyhow::Result<()> {
@@ -112,4 +108,49 @@ impl AgentLink {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
         let _ = self.child.start_kill();
     }
+}
+
+/// Reads whole frames off the agent's stdout in a loop and forwards each outcome: a payload,
+/// a read error, or nothing at all once the stream ends cleanly (dropping the sender, which
+/// is what turns the matching `recv` into `Ok(None)`).
+async fn read_frames(
+    mut stdout: BufReader<ChildStdout>,
+    tx: mpsc::Sender<std::io::Result<Vec<u8>>>,
+) {
+    loop {
+        match read_frame(&mut stdout).await {
+            Ok(Some(payload)) => {
+                if tx.send(Ok(payload)).await.is_err() {
+                    return;
+                }
+            }
+            Ok(None) => return,
+            Err(err) => {
+                let _ = tx.send(Err(err)).await;
+                return;
+            }
+        }
+    }
+}
+
+/// Async twin of `volant_protocol::frame::read_frame`: reads the first length byte alone so
+/// a clean end of stream (`Ok(None)`) is distinguished from the stream closing partway
+/// through the length prefix or the payload, both of which are errors.
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
+    let mut first = [0u8; 1];
+    if r.read(&mut first).await? == 0 {
+        return Ok(None);
+    }
+    let mut rest = [0u8; 3];
+    r.read_exact(&mut rest).await?;
+    let len = u32::from_be_bytes([first[0], rest[0], rest[1], rest[2]]) as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame of {len} bytes exceeds the {MAX_FRAME_LEN} byte limit"),
+        ));
+    }
+    let mut payload = vec![0u8; len];
+    r.read_exact(&mut payload).await?;
+    Ok(Some(payload))
 }

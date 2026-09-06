@@ -1,0 +1,10 @@
+- name: Losing the agent
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Say hello
+      command: echo hello
+    - name: Kill the agent running this task
+      shell: kill $PPID
+    - name: Never reached
+      command: echo unreachable

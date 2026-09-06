@@ -1,3 +1,6 @@
 #!/bin/sh
-head -1 "$1" | grep -Eq '^(feat|fix|docs|ci|refactor|test|chore|perf|build)(\([a-z0-9-]+\))?!?: [a-z]' \
+subject=$(head -1 "$1")
+printf '%s' "$subject" | grep -Eq '^(feat|fix|docs|ci|refactor|test|chore|perf|build)(\([a-z0-9-]+\))?!?: [a-z]' \
   || { echo "commit subject must follow Conventional Commits, e.g. 'feat(agent): add facts collector'" >&2; exit 1; }
+[ "$(printf '%s' "$subject" | wc -m)" -lt 72 ] \
+  || { echo "commit subject must be under 72 characters" >&2; exit 1; }

@@ -37,6 +37,10 @@ lint:
 test:
     cargo nextest run --workspace
 
+# Regenerate docs/src/modules.md from the module registry
+docs-modules:
+    VOLANT_UPDATE_DOCS=1 cargo test -p volant-protocol the_documentation_table_matches_the_registry
+
 # Run the CI workflow locally (needs Docker)
 ci-local:
     gh act pull_request -W .github/workflows/ci.yml

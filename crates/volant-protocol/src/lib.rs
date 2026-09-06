@@ -5,5 +5,6 @@
 
 pub mod frame;
 pub mod messages;
+pub mod modules;
 
 pub use messages::*;

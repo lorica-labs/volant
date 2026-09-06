@@ -9,12 +9,26 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
+use volant_protocol::modules::COMMAND;
 
-use super::Run;
+use super::{Module, Run};
 use crate::clock;
 
+pub const MODULE: Module = Module {
+    spec: &COMMAND,
+    run: run_command,
+};
+
+fn run_command(
+    args: &Map<String, Value>,
+    timeout: Option<Duration>,
+    cancelled: &dyn Fn() -> bool,
+) -> Run {
+    execute(args, false, timeout, cancelled)
+}
+
 /// Runs one command. `uses_shell` selects `shell` semantics (`sh -c`) over `command`.
-pub fn run(
+pub(crate) fn execute(
     args: &Map<String, Value>,
     uses_shell: bool,
     timeout: Option<Duration>,
@@ -299,7 +313,7 @@ mod tests {
 
     #[test]
     fn free_form_command_reports_stdout_and_rc() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "echo hello world"})),
             false,
             None,
@@ -318,7 +332,7 @@ mod tests {
 
     #[test]
     fn non_zero_rc_is_a_failure_with_the_ansible_message() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "false"})),
             false,
             None,
@@ -331,7 +345,7 @@ mod tests {
 
     #[test]
     fn shell_form_goes_through_sh() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "echo $((6 * 7))"})),
             true,
             None,
@@ -343,14 +357,14 @@ mod tests {
 
     #[test]
     fn argv_and_cmd_forms_are_accepted() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"argv": ["printf", "%s-%s", "a", "b"]})),
             false,
             None,
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "a-b");
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"cmd": "echo cmd-form"})),
             false,
             None,
@@ -361,7 +375,7 @@ mod tests {
 
     #[test]
     fn creates_skips_when_the_path_exists() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "echo never", "creates": "/"})),
             false,
             None,
@@ -376,7 +390,7 @@ mod tests {
 
     #[test]
     fn removes_skips_when_the_path_is_absent() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "echo never", "removes": "/definitely/not/here"})),
             false,
             None,
@@ -395,7 +409,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("volant-chdir-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("marker"), b"").unwrap();
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "ls", "chdir": dir.to_str().unwrap()})),
             false,
             None,
@@ -407,7 +421,7 @@ mod tests {
 
     #[test]
     fn stdin_is_fed_to_the_program() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": "from stdin"})),
             false,
             None,
@@ -423,7 +437,7 @@ mod tests {
             .cycle()
             .take(1_048_576)
             .collect();
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),
             true,
             None,
@@ -435,7 +449,7 @@ mod tests {
 
     #[test]
     fn a_missing_program_reports_errno_2() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "volant-no-such-program"})),
             false,
             None,
@@ -453,7 +467,7 @@ mod tests {
 
     #[test]
     fn a_missing_chdir_reports_the_directory_not_the_program() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({
                 "_raw_params": "echo never",
                 "chdir": "/definitely/not/here",
@@ -473,7 +487,7 @@ mod tests {
     #[test]
     fn cancellation_kills_the_program() {
         let started = std::time::Instant::now();
-        let run = run(
+        let run = execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
             None,
@@ -485,7 +499,7 @@ mod tests {
 
     #[test]
     fn empty_command_is_an_error() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "   "})),
             false,
             None,
@@ -498,7 +512,7 @@ mod tests {
     #[test]
     fn a_timeout_kills_the_program_and_reports_ansible_shape() {
         let started = std::time::Instant::now();
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
             Some(std::time::Duration::from_secs(1)),
@@ -530,7 +544,7 @@ mod tests {
         // Cancel only once the grandchild is actually running. Cancelling straight away kills the
         // shell before it forks, so nothing would survive however narrow the kill was.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let run = run(
+        let run = execute(
             &args(json!({"_raw_params": format!("sleep {marker} & wait")})),
             true,
             None,
@@ -551,7 +565,7 @@ mod tests {
 
     #[test]
     fn a_program_killed_by_a_signal_reports_the_negative_signal_number() {
-        let r = done(run(
+        let r = done(execute(
             &args(json!({"_raw_params": "sh -c 'kill -TERM $$'"})),
             false,
             None,

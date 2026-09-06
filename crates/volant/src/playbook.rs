@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Map, Value};
+use volant_protocol::modules::native;
 use yaml_rust2::yaml::Hash;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -32,8 +33,11 @@ pub struct PlayTask {
 /// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
 const PLAY_KEYWORDS: &[&str] = &["name", "hosts", "gather_facts", "tasks"];
 const TASK_KEYWORDS: &[&str] = &["name", "ignore_errors", "args"];
-/// Modules whose free-form string is a command line, kept whole as `_raw_params`.
-const RAW_PARAM_MODULES: &[&str] = &["command", "shell", "raw"];
+
+/// Whether the module's string form is one command line rather than `key=value` pairs.
+fn is_free_form(module: &str) -> bool {
+    native(module).is_some_and(|m| m.free_form)
+}
 
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
     let text = std::fs::read_to_string(path)
@@ -208,7 +212,6 @@ fn is_reserved_task_keyword(key: &str) -> bool {
 }
 
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
-    let short = module.rsplit('.').next().unwrap_or(module);
     let mut args = Map::new();
     match value {
         Yaml::Hash(_) => {
@@ -216,14 +219,14 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
                 args = map;
             }
         }
-        Yaml::String(s) if RAW_PARAM_MODULES.contains(&short) => {
+        Yaml::String(s) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(s.clone()));
         }
         // A deliberate divergence: YAML's core schema resolves an unquoted `true`/`false` as a
         // boolean, and ansible-playbook refuses it with "unexpected parameter type in action".
         // Volant takes the value back to the text it was written as and runs it, so
         // `command: false` runs `/bin/false` where Ansible would stop on an error.
-        Yaml::Boolean(b) if RAW_PARAM_MODULES.contains(&short) => {
+        Yaml::Boolean(b) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(b.to_string()));
         }
         Yaml::String(s) => {
@@ -383,5 +386,24 @@ mod tests {
     fn a_playbook_must_be_a_list_of_plays() {
         assert!(parse("hosts: all\n", "x.yml").is_err());
         assert!(parse("", "x.yml").is_err());
+    }
+
+    #[test]
+    fn free_form_follows_the_module_registry() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - ansible.legacy.shell: echo a=b\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "echo a=b");
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - community.general.command: echo a\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("expected key=value"),
+            "another collection's command is not free-form here"
+        );
     }
 }

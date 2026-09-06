@@ -1,0 +1,542 @@
+[
+  {
+    "case": {
+      "template": "{{ 1 + 1 }}"
+    },
+    "result": 2
+  },
+  {
+    "case": {
+      "template": "{{ 2.5 * 2 }}"
+    },
+    "result": 5.0
+  },
+  {
+    "case": {
+      "template": "{{ x * 2 }}",
+      "vars": {
+        "x": 5
+      }
+    },
+    "result": 10
+  },
+  {
+    "case": {
+      "template": "Hello {{ name }}!",
+      "vars": {
+        "name": "World"
+      }
+    },
+    "result": "Hello World!"
+  },
+  {
+    "case": {
+      "template": "{{ name }} and {{ other }}",
+      "vars": {
+        "name": "a",
+        "other": "b"
+      }
+    },
+    "result": "a and b"
+  },
+  {
+    "case": {
+      "template": "{{ items | length }}",
+      "vars": {
+        "items": [
+          1,
+          2,
+          3
+        ]
+      }
+    },
+    "result": 3
+  },
+  {
+    "case": {
+      "template": "{{ items[1] }}",
+      "vars": {
+        "items": [
+          1,
+          2,
+          3
+        ]
+      }
+    },
+    "result": 2
+  },
+  {
+    "case": {
+      "template": "{{ conf.port }}",
+      "vars": {
+        "conf": {
+          "port": 8080
+        }
+      }
+    },
+    "result": 8080
+  },
+  {
+    "case": {
+      "template": "{{ conf['port'] }}",
+      "vars": {
+        "conf": {
+          "port": 8080
+        }
+      }
+    },
+    "result": 8080
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": null
+      }
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ items }}",
+      "vars": {
+        "items": [
+          1,
+          "two",
+          {
+            "three": 3
+          }
+        ]
+      }
+    },
+    "result": [
+      1,
+      "two",
+      {
+        "three": 3
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ 'lit' }}"
+    },
+    "result": "lit"
+  },
+  {
+    "case": {
+      "template": "{% if x %}yes{% else %}no{% endif %}",
+      "vars": {
+        "x": 0
+      }
+    },
+    "result": "no"
+  },
+  {
+    "case": {
+      "template": "{{ missing }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': 'missing' is undefined"
+  },
+  {
+    "case": {
+      "template": "{{ conf.missing }}",
+      "vars": {
+        "conf": {
+          "port": 1
+        }
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': object of type 'dict' has no attribute 'missing'"
+  },
+  {
+    "case": {
+      "template": "{{ 'text' | upper }}"
+    },
+    "result": "TEXT"
+  },
+  {
+    "case": {
+      "template": "{{ items | join(', ') }}",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "result": "a, b"
+  },
+  {
+    "case": {
+      "template": "{{ (x > 3) | string }}",
+      "vars": {
+        "x": 5
+      }
+    },
+    "result": "True"
+  },
+  {
+    "case": {
+      "template": "plain text without a template"
+    },
+    "result": "plain text without a template"
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": "007"
+      }
+    },
+    "result": "007"
+  },
+  {
+    "case": {
+      "template": "{{ x | int }}",
+      "vars": {
+        "x": "007"
+      }
+    },
+    "result": 7
+  },
+  {
+    "case": {
+      "vars": {
+        "x": 5
+      },
+      "when": "x > 3"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "vars": {
+        "x": 1
+      },
+      "when": "x > 3"
+    },
+    "skipped": true
+  },
+  {
+    "case": {
+      "vars": {
+        "flag": false
+      },
+      "when": "flag"
+    },
+    "skipped": true
+  },
+  {
+    "case": {
+      "vars": {
+        "x": 1
+      },
+      "when": "x is defined"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "y is defined"
+    },
+    "skipped": true
+  },
+  {
+    "case": {
+      "when": "y is not defined"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "'yes'"
+    },
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpwhngqx6f/golden.yml:182:11'. Conditionals must have a boolean result."
+  },
+  {
+    "case": {
+      "vars": {
+        "x": "false"
+      },
+      "when": "x"
+    },
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpwhngqx6f/golden.yml:188:10'. Conditionals must have a boolean result."
+  },
+  {
+    "case": {
+      "vars": {
+        "x": 5
+      },
+      "when": "{{ x > 3 }}"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "missing > 3"
+    },
+    "error": "Task failed: Error while evaluating conditional: 'missing' is undefined"
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": false
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": "yes"
+      }
+    },
+    "result": "yes"
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": "no"
+      }
+    },
+    "result": "no"
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": null
+      }
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": null
+      }
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": null
+      }
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": null
+      }
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ nothing }}",
+      "vars": {
+        "nothing": "null"
+      }
+    },
+    "result": "null"
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": 8
+      }
+    },
+    "result": 8
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": "010"
+      }
+    },
+    "result": "010"
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": 16
+      }
+    },
+    "result": 16
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": 1000
+      }
+    },
+    "result": 1000
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": 1.0
+      }
+    },
+    "result": 1.0
+  },
+  {
+    "case": {
+      "template": "{{ v }}",
+      "vars": {
+        "v": "true"
+      }
+    },
+    "result": "true"
+  },
+  {
+    "case": {
+      "template": "{{ v }}",
+      "vars": {
+        "v": "false"
+      }
+    },
+    "result": "false"
+  },
+  {
+    "case": {
+      "template": "{{ v }}",
+      "vars": {
+        "v": true
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ v }}",
+      "vars": {
+        "v": false
+      }
+    },
+    "result": false
+  }
+]

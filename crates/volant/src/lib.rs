@@ -8,6 +8,7 @@ pub mod inventory;
 pub mod playbook;
 pub mod render;
 pub mod stats;
+pub mod template;
 pub mod transport;
 pub mod vars;
 pub mod yaml;

@@ -2,6 +2,8 @@
 //! Volant controller: loads Ansible content and drives agents.
 
 pub mod agent;
+pub mod cli;
+pub mod executor;
 pub mod inventory;
 pub mod playbook;
 pub mod render;

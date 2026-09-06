@@ -1,0 +1,18 @@
+- name: Smoke test
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: Say hello
+      command: echo hello
+
+    - name: Fail but keep going
+      command: false
+      ignore_errors: true
+
+    - name: Skip because the path exists
+      command:
+        cmd: echo never
+        creates: /
+
+    - name: Shell arithmetic
+      shell: echo $((6 * 7))

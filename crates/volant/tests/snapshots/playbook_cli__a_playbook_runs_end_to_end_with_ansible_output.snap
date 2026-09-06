@@ -13,10 +13,10 @@ fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "[ti
 ...ignoring
 
 TASK [Skip because the path exists] ********************************************
-ok: [localhost]
+skipping: [localhost]
 
 TASK [Shell arithmetic] ********************************************************
 changed: [localhost]
 
 PLAY RECAP *********************************************************************
-localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1
+localhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=1    rescued=0    ignored=1

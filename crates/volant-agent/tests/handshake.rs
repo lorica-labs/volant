@@ -28,6 +28,16 @@ fn hello_gets_ready_and_eof_ends_the_agent() {
 }
 
 #[test]
+fn a_truncated_frame_makes_the_agent_exit_non_zero() {
+    let mut agent = spawn_agent();
+    // Declares a 5 byte payload, then stdin closes before any payload arrives.
+    agent.write_raw(&5u32.to_be_bytes());
+    agent.close();
+    let status = agent.child.wait().unwrap();
+    assert!(!status.success(), "expected a non-zero exit, got {status}");
+}
+
+#[test]
 fn a_protocol_mismatch_is_logged_before_ready() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {

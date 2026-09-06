@@ -33,6 +33,13 @@ impl Agent {
         stdin.flush().unwrap();
     }
 
+    /// Writes raw bytes with no framing, for tests that need to send a partial frame.
+    pub fn write_raw(&mut self, bytes: &[u8]) {
+        let stdin = self.stdin.as_mut().expect("stdin open");
+        stdin.write_all(bytes).unwrap();
+        stdin.flush().unwrap();
+    }
+
     pub fn recv(&mut self) -> Option<FromAgent> {
         read_frame(&mut self.stdout)
             .unwrap()
@@ -42,5 +49,12 @@ impl Agent {
     /// Closes stdin so the agent sees end of stream.
     pub fn close(&mut self) {
         self.stdin.take();
+    }
+}
+
+impl Drop for Agent {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }

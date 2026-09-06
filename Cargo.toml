@@ -13,6 +13,9 @@ authors = ["Hugo Planque"]
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+volant-protocol = { path = "crates/volant-protocol", version = "0.1.0-alpha.1" }
 
 [profile.dev]
 debug = "line-tables-only"

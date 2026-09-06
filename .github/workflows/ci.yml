@@ -86,5 +86,4 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
-      - run: cargo publish --dry-run -p volant-agent
-      - run: cargo publish --dry-run -p volant
+      - run: cargo publish --dry-run --workspace

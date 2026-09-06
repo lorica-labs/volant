@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant agent: runs task batches on a managed host, talking frames on stdin and stdout.
 
-// Not yet called from `serve`: the controller does not drive batches yet.
-#[allow(dead_code)]
 mod clock;
-#[allow(dead_code)]
 mod modules;
+mod runner;
 
 use std::io::{self, BufReader, BufWriter};
 use std::sync::mpsc;
@@ -81,10 +79,7 @@ fn serve() -> io::Result<()> {
                     arch: std::env::consts::ARCH.to_string(),
                 })?;
             }
-            ToAgent::RunBatch { id, .. } => send(&FromAgent::Log {
-                level: LogLevel::Error,
-                message: format!("batch {id} refused: task execution is not implemented"),
-            })?,
+            ToAgent::RunBatch { id, tasks } => runner::run_batch(id, &tasks, &rx, &mut send)?,
             ToAgent::Cancel { .. } => {}
         }
     }

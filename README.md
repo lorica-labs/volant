@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lorica-labs/volant/main/docs/assets/volant-mark.png" width="88" height="88" alt="">
+</p>
+
 # Volant
 
 Fast, drop-in engine for Ansible playbooks.

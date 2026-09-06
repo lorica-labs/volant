@@ -4,7 +4,7 @@ mod common;
 
 use common::spawn_agent;
 use serde_json::json;
-use volant_protocol::{BatchOutcome, FromAgent, PROTOCOL_VERSION, Task, ToAgent};
+use volant_protocol::{BatchOutcome, FromAgent, LogLevel, PROTOCOL_VERSION, Task, ToAgent};
 
 fn command(cmd: &str, ignore_errors: bool) -> Task {
     Task {
@@ -100,6 +100,37 @@ fn cancel_interrupts_a_running_task() {
     assert!(started.elapsed().as_secs() < 5);
     agent.close();
     agent.child.wait().unwrap();
+}
+
+#[test]
+fn a_broken_stdin_during_a_batch_is_logged_and_exits_non_zero() {
+    let mut agent = spawn_agent();
+    agent.send(&ToAgent::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    agent.recv();
+    agent.send(&ToAgent::RunBatch {
+        id: 5,
+        tasks: vec![command("sleep 30", false)],
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    // A frame header declaring a body, then stdin closes before the body arrives:
+    // read_frame reports UnexpectedEof rather than a clean end of stream.
+    agent.write_raw(&9u32.to_be_bytes());
+    agent.close();
+    let msg = agent.recv();
+    assert!(
+        matches!(
+            &msg,
+            Some(FromAgent::Log {
+                level: LogLevel::Error,
+                ..
+            })
+        ),
+        "expected an error log, got {msg:?}"
+    );
+    let status = agent.child.wait().unwrap();
+    assert!(!status.success());
 }
 
 #[test]

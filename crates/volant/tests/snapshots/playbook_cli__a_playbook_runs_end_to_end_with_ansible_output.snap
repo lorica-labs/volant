@@ -1,23 +1,22 @@
 ---
 source: crates/volant/tests/playbook_cli.rs
-assertion_line: 31
 expression: "String::from_utf8(out.stdout).unwrap()"
 ---
 
-PLAY [Smoke test] *************************************************************
+PLAY [Smoke test] **************************************************************
 
-TASK [Say hello] **************************************************************
+TASK [Say hello] ***************************************************************
 changed: [localhost]
 
-TASK [Fail but keep going] ****************************************************
+TASK [Fail but keep going] *****************************************************
 fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "[time]", "end": "[time]", "failed": true, "msg": "non-zero return code", "rc": 1, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
 ...ignoring
 
-TASK [Skip because the path exists] *******************************************
+TASK [Skip because the path exists] ********************************************
 ok: [localhost]
 
-TASK [Shell arithmetic] *******************************************************
+TASK [Shell arithmetic] ********************************************************
 changed: [localhost]
 
-PLAY RECAP ********************************************************************
+PLAY RECAP *********************************************************************
 localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1

@@ -60,8 +60,10 @@ impl Renderer {
         }
     }
 
+    /// The star run fills the width past the text, so the line is one character wider than the
+    /// width, and never shorter than three stars: what `ansible-playbook` prints.
     fn banner(&mut self, text: &str) {
-        let stars = self.width.saturating_sub(text.len() + 1);
+        let stars = self.width.saturating_sub(text.len()).max(3);
         let _ = writeln!(self.out, "\n{text} {}", "*".repeat(stars));
     }
 
@@ -239,12 +241,19 @@ mod tests {
     }
 
     #[test]
-    fn banners_are_padded_with_stars_to_the_width() {
+    fn banners_are_padded_with_stars_past_the_width() {
         let out = capture(|r| r.play("Smoke test"));
         let line = out.lines().nth(1).unwrap();
         assert!(line.starts_with("PLAY [Smoke test] ***"));
-        assert_eq!(line.len(), 79);
+        assert_eq!(line.len(), 80);
         assert_eq!(out, format!("\n{line}\n"));
+    }
+
+    #[test]
+    fn a_banner_wider_than_the_terminal_keeps_three_stars() {
+        let name = "x".repeat(120);
+        let out = capture(|r| r.play(&name));
+        assert_eq!(out.lines().nth(1).unwrap(), format!("PLAY [{name}] ***"));
     }
 
     #[test]

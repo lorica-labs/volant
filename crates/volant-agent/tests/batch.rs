@@ -11,6 +11,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         module: "command".into(),
         args: json!({"_raw_params": cmd}).as_object().unwrap().clone(),
         ignore_errors,
+        timeout: None,
     }
 }
 
@@ -131,6 +132,35 @@ fn a_broken_stdin_during_a_batch_is_logged_and_exits_non_zero() {
     );
     let status = agent.child.wait().unwrap();
     assert!(!status.success());
+}
+
+#[test]
+fn a_task_timeout_fails_the_task_and_stops_the_batch() {
+    let mut agent = spawn_agent();
+    agent.send(&ToAgent::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    agent.recv();
+    let mut slow = command("sleep 30", false);
+    slow.timeout = Some(1);
+    let started = std::time::Instant::now();
+    agent.send(&ToAgent::RunBatch {
+        id: 5,
+        tasks: vec![slow, command("echo never", false)],
+    });
+    let (i, r) = result_of(agent.recv());
+    assert_eq!(i, 0);
+    assert!(r.failed());
+    assert_eq!(
+        agent.recv(),
+        Some(FromAgent::BatchDone {
+            batch: 5,
+            outcome: BatchOutcome::Failed { at: 0 }
+        })
+    );
+    assert!(started.elapsed().as_secs() < 5);
+    agent.close();
+    agent.child.wait().unwrap();
 }
 
 #[test]

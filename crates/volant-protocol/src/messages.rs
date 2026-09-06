@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// Bumped when a message changes shape. Controller and agent refuse to talk across versions.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Controller to agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,6 +80,9 @@ pub struct Task {
     pub args: Map<String, Value>,
     #[serde(default)]
     pub ignore_errors: bool,
+    /// Seconds allowed for the module to run; the agent kills it past that (Ansible's `timeout`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
 }
 
 /// A module result, in the free-form shape Ansible modules return.
@@ -125,7 +128,19 @@ mod tests {
             protocol: PROTOCOL_VERSION,
         })
         .unwrap();
-        assert_eq!(text, r#"{"type":"hello","protocol":1}"#);
+        assert_eq!(
+            text,
+            format!(r#"{{"type":"hello","protocol":{PROTOCOL_VERSION}}}"#)
+        );
+    }
+
+    #[test]
+    fn timeout_is_optional_and_absent_when_unset() {
+        let task: Task = serde_json::from_str(r#"{"module":"raw"}"#).unwrap();
+        assert_eq!(task.timeout, None);
+        assert!(!serde_json::to_string(&task).unwrap().contains("timeout"));
+        let task: Task = serde_json::from_str(r#"{"module":"raw","timeout":5}"#).unwrap();
+        assert_eq!(task.timeout, Some(5));
     }
 
     #[test]
@@ -139,6 +154,7 @@ mod tests {
                     .unwrap()
                     .clone(),
                 ignore_errors: true,
+                timeout: None,
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();

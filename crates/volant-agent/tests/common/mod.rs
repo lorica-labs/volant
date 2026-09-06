@@ -34,6 +34,9 @@ impl Agent {
     }
 
     /// Writes raw bytes with no framing, for tests that need to send a partial frame.
+    /// Only `handshake.rs` calls this; each integration test binary compiles its own
+    /// copy of this module, so the others see it as unused.
+    #[allow(dead_code)]
     pub fn write_raw(&mut self, bytes: &[u8]) {
         let stdin = self.stdin.as_mut().expect("stdin open");
         stdin.write_all(bytes).unwrap();

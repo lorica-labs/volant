@@ -19,10 +19,11 @@ clap.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
 volant-protocol.workspace = true
+yaml-rust2.workspace = true
 
-# Remove this entry once the controller actually uses serde_json and volant-protocol.
+# Remove this entry once the controller actually uses volant-protocol.
 [package.metadata.cargo-machete]
-ignored = ["serde_json", "volant-protocol"]
+ignored = ["volant-protocol"]
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.xz"

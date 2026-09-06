@@ -261,7 +261,7 @@
     "case": {
       "when": "'yes'"
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpwhngqx6f/golden.yml:182:11'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpgxqgnc0k/golden.yml:182:11'. Conditionals must have a boolean result."
   },
   {
     "case": {
@@ -270,7 +270,7 @@
       },
       "when": "x"
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpwhngqx6f/golden.yml:188:10'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpgxqgnc0k/golden.yml:188:10'. Conditionals must have a boolean result."
   },
   {
     "case": {
@@ -415,6 +415,24 @@
   },
   {
     "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": "on"
+      }
+    },
+    "result": "on"
+  },
+  {
+    "case": {
+      "template": "{{ flag }}",
+      "vars": {
+        "flag": "off"
+      }
+    },
+    "result": "off"
+  },
+  {
+    "case": {
       "template": "{{ nothing }}",
       "vars": {
         "nothing": null
@@ -475,6 +493,15 @@
       }
     },
     "result": "010"
+  },
+  {
+    "case": {
+      "template": "{{ num }}",
+      "vars": {
+        "num": "08"
+      }
+    },
+    "result": "08"
   },
   {
     "case": {

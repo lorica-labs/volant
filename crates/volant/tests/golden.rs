@@ -3,6 +3,7 @@
 
 use serde_json::{Map, Value};
 use volant::template::Templar;
+use volant::yaml;
 
 fn expected() -> Vec<Value> {
     serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses")
@@ -70,6 +71,37 @@ fn every_golden_case_matches_the_reference() {
     assert!(
         failures.is_empty(),
         "{} case(s) differ from ansible-core:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// `every_golden_case_matches_the_reference` above takes each case's `vars` straight from
+/// `expected.json`, i.e. already typed by ansible-core's own YAML reading of `cases.yml` — it
+/// never runs `vars` through our own `yaml::to_json`. This test does: it re-parses
+/// `cases.yml`'s literal source, converts each case's `vars` mapping through the same
+/// `yaml::load`/`yaml::to_json` path a real playbook's `vars_files` or inline `vars` uses, and
+/// compares the result to the same reference recording, so a YAML 1.1/1.2 scalar-resolution
+/// gap between saphyr and PyYAML shows up here even though the test above can't see it.
+#[test]
+fn our_yaml_loading_of_vars_matches_the_reference() {
+    let cases_text = include_str!("golden/cases.yml");
+    let docs = yaml::load(cases_text, "cases.yml").expect("cases.yml parses");
+    let cases = docs[0].as_vec().expect("cases.yml is a list of cases");
+    let mut failures = Vec::new();
+    for (case, entry) in cases.iter().zip(expected()) {
+        let Some(vars) = yaml::field(case, "vars") else {
+            continue;
+        };
+        let ours = yaml::to_json(vars).expect("vars convert to JSON");
+        let want = entry["case"]["vars"].clone();
+        if !same(&ours, &want) {
+            failures.push(format!("{case:?}\n  reference: {want}\n  ours: {ours}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} case(s)' vars differ from ansible-core's own YAML reading:\n{}",
         failures.len(),
         failures.join("\n")
     );

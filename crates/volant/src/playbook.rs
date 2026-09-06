@@ -20,6 +20,8 @@ pub struct Play {
     pub name: String,
     pub hosts: String,
     pub gather_facts: bool,
+    pub vars: Map<String, Value>,
+    pub vars_files: Vec<String>,
     pub tasks: Vec<PlayTask>,
 }
 
@@ -29,11 +31,43 @@ pub struct PlayTask {
     pub module: String,
     pub args: Map<String, Value>,
     pub ignore_errors: bool,
+    pub timeout: Option<u64>,
+    pub vars: Map<String, Value>,
+    /// Conditions that must all hold, as Jinja2 expressions.
+    pub when: Vec<String>,
+    /// Raw `loop` value: a list, or a template string rendering to one. `with_items` lands
+    /// here too and is flattened one level at run time.
+    pub loop_items: Option<Value>,
+    pub loop_var: String,
+    pub loop_label: Option<String>,
+    pub register: Option<String>,
+    pub changed_when: Vec<String>,
+    pub failed_when: Vec<String>,
 }
 
 /// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
-const PLAY_KEYWORDS: &[&str] = &["name", "hosts", "gather_facts", "tasks"];
-const TASK_KEYWORDS: &[&str] = &["name", "ignore_errors", "args"];
+const PLAY_KEYWORDS: &[&str] = &[
+    "name",
+    "hosts",
+    "gather_facts",
+    "tasks",
+    "vars",
+    "vars_files",
+];
+const TASK_KEYWORDS: &[&str] = &[
+    "name",
+    "ignore_errors",
+    "args",
+    "timeout",
+    "vars",
+    "when",
+    "loop",
+    "with_items",
+    "loop_control",
+    "register",
+    "changed_when",
+    "failed_when",
+];
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 fn is_free_form(module: &str) -> bool {
@@ -87,6 +121,26 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
     let gather_facts = field(yaml, "gather_facts")
         .and_then(as_bool)
         .unwrap_or(true);
+    let vars = match field(yaml, "vars") {
+        None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
+        Some(v) => match to_json(v).context("'vars'")? {
+            Value::Object(map) => map,
+            _ => bail!("'vars' must be a mapping"),
+        },
+    };
+    let vars_files = match field(yaml, "vars_files") {
+        None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
+        Some(Yaml::Sequence(items)) => items
+            .iter()
+            .map(|i| {
+                i.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| anyhow!("'vars_files' entries must be strings"))
+            })
+            .collect::<anyhow::Result<_>>()?,
+        Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
+        _ => bail!("'vars_files' must be a list of paths"),
+    };
     let tasks = match field(yaml, "tasks") {
         Some(Yaml::Sequence(items)) => items
             .iter()
@@ -100,6 +154,8 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         name,
         hosts,
         gather_facts,
+        vars,
+        vars_files,
         tasks,
     })
 }
@@ -142,12 +198,81 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     let ignore_errors = field(yaml, "ignore_errors")
         .and_then(as_bool)
         .unwrap_or(false);
+    let timeout = match field(yaml, "timeout") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Some(*i as u64),
+        Some(other) => {
+            bail!("task '{label}': 'timeout' must be a non-negative integer, found {other:?}")
+        }
+    };
+    let vars = match field(yaml, "vars") {
+        None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
+        Some(v) => match to_json(v).with_context(|| format!("task '{label}': 'vars'"))? {
+            Value::Object(map) => map,
+            _ => bail!("task '{label}': 'vars' must be a mapping"),
+        },
+    };
+    let when = conditions(yaml, "when", &label)?;
+    let changed_when = conditions(yaml, "changed_when", &label)?;
+    let failed_when = conditions(yaml, "failed_when", &label)?;
+    let register = match field(yaml, "register") {
+        None => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(_) => bail!("task '{label}': 'register' must be a variable name"),
+    };
+    let loop_items = match (field(yaml, "loop"), field(yaml, "with_items")) {
+        (Some(_), Some(_)) => bail!("task '{label}': 'loop' and 'with_items' cannot both be given"),
+        (Some(v), None) | (None, Some(v)) => {
+            Some(to_json(v).with_context(|| format!("task '{label}': loop"))?)
+        }
+        (None, None) => None,
+    };
+    let (loop_var, loop_label) = match field(yaml, "loop_control") {
+        None => ("item".to_string(), None),
+        Some(control) => (
+            field(control, "loop_var")
+                .and_then(|v| v.as_str())
+                .unwrap_or("item")
+                .to_string(),
+            field(control, "label")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        ),
+    };
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
         args,
         ignore_errors,
+        timeout,
+        vars,
+        when,
+        loop_items,
+        loop_var,
+        loop_label,
+        register,
+        changed_when,
+        failed_when,
     })
+}
+
+/// `when`, `changed_when`, `failed_when`: one expression or a list of them. A YAML boolean is
+/// spelled back as Python would (`True`/`False`) so the expression evaluator reads it.
+fn conditions(yaml: &Yaml, key: &str, label: &str) -> anyhow::Result<Vec<String>> {
+    let one = |node: &Yaml| -> anyhow::Result<String> {
+        match node {
+            Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
+            Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
+            other => bail!(
+                "task '{label}': '{key}' must be an expression or a list of expressions, found {other:?}"
+            ),
+        }
+    };
+    match field(yaml, key) {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        Some(Yaml::Sequence(items)) => items.iter().map(one).collect(),
+        Some(node) => Ok(vec![one(node)?]),
+    }
 }
 
 /// Ansible task keywords that exist but are not handled yet. Refusing them keeps a playbook
@@ -155,20 +280,13 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
 fn is_reserved_task_keyword(key: &str) -> bool {
     matches!(
         key,
-        "when"
-            | "loop"
-            | "with_items"
-            | "register"
-            | "become"
+        "become"
             | "become_user"
-            | "changed_when"
-            | "failed_when"
             | "until"
             | "retries"
             | "delay"
             | "notify"
             | "tags"
-            | "vars"
             | "environment"
             | "delegate_to"
             | "run_once"
@@ -180,11 +298,9 @@ fn is_reserved_task_keyword(key: &str) -> bool {
             | "import_tasks"
             | "include_role"
             | "import_role"
-            | "loop_control"
             | "check_mode"
             | "diff"
             | "throttle"
-            | "timeout"
             | "any_errors_fatal"
             | "async"
             | "poll"
@@ -308,12 +424,12 @@ mod tests {
     #[test]
     fn unsupported_keywords_are_refused_with_context() {
         let err = parse(
-            "- hosts: all\n  tasks:\n    - name: Later\n      command: true\n      when: x\n",
+            "- hosts: all\n  tasks:\n    - name: Later\n      command: true\n      until: x\n",
             "x.yml",
         )
         .unwrap_err();
         let text = format!("{err:#}");
-        assert!(text.contains("when"), "{text}");
+        assert!(text.contains("until"), "{text}");
         assert!(text.contains("Later"), "{text}");
         let err = parse("- hosts: all\n  become: yes\n  tasks: []\n", "x.yml").unwrap_err();
         assert!(format!("{err:#}").contains("become"));
@@ -367,5 +483,129 @@ mod tests {
         let err = parse("- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n", "x.yml").unwrap_err();
         let text = format!("{err:#}");
         assert!(text.contains("vault") && text.contains("Secret"), "{text}");
+    }
+
+    const KEYWORDS: &str = r#"
+- name: Keywords
+  hosts: all
+  gather_facts: false
+  vars:
+    port: 80
+    greeting: "hello {{ name }}"
+  vars_files:
+    - vars/common.yml
+    - "vars/{{ env }}.yml"
+  tasks:
+    - name: Conditional
+      command: echo {{ port }}
+      when: port > 1
+      register: out
+      vars:
+        local: 1
+      timeout: 5
+    - name: Several conditions
+      command: true
+      when:
+        - out is defined
+        - out.rc == 0
+      changed_when: false
+      failed_when:
+        - out.rc != 0
+        - "'oops' in out.stdout"
+    - name: Looping
+      debug:
+        msg: "{{ item }}"
+      loop: "{{ ['a', 'b'] }}"
+    - name: Legacy loop with control
+      debug:
+        msg: "{{ server.name }}"
+      with_items:
+        - {name: a}
+        - {name: b}
+      loop_control:
+        loop_var: server
+        label: "{{ server.name }}"
+    - name: Facts
+      set_fact:
+        computed: "{{ port + 1 }}"
+"#;
+
+    #[test]
+    fn play_vars_and_vars_files_are_kept_raw() {
+        let pb = parse(KEYWORDS, "k.yml").unwrap();
+        let play = &pb.plays[0];
+        assert_eq!(play.vars["port"], serde_json::json!(80));
+        assert_eq!(play.vars["greeting"], serde_json::json!("hello {{ name }}"));
+        assert_eq!(play.vars_files, ["vars/common.yml", "vars/{{ env }}.yml"]);
+    }
+
+    #[test]
+    fn task_keywords_are_read() {
+        let pb = parse(KEYWORDS, "k.yml").unwrap();
+        let t = &pb.plays[0].tasks;
+        assert_eq!(t[0].when, ["port > 1"]);
+        assert_eq!(t[0].register.as_deref(), Some("out"));
+        assert_eq!(t[0].vars["local"], serde_json::json!(1));
+        assert_eq!(t[0].timeout, Some(5));
+        assert_eq!(
+            t[0].args["_raw_params"], "echo {{ port }}",
+            "arguments stay untemplated here"
+        );
+
+        assert_eq!(t[1].when, ["out is defined", "out.rc == 0"]);
+        assert_eq!(t[1].changed_when, ["False"]);
+        assert_eq!(t[1].failed_when, ["out.rc != 0", "'oops' in out.stdout"]);
+
+        assert_eq!(t[2].loop_items, Some(serde_json::json!("{{ ['a', 'b'] }}")));
+        assert_eq!(t[2].loop_var, "item");
+        assert!(t[2].loop_label.is_none());
+
+        assert_eq!(
+            t[3].loop_items,
+            Some(serde_json::json!([{"name": "a"}, {"name": "b"}]))
+        );
+        assert_eq!(t[3].loop_var, "server");
+        assert_eq!(t[3].loop_label.as_deref(), Some("{{ server.name }}"));
+
+        assert_eq!(t[4].module, "set_fact");
+        assert_eq!(t[4].args["computed"], "{{ port + 1 }}");
+    }
+
+    #[test]
+    fn when_accepts_booleans_and_refuses_other_scalars() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - command: true\n      when: false\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert_eq!(pb.plays[0].tasks[0].when, ["False"]);
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("when"));
+    }
+
+    #[test]
+    fn loop_and_with_items_together_are_refused() {
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - debug:\n      loop: [1]\n      with_items: [2]\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("loop"));
+    }
+
+    #[test]
+    fn still_unsupported_keywords_are_refused() {
+        for kw in ["become", "until", "notify", "block", "delegate_to"] {
+            let err = parse(
+                &format!("- hosts: all\n  tasks:\n    - command: true\n      {kw}: x\n"),
+                "x.yml",
+            )
+            .unwrap_err();
+            assert!(format!("{err:#}").contains(kw), "{kw}");
+        }
     }
 }

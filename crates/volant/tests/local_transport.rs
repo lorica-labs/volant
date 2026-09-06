@@ -60,9 +60,18 @@ async fn runs_a_batch_through_the_local_transport() {
     );
 }
 
+/// A `sleep` duration that doubles as a `pgrep -f` marker: GNU `sleep` rejects a second,
+/// non-numeric argument outright, so the marker has to live inside the number itself. The
+/// fractional part carries this test binary's pid so two runs never search for each other's
+/// grandchild, and `whole_seconds` keeps a run that outlives its own test bounded rather than
+/// orphaned forever if the kill it is checking for turns out not to happen.
+fn unique_sleep_marker(whole_seconds: u32) -> String {
+    format!("{whole_seconds}.{}", std::process::id())
+}
+
 #[tokio::test]
 async fn cancel_stops_the_running_task_and_its_children() {
-    let marker = format!("volant-cancel-{}", std::process::id());
+    let marker = unique_sleep_marker(40);
     let transport = Transport::for_host(&local_host()).unwrap();
     let mut link = transport.connect(&agent_path()).await.unwrap();
     link.handshake().await.unwrap();
@@ -70,7 +79,10 @@ async fn cancel_stops_the_running_task_and_its_children() {
         id: 9,
         tasks: vec![Task {
             module: "shell".into(),
-            args: json!({"_raw_params": format!("sleep 30 {marker} & wait")})
+            // `sleep ... & wait` forces the shell to fork the sleep as a grandchild and stay
+            // around itself (a lone trailing simple command would instead be exec'd, replacing
+            // the shell and leaving no grandchild to kill).
+            args: json!({"_raw_params": format!("sleep {marker} & wait")})
                 .as_object()
                 .unwrap()
                 .clone(),
@@ -101,7 +113,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
 
 #[tokio::test]
 async fn dropping_the_link_lets_the_agent_stop_its_task() {
-    let marker = format!("volant-drop-{}", std::process::id());
+    let marker = unique_sleep_marker(45);
     let transport = Transport::for_host(&local_host()).unwrap();
     let mut link = transport.connect(&agent_path()).await.unwrap();
     link.handshake().await.unwrap();
@@ -109,7 +121,7 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
         id: 10,
         tasks: vec![Task {
             module: "shell".into(),
-            args: json!({"_raw_params": format!("sleep 30 {marker} & wait")})
+            args: json!({"_raw_params": format!("sleep {marker} & wait")})
                 .as_object()
                 .unwrap()
                 .clone(),

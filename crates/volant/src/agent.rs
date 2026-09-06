@@ -31,13 +31,20 @@ pub fn locate() -> anyhow::Result<PathBuf> {
     })
 }
 
+/// How long a bare `drop` waits for the agent to notice end of stream and clean up its task
+/// before giving up and letting `kill_on_drop` kill the agent outright. This blocks whatever
+/// thread runs the drop (there is no `.await` in `Drop::drop`), so it has to stay small; the
+/// agent itself polls for cancellation every 20ms, so a plain multiple of that covers the
+/// common case without making a wedged agent stall the caller for long.
+const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+const DROP_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// A running agent reached through a transport: frames in, frames out.
 ///
-/// Field order is drop order: our end of the pipe closes first so the agent sees end of stream
-/// and stops the task it is running (it kills the process group), then `kill_on_drop` reaps the
-/// agent if it is still alive.
+/// `stdin` is an `Option` so `Drop` can close it explicitly, ahead of waiting on `child`, even
+/// though a type with a manual `Drop` impl cannot otherwise move a field out of itself.
 pub struct AgentLink {
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
     child: Child,
 }
@@ -52,19 +59,23 @@ impl AgentLink {
         let (tx, rx) = mpsc::channel(1);
         tokio::spawn(read_frames(stdout, tx));
         Ok(Self {
-            stdin,
+            stdin: Some(stdin),
             frames: rx,
             child,
         })
+    }
+
+    fn stdin(&mut self) -> &mut ChildStdin {
+        self.stdin.as_mut().expect("stdin is only taken on drop")
     }
 
     pub async fn send(&mut self, msg: &ToAgent) -> std::io::Result<()> {
         let payload = serde_json::to_vec(msg)?;
         let len =
             u32::try_from(payload.len()).map_err(|_| std::io::Error::other("frame too large"))?;
-        self.stdin.write_all(&len.to_be_bytes()).await?;
-        self.stdin.write_all(&payload).await?;
-        self.stdin.flush().await
+        self.stdin().write_all(&len.to_be_bytes()).await?;
+        self.stdin().write_all(&payload).await?;
+        self.stdin().flush().await
     }
 
     /// `Ok(None)` when the agent closed its stdout cleanly. Awaits a channel fed by a
@@ -128,9 +139,27 @@ impl AgentLink {
 
     /// Kills the agent process if it is still running.
     pub async fn shutdown(mut self) {
-        drop(self.stdin);
+        drop(self.stdin.take());
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
         let _ = self.child.start_kill();
+    }
+}
+
+impl Drop for AgentLink {
+    /// A bare `drop` (no call to `shutdown`) has no `.await` to wait on the agent with, so
+    /// this closes stdin and then busy-polls `try_wait` for up to `DROP_GRACE`, giving the
+    /// agent a scheduling window to see end of stream and kill its task's process group
+    /// before this returns. If the agent is still alive once the grace period runs out, this
+    /// falls through and lets the `child` field's own `kill_on_drop` kill it as before.
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        let deadline = std::time::Instant::now() + DROP_GRACE;
+        while std::time::Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) => std::thread::sleep(DROP_POLL_INTERVAL),
+            }
+        }
     }
 }
 

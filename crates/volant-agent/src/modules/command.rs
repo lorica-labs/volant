@@ -517,12 +517,24 @@ mod tests {
     #[test]
     fn cancellation_kills_the_whole_process_group() {
         // `sh -c` forks a grandchild; killing only the shell would leave `sleep` running.
-        let marker = format!("volant-group-{}", std::process::id());
+        // The marker has to live inside `sleep`'s duration argument: GNU `sleep` rejects a
+        // second, non-numeric argument outright, and a lone trailing simple command would be
+        // exec'd (replacing the shell) rather than forked, leaving no grandchild to kill.
+        let marker = format!("30.{}", std::process::id());
+        let alive = |marker: &str| {
+            std::process::Command::new("pgrep")
+                .args(["-f", marker])
+                .output()
+                .is_ok_and(|o| !o.stdout.is_empty())
+        };
+        // Cancel only once the grandchild is actually running. Cancelling straight away kills the
+        // shell before it forks, so nothing would survive however narrow the kill was.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let run = run(
-            &args(json!({"_raw_params": format!("sleep 30 {marker} & wait")})),
+            &args(json!({"_raw_params": format!("sleep {marker} & wait")})),
             true,
             None,
-            &|| true,
+            &|| alive(&marker) || std::time::Instant::now() > deadline,
         );
         assert!(matches!(run, Run::Cancelled));
         std::thread::sleep(std::time::Duration::from_millis(200));

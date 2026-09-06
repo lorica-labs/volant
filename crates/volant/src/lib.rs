@@ -9,6 +9,7 @@ pub mod playbook;
 pub mod render;
 pub mod stats;
 pub mod transport;
+pub mod vars;
 pub mod yaml;
 
 /// Version string shown by `--version`: semver, git sha and build date.

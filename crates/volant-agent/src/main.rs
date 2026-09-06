@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant agent: runs task batches on a managed host, talking frames on stdin and stdout.
 
+// Not yet called from `serve`: the controller does not drive batches yet.
+#[allow(dead_code)]
+mod clock;
+#[allow(dead_code)]
+mod modules;
+
 use std::io::{self, BufReader, BufWriter};
 use std::sync::mpsc;
 use std::thread;

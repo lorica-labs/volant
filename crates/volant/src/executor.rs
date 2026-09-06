@@ -58,6 +58,7 @@ pub async fn run_play(
             module: t.module.clone(),
             args: t.args.clone(),
             ignore_errors: t.ignore_errors,
+            timeout: None,
         })
         .collect();
     let ignore: Vec<bool> = play.tasks.iter().map(|t| t.ignore_errors).collect();

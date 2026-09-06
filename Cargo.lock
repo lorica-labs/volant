@@ -521,6 +521,7 @@ dependencies = [
 name = "volant-agent"
 version = "0.1.0-alpha.2"
 dependencies = [
+ "libc",
  "serde_json",
  "shlex",
  "volant-protocol",

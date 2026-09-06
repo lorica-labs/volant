@@ -14,7 +14,12 @@ use super::Run;
 use crate::clock;
 
 /// Runs one command. `uses_shell` selects `shell` semantics (`sh -c`) over `command`.
-pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> bool) -> Run {
+pub fn run(
+    args: &Map<String, Value>,
+    uses_shell: bool,
+    timeout: Option<Duration>,
+    cancelled: &dyn Fn() -> bool,
+) -> Run {
     let uses_shell = uses_shell
         || args
             .get("_uses_shell")
@@ -84,6 +89,11 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
     if let Some(dir) = chdir {
         command.current_dir(dir);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
@@ -103,19 +113,26 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
         })
     });
 
+    let deadline = timeout.map(|t| Instant::now() + t);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if cancelled() => {
-                let _ = child.kill();
+                kill_group(&child);
                 let _ = child.wait();
                 return Run::Cancelled;
+            }
+            Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => {
+                kill_group(&child);
+                let _ = child.wait();
+                let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
+                return Run::Done(timed_out(display, seconds));
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
         }
     };
-    let rc = status.code().unwrap_or(-1);
+    let rc = exit_code(&status);
     let mut stdout = stdout.join().unwrap_or_default();
     let mut stderr = stderr.join().unwrap_or_default();
     if let Some(stdin_writer) = stdin_writer {
@@ -145,6 +162,38 @@ pub fn run(args: &Map<String, Value>, uses_shell: bool, cancelled: &dyn Fn() -> 
         result.insert("failed".into(), json!(true));
     }
     Run::Done(TaskResult(result))
+}
+
+/// Kills the child's whole process group, so pipelines and backgrounded grandchildren go too.
+fn kill_group(child: &std::process::Child) {
+    #[cfg(unix)]
+    {
+        // The child was started with `process_group(0)`, so its pid is its pgid.
+        let pgid = child.id() as libc::pid_t;
+        // Negative pid targets the group. SIGKILL: the module was already asked to stop.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child;
+    }
+}
+
+/// Ansible reports a signal death as the negative signal number, like Python's `Popen`.
+fn exit_code(status: &std::process::ExitStatus) -> i64 {
+    if let Some(code) = status.code() {
+        return i64::from(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return -i64::from(signal);
+        }
+    }
+    -1
 }
 
 fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String> {
@@ -177,6 +226,19 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
     result.insert("changed".into(), json!(false));
     result.insert("skipped".into(), json!(true));
     result.insert("msg".into(), json!(msg));
+    TaskResult(result)
+}
+
+fn timed_out(cmd: Value, seconds: u64) -> TaskResult {
+    let mut result = Map::new();
+    result.insert("cmd".into(), cmd);
+    result.insert("failed".into(), json!(true));
+    result.insert(
+        "msg".into(),
+        json!(format!(
+            "The command action failed to execute in the expected time frame ({seconds})"
+        )),
+    );
     TaskResult(result)
 }
 
@@ -232,6 +294,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "echo hello world"})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -247,9 +310,12 @@ mod tests {
 
     #[test]
     fn non_zero_rc_is_a_failure_with_the_ansible_message() {
-        let r = done(run(&args(json!({"_raw_params": "false"})), false, &|| {
-            false
-        }));
+        let r = done(run(
+            &args(json!({"_raw_params": "false"})),
+            false,
+            None,
+            &|| false,
+        ));
         assert_eq!(r.0["rc"], 1);
         assert_eq!(r.0["msg"], "non-zero return code");
         assert!(r.failed());
@@ -260,6 +326,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "echo $((6 * 7))"})),
             true,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "42");
@@ -271,12 +338,16 @@ mod tests {
         let r = done(run(
             &args(json!({"argv": ["printf", "%s-%s", "a", "b"]})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "a-b");
-        let r = done(run(&args(json!({"cmd": "echo cmd-form"})), false, &|| {
-            false
-        }));
+        let r = done(run(
+            &args(json!({"cmd": "echo cmd-form"})),
+            false,
+            None,
+            &|| false,
+        ));
         assert_eq!(r.0["stdout"], "cmd-form");
     }
 
@@ -285,6 +356,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "echo never", "creates": "/"})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -299,6 +371,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "echo never", "removes": "/definitely/not/here"})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(
@@ -317,6 +390,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "ls", "chdir": dir.to_str().unwrap()})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "marker");
@@ -328,6 +402,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "cat", "stdin": "from stdin"})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "from stdin");
@@ -343,6 +418,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),
             true,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -354,6 +430,7 @@ mod tests {
         let r = done(run(
             &args(json!({"_raw_params": "volant-no-such-program"})),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["rc"], 2);
@@ -374,6 +451,7 @@ mod tests {
                 "chdir": "/definitely/not/here",
             })),
             false,
+            None,
             &|| false,
         ));
         assert_eq!(r.0["rc"], 2);
@@ -387,15 +465,77 @@ mod tests {
     #[test]
     fn cancellation_kills_the_program() {
         let started = std::time::Instant::now();
-        let run = run(&args(json!({"_raw_params": "sleep 30"})), false, &|| true);
+        let run = run(
+            &args(json!({"_raw_params": "sleep 30"})),
+            false,
+            None,
+            &|| true,
+        );
         assert!(matches!(run, Run::Cancelled));
         assert!(started.elapsed().as_secs() < 5);
     }
 
     #[test]
     fn empty_command_is_an_error() {
-        let r = done(run(&args(json!({"_raw_params": "   "})), false, &|| false));
+        let r = done(run(
+            &args(json!({"_raw_params": "   "})),
+            false,
+            None,
+            &|| false,
+        ));
         assert!(r.failed());
         assert_eq!(r.0["msg"], "no command given");
+    }
+
+    #[test]
+    fn a_timeout_kills_the_program_and_reports_ansible_message() {
+        let started = std::time::Instant::now();
+        let r = done(run(
+            &args(json!({"_raw_params": "sleep 30"})),
+            false,
+            Some(std::time::Duration::from_secs(1)),
+            &|| false,
+        ));
+        assert!(started.elapsed().as_secs() < 5);
+        assert!(r.failed());
+        assert_eq!(
+            r.0["msg"],
+            "The command action failed to execute in the expected time frame (1)"
+        );
+    }
+
+    #[test]
+    fn cancellation_kills_the_whole_process_group() {
+        // `sh -c` forks a grandchild; killing only the shell would leave `sleep` running.
+        let marker = format!("volant-group-{}", std::process::id());
+        let run = run(
+            &args(json!({"_raw_params": format!("sleep 30 {marker} & wait")})),
+            true,
+            None,
+            &|| true,
+        );
+        assert!(matches!(run, Run::Cancelled));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let survivors = std::process::Command::new("pgrep")
+            .args(["-f", &marker])
+            .output()
+            .unwrap();
+        assert!(
+            survivors.stdout.is_empty(),
+            "grandchild survived: {}",
+            String::from_utf8_lossy(&survivors.stdout)
+        );
+    }
+
+    #[test]
+    fn a_program_killed_by_a_signal_reports_the_negative_signal_number() {
+        let r = done(run(
+            &args(json!({"_raw_params": "sh -c 'kill -TERM $$'"})),
+            false,
+            None,
+            &|| false,
+        ));
+        assert_eq!(r.0["rc"], -15);
+        assert!(r.failed());
     }
 }

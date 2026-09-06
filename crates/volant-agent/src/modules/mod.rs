@@ -19,9 +19,10 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
         .strip_prefix("ansible.builtin.")
         .or_else(|| task.module.strip_prefix("ansible.legacy."))
         .unwrap_or(&task.module);
+    let timeout = task.timeout.map(std::time::Duration::from_secs);
     match name {
-        "command" => command::run(&task.args, false, cancelled),
-        "shell" | "raw" => command::run(&task.args, true, cancelled),
+        "command" => command::run(&task.args, false, timeout, cancelled),
+        "shell" | "raw" => command::run(&task.args, true, timeout, cancelled),
         other => Run::Done(TaskResult::failed_with(format!(
             "The module {other} is not available on the agent yet"
         ))),

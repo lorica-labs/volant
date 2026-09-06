@@ -40,6 +40,7 @@ async fn runs_a_batch_through_the_local_transport() {
                 .unwrap()
                 .clone(),
             ignore_errors: false,
+            timeout: None,
         }],
     })
     .await

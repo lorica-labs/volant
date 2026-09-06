@@ -12,6 +12,8 @@ homepage = "https://github.com/lorica-labs/volant"
 authors = ["Hugo Planque"]
 
 [workspace.dependencies]
+anstream = "1"
+anstyle = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

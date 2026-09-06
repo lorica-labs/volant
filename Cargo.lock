@@ -594,6 +594,7 @@ dependencies = [
  "clap",
  "insta",
  "minijinja",
+ "regex",
  "saphyr",
  "serde_json",
  "shlex",

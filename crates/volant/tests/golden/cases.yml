@@ -120,3 +120,74 @@
   vars: {v: True}
 - template: "{{ v }}"
   vars: {v: False}
+# Ansible filters
+- template: "{{ missing | default('fallback') }}"
+- template: "{{ empty | default('fallback') }}"
+  vars: {empty: ""}
+- template: "{{ empty | default('fallback', true) }}"
+  vars: {empty: ""}
+- template: "{{ present | default('fallback') }}"
+  vars: {present: 0}
+- template: "{{ 'yes' | bool }}"
+- template: "{{ 'no' | bool }}"
+- template: "{{ 1 | bool }}"
+- template: "{{ 'on' | bool }}"
+- template: "{{ 'maybe' | bool }}"
+- template: "{{ '42' | int }}"
+- template: "{{ 'abc' | int }}"
+- template: "{{ 3.9 | int }}"
+- template: "{{ '2.5' | float }}"
+- template: "{{ present | mandatory }}"
+  vars: {present: 1}
+- template: "{{ missing | mandatory }}"
+- template: "{{ (x > 3) | ternary('big', 'small') }}"
+  vars: {x: 5}
+- template: "{{ a | combine(b) }}"
+  vars: {a: {x: 1, y: 1}, b: {y: 2, z: 2}}
+- template: "{{ a | combine(b, recursive=true) }}"
+  vars: {a: {n: {x: 1, y: 1}}, b: {n: {y: 2}}}
+- template: "{{ d | dict2items }}"
+  vars: {d: {a: 1, b: 2}}
+- template: "{{ d | dict2items(key_name='k', value_name='v') }}"
+  vars: {d: {a: 1}}
+- template: "{{ l | items2dict }}"
+  vars: {l: [{key: a, value: 1}, {key: b, value: 2}]}
+- template: "{{ d | to_json }}"
+  vars: {d: {b: 1, a: [1, 2]}}
+- template: "{{ d | to_nice_json }}"
+  vars: {d: {b: 1, a: [1, 2]}}
+- template: "{{ s | from_json }}"
+  vars: {s: '{"a": [1, 2]}'}
+- template: "{{ '/etc/nginx/nginx.conf' | basename }}"
+- template: "{{ '/etc/nginx/nginx.conf' | dirname }}"
+- template: "{{ 'a,b,,c' | split(',') }}"
+- template: "{{ '  a b   c ' | split }}"
+- template: "{{ 'ansible' | regex_replace('^a(.*)$', 'A\\1') }}"
+- template: "{{ 'foo=bar' | regex_replace('(?P<k>\\w+)=(?P<v>\\w+)', '\\g<v>=\\g<k>') }}"
+- template: "{{ 'Hello World' | regex_replace('world', 'there', ignorecase=true) }}"
+- template: "{{ 'server1.example.com' | regex_search('^(\\w+)\\.') }}"
+- template: "{{ 'server1.example.com' | regex_search('^(\\w+)\\.', '\\1') }}"
+- template: "{{ 'nothing here' | regex_search('\\d+') }}"
+- template: "{{ 'a1b22c333' | regex_findall('\\d+') }}"
+- template: "{{ missing_filter_input | some_unknown_filter }}"
+  vars: {missing_filter_input: 1}
+# Ansible tests
+- when: "x is truthy"
+  vars: {x: "0"}
+- when: "x is falsy"
+  vars: {x: []}
+- when: "'foobar' is match('foo')"
+- when: "'foobar' is match('bar')"
+- when: "'foobar' is search('bar')"
+- when: "'foobar' is regex('^f.*r$')"
+- when: "'b' in items"
+  vars: {items: [a, b]}
+- when: "items is contains('b')"
+  vars: {items: [a, b]}
+# lookups
+- template: "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
+- template: "{{ lookup('env', 'VOLANT_GOLDEN_UNSET_ENV') }}"
+- template: "{{ lookup('vars', 'name') }}"
+  vars: {name: found}
+- template: "{{ lookup('pipe', 'echo piped') }}"
+- template: "{{ lookup('file', 'golden_lookup.txt') }}"

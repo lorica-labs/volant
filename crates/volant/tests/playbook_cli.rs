@@ -59,6 +59,19 @@ fn a_failing_task_stops_the_host_and_exits_2() {
 }
 
 #[test]
+fn an_agent_that_dies_mid_batch_makes_its_host_unreachable() {
+    let out = volant(&["playbook", &fixture("dying-agent.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("fatal: [localhost]: UNREACHABLE!"), "{text}");
+    assert!(
+        !text.contains("Never reached"),
+        "tasks after the agent died must not be displayed: {text}"
+    );
+    assert!(text.contains("unreachable=1"), "{text}");
+    assert_eq!(out.status.code(), Some(4), "{text}");
+}
+
+#[test]
 fn the_playbook_alias_takes_the_same_arguments() {
     let alias = Path::new(env!("CARGO_BIN_EXE_volant")).with_file_name("volant-playbook");
     let out = Command::new(alias)

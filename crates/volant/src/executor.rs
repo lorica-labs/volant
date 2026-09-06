@@ -2,11 +2,11 @@
 //! Runs one play on its hosts with the `linear` strategy: every host runs the same batch,
 //! output is shown task by task once every live host has reported that task.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use tokio::sync::mpsc;
-use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
+use volant_protocol::{FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::AgentLink;
 use crate::inventory::Host;
@@ -23,7 +23,6 @@ enum Event {
     },
     Finished {
         host: String,
-        stopped_at: Option<usize>,
     },
     Unreachable {
         host: String,
@@ -78,7 +77,7 @@ pub async fn run_play(
 
     let order: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let mut pending: HashMap<String, BTreeMap<usize, TaskResult>> = HashMap::new();
-    let mut finished: HashMap<String, Option<usize>> = HashMap::new();
+    let mut finished: HashSet<String> = HashSet::new();
 
     for (index, task) in play.tasks.iter().enumerate() {
         let mut header_shown = false;
@@ -94,7 +93,7 @@ pub async fn run_play(
                     out.result(host, outcome, &result);
                     break;
                 }
-                if finished.contains_key(host) {
+                if finished.contains(host) {
                     break;
                 }
                 match rx.recv().await {
@@ -105,8 +104,8 @@ pub async fn run_play(
                     }) => {
                         pending.entry(host).or_default().insert(index, result);
                     }
-                    Some(Event::Finished { host, stopped_at }) => {
-                        finished.insert(host, stopped_at);
+                    Some(Event::Finished { host }) => {
+                        finished.insert(host);
                     }
                     Some(Event::Unreachable { host, msg }) => {
                         if !header_shown {
@@ -115,7 +114,7 @@ pub async fn run_play(
                         }
                         stats.unreachable(&host);
                         out.unreachable(&host, &msg);
-                        finished.insert(host, Some(index));
+                        finished.insert(host);
                     }
                     None => break,
                 }
@@ -123,6 +122,15 @@ pub async fn run_play(
         }
         if finished.len() == order.len() && pending.values().all(BTreeMap::is_empty) {
             break;
+        }
+    }
+    // The channel is bounded, so a host still owing a send would block forever if reading
+    // stopped here. Drain until every worker has dropped its sender, which is also the last
+    // chance to report a host that died after its final result.
+    while let Some(event) = rx.recv().await {
+        if let Event::Unreachable { host, msg } = event {
+            stats.unreachable(&host);
+            out.unreachable(&host, &msg);
         }
     }
     for worker in workers {
@@ -175,7 +183,9 @@ async fn drive_host(
             .await;
         return;
     }
-    let stopped_at = loop {
+    // An end that is not a `BatchDone` means the agent died, the pipe closed or a frame
+    // failed to decode: the host is unreachable from here on, not quietly done.
+    let ended = loop {
         match link.recv().await {
             Ok(Some(FromAgent::TaskResult { index, result, .. })) => {
                 let _ = tx
@@ -186,19 +196,20 @@ async fn drive_host(
                     })
                     .await;
             }
-            Ok(Some(FromAgent::BatchDone { outcome, .. })) => {
-                break match outcome {
-                    BatchOutcome::Completed => None,
-                    BatchOutcome::Failed { at } | BatchOutcome::Cancelled { at } => Some(at),
-                };
-            }
+            Ok(Some(FromAgent::BatchDone { .. })) => break Ok(()),
             Ok(Some(FromAgent::Log { message, .. })) => eprintln!("[{host}] {message}"),
             Ok(Some(FromAgent::Ready { .. })) => {}
-            Ok(None) | Err(_) => break Some(0),
+            Ok(None) => break Err("agent stopped before the batch finished".to_string()),
+            Err(err) => break Err(format!("reading from the agent: {err}")),
         }
     };
     link.shutdown().await;
-    let _ = tx.send(Event::Finished { host, stopped_at }).await;
+    let _ = tx
+        .send(match ended {
+            Ok(()) => Event::Finished { host },
+            Err(msg) => Event::Unreachable { host, msg },
+        })
+        .await;
 }
 
 async fn connect(transport: &Transport, agent: &Path) -> anyhow::Result<AgentLink> {

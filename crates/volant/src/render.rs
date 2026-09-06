@@ -16,6 +16,8 @@ pub struct Renderer {
     verbosity: u8,
 }
 
+const HOST_COLUMN: usize = 26;
+
 const OK: Style = AnsiColor::Green.on_default();
 const CHANGED: Style = AnsiColor::Yellow.on_default();
 const FAILED: Style = AnsiColor::Red.on_default();
@@ -124,9 +126,11 @@ impl Renderer {
                 OK
             };
             let name = if self.color {
-                format!("{:<37}", self.paint(host_style, host))
+                let painted = self.paint(host_style, host);
+                let width = HOST_COLUMN + (painted.len() - host.len());
+                format!("{painted:<width$}")
             } else {
-                format!("{host:<26}")
+                format!("{host:<HOST_COLUMN$}")
             };
             let field = |lead: &str, n: u32, style: Style| {
                 let text = format!("{lead}={n:<4}");
@@ -199,15 +203,39 @@ mod tests {
         }
     }
 
-    fn capture(f: impl FnOnce(&mut Renderer)) -> String {
+    fn capture_with_color(color: bool, f: impl FnOnce(&mut Renderer)) -> String {
         let buf = Arc::new(Mutex::new(Vec::new()));
-        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 0);
+        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), color, 79, 0);
         f(&mut r);
         String::from_utf8(buf.lock().unwrap().clone()).unwrap()
     }
 
+    fn capture(f: impl FnOnce(&mut Renderer)) -> String {
+        capture_with_color(false, f)
+    }
+
     fn result(v: serde_json::Value) -> TaskResult {
         TaskResult(v.as_object().unwrap().clone())
+    }
+
+    /// Strips ANSI CSI sequences (`ESC [ ... letter`), the shape anstyle emits, so a
+    /// coloured capture can be compared against the plain one on visible text alone.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' && chars.peek() == Some(&'[') {
+                chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
     }
 
     #[test]
@@ -299,5 +327,51 @@ mod tests {
             out.trim_end(),
             r#"ok: [h] => {"changed": false, "stdout": "x"}"#
         );
+    }
+
+    #[test]
+    fn the_recap_still_lines_up_with_colour_on() {
+        let mut stats = Stats::default();
+        stats.record("localhost", Outcome::Changed);
+        stats.record("localhost", Outcome::Ok);
+        stats.record("localhost", Outcome::Ignored);
+        let plain = capture(|r| r.recap(&stats));
+        let coloured = capture_with_color(true, |r| r.recap(&stats));
+        assert_ne!(coloured, plain, "colour should change the output at all");
+        assert_eq!(
+            strip_ansi(&coloured),
+            plain,
+            "visible columns must match the uncoloured recap once escapes are stripped"
+        );
+    }
+
+    #[test]
+    fn result_lines_only_get_wrapped_in_colour_not_rewritten() {
+        let cases = [
+            (Outcome::Ok, result(json!({"changed": false}))),
+            (Outcome::Changed, result(json!({"changed": true}))),
+            (Outcome::Skipped, result(json!({"skipped": true}))),
+            (Outcome::Failed, result(json!({"failed": true, "rc": 1}))),
+            (Outcome::Ignored, result(json!({"failed": true, "rc": 1}))),
+        ];
+        for (outcome, task_result) in cases {
+            let plain = capture(|r| r.result("h", outcome, &task_result));
+            let coloured = capture_with_color(true, |r| r.result("h", outcome, &task_result));
+            assert_ne!(
+                coloured, plain,
+                "{outcome:?}: colour should change the output at all"
+            );
+            assert_eq!(
+                strip_ansi(&coloured),
+                plain,
+                "{outcome:?}: visible text must be unchanged by colour"
+            );
+            for line in plain.lines() {
+                assert!(
+                    coloured.contains(line),
+                    "{outcome:?}: styling should wrap {line:?} verbatim, not rewrite it"
+                );
+            }
+        }
     }
 }

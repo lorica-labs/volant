@@ -22,17 +22,24 @@ fn main() {
 fn serve() -> io::Result<()> {
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
     // while a task is running.
-    let (tx, rx) = mpsc::channel::<ToAgent>();
+    let (tx, rx) = mpsc::channel::<io::Result<ToAgent>>();
     thread::spawn(move || {
         let mut stdin = BufReader::new(io::stdin().lock());
-        while let Ok(Some(bytes)) = read_frame(&mut stdin) {
-            match serde_json::from_slice::<ToAgent>(&bytes) {
-                Ok(msg) => {
-                    if tx.send(msg).is_err() {
-                        break;
+        loop {
+            match read_frame(&mut stdin) {
+                Ok(Some(bytes)) => match serde_json::from_slice::<ToAgent>(&bytes) {
+                    Ok(msg) => {
+                        if tx.send(Ok(msg)).is_err() {
+                            break;
+                        }
                     }
+                    Err(err) => eprintln!("volant-agent: discarding malformed frame: {err}"),
+                },
+                Ok(None) => break,
+                Err(err) => {
+                    let _ = tx.send(Err(err));
+                    break;
                 }
-                Err(err) => eprintln!("volant-agent: discarding malformed frame: {err}"),
             }
         }
     });
@@ -42,6 +49,16 @@ fn serve() -> io::Result<()> {
         |msg: &FromAgent| -> io::Result<()> { write_frame(&mut out, &serde_json::to_vec(msg)?) };
 
     while let Ok(msg) = rx.recv() {
+        let msg = match msg {
+            Ok(msg) => msg,
+            Err(err) => {
+                send(&FromAgent::Log {
+                    level: LogLevel::Error,
+                    message: format!("reading frame from controller: {err}"),
+                })?;
+                return Err(err);
+            }
+        };
         match msg {
             ToAgent::Hello { protocol } => {
                 if protocol != PROTOCOL_VERSION {

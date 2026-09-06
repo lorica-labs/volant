@@ -261,7 +261,7 @@
     "case": {
       "when": "'yes'"
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpgxqgnc0k/golden.yml:182:11'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp4y5k1h9k/golden.yml:182:11'. Conditionals must have a boolean result."
   },
   {
     "case": {
@@ -270,7 +270,7 @@
       },
       "when": "x"
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmpgxqgnc0k/golden.yml:188:10'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp4y5k1h9k/golden.yml:188:10'. Conditionals must have a boolean result."
   },
   {
     "case": {
@@ -565,5 +565,451 @@
       }
     },
     "result": false
+  },
+  {
+    "case": {
+      "template": "{{ missing | default('fallback') }}"
+    },
+    "result": "fallback"
+  },
+  {
+    "case": {
+      "template": "{{ empty | default('fallback') }}",
+      "vars": {
+        "empty": ""
+      }
+    },
+    "result": ""
+  },
+  {
+    "case": {
+      "template": "{{ empty | default('fallback', true) }}",
+      "vars": {
+        "empty": ""
+      }
+    },
+    "result": "fallback"
+  },
+  {
+    "case": {
+      "template": "{{ present | default('fallback') }}",
+      "vars": {
+        "present": 0
+      }
+    },
+    "result": 0
+  },
+  {
+    "case": {
+      "template": "{{ 'yes' | bool }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 'no' | bool }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 1 | bool }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 'on' | bool }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 'maybe' | bool }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ '42' | int }}"
+    },
+    "result": 42
+  },
+  {
+    "case": {
+      "template": "{{ 'abc' | int }}"
+    },
+    "result": 0
+  },
+  {
+    "case": {
+      "template": "{{ 3.9 | int }}"
+    },
+    "result": 3
+  },
+  {
+    "case": {
+      "template": "{{ '2.5' | float }}"
+    },
+    "result": 2.5
+  },
+  {
+    "case": {
+      "template": "{{ present | mandatory }}",
+      "vars": {
+        "present": 1
+      }
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ missing | mandatory }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.mandatory' failed: Mandatory variable 'missing' not defined."
+  },
+  {
+    "case": {
+      "template": "{{ (x > 3) | ternary('big', 'small') }}",
+      "vars": {
+        "x": 5
+      }
+    },
+    "result": "big"
+  },
+  {
+    "case": {
+      "template": "{{ a | combine(b) }}",
+      "vars": {
+        "a": {
+          "x": 1,
+          "y": 1
+        },
+        "b": {
+          "y": 2,
+          "z": 2
+        }
+      }
+    },
+    "result": {
+      "x": 1,
+      "y": 2,
+      "z": 2
+    }
+  },
+  {
+    "case": {
+      "template": "{{ a | combine(b, recursive=true) }}",
+      "vars": {
+        "a": {
+          "n": {
+            "x": 1,
+            "y": 1
+          }
+        },
+        "b": {
+          "n": {
+            "y": 2
+          }
+        }
+      }
+    },
+    "result": {
+      "n": {
+        "x": 1,
+        "y": 2
+      }
+    }
+  },
+  {
+    "case": {
+      "template": "{{ d | dict2items }}",
+      "vars": {
+        "d": {
+          "a": 1,
+          "b": 2
+        }
+      }
+    },
+    "result": [
+      {
+        "key": "a",
+        "value": 1
+      },
+      {
+        "key": "b",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ d | dict2items(key_name='k', value_name='v') }}",
+      "vars": {
+        "d": {
+          "a": 1
+        }
+      }
+    },
+    "result": [
+      {
+        "k": "a",
+        "v": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ l | items2dict }}",
+      "vars": {
+        "l": [
+          {
+            "key": "a",
+            "value": 1
+          },
+          {
+            "key": "b",
+            "value": 2
+          }
+        ]
+      }
+    },
+    "result": {
+      "a": 1,
+      "b": 2
+    }
+  },
+  {
+    "case": {
+      "template": "{{ d | to_json }}",
+      "vars": {
+        "d": {
+          "a": [
+            1,
+            2
+          ],
+          "b": 1
+        }
+      }
+    },
+    "result": "{\"a\": [1, 2], \"b\": 1}"
+  },
+  {
+    "case": {
+      "template": "{{ d | to_nice_json }}",
+      "vars": {
+        "d": {
+          "a": [
+            1,
+            2
+          ],
+          "b": 1
+        }
+      }
+    },
+    "result": "{\n    \"a\": [\n        1,\n        2\n    ],\n    \"b\": 1\n}"
+  },
+  {
+    "case": {
+      "template": "{{ s | from_json }}",
+      "vars": {
+        "s": "{\"a\": [1, 2]}"
+      }
+    },
+    "result": {
+      "a": [
+        1,
+        2
+      ]
+    }
+  },
+  {
+    "case": {
+      "template": "{{ '/etc/nginx/nginx.conf' | basename }}"
+    },
+    "result": "nginx.conf"
+  },
+  {
+    "case": {
+      "template": "{{ '/etc/nginx/nginx.conf' | dirname }}"
+    },
+    "result": "/etc/nginx"
+  },
+  {
+    "case": {
+      "template": "{{ 'a,b,,c' | split(',') }}"
+    },
+    "result": [
+      "a",
+      "b",
+      "",
+      "c"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ '  a b   c ' | split }}"
+    },
+    "result": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ 'ansible' | regex_replace('^a(.*)$', 'A\\1') }}"
+    },
+    "result": "Ansible"
+  },
+  {
+    "case": {
+      "template": "{{ 'foo=bar' | regex_replace('(?P<k>\\w+)=(?P<v>\\w+)', '\\g<v>=\\g<k>') }}"
+    },
+    "result": "bar=foo"
+  },
+  {
+    "case": {
+      "template": "{{ 'Hello World' | regex_replace('world', 'there', ignorecase=true) }}"
+    },
+    "result": "Hello there"
+  },
+  {
+    "case": {
+      "template": "{{ 'server1.example.com' | regex_search('^(\\w+)\\.') }}"
+    },
+    "result": "server1."
+  },
+  {
+    "case": {
+      "template": "{{ 'server1.example.com' | regex_search('^(\\w+)\\.', '\\1') }}"
+    },
+    "result": [
+      "server1"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ 'nothing here' | regex_search('\\d+') }}"
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "template": "{{ 'a1b22c333' | regex_findall('\\d+') }}"
+    },
+    "result": [
+      "1",
+      "22",
+      "333"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ missing_filter_input | some_unknown_filter }}",
+      "vars": {
+        "missing_filter_input": 1
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Syntax error in template: No filter named 'some_unknown_filter'."
+  },
+  {
+    "case": {
+      "vars": {
+        "x": "0"
+      },
+      "when": "x is truthy"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "vars": {
+        "x": []
+      },
+      "when": "x is falsy"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "'foobar' is match('foo')"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "'foobar' is match('bar')"
+    },
+    "skipped": true
+  },
+  {
+    "case": {
+      "when": "'foobar' is search('bar')"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "when": "'foobar' is regex('^f.*r$')"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "when": "'b' in items"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "when": "items is contains('b')"
+    },
+    "result": "ran"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
+    },
+    "result": "golden-env-value"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('env', 'VOLANT_GOLDEN_UNSET_ENV') }}"
+    },
+    "result": ""
+  },
+  {
+    "case": {
+      "template": "{{ lookup('vars', 'name') }}",
+      "vars": {
+        "name": "found"
+      }
+    },
+    "result": "found"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('pipe', 'echo piped') }}"
+    },
+    "result": "piped"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('file', 'golden_lookup.txt') }}"
+    },
+    "result": "file contents"
   }
 ]

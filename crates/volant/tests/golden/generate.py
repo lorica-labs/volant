@@ -35,10 +35,13 @@ def main() -> int:
         tasks.append(task)
     play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": tasks}]
     env = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", ANSIBLE_NOCOLOR="1")
+    env["VOLANT_GOLDEN_ENV"] = "golden-env-value"
     with tempfile.TemporaryDirectory() as tmp:
         playbook = os.path.join(tmp, "golden.yml")
         with open(playbook, "w", encoding="utf-8") as f:
             yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True)
+        with open(os.path.join(tmp, "golden_lookup.txt"), "w", encoding="utf-8") as f:
+            f.write("file contents")
         run = subprocess.run(["ansible-playbook", "-i", "localhost,", playbook], env=env, capture_output=True, text=True)
     report = json.loads(run.stdout)
     results = []

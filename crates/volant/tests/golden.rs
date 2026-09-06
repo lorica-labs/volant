@@ -28,7 +28,12 @@ fn same(a: &Value, b: &Value) -> bool {
 
 #[test]
 fn every_golden_case_matches_the_reference() {
-    let templar = Templar::new(std::env::temp_dir());
+    let base = std::env::temp_dir().join(format!("volant-golden-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::write(base.join("golden_lookup.txt"), "file contents").unwrap();
+    // Safety: nextest runs each test in its own process; nothing else reads the environment here.
+    unsafe { std::env::set_var("VOLANT_GOLDEN_ENV", "golden-env-value") };
+    let templar = Templar::new(base.clone());
     let mut failures = Vec::new();
     for entry in expected() {
         let case = &entry["case"];
@@ -68,6 +73,7 @@ fn every_golden_case_matches_the_reference() {
             failures.push(text);
         }
     }
+    std::fs::remove_dir_all(&base).ok();
     assert!(
         failures.is_empty(),
         "{} case(s) differ from ansible-core:\n{}",

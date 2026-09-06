@@ -438,7 +438,11 @@ mod tests {
         );
         assert_eq!(v["from"], json!("ini_group"));
         assert_eq!(v["tier"], json!("ini"));
-        assert_eq!(v["play_all"], json!("yes"), "as data, yes stays a string");
+        assert_eq!(
+            v["play_all"],
+            json!(true),
+            "yes as data is a boolean too, matching PyYAML"
+        );
         assert!(!v.contains_key("hidden") && !v.contains_key("backup"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -86,6 +86,10 @@
   vars: {flag: "yes"}
 - template: "{{ flag }}"
   vars: {flag: "no"}
+- template: "{{ flag }}"
+  vars: {flag: "on"}
+- template: "{{ flag }}"
+  vars: {flag: "off"}
 - template: "{{ nothing }}"
   vars: {nothing: ~}
 - template: "{{ nothing }}"
@@ -100,6 +104,8 @@
   vars: {num: 010}
 - template: "{{ num }}"
   vars: {num: "010"}
+- template: "{{ num }}"
+  vars: {num: 08}
 - template: "{{ num }}"
   vars: {num: 0x10}
 - template: "{{ num }}"

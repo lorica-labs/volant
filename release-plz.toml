@@ -15,3 +15,8 @@ version_group = "volant"
 name = "volant-agent"
 git_tag_enable = false
 version_group = "volant"
+
+[[package]]
+name = "volant-protocol"
+git_tag_enable = false
+version_group = "volant"

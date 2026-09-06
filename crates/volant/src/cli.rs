@@ -5,11 +5,13 @@ use std::path::PathBuf;
 
 use anstream::ColorChoice;
 use clap::Parser;
+use tokio::sync::watch;
 
+use crate::executor::{self, DEFAULT_CONNECT_TIMEOUT, RunOptions};
 use crate::inventory::Inventory;
 use crate::render::Renderer;
 use crate::stats::{Stats, exit_code};
-use crate::{agent, executor, playbook};
+use crate::{agent, playbook};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -64,29 +66,56 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let agent = agent::locate()?;
     let mut stats = Stats::default();
 
-    let work = async {
-        for pb in &playbooks {
-            for play in &pb.plays {
-                let resolution = inventory.resolve(&play.hosts);
-                for pattern in &resolution.unmatched {
-                    out.warning(&format!(
-                        "Could not match supplied host pattern, ignoring: {pattern}"
-                    ));
-                }
-                executor::run_play(play, resolution.hosts, &agent, out, &mut stats).await?;
+    let (stop_tx, stop_rx) = watch::channel(false);
+    spawn_signal_watcher(stop_tx);
+    let options = RunOptions {
+        connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        stop: stop_rx.clone(),
+    };
+
+    'plays: for pb in &playbooks {
+        for play in &pb.plays {
+            if *stop_rx.borrow() {
+                break 'plays;
             }
+            let resolution = inventory.resolve(&play.hosts);
+            for pattern in &resolution.unmatched {
+                out.warning(&format!(
+                    "Could not match supplied host pattern, ignoring: {pattern}"
+                ));
+            }
+            executor::run_play(play, resolution.hosts, &agent, &options, out, &mut stats).await?;
         }
-        anyhow::Ok(())
-    };
-    let interrupted = tokio::select! {
-        result = work => { result?; false }
-        _ = tokio::signal::ctrl_c() => true,
-    };
-    if interrupted {
+    }
+    if *stop_rx.borrow() {
         eprintln!("[ERROR]: User interrupted execution");
         out.recap(&stats);
         return Ok(99);
     }
     out.recap(&stats);
     Ok(exit_code(&stats))
+}
+
+/// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is
+/// printed, and the process exits with ansible-playbook's code 99.
+fn spawn_signal_watcher(stop: watch::Sender<bool>) {
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut term = match signal(SignalKind::terminate()) {
+                Ok(term) => term,
+                Err(_) => return,
+            };
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        let _ = stop.send(true);
+    });
 }

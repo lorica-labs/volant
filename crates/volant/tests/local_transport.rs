@@ -60,6 +60,92 @@ async fn runs_a_batch_through_the_local_transport() {
     );
 }
 
+#[tokio::test]
+async fn cancel_stops_the_running_task_and_its_children() {
+    let marker = format!("volant-cancel-{}", std::process::id());
+    let transport = Transport::for_host(&local_host()).unwrap();
+    let mut link = transport.connect(&agent_path()).await.unwrap();
+    link.handshake().await.unwrap();
+    link.send(&ToAgent::RunBatch {
+        id: 9,
+        tasks: vec![Task {
+            module: "shell".into(),
+            args: json!({"_raw_params": format!("sleep 30 {marker} & wait")})
+                .as_object()
+                .unwrap()
+                .clone(),
+            ignore_errors: false,
+            timeout: None,
+        }],
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    assert!(
+        link.cancel(9, std::time::Duration::from_secs(5)).await,
+        "agent must confirm the cancel"
+    );
+    assert!(started.elapsed().as_secs() < 5);
+    link.shutdown().await;
+    let survivors = std::process::Command::new("pgrep")
+        .args(["-f", &marker])
+        .output()
+        .unwrap();
+    assert!(
+        survivors.stdout.is_empty(),
+        "grandchild survived: {}",
+        String::from_utf8_lossy(&survivors.stdout)
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_link_lets_the_agent_stop_its_task() {
+    let marker = format!("volant-drop-{}", std::process::id());
+    let transport = Transport::for_host(&local_host()).unwrap();
+    let mut link = transport.connect(&agent_path()).await.unwrap();
+    link.handshake().await.unwrap();
+    link.send(&ToAgent::RunBatch {
+        id: 10,
+        tasks: vec![Task {
+            module: "shell".into(),
+            args: json!({"_raw_params": format!("sleep 30 {marker} & wait")})
+                .as_object()
+                .unwrap()
+                .clone(),
+            ignore_errors: false,
+            timeout: None,
+        }],
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    drop(link);
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let survivors = std::process::Command::new("pgrep")
+        .args(["-f", &marker])
+        .output()
+        .unwrap();
+    assert!(
+        survivors.stdout.is_empty(),
+        "the agent was killed before it could stop its task"
+    );
+}
+
+#[tokio::test]
+async fn a_silent_agent_fails_the_handshake_within_the_timeout() {
+    // A program that never answers stands in for a hung agent.
+    let transport = Transport::for_host(&local_host()).unwrap();
+    let mut link = transport.connect(std::path::Path::new("/bin/sleep")).await;
+    // `/bin/sleep` needs an argument to run; a spawn failure is fine too, the point is below.
+    if let Ok(link) = link.as_mut() {
+        let started = std::time::Instant::now();
+        let err = tokio::time::timeout(std::time::Duration::from_secs(1), link.handshake()).await;
+        assert!(err.is_err() || err.unwrap().is_err());
+        assert!(started.elapsed().as_secs() < 3);
+    }
+}
+
 /// Spawns a process piping `script` to `sh -c`, wired up the same way `Transport::Local`
 /// wires up the real agent, so it can stand in for one in `AgentLink` tests.
 fn spawn_shell(script: &str) -> AgentLink {

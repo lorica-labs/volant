@@ -15,8 +15,7 @@ insta-accept:
 
 # Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION)
 golden:
-    test "$(ansible-playbook --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" = "$(cat crates/volant/tests/golden/ANSIBLE_VERSION)"
-    @echo "golden generator arrives with the templating task"
+    "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py
 
 # Everything CI runs, in the same order
 check: fmt lint test

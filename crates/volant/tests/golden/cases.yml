@@ -1,0 +1,116 @@
+# Each case is either a template rendered through `debug: msg=` or a `when` condition.
+# Regenerate expected.json with `just golden`; never edit expected.json by hand.
+- template: "{{ 1 + 1 }}"
+- template: "{{ 2.5 * 2 }}"
+- template: "{{ x * 2 }}"
+  vars: {x: 5}
+- template: "Hello {{ name }}!"
+  vars: {name: World}
+- template: "{{ name }} and {{ other }}"
+  vars: {name: a, other: b}
+- template: "{{ items | length }}"
+  vars: {items: [1, 2, 3]}
+- template: "{{ items[1] }}"
+  vars: {items: [1, 2, 3]}
+- template: "{{ conf.port }}"
+  vars: {conf: {port: 8080}}
+- template: "{{ conf['port'] }}"
+  vars: {conf: {port: 8080}}
+- template: "{{ flag }}"
+  vars: {flag: true}
+- template: "{{ nothing }}"
+  vars: {nothing: null}
+- template: "{{ items }}"
+  vars: {items: [1, "two", {three: 3}]}
+- template: "{{ 'lit' }}"
+- template: "{% if x %}yes{% else %}no{% endif %}"
+  vars: {x: 0}
+- template: "{{ missing }}"
+- template: "{{ conf.missing }}"
+  vars: {conf: {port: 1}}
+- template: "{{ 'text' | upper }}"
+- template: "{{ items | join(', ') }}"
+  vars: {items: [a, b]}
+- template: "{{ (x > 3) | string }}"
+  vars: {x: 5}
+- template: "plain text without a template"
+- template: "{{ x }}"
+  vars: {x: "007"}
+- template: "{{ x | int }}"
+  vars: {x: "007"}
+- when: "x > 3"
+  vars: {x: 5}
+- when: "x > 3"
+  vars: {x: 1}
+- when: "flag"
+  vars: {flag: false}
+- when: "x is defined"
+  vars: {x: 1}
+- when: "y is defined"
+- when: "y is not defined"
+- when: "'yes'"
+- when: "x"
+  vars: {x: "false"}
+- when: "{{ x > 3 }}"
+  vars: {x: 5}
+- when: "missing > 3"
+# YAML 1.1 vs 1.2 scalar resolution: PyYAML (Ansible, and generate.py itself) follows 1.1,
+# saphyr follows 1.2. These are single expressions so the JSON type PyYAML resolved survives
+# unchanged into expected.json's "result": reading it after `just golden` tells us what
+# ansible-core treats as bool/null/int/string for each spelling, ground truth for yaml.rs.
+- template: "{{ flag }}"
+  vars: {flag: yes}
+- template: "{{ flag }}"
+  vars: {flag: Yes}
+- template: "{{ flag }}"
+  vars: {flag: YES}
+- template: "{{ flag }}"
+  vars: {flag: no}
+- template: "{{ flag }}"
+  vars: {flag: No}
+- template: "{{ flag }}"
+  vars: {flag: NO}
+- template: "{{ flag }}"
+  vars: {flag: on}
+- template: "{{ flag }}"
+  vars: {flag: On}
+- template: "{{ flag }}"
+  vars: {flag: ON}
+- template: "{{ flag }}"
+  vars: {flag: off}
+- template: "{{ flag }}"
+  vars: {flag: Off}
+- template: "{{ flag }}"
+  vars: {flag: OFF}
+- template: "{{ flag }}"
+  vars: {flag: "yes"}
+- template: "{{ flag }}"
+  vars: {flag: "no"}
+- template: "{{ nothing }}"
+  vars: {nothing: ~}
+- template: "{{ nothing }}"
+  vars: {nothing: null}
+- template: "{{ nothing }}"
+  vars: {nothing: Null}
+- template: "{{ nothing }}"
+  vars: {nothing: NULL}
+- template: "{{ nothing }}"
+  vars: {nothing: "null"}
+- template: "{{ num }}"
+  vars: {num: 010}
+- template: "{{ num }}"
+  vars: {num: "010"}
+- template: "{{ num }}"
+  vars: {num: 0x10}
+- template: "{{ num }}"
+  vars: {num: 1_000}
+- template: "{{ num }}"
+  vars: {num: 1.0}
+- template: "{{ v }}"
+  vars: {v: "true"}
+- template: "{{ v }}"
+  vars: {v: "false"}
+- template: "{{ v }}"
+  vars: {v: True}
+- template: "{{ v }}"
+  vars: {v: False}

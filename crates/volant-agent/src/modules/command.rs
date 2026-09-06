@@ -175,6 +175,7 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
     result.insert("stdout_lines".into(), lines(&stdout));
     result.insert("stderr_lines".into(), json!([]));
     result.insert("changed".into(), json!(false));
+    result.insert("skipped".into(), json!(true));
     result.insert("msg".into(), json!(msg));
     TaskResult(result)
 }
@@ -290,6 +291,7 @@ mod tests {
         assert_eq!(r.0["msg"], "Did not run command since '/' exists");
         assert_eq!(r.0["stdout"], "skipped, since / exists");
         assert!(!r.changed() && !r.failed());
+        assert!(r.skipped());
     }
 
     #[test]
@@ -304,6 +306,7 @@ mod tests {
             "Did not run command since '/definitely/not/here' does not exist"
         );
         assert!(!r.changed());
+        assert!(r.skipped());
     }
 
     #[test]

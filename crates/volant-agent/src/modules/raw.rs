@@ -31,6 +31,8 @@ fn run_raw(
         .unwrap_or("sh");
     let mut inner = Map::new();
     inner.insert("argv".into(), json!([executable, "-c", line]));
+    // Ansible's `raw` returns the output untouched, where `command` trims trailing newlines.
+    inner.insert("strip_empty_ends".into(), json!(false));
     if line.is_empty() {
         return Run::Done(TaskResult::failed_with("no command given"));
     }
@@ -58,7 +60,9 @@ mod tests {
         let Run::Done(r) = run_raw(&args, None, &|| false) else {
             panic!("cancelled")
         };
-        assert_eq!(r.0["stdout"], "4");
+        // Ansible keeps the trailing newline for `raw` where `command` strips it.
+        assert_eq!(r.0["stdout"], "4\n");
+        assert_eq!(r.0["stdout_lines"], json!(["4"]));
         assert_eq!(r.0["rc"], 0);
         assert!(r.changed());
         for absent in ["cmd", "start", "end", "delta", "msg"] {
@@ -91,6 +95,6 @@ mod tests {
         let Run::Done(r) = run_raw(&args, None, &|| false) else {
             panic!("cancelled")
         };
-        assert_eq!(r.0["stdout"], "/bin/sh");
+        assert_eq!(r.0["stdout"], "/bin/sh\n");
     }
 }

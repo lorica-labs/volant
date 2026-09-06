@@ -118,15 +118,13 @@ pub fn run(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if cancelled() => {
-                kill_group(&child);
-                let _ = child.wait();
+                kill_and_wait(&mut child);
                 return Run::Cancelled;
             }
             Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => {
-                kill_group(&child);
-                let _ = child.wait();
+                kill_and_wait(&mut child);
                 let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
-                return Run::Done(timed_out(display, seconds));
+                return Run::Done(timed_out(seconds));
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
@@ -162,6 +160,13 @@ pub fn run(
         result.insert("failed".into(), json!(true));
     }
     Run::Done(TaskResult(result))
+}
+
+/// Kills the child's process group and waits for it to actually exit, so the caller never
+/// races the kernel's own cleanup. Cancellation and the timeout path both need this.
+fn kill_and_wait(child: &mut std::process::Child) {
+    kill_group(child);
+    let _ = child.wait();
 }
 
 /// Kills the child's whole process group, so pipelines and backgrounded grandchildren go too.
@@ -229,16 +234,19 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
     TaskResult(result)
 }
 
-fn timed_out(cmd: Value, seconds: u64) -> TaskResult {
+/// Matches `ansible-core`'s shape for the `timeout:` task keyword, not the module's own
+/// timeout mechanism: no `cmd`, no `rc`/`stdout`/`stderr` (the reference drops those too,
+/// even when the command had already produced output), and no `timedout.frame` (an
+/// Ansible-internal traceback hint we have nothing to reproduce).
+fn timed_out(seconds: u64) -> TaskResult {
     let mut result = Map::new();
-    result.insert("cmd".into(), cmd);
+    result.insert("changed".into(), json!(false));
     result.insert("failed".into(), json!(true));
     result.insert(
         "msg".into(),
-        json!(format!(
-            "The command action failed to execute in the expected time frame ({seconds})"
-        )),
+        json!(format!("Task failed: Timed out after {seconds} second(s).")),
     );
+    result.insert("timedout".into(), json!({"period": seconds}));
     TaskResult(result)
 }
 
@@ -488,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timeout_kills_the_program_and_reports_ansible_message() {
+    fn a_timeout_kills_the_program_and_reports_ansible_shape() {
         let started = std::time::Instant::now();
         let r = done(run(
             &args(json!({"_raw_params": "sleep 30"})),
@@ -498,10 +506,12 @@ mod tests {
         ));
         assert!(started.elapsed().as_secs() < 5);
         assert!(r.failed());
-        assert_eq!(
-            r.0["msg"],
-            "The command action failed to execute in the expected time frame (1)"
-        );
+        assert!(!r.changed());
+        assert_eq!(r.0["msg"], "Task failed: Timed out after 1 second(s).");
+        assert_eq!(r.0["timedout"], json!({"period": 1}));
+        assert!(r.0.get("rc").is_none());
+        assert!(r.0.get("stdout").is_none());
+        assert!(r.0.get("cmd").is_none());
     }
 
     #[test]

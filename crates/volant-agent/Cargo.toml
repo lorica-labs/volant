@@ -13,3 +13,5 @@ homepage.workspace = true
 authors.workspace = true
 
 [dependencies]
+serde_json.workspace = true
+volant-protocol.workspace = true

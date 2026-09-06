@@ -4,10 +4,11 @@
 use std::path::Path;
 
 use anyhow::{Context, anyhow, bail};
+use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 use volant_protocol::modules::native;
-use yaml_rust2::yaml::Hash;
-use yaml_rust2::{Yaml, YamlLoader};
+
+use crate::yaml::{as_bool, field, to_json};
 
 #[derive(Debug, Default)]
 pub struct Playbook {
@@ -46,10 +47,9 @@ pub fn load(path: &Path) -> anyhow::Result<Playbook> {
 }
 
 pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
-    let docs =
-        YamlLoader::load_from_str(text).with_context(|| format!("{source}: invalid YAML"))?;
+    let docs = crate::yaml::load(text, source)?;
     let plays = match docs.first() {
-        Some(Yaml::Array(items)) => items,
+        Some(Yaml::Sequence(items)) => items,
         _ => bail!("{source}: a playbook must be a list of plays"),
     };
     let plays = plays
@@ -60,60 +60,40 @@ pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
     Ok(Playbook { plays })
 }
 
-/// `yaml-rust2` 0.12 implements `Index<&str>`/`Index<usize>` on `Yaml` itself (returning
-/// `BadValue` for a missing key), but not `Index<&Yaml>` on the `Hash` map: that indexing goes
-/// through `hashlink::LinkedHashMap`'s own `Index`, which panics on a missing key like
-/// `std::collections::HashMap` does. Fields are looked up with `get` and defaulted explicitly
-/// instead.
-fn field<'a>(map: &'a Hash, key: &str) -> &'a Yaml {
-    static BAD_VALUE: Yaml = Yaml::BadValue;
-    map.get(&Yaml::String(key.to_string()))
-        .unwrap_or(&BAD_VALUE)
-}
-
-/// Ansible playbooks come from PyYAML, whose default bool resolver also accepts `yes`/`no`/
-/// `on`/`off`; `yaml-rust2` follows the YAML 1.2 core schema and parses those as plain strings.
-fn as_bool(yaml: &Yaml) -> Option<bool> {
-    match yaml {
-        Yaml::Boolean(b) => Some(*b),
-        Yaml::String(s) => match s.as_str() {
-            "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" => Some(true),
-            "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" => Some(false),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
     let map = yaml
-        .as_hash()
+        .as_mapping()
         .ok_or_else(|| anyhow!("a play must be a mapping"))?;
-    for key in map.keys() {
+    for (key, _) in map {
         let key = key.as_str().unwrap_or_default();
         if !PLAY_KEYWORDS.contains(&key) {
             bail!("play keyword '{key}' is not supported yet");
         }
     }
-    let hosts = match field(map, "hosts") {
-        Yaml::String(s) => s.clone(),
-        Yaml::Array(items) => items
+    let hosts = match field(yaml, "hosts") {
+        Some(Yaml::Value(Scalar::String(s))) => s.to_string(),
+        Some(Yaml::Sequence(items)) => items
             .iter()
             .filter_map(Yaml::as_str)
             .collect::<Vec<_>>()
             .join(","),
-        Yaml::BadValue => bail!("a play needs 'hosts'"),
-        other => bail!("'hosts' must be a string or a list, found {other:?}"),
+        None => bail!("a play needs 'hosts'"),
+        Some(other) => bail!("'hosts' must be a string or a list, found {other:?}"),
     };
-    let name = field(map, "name").as_str().unwrap_or(&hosts).to_string();
-    let gather_facts = as_bool(field(map, "gather_facts")).unwrap_or(true);
-    let tasks = match field(map, "tasks") {
-        Yaml::Array(items) => items
+    let name = field(yaml, "name")
+        .and_then(Yaml::as_str)
+        .unwrap_or(&hosts)
+        .to_string();
+    let gather_facts = field(yaml, "gather_facts")
+        .and_then(as_bool)
+        .unwrap_or(true);
+    let tasks = match field(yaml, "tasks") {
+        Some(Yaml::Sequence(items)) => items
             .iter()
             .enumerate()
             .map(|(i, y)| parse_task(y).with_context(|| format!("task {}", i + 1)))
             .collect::<anyhow::Result<Vec<_>>>()?,
-        Yaml::BadValue | Yaml::Null => Vec::new(),
+        None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
         _ => bail!("'tasks' must be a list"),
     };
     Ok(Play {
@@ -126,9 +106,11 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
 
 fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     let map = yaml
-        .as_hash()
+        .as_mapping()
         .ok_or_else(|| anyhow!("a task must be a mapping"))?;
-    let name = field(map, "name").as_str().map(str::to_string);
+    let name = field(yaml, "name")
+        .and_then(Yaml::as_str)
+        .map(str::to_string);
     let label = name.clone().unwrap_or_else(|| "unnamed".to_string());
     let mut module: Option<(String, &Yaml)> = None;
     for (key, value) in map {
@@ -149,7 +131,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     }
     let (module, value) = module.ok_or_else(|| anyhow!("task '{label}': no module given"))?;
     let mut args = module_args(&module, value).with_context(|| format!("task '{label}'"))?;
-    if let Yaml::Hash(extra) = field(map, "args") {
+    if let Some(Yaml::Mapping(extra)) = field(yaml, "args") {
         for (k, v) in extra {
             let k = k
                 .as_str()
@@ -157,7 +139,9 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
             args.insert(k.to_string(), to_json(v)?);
         }
     }
-    let ignore_errors = as_bool(field(map, "ignore_errors")).unwrap_or(false);
+    let ignore_errors = field(yaml, "ignore_errors")
+        .and_then(as_bool)
+        .unwrap_or(false);
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
@@ -214,22 +198,22 @@ fn is_reserved_task_keyword(key: &str) -> bool {
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
     let mut args = Map::new();
     match value {
-        Yaml::Hash(_) => {
+        Yaml::Mapping(_) => {
             if let Value::Object(map) = to_json(value)? {
                 args = map;
             }
         }
-        Yaml::String(s) if is_free_form(module) => {
-            args.insert("_raw_params".into(), Value::String(s.clone()));
+        Yaml::Value(Scalar::String(s)) if is_free_form(module) => {
+            args.insert("_raw_params".into(), Value::String(s.to_string()));
         }
         // A deliberate divergence: YAML's core schema resolves an unquoted `true`/`false` as a
         // boolean, and ansible-playbook refuses it with "unexpected parameter type in action".
         // Volant takes the value back to the text it was written as and runs it, so
         // `command: false` runs `/bin/false` where Ansible would stop on an error.
-        Yaml::Boolean(b) if is_free_form(module) => {
+        Yaml::Value(Scalar::Boolean(b)) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(b.to_string()));
         }
-        Yaml::String(s) => {
+        Yaml::Value(Scalar::String(s)) => {
             for word in shlex::split(s).ok_or_else(|| anyhow!("unbalanced quotes in '{s}'"))? {
                 let (k, v) = word
                     .split_once('=')
@@ -237,39 +221,10 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
                 args.insert(k.to_string(), Value::String(v.to_string()));
             }
         }
-        Yaml::Null => {}
+        Yaml::Value(Scalar::Null) => {}
         other => bail!("module arguments must be a mapping or a string, found {other:?}"),
     }
     Ok(args)
-}
-
-fn to_json(yaml: &Yaml) -> anyhow::Result<Value> {
-    Ok(match yaml {
-        Yaml::Real(s) => s
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .unwrap_or(Value::String(s.clone())),
-        Yaml::Integer(i) => Value::from(*i),
-        Yaml::String(s) => Value::String(s.clone()),
-        Yaml::Boolean(b) => Value::Bool(*b),
-        Yaml::Array(items) => {
-            Value::Array(items.iter().map(to_json).collect::<anyhow::Result<_>>()?)
-        }
-        Yaml::Hash(map) => {
-            let mut out = Map::new();
-            for (k, v) in map {
-                let k = k
-                    .as_str()
-                    .ok_or_else(|| anyhow!("mapping keys must be strings"))?;
-                out.insert(k.to_string(), to_json(v)?);
-            }
-            Value::Object(out)
-        }
-        Yaml::Null | Yaml::BadValue => Value::Null,
-        Yaml::Alias(_) => bail!("YAML aliases are not supported yet"),
-    })
 }
 
 #[cfg(test)]
@@ -405,5 +360,12 @@ mod tests {
             format!("{err:#}").contains("expected key=value"),
             "another collection's command is not free-form here"
         );
+    }
+
+    #[test]
+    fn a_vault_value_in_a_task_is_refused_with_context() {
+        let err = parse("- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n", "x.yml").unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains("vault") && text.contains("Secret"), "{text}");
     }
 }

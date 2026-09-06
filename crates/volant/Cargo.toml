@@ -18,11 +18,11 @@ anstream.workspace = true
 anstyle.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+saphyr.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
 tokio.workspace = true
 volant-protocol.workspace = true
-yaml-rust2.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

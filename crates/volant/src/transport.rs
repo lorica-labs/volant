@@ -23,7 +23,7 @@ impl Transport {
         match host
             .vars
             .get("ansible_connection")
-            .map(String::as_str)
+            .and_then(serde_json::Value::as_str)
             .unwrap_or("ssh")
         {
             "local" => Ok(Transport::Local),

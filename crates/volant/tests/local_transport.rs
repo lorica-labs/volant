@@ -19,7 +19,7 @@ fn agent_path() -> PathBuf {
 
 fn local_host() -> Host {
     let mut vars = BTreeMap::new();
-    vars.insert("ansible_connection".to_string(), "local".to_string());
+    vars.insert("ansible_connection".to_string(), json!("local"));
     Host {
         name: "localhost".to_string(),
         vars,

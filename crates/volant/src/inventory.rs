@@ -73,7 +73,14 @@ impl Inventory {
             if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
-            if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            if line.starts_with('[') {
+                let header = line
+                    .strip_prefix('[')
+                    .and_then(|l| l.strip_suffix(']'))
+                    .ok_or_else(|| InventoryError {
+                        line: line_no,
+                        message: "unbalanced section header".to_string(),
+                    })?;
                 section = match header.rsplit_once(':') {
                     Some((name, "children")) => Section::Children(name.to_string()),
                     Some((name, "vars")) => Section::Vars(name.to_string()),
@@ -94,6 +101,12 @@ impl Inventory {
                     let (name, pairs) = words
                         .split_first()
                         .expect("non-empty line has a first word");
+                    if name.is_empty() {
+                        return Err(InventoryError {
+                            line: line_no,
+                            message: "empty host name".to_string(),
+                        });
+                    }
                     let vars = key_values(pairs, line_no)?;
                     inv.add_host(name, vars);
                     let group = group.clone();
@@ -180,8 +193,14 @@ impl Inventory {
     /// Hosts of a group and of its descendants, in inventory order, without duplicates.
     fn group_hosts(&self, group: &Group) -> Vec<String> {
         let mut members = HashSet::new();
+        let mut visited = HashSet::new();
         let mut queue = VecDeque::from([group]);
         while let Some(g) = queue.pop_front() {
+            if !visited.insert(g.name.as_str()) {
+                // A group can list a child that (directly or transitively) lists it back;
+                // skip a group already walked instead of re-enqueueing it forever.
+                continue;
+            }
             members.extend(g.hosts.iter().cloned());
             queue.extend(g.children.iter().filter_map(|c| self.group(c)));
         }
@@ -226,6 +245,7 @@ impl Inventory {
             .flat_map(|g| g.children.iter().map(String::as_str))
             .collect();
         let mut depth = HashMap::new();
+        let mut visited = HashSet::new();
         let mut queue: VecDeque<(&Group, usize)> = self
             .groups
             .iter()
@@ -233,8 +253,11 @@ impl Inventory {
             .map(|g| (g, 1))
             .collect();
         while let Some((g, d)) = queue.pop_front() {
-            let entry = depth.entry(g.name.clone()).or_insert(d);
-            *entry = (*entry).max(d);
+            if !visited.insert(g.name.as_str()) {
+                // Same guard as `group_hosts`: a cyclic `:children` chain must not requeue.
+                continue;
+            }
+            depth.insert(g.name.clone(), d);
             queue.extend(
                 g.children
                     .iter()
@@ -387,5 +410,25 @@ env=prod
         assert_eq!(err.line, 2);
         let err = Inventory::parse_ini("[web:vars]\nno_equals_sign\n").unwrap_err();
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn a_circular_group_resolves_instead_of_hanging() {
+        let inv = Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n").unwrap();
+        let res = inv.resolve("a");
+        assert!(res.hosts.is_empty());
+        assert!(res.unmatched.is_empty());
+    }
+
+    #[test]
+    fn empty_host_name_is_rejected() {
+        let err = Inventory::parse_ini("[web]\n\"\"\n").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn unbalanced_section_header_is_rejected() {
+        let err = Inventory::parse_ini("[web\nweb1\n").unwrap_err();
+        assert_eq!(err.line, 1);
     }
 }

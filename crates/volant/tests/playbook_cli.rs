@@ -135,6 +135,31 @@ fn variables_loops_conditions_and_facts_render_like_ansible() {
 }
 
 #[test]
+fn a_variable_naming_a_later_bound_variable_still_renders() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("late/inventory.ini"),
+        &fixture("late/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("TASK [Say everything]"),
+        "a task name renders against the task's own vars: {text}"
+    );
+    assert!(
+        text.contains(r#"(item=a) => {"msg": "greet a"}"#)
+            && text.contains(r#"(item=b) => {"msg": "greet b"}"#),
+        "a play var naming the loop variable renders per item: {text}"
+    );
+    assert!(
+        text.contains(r#"ok: [alpha] => {"msg": "hello there"}"#),
+        "a templated value read through hostvars renders: {text}"
+    );
+}
+
+#[test]
 fn a_failed_host_leaves_the_following_plays() {
     let out = volant(&[
         "playbook",

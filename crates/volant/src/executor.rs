@@ -301,7 +301,7 @@ fn task_name(task: &PlayTask, host: &str, plan: &PlayPlan, state: &RunState) -> 
     if !Templar::is_template(&task.name) {
         return task.name.clone();
     }
-    let vars = host_vars(host, plan, &Map::new(), state.templar.as_ref(), &state.vars);
+    let vars = host_vars(host, plan, &task.vars, state.templar.as_ref(), &state.vars);
     state
         .templar
         .render(&task.name, &vars)
@@ -388,6 +388,8 @@ fn prepare(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),
             );
+            // Variables naming the loop variable could not resolve before it was bound.
+            vars = templar.resolve_vars(&vars);
         }
         let label = match (&element, &task.loop_label) {
             (None, _) => None,

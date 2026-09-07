@@ -41,6 +41,25 @@ impl Templar {
     /// Renders a string. Exactly one `{{ expression }}` gives the expression's value with its
     /// type; text around or between expressions gives a string.
     pub fn render(&self, text: &str, vars: &Map<String, Value>) -> Result<Value, TemplateError> {
+        let mut value = self.render_once(text, vars)?;
+        // A variable can hold a template of its own, so Ansible renders a result again while it
+        // still carries a marker. Three further passes: a chain longer than that is a loop, and
+        // an unchanged result ends it earlier.
+        for _ in 0..3 {
+            let Value::String(text) = &value else { break };
+            if !Self::is_template(text) {
+                break;
+            }
+            let next = self.render_once(text, vars)?;
+            if next == value {
+                break;
+            }
+            value = next;
+        }
+        Ok(value)
+    }
+
+    fn render_once(&self, text: &str, vars: &Map<String, Value>) -> Result<Value, TemplateError> {
         if !Self::is_template(text) {
             return Ok(Value::String(text.to_string()));
         }

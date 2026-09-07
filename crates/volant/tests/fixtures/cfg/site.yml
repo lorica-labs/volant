@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Show inputs
+      debug:
+        msg: "{{ inventory_hostname }} {{ colour | default('none') }} {{ ansible_version.full }} {{ ansible_version.major }}"

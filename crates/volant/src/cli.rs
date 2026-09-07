@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 
 use anstream::ColorChoice;
 use clap::Parser;
-use serde_json::Map;
 use tokio::sync::watch;
 
-use crate::executor::{self, DEFAULT_CONNECT_TIMEOUT, RunOptions, RunState};
-use crate::inventory::Inventory;
+use crate::config::Config;
+use crate::executor::{self, RunOptions, RunState};
+use crate::inventory::{Host, Inventory};
 use crate::render::Renderer;
 use crate::stats::{Stats, exit_code};
 use crate::template::Templar;
@@ -26,6 +26,12 @@ pub struct PlaybookArgs {
     /// Inventory file. Without it only the implicit localhost exists.
     #[arg(short = 'i', long = "inventory", value_name = "PATH")]
     pub inventory: Option<PathBuf>,
+    /// Extra variables: `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
+    #[arg(short = 'e', long = "extra-vars", value_name = "VARS")]
+    pub extra_vars: Vec<String>,
+    /// Limit the play to this host pattern.
+    #[arg(short = 'l', long = "limit", value_name = "SUBSET")]
+    pub limit: Option<String>,
     /// Disable coloured output.
     #[arg(long)]
     pub no_color: bool,
@@ -59,7 +65,9 @@ pub fn run(args: PlaybookArgs) -> i32 {
 }
 
 async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32> {
-    let inventory = match &args.inventory {
+    let config = Config::load();
+    let inventory_path = args.inventory.clone().or(config.inventory);
+    let inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
     };
@@ -74,7 +82,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let (stop_tx, stop_rx) = watch::channel(false);
     spawn_signal_watcher(stop_tx);
     let options = RunOptions {
-        connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        connect_timeout: config.timeout,
         stop: stop_rx.clone(),
     };
 
@@ -83,17 +91,32 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     let playbook_dir = playbook_dir.canonicalize().unwrap_or(playbook_dir);
-    let store = VarStore::new(
-        &inventory,
-        args.inventory.as_deref(),
-        &playbook_dir,
-        Map::new(),
-    )?;
+    let cwd = std::env::current_dir()?;
+    let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
+    let store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
     let mut state = RunState {
         templar: Arc::new(Templar::new(playbook_dir.clone())),
         vars: Arc::new(Mutex::new(store)),
         failed_hosts: HashSet::new(),
         verbosity: args.verbose,
+    };
+
+    let limit: Option<HashSet<String>> = match &args.limit {
+        None => None,
+        Some(pattern) => {
+            let names: HashSet<String> = inventory
+                .resolve(pattern)
+                .hosts
+                .into_iter()
+                .map(|h| h.name)
+                .collect();
+            if names.is_empty() {
+                anyhow::bail!(
+                    "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
+                );
+            }
+            Some(names)
+        }
     };
 
     'plays: for pb in &playbooks {
@@ -107,16 +130,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     "Could not match supplied host pattern, ignoring: {pattern}"
                 ));
             }
-            executor::run_play(
-                play,
-                resolution.hosts,
-                &agent,
-                &options,
-                &mut state,
-                out,
-                &mut stats,
-            )
-            .await?;
+            let hosts: Vec<Host> = match &limit {
+                Some(allowed) => resolution
+                    .hosts
+                    .into_iter()
+                    .filter(|h| allowed.contains(&h.name))
+                    .collect(),
+                None => resolution.hosts,
+            };
+            executor::run_play(play, hosts, &agent, &options, &mut state, out, &mut stats).await?;
         }
     }
     if *stop_rx.borrow() {

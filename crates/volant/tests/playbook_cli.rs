@@ -163,6 +163,68 @@ fn a_deferred_render_error_does_not_resurrect_a_host_that_already_failed() {
 }
 
 #[test]
+fn extra_vars_and_limit_apply() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("cfg/hosts.ini"),
+        "-e",
+        "colour=blue",
+        "-l",
+        "two",
+        &fixture("cfg/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#"ok: [two] => {"msg": "two blue"#), "{text}");
+    assert!(!text.contains("[one]"), "limit must exclude one: {text}");
+    let reference = include_str!("golden/ANSIBLE_VERSION").trim();
+    assert!(
+        text.contains(&format!("blue {reference} 2\"")),
+        "ansible_version comes from the reference file: {text}"
+    );
+}
+
+#[test]
+fn ansible_cfg_supplies_the_inventory_when_none_is_given() {
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &fixture("cfg/site.yml")])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_CONFIG", fixture("cfg/ansible.cfg"))
+        .output()
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("ok: [one]") && text.contains("ok: [two]"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_limit_that_matches_nothing_is_an_error() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("cfg/hosts.ini"),
+        "-l",
+        "nobody",
+        &fixture("cfg/site.yml"),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no hosts"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
     let out = volant(&[
         "playbook",

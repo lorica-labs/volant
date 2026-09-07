@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `playbook` command: the same arguments as `ansible-playbook`, for the subset that exists.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anstream::ColorChoice;
 use clap::Parser;
+use serde_json::Map;
 use tokio::sync::watch;
 
-use crate::executor::{self, DEFAULT_CONNECT_TIMEOUT, RunOptions};
+use crate::executor::{self, DEFAULT_CONNECT_TIMEOUT, RunOptions, RunState};
 use crate::inventory::Inventory;
 use crate::render::Renderer;
 use crate::stats::{Stats, exit_code};
+use crate::template::Templar;
+use crate::vars::VarStore;
 use crate::{agent, playbook};
 
 #[derive(Parser, Debug)]
@@ -73,6 +78,24 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         stop: stop_rx.clone(),
     };
 
+    let playbook_dir = args.playbooks[0]
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let playbook_dir = playbook_dir.canonicalize().unwrap_or(playbook_dir);
+    let store = VarStore::new(
+        &inventory,
+        args.inventory.as_deref(),
+        &playbook_dir,
+        Map::new(),
+    )?;
+    let mut state = RunState {
+        templar: Arc::new(Templar::new(playbook_dir.clone())),
+        vars: Arc::new(Mutex::new(store)),
+        failed_hosts: HashSet::new(),
+        verbosity: args.verbose,
+    };
+
     'plays: for pb in &playbooks {
         for play in &pb.plays {
             if *stop_rx.borrow() {
@@ -84,7 +107,16 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     "Could not match supplied host pattern, ignoring: {pattern}"
                 ));
             }
-            executor::run_play(play, resolution.hosts, &agent, &options, out, &mut stats).await?;
+            executor::run_play(
+                play,
+                resolution.hosts,
+                &agent,
+                &options,
+                &mut state,
+                out,
+                &mut stats,
+            )
+            .await?;
         }
     }
     if *stop_rx.borrow() {

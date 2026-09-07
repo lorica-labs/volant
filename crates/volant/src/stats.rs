@@ -31,19 +31,22 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn record(&mut self, host: &str, outcome: Outcome) {
+    /// `changed` is the result's own flag: an ignored failure still counts as changed when the
+    /// module reported one, on top of counting as ignored. A hard failure never counts as
+    /// changed, whatever the result says: the host stopped there.
+    pub fn record(&mut self, host: &str, outcome: Outcome, changed: bool) {
         let h = self.hosts.entry(host.to_string()).or_default();
         match outcome {
-            Outcome::Ok => h.ok += 1,
-            Outcome::Changed => {
-                h.ok += 1;
-                h.changed += 1;
-            }
             Outcome::Skipped => h.skipped += 1,
             Outcome::Failed => h.failed += 1,
-            Outcome::Ignored => {
+            Outcome::Ok | Outcome::Changed | Outcome::Ignored => {
                 h.ok += 1;
-                h.ignored += 1;
+                if changed {
+                    h.changed += 1;
+                }
+                if outcome == Outcome::Ignored {
+                    h.ignored += 1;
+                }
             }
         }
     }
@@ -80,11 +83,11 @@ mod tests {
     #[test]
     fn counters_follow_ansible_rules() {
         let mut s = Stats::default();
-        s.record("h", Outcome::Ok);
-        s.record("h", Outcome::Changed);
-        s.record("h", Outcome::Ignored);
-        s.record("h", Outcome::Skipped);
-        s.record("h", Outcome::Failed);
+        s.record("h", Outcome::Ok, false);
+        s.record("h", Outcome::Changed, true);
+        s.record("h", Outcome::Ignored, false);
+        s.record("h", Outcome::Skipped, false);
+        s.record("h", Outcome::Failed, true);
         s.unreachable("h");
         let h = s.host("h");
         assert_eq!(
@@ -101,10 +104,26 @@ mod tests {
     }
 
     #[test]
+    fn an_ignored_failure_still_counts_as_changed_when_the_result_says_so() {
+        let mut s = Stats::default();
+        s.record("h", Outcome::Ignored, true);
+        let h = s.host("h");
+        assert_eq!((h.ok, h.changed, h.ignored), (1, 1, 1));
+    }
+
+    #[test]
+    fn a_hard_failure_never_counts_as_changed() {
+        let mut s = Stats::default();
+        s.record("h", Outcome::Failed, true);
+        let h = s.host("h");
+        assert_eq!((h.ok, h.changed, h.failed), (0, 0, 1));
+    }
+
+    #[test]
     fn exit_codes_are_a_bitmask() {
         let mut s = Stats::default();
         assert_eq!(exit_code(&s), 0);
-        s.record("a", Outcome::Failed);
+        s.record("a", Outcome::Failed, false);
         assert_eq!(exit_code(&s), 2);
         s.unreachable("b");
         assert_eq!(exit_code(&s), 6);
@@ -113,8 +132,8 @@ mod tests {
     #[test]
     fn hosts_are_listed_sorted() {
         let mut s = Stats::default();
-        s.record("web", Outcome::Ok);
-        s.record("db", Outcome::Ok);
+        s.record("web", Outcome::Ok, false);
+        s.record("db", Outcome::Ok, false);
         assert_eq!(s.hosts().map(|(n, _)| n).collect::<Vec<_>>(), ["db", "web"]);
     }
 }

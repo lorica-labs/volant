@@ -99,6 +99,10 @@ impl VarStore {
         })
     }
 
+    pub fn playbook_dir(&self) -> &Path {
+        &self.playbook_dir
+    }
+
     pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
         self.facts
             .entry(host.to_string())

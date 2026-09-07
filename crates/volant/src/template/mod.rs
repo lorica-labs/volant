@@ -96,6 +96,52 @@ impl Templar {
             .map_err(|e| TemplateError(format!("cannot convert template result: {e}")))
     }
 
+    /// Templates the string values of a variable map against the map itself, a few passes, until
+    /// nothing changes. Best effort: a value that fails to render is left as written, so the
+    /// error surfaces where the value is used, as it does in Ansible.
+    pub fn resolve_vars(&self, vars: &Map<String, Value>) -> Map<String, Value> {
+        let mut current = vars.clone();
+        for _ in 0..5 {
+            let mut next = current.clone();
+            let mut changed = false;
+            for (k, v) in &current {
+                if k == "hostvars" {
+                    continue;
+                }
+                let rendered = self.render_value_lenient(v, &current);
+                if rendered != *v {
+                    changed = true;
+                    next.insert(k.clone(), rendered);
+                }
+            }
+            current = next;
+            if !changed {
+                break;
+            }
+        }
+        current
+    }
+
+    fn render_value_lenient(&self, value: &Value, vars: &Map<String, Value>) -> Value {
+        match value {
+            Value::String(s) if Self::is_template(s) => {
+                self.render(s, vars).unwrap_or_else(|_| value.clone())
+            }
+            Value::Array(items) => Value::Array(
+                items
+                    .iter()
+                    .map(|v| self.render_value_lenient(v, vars))
+                    .collect(),
+            ),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), self.render_value_lenient(v, vars)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
     /// A `when` clause. Ansible accepts `{{ }}` around it with a warning; the result must be a
     /// boolean, anything else is an error in the reference release.
     pub fn condition(&self, expr: &str, vars: &Map<String, Value>) -> Result<bool, TemplateError> {
@@ -215,6 +261,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v, json!({"{{ k }}": [1, {"n": 2}], "lit": 3}));
+    }
+
+    #[test]
+    fn resolve_vars_chains_references_and_leaves_broken_ones_alone() {
+        let t = Templar::new(std::env::temp_dir());
+        let resolved = t.resolve_vars(&vars(
+            json!({"a": "{{ b }}", "b": "{{ c }}!", "c": "x", "bad": "{{ missing }}"}),
+        ));
+        assert_eq!(resolved["a"], json!("x!"));
+        assert_eq!(resolved["c"], json!("x"));
+        assert_eq!(resolved["bad"], json!("{{ missing }}"));
     }
 
     #[test]

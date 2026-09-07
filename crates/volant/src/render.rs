@@ -91,22 +91,41 @@ impl Renderer {
         );
     }
 
-    pub fn result(&mut self, host: &str, outcome: Outcome, result: &TaskResult) {
-        let dump = ansible_json(&serde_json::Value::Object(result.0.clone()));
+    /// `label` is the loop item's display text, present only for a loop item result. `dump`
+    /// forces the JSON tail (used for `debug`) even for an `ok` result at verbosity 0.
+    pub fn result(
+        &mut self,
+        host: &str,
+        outcome: Outcome,
+        result: &TaskResult,
+        label: Option<&str>,
+        dump: bool,
+    ) {
+        let json = ansible_json(&serde_json::Value::Object(result.0.clone()));
+        let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
+        let show = dump || self.verbosity > 0;
+        let tail = if show {
+            format!(" => {json}")
+        } else {
+            String::new()
+        };
         let line = match outcome {
-            Outcome::Ok if self.verbosity > 0 => self.paint(OK, &format!("ok: [{host}] => {dump}")),
-            Outcome::Ok => self.paint(OK, &format!("ok: [{host}]")),
-            Outcome::Changed if self.verbosity > 0 => {
-                self.paint(CHANGED, &format!("changed: [{host}] => {dump}"))
-            }
-            Outcome::Changed => self.paint(CHANGED, &format!("changed: [{host}]")),
-            Outcome::Skipped => self.paint(SKIPPED, &format!("skipping: [{host}]")),
+            Outcome::Ok => self.paint(OK, &format!("ok: [{host}]{item}{tail}")),
+            Outcome::Changed => self.paint(CHANGED, &format!("changed: [{host}]{item}{tail}")),
+            Outcome::Skipped => self.paint(SKIPPED, &format!("skipping: [{host}]{item}")),
+            Outcome::Failed | Outcome::Ignored if label.is_some() => self.paint(
+                FAILED,
+                &format!(
+                    "failed: [{host}] (item={}) => {json}",
+                    label.unwrap_or_default()
+                ),
+            ),
             Outcome::Failed | Outcome::Ignored => {
-                self.paint(FAILED, &format!("fatal: [{host}]: FAILED! => {dump}"))
+                self.paint(FAILED, &format!("fatal: [{host}]: FAILED! => {json}"))
             }
         };
         let _ = writeln!(self.out, "{line}");
-        if outcome == Outcome::Ignored {
+        if outcome == Outcome::Ignored && label.is_none() {
             let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
         }
     }
@@ -159,7 +178,7 @@ impl Renderer {
 }
 
 /// Ansible dumps results as JSON with sorted keys and `": "` and `", "` separators.
-fn ansible_json(value: &serde_json::Value) -> String {
+pub(crate) fn ansible_json(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
@@ -264,18 +283,36 @@ mod tests {
                 "web1",
                 Outcome::Changed,
                 &result(json!({"changed": true, "stdout": "hi"})),
+                None,
+                false,
             );
-            r.result("web2", Outcome::Ok, &result(json!({"changed": false})));
-            r.result("web3", Outcome::Skipped, &result(json!({"skipped": true})));
+            r.result(
+                "web2",
+                Outcome::Ok,
+                &result(json!({"changed": false})),
+                None,
+                false,
+            );
+            r.result(
+                "web3",
+                Outcome::Skipped,
+                &result(json!({"skipped": true})),
+                None,
+                false,
+            );
             r.result(
                 "web4",
                 Outcome::Failed,
                 &result(json!({"failed": true, "rc": 1, "msg": "non-zero return code"})),
+                None,
+                false,
             );
             r.result(
                 "web5",
                 Outcome::Ignored,
                 &result(json!({"failed": true, "rc": 1})),
+                None,
+                false,
             );
         });
         let lines: Vec<&str> = out.lines().collect();
@@ -310,9 +347,9 @@ mod tests {
     #[test]
     fn the_recap_matches_ansible_columns() {
         let mut stats = Stats::default();
-        stats.record("localhost", Outcome::Changed);
-        stats.record("localhost", Outcome::Ok);
-        stats.record("localhost", Outcome::Ignored);
+        stats.record("localhost", Outcome::Changed, true);
+        stats.record("localhost", Outcome::Ok, false);
+        stats.record("localhost", Outcome::Ignored, false);
         let out = capture(|r| r.recap(&stats));
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines[1].starts_with("PLAY RECAP ***"));
@@ -330,6 +367,8 @@ mod tests {
             "h",
             Outcome::Ok,
             &result(json!({"changed": false, "stdout": "x"})),
+            None,
+            false,
         );
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         assert_eq!(
@@ -341,9 +380,9 @@ mod tests {
     #[test]
     fn the_recap_still_lines_up_with_colour_on() {
         let mut stats = Stats::default();
-        stats.record("localhost", Outcome::Changed);
-        stats.record("localhost", Outcome::Ok);
-        stats.record("localhost", Outcome::Ignored);
+        stats.record("localhost", Outcome::Changed, true);
+        stats.record("localhost", Outcome::Ok, false);
+        stats.record("localhost", Outcome::Ignored, false);
         let plain = capture(|r| r.recap(&stats));
         let coloured = capture_with_color(true, |r| r.recap(&stats));
         assert_ne!(coloured, plain, "colour should change the output at all");
@@ -364,8 +403,9 @@ mod tests {
             (Outcome::Ignored, result(json!({"failed": true, "rc": 1}))),
         ];
         for (outcome, task_result) in cases {
-            let plain = capture(|r| r.result("h", outcome, &task_result));
-            let coloured = capture_with_color(true, |r| r.result("h", outcome, &task_result));
+            let plain = capture(|r| r.result("h", outcome, &task_result, None, false));
+            let coloured =
+                capture_with_color(true, |r| r.result("h", outcome, &task_result, None, false));
             assert_ne!(
                 coloured, plain,
                 "{outcome:?}: colour should change the output at all"
@@ -382,5 +422,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn loop_items_and_forced_dumps_follow_ansible_shapes() {
+        let out = capture(|r| {
+            r.result(
+                "h",
+                Outcome::Changed,
+                &result(json!({"changed": true})),
+                Some("one"),
+                false,
+            );
+            r.result(
+                "h",
+                Outcome::Skipped,
+                &result(json!({"skipped": true})),
+                Some("two"),
+                false,
+            );
+            r.result(
+                "h",
+                Outcome::Failed,
+                &result(json!({"failed": true, "rc": 1})),
+                Some("three"),
+                false,
+            );
+            r.result(
+                "h",
+                Outcome::Ok,
+                &result(json!({"msg": "shown"})),
+                None,
+                true,
+            );
+        });
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "changed: [h] => (item=one)");
+        assert_eq!(lines[1], "skipping: [h] => (item=two)");
+        assert_eq!(
+            lines[2],
+            r#"failed: [h] (item=three) => {"failed": true, "rc": 1}"#
+        );
+        assert_eq!(lines[3], r#"ok: [h] => {"msg": "shown"}"#);
     }
 }

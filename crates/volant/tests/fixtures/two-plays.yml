@@ -1,0 +1,11 @@
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Break beta
+      command: "{{ (inventory_hostname == 'beta') | ternary('false', 'true') }}"
+
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Survivors only
+      command: echo still here

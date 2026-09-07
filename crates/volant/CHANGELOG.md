@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.2...v0.1.0-alpha.3) - 2026-09-07
+
+### Added
+
+- *(controller)* add extra vars, limit and ansible.cfg defaults ([#69](https://github.com/lorica-labs/volant/pull/69))
+- *(controller)* render per host and batch tasks up to boundaries ([#66](https://github.com/lorica-labs/volant/pull/66))
+- *(controller)* parse when, loop, register, vars and conditions ([#65](https://github.com/lorica-labs/volant/pull/65))
+- *(controller)* add ansible filters, tests and lookups to the templar ([#64](https://github.com/lorica-labs/volant/pull/64))
+- *(controller)* render jinja2 templates with strict undefined vars ([#62](https://github.com/lorica-labs/volant/pull/62))
+- *(controller)* layer variable sources with ansible precedence ([#61](https://github.com/lorica-labs/volant/pull/61))
+- *(agent)* kill process groups, add task timeouts and signal codes ([#54](https://github.com/lorica-labs/volant/pull/54))
+
+### Fixed
+
+- *(controller)* variables, conditions and per-playbook paths ([#72](https://github.com/lorica-labs/volant/pull/72))
+- *(controller)* stop a deferred render error reviving a failed host ([#68](https://github.com/lorica-labs/volant/pull/68))
+- *(controller)* resolve YAML 1.1 scalar spellings like PyYAML ([#63](https://github.com/lorica-labs/volant/pull/63))
+- *(controller)* stop the agent's task when the link is dropped ([#57](https://github.com/lorica-labs/volant/pull/57))
+- *(controller)* cancel batches on interrupt and bound the handshake ([#56](https://github.com/lorica-labs/volant/pull/56))
+
+### Other
+
+- drop a private path from a public source comment ([#73](https://github.com/lorica-labs/volant/pull/73))
+- count banner characters, share frame codec, tighten visibility ([#70](https://github.com/lorica-labs/volant/pull/70))
+- *(controller)* switch yaml to saphyr and detect vault tags ([#60](https://github.com/lorica-labs/volant/pull/60))
+- share the native module registry between controller and agent ([#58](https://github.com/lorica-labs/volant/pull/58))
+- enforce the commit subject length and tidy release tooling ([#52](https://github.com/lorica-labs/volant/pull/52))
+
 ## [0.1.0-alpha.2](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) - 2026-09-06
 
 ### Added

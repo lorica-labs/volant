@@ -4,11 +4,11 @@
 pub mod agent;
 pub mod cli;
 pub mod config;
-pub mod executor;
+pub(crate) mod executor;
 pub mod inventory;
 pub mod playbook;
-pub mod render;
-pub mod stats;
+pub(crate) mod render;
+pub(crate) mod stats;
 pub mod template;
 pub mod transport;
 pub mod vars;

@@ -43,6 +43,7 @@ impl Renderer {
         }
     }
 
+    #[cfg(test)]
     pub fn with_writer(out: Box<dyn Write>, color: bool, width: usize, verbosity: u8) -> Self {
         Self {
             out,
@@ -63,7 +64,7 @@ impl Renderer {
     /// The star run fills the width past the text, so the line is one character wider than the
     /// width, and never shorter than three stars: what `ansible-playbook` prints.
     fn banner(&mut self, text: &str) {
-        let stars = self.width.saturating_sub(text.len()).max(3);
+        let stars = self.width.saturating_sub(text.chars().count()).max(3);
         let _ = writeln!(self.out, "\n{text} {}", "*".repeat(stars));
     }
 
@@ -266,6 +267,12 @@ mod tests {
         assert!(line.starts_with("PLAY [Smoke test] ***"));
         assert_eq!(line.len(), 80);
         assert_eq!(out, format!("\n{line}\n"));
+    }
+
+    #[test]
+    fn banners_count_characters_not_bytes() {
+        let out = capture(|r| r.play("Déploiement été"));
+        assert_eq!(out.lines().nth(1).unwrap().chars().count(), 80);
     }
 
     #[test]

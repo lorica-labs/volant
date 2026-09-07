@@ -55,6 +55,7 @@ impl Stats {
         self.hosts.entry(host.to_string()).or_default().unreachable += 1;
     }
 
+    #[cfg(test)]
     pub fn host(&self, name: &str) -> HostStats {
         self.hosts.get(name).copied().unwrap_or_default()
     }

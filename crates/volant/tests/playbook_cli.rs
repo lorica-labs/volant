@@ -160,6 +160,23 @@ fn a_variable_naming_a_later_bound_variable_still_renders() {
 }
 
 #[test]
+fn vars_files_are_resolved_for_each_host() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("pervars/inventory.ini"),
+        &fixture("pervars/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#"ok: [one] => {"msg": "one is red"}"#)
+            && text.contains(r#"ok: [two] => {"msg": "two is blue"}"#),
+        "each host reads the file its own variables name: {text}"
+    );
+}
+
+#[test]
 fn a_failed_host_leaves_the_following_plays() {
     let out = volant(&[
         "playbook",

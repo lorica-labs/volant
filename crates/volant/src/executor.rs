@@ -76,7 +76,8 @@ enum Event {
 struct PlayPlan {
     tasks: Vec<PlayTask>,
     play_vars: Map<String, Value>,
-    vars_files: Vec<Map<String, Value>>,
+    /// The `vars_files` maps of each host, in the order the play lists the files.
+    vars_files: HashMap<String, Vec<Map<String, Value>>>,
     play_hosts: Vec<String>,
 }
 
@@ -108,7 +109,7 @@ pub async fn run_play(
         .expect("vars lock")
         .playbook_dir()
         .to_path_buf();
-    let vars_files = load_play_vars_files(play, &hosts[0], &play_hosts, &playbook_dir, state)?;
+    let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state)?;
     let plan = Arc::new(PlayPlan {
         tasks: play.tasks.iter().map(clone_task).collect(),
         play_vars: play.vars.clone(),
@@ -257,44 +258,61 @@ fn clone_task(t: &PlayTask) -> PlayTask {
     }
 }
 
-/// `vars_files` paths are templates over play vars and the first host's variables, as in Ansible.
+/// `vars_files` paths are templates over play vars and the host's own variables, and Ansible
+/// resolves them per host, so two hosts can read two different files. Each rendered path is
+/// read once.
 fn load_play_vars_files(
     play: &Play,
-    first: &Host,
+    hosts: &[Host],
     play_hosts: &[String],
     playbook_dir: &Path,
     state: &RunState,
-) -> anyhow::Result<Vec<Map<String, Value>>> {
-    let scope = Scope {
-        play_vars: play.vars.clone(),
-        vars_files: Vec::new(),
-        task_vars: Map::new(),
-        play_hosts: play_hosts.to_vec(),
-    };
-    let vars = state.templar.resolve_vars(
-        &state
-            .vars
-            .lock()
-            .expect("vars lock")
-            .for_host(&first.name, &scope),
-    );
-    let mut files = Vec::new();
-    for raw in &play.vars_files {
-        let rendered = state
-            .templar
-            .render(raw, &vars)
-            .map_err(|e| anyhow::anyhow!("vars_files '{raw}': {e}"))?;
-        let path = rendered
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("vars_files entry must render to a path: {raw}"))?;
-        let path = if Path::new(path).is_absolute() {
-            PathBuf::from(path)
-        } else {
-            playbook_dir.join(path)
-        };
-        files.push(load_vars_file(&path)?);
+) -> anyhow::Result<HashMap<String, Vec<Map<String, Value>>>> {
+    let mut per_host = HashMap::new();
+    if play.vars_files.is_empty() {
+        return Ok(per_host);
     }
-    Ok(files)
+    let mut loaded: HashMap<PathBuf, Map<String, Value>> = HashMap::new();
+    for host in hosts {
+        let scope = Scope {
+            play_vars: play.vars.clone(),
+            vars_files: Vec::new(),
+            task_vars: Map::new(),
+            play_hosts: play_hosts.to_vec(),
+        };
+        let vars = state.templar.resolve_vars(
+            &state
+                .vars
+                .lock()
+                .expect("vars lock")
+                .for_host(&host.name, &scope),
+        );
+        let mut files = Vec::new();
+        for raw in &play.vars_files {
+            let rendered = state
+                .templar
+                .render(raw, &vars)
+                .map_err(|e| anyhow::anyhow!("vars_files '{raw}': {e}"))?;
+            let path = rendered
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("vars_files entry must render to a path: {raw}"))?;
+            let path = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                playbook_dir.join(path)
+            };
+            files.push(match loaded.get(&path) {
+                Some(file) => file.clone(),
+                None => {
+                    let file = load_vars_file(&path)?;
+                    loaded.insert(path, file.clone());
+                    file
+                }
+            });
+        }
+        per_host.insert(host.name.clone(), files);
+    }
+    Ok(per_host)
 }
 
 fn task_name(task: &PlayTask, host: &str, plan: &PlayPlan, state: &RunState) -> String {
@@ -320,7 +338,7 @@ fn host_vars(
 ) -> Map<String, Value> {
     let scope = Scope {
         play_vars: plan.play_vars.clone(),
-        vars_files: plan.vars_files.clone(),
+        vars_files: plan.vars_files.get(host).cloned().unwrap_or_default(),
         task_vars: task_vars.clone(),
         play_hosts: plan.play_hosts.clone(),
     };

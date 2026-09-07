@@ -241,7 +241,26 @@ impl VarStore {
         insert(vars, "ansible_check_mode", Value::Bool(false));
         insert(vars, "ansible_diff_mode", Value::Bool(false));
         insert(vars, "ansible_forks", Value::from(5));
+        insert(vars, "ansible_version", ansible_version());
+        insert(
+            vars,
+            "volant_version",
+            Value::String(env!("CARGO_PKG_VERSION").to_string()),
+        );
     }
+}
+
+/// The ansible-core release Volant reproduces, as the `ansible_version` dictionary roles
+/// consult. The number lives in tests/golden/ANSIBLE_VERSION and nowhere else.
+pub fn ansible_version() -> Value {
+    let full = include_str!("../tests/golden/ANSIBLE_VERSION").trim();
+    let mut parts = full.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
+    let (major, minor, revision) = (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    );
+    serde_json::json!({ "full": full, "major": major, "minor": minor, "revision": revision, "string": full })
 }
 
 fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
@@ -542,6 +561,14 @@ mod tests {
         assert_eq!(parsed["from_file"], json!(1));
         assert_eq!(parsed["layer"], json!("file"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ansible_version_comes_from_the_reference_file() {
+        let v = ansible_version();
+        let reference = include_str!("../tests/golden/ANSIBLE_VERSION").trim();
+        assert_eq!(v["full"], json!(reference));
+        assert_eq!(v["major"], json!(2));
     }
 
     #[test]

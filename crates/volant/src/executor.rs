@@ -523,6 +523,15 @@ fn run_local(
     TaskResult(r)
 }
 
+/// One module result, ready to report: `changed_when` and `failed_when` decide its outcome
+/// wherever the module ran, controller side as well as on the agent.
+fn finish(task: &PlayTask, item: &Item, result: TaskResult, templar: &Templar) -> TaskResult {
+    match apply_conditions(task, item, result, templar) {
+        Ok(r) => r,
+        Err(e) => TaskResult::failed_with(e.0),
+    }
+}
+
 /// Applies `changed_when` and `failed_when` to one result, with `result` bound to it.
 fn apply_conditions(
     task: &PlayTask,
@@ -685,7 +694,12 @@ async fn drive_host(
                     for item in &items {
                         let r = match &item.skipped {
                             Some(s) => s.clone(),
-                            None => run_local(task, item, &name, &templar, &store, verbosity),
+                            None => finish(
+                                task,
+                                item,
+                                run_local(task, item, &name, &templar, &store, verbosity),
+                                &templar,
+                            ),
                         };
                         results.push((item.element.clone(), r));
                         labels.push(item.label.clone());
@@ -814,10 +828,7 @@ async fn drive_host(
                 for (ii, item) in items.iter().enumerate() {
                     let r = match (&item.skipped, received[bi][ii].take()) {
                         (Some(s), _) => s.clone(),
-                        (None, Some(r)) => match apply_conditions(task, item, r, &templar) {
-                            Ok(r) => r,
-                            Err(e) => TaskResult::failed_with(e.0),
-                        },
+                        (None, Some(r)) => finish(task, item, r, &templar),
                         (None, None) => {
                             reached = false;
                             break;

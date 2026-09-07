@@ -1,0 +1,14 @@
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Break beta
+      command: "{{ (inventory_hostname == 'beta') | ternary('false', 'true') }}"
+    - name: Bad render
+      command: "{{ does_not_exist }}"
+      ignore_errors: true
+
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Survivors only
+      command: echo still here

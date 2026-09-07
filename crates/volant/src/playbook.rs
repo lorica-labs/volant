@@ -38,6 +38,9 @@ pub struct PlayTask {
     /// Raw `loop` value: a list, or a template string rendering to one. `with_items` lands
     /// here too and is flattened one level at run time.
     pub loop_items: Option<Value>,
+    /// Whether `loop_items` came from `with_items` rather than `loop`: `with_items` flattens
+    /// one level, `loop` does not.
+    pub with_items: bool,
     pub loop_var: String,
     pub loop_label: Option<String>,
     pub register: Option<String>,
@@ -220,12 +223,17 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
         Some(_) => bail!("task '{label}': 'register' must be a variable name"),
     };
-    let loop_items = match (field(yaml, "loop"), field(yaml, "with_items")) {
+    let (loop_items, with_items) = match (field(yaml, "loop"), field(yaml, "with_items")) {
         (Some(_), Some(_)) => bail!("task '{label}': 'loop' and 'with_items' cannot both be given"),
-        (Some(v), None) | (None, Some(v)) => {
-            Some(to_json(v).with_context(|| format!("task '{label}': loop"))?)
-        }
-        (None, None) => None,
+        (Some(v), None) => (
+            Some(to_json(v).with_context(|| format!("task '{label}': loop"))?),
+            false,
+        ),
+        (None, Some(v)) => (
+            Some(to_json(v).with_context(|| format!("task '{label}': with_items"))?),
+            true,
+        ),
+        (None, None) => (None, false),
     };
     let (loop_var, loop_label) = match field(yaml, "loop_control") {
         None => ("item".to_string(), None),
@@ -248,6 +256,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         vars,
         when,
         loop_items,
+        with_items,
         loop_var,
         loop_label,
         register,
@@ -566,6 +575,7 @@ mod tests {
         );
         assert_eq!(t[3].loop_var, "server");
         assert_eq!(t[3].loop_label.as_deref(), Some("{{ server.name }}"));
+        assert!(t[3].with_items && !t[2].with_items);
 
         assert_eq!(t[4].module, "set_fact");
         assert_eq!(t[4].args["computed"], "{{ port + 1 }}");

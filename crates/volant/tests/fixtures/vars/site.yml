@@ -1,0 +1,50 @@
+- name: Variables and keywords
+  hosts: web
+  gather_facts: false
+  vars:
+    shout: "{{ greeting | upper }}"
+  vars_files:
+    - vars/extra.yml
+  tasks:
+    - name: Greet {{ inventory_hostname }}
+      command: echo {{ shout }}{{ suffix }} on {{ port }}
+      register: greeted
+
+    - name: Only alpha
+      command: echo alpha-only
+      when: inventory_hostname == 'alpha'
+
+    - name: Show what was said
+      debug:
+        msg: "{{ greeted.stdout }}"
+
+    - name: Loop over servers
+      command: echo {{ item.name }}
+      loop: "{{ servers }}"
+      register: looped
+
+    - name: Loop summary
+      debug:
+        var: looped.results | map(attribute='stdout') | list
+
+    - name: Remember
+      set_fact:
+        remembered: "{{ looped.results | length }}"
+
+    - name: Omitted argument is dropped
+      command:
+        cmd: echo omitted
+        chdir: "{{ omit }}"
+
+    - name: Reported as unchanged
+      command: echo same
+      changed_when: false
+
+    - name: Failing only on beta
+      command: echo {{ remembered }}
+      failed_when: inventory_hostname == 'beta'
+      ignore_errors: true
+
+    - name: Undefined variable
+      command: echo {{ not_defined_anywhere }}
+      ignore_errors: true

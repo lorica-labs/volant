@@ -19,4 +19,4 @@ TASK [Shell arithmetic] ********************************************************
 changed: [localhost]
 
 PLAY RECAP *********************************************************************
-localhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=1    rescued=0    ignored=1
+localhost                  : ok=3    changed=3    unreachable=0    failed=0    skipped=1    rescued=0    ignored=1

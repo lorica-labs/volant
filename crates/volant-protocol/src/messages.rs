@@ -103,10 +103,13 @@ impl TaskResult {
         self.flag("skipped")
     }
 
-    /// Ansible's rule: `failed` set, or an `rc` present and different from zero.
+    /// Ansible's rule: a present `failed` (true or false) is the truth; `rc` only decides when
+    /// `failed` is absent. `failed_when: false` can rescue a non-zero `rc`.
     pub fn failed(&self) -> bool {
-        self.flag("failed")
-            || matches!(self.0.get("rc"), Some(Value::Number(n)) if n.as_i64() != Some(0))
+        match self.0.get("failed") {
+            Some(Value::Bool(b)) => *b,
+            _ => matches!(self.0.get("rc"), Some(Value::Number(n)) if n.as_i64() != Some(0)),
+        }
     }
 
     pub fn failed_with(msg: impl Into<String>) -> Self {
@@ -181,6 +184,17 @@ mod tests {
         assert!(!ok.failed() && ok.changed());
         assert!(bad.failed() && !bad.changed());
         assert!(flagged.failed());
+    }
+
+    #[test]
+    fn an_explicit_failed_false_rescues_a_non_zero_rc() {
+        let rescued = TaskResult(
+            json!({"failed": false, "rc": 2})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        assert!(!rescued.failed());
     }
 
     #[test]

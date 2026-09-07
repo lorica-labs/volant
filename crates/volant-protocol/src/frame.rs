@@ -6,11 +6,28 @@ use std::io::{self, Read, Write};
 /// Largest frame accepted. Protects against a corrupt length allocating unbounded memory.
 pub const MAX_FRAME_LEN: usize = 64 * 1024 * 1024;
 
+/// The four-byte header for a payload of `len` bytes.
+pub fn header(len: usize) -> io::Result<[u8; 4]> {
+    u32::try_from(len)
+        .map(u32::to_be_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))
+}
+
+/// The payload length a header announces, refused above `MAX_FRAME_LEN`.
+pub fn payload_len(header: [u8; 4]) -> io::Result<usize> {
+    let len = u32::from_be_bytes(header) as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame of {len} bytes exceeds the {MAX_FRAME_LEN} byte limit"),
+        ));
+    }
+    Ok(len)
+}
+
 /// Writes one frame and flushes the writer.
 pub fn write_frame<W: Write>(mut w: W, payload: &[u8]) -> io::Result<()> {
-    let len = u32::try_from(payload.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))?;
-    w.write_all(&len.to_be_bytes())?;
+    w.write_all(&header(payload.len())?)?;
     w.write_all(payload)?;
     w.flush()
 }
@@ -24,13 +41,7 @@ pub fn read_frame<R: Read>(mut r: R) -> io::Result<Option<Vec<u8>>> {
     }
     let mut rest = [0u8; 3];
     r.read_exact(&mut rest)?;
-    let len = u32::from_be_bytes([first[0], rest[0], rest[1], rest[2]]) as usize;
-    if len > MAX_FRAME_LEN {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("frame of {len} bytes exceeds the {MAX_FRAME_LEN} byte limit"),
-        ));
-    }
+    let len = payload_len([first[0], rest[0], rest[1], rest[2]])?;
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload)?;
     Ok(Some(payload))
@@ -70,6 +81,17 @@ mod tests {
     #[test]
     fn oversized_length_is_rejected_before_allocating() {
         let err = read_frame(Cursor::new(vec![0xff, 0xff, 0xff, 0xff])).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn header_encodes_the_length_as_big_endian() {
+        assert_eq!(header(5).unwrap(), [0, 0, 0, 5]);
+    }
+
+    #[test]
+    fn payload_len_rejects_a_frame_over_the_limit() {
+        let err = payload_len([0xff; 4]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

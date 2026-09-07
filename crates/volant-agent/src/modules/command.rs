@@ -435,7 +435,7 @@ mod tests {
         let payload: String = "abcdefghijklmnopqrstuvwxyz0123456789\n"
             .chars()
             .cycle()
-            .take(1_048_576)
+            .take(64 * 1_048_576)
             .collect();
         let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),

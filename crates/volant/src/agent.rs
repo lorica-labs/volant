@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
-use volant_protocol::frame::MAX_FRAME_LEN;
+use volant_protocol::frame::{header, payload_len};
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
 /// Where the agent binary is: `VOLANT_AGENT_DIR`, then next to this executable.
@@ -71,9 +71,7 @@ impl AgentLink {
 
     pub async fn send(&mut self, msg: &ToAgent) -> std::io::Result<()> {
         let payload = serde_json::to_vec(msg)?;
-        let len =
-            u32::try_from(payload.len()).map_err(|_| std::io::Error::other("frame too large"))?;
-        self.stdin().write_all(&len.to_be_bytes()).await?;
+        self.stdin().write_all(&header(payload.len())?).await?;
         self.stdin().write_all(&payload).await?;
         self.stdin().flush().await
     }
@@ -196,13 +194,7 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<V
     }
     let mut rest = [0u8; 3];
     r.read_exact(&mut rest).await?;
-    let len = u32::from_be_bytes([first[0], rest[0], rest[1], rest[2]]) as usize;
-    if len > MAX_FRAME_LEN {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("frame of {len} bytes exceeds the {MAX_FRAME_LEN} byte limit"),
-        ));
-    }
+    let len = payload_len([first[0], rest[0], rest[1], rest[2]])?;
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload).await?;
     Ok(Some(payload))

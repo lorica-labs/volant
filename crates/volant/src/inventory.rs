@@ -217,7 +217,7 @@ impl Inventory {
     }
 
     /// Group vars from the outermost group to the innermost, then host vars on top.
-    fn host_with_vars(&self, name: &str) -> Host {
+    pub fn host_with_vars(&self, name: &str) -> Host {
         let host = self
             .hosts
             .iter()

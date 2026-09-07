@@ -71,7 +71,9 @@ impl VarStore {
         let mut host_line_vars = BTreeMap::new();
         let mut group_names = BTreeMap::new();
         for host in &groups["all"] {
-            let resolved = inventory.resolve(host).hosts.remove(0);
+            // Not `resolve`: a name that is both a group and a host resolves as the group, and
+            // an empty group would leave this host without its own inventory variables.
+            let resolved = inventory.host_with_vars(host);
             inventory_vars.insert(host.clone(), resolved.vars.into_iter().collect());
             host_line_vars.insert(
                 host.clone(),
@@ -540,6 +542,17 @@ mod tests {
         let store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
         let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
+    }
+
+    #[test]
+    fn a_host_that_shares_a_group_name_still_gets_its_variables() {
+        // Ansible warns "Found both group and host with same name" and runs the host.
+        let inv = Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
+        let store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let v = store.for_host("db", &scope(&["db"]));
+        assert_eq!(v["inventory_hostname"], json!("db"));
+        assert_eq!(v["x"], json!(1));
+        assert_eq!(v["from"], json!("group"));
     }
 
     #[test]

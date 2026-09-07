@@ -102,7 +102,18 @@ impl Renderer {
         label: Option<&str>,
         dump: bool,
     ) {
-        let json = ansible_json(&serde_json::Value::Object(result.0.clone()));
+        let mut body = result.0.clone();
+        if dump {
+            // Ansible cleans a `debug` result before showing it, so the message stands alone:
+            // whatever `changed_when` and `failed_when` decided is counted, never printed.
+            body.retain(|k, _| {
+                !matches!(
+                    k.as_str(),
+                    "changed" | "failed" | "skipped" | "failed_when_result" | "invocation"
+                )
+            });
+        }
+        let json = ansible_json(&serde_json::Value::Object(body));
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
         let show = dump || self.verbosity > 0;
         let tail = if show {

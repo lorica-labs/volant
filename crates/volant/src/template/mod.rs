@@ -41,6 +41,25 @@ impl Templar {
     /// Renders a string. Exactly one `{{ expression }}` gives the expression's value with its
     /// type; text around or between expressions gives a string.
     pub fn render(&self, text: &str, vars: &Map<String, Value>) -> Result<Value, TemplateError> {
+        let mut value = self.render_once(text, vars)?;
+        // A variable can hold a template of its own, so Ansible renders a result again while it
+        // still carries a marker. Three further passes: a chain longer than that is a loop, and
+        // an unchanged result ends it earlier.
+        for _ in 0..3 {
+            let Value::String(text) = &value else { break };
+            if !Self::is_template(text) {
+                break;
+            }
+            let next = self.render_once(text, vars)?;
+            if next == value {
+                break;
+            }
+            value = next;
+        }
+        Ok(value)
+    }
+
+    fn render_once(&self, text: &str, vars: &Map<String, Value>) -> Result<Value, TemplateError> {
         if !Self::is_template(text) {
             return Ok(Value::String(text.to_string()));
         }
@@ -100,6 +119,14 @@ impl Templar {
     /// nothing changes. Best effort: a value that fails to render is left as written, so the
     /// error surfaces where the value is used, as it does in Ansible.
     pub fn resolve_vars(&self, vars: &Map<String, Value>) -> Map<String, Value> {
+        // Most maps hold no template at all, and `hostvars` is left alone below: walking them
+        // once is far cheaper than the two clones a pass costs.
+        if !vars
+            .iter()
+            .any(|(k, v)| k != "hostvars" && holds_template(v))
+        {
+            return vars.clone();
+        }
         let mut current = vars.clone();
         for _ in 0..5 {
             let mut next = current.clone();
@@ -154,6 +181,16 @@ impl Templar {
                 if truthy(&other) { "True" } else { "False" }
             ))),
         }
+    }
+}
+
+/// Whether any string inside a value still carries a template marker.
+fn holds_template(value: &Value) -> bool {
+    match value {
+        Value::String(s) => Templar::is_template(s),
+        Value::Array(items) => items.iter().any(holds_template),
+        Value::Object(map) => map.values().any(holds_template),
+        _ => false,
     }
 }
 

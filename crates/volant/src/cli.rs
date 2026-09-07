@@ -86,11 +86,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         stop: stop_rx.clone(),
     };
 
-    let playbook_dir = args.playbooks[0]
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let playbook_dir = playbook_dir.canonicalize().unwrap_or(playbook_dir);
+    let playbook_dir = base_dir(&args.playbooks[0]);
     let cwd = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
     let store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
@@ -119,7 +115,14 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         }
     };
 
-    'plays: for pb in &playbooks {
+    let mut current_dir = playbook_dir;
+    'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
+        let dir = base_dir(path);
+        if dir != current_dir {
+            state.templar = Arc::new(Templar::new(dir.clone()));
+            state.vars.lock().expect("vars lock").rebase(&dir)?;
+            current_dir = dir;
+        }
         for play in &pb.plays {
             if *stop_rx.borrow() {
                 break 'plays;
@@ -148,6 +151,17 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     }
     out.recap(&stats);
     Ok(exit_code(&stats))
+}
+
+/// A playbook's own directory, absolute where the filesystem allows it: `group_vars/`,
+/// `host_vars/`, relative `vars_files` entries, lookups and the `playbook_dir` variable all
+/// resolve against it, so it follows the playbook being run rather than the first one.
+fn base_dir(playbook: &Path) -> PathBuf {
+    let dir = match playbook.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    dir.canonicalize().unwrap_or(dir)
 }
 
 /// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is

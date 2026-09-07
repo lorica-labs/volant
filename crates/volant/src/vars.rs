@@ -38,6 +38,9 @@ pub struct VarStore {
     groups: BTreeMap<String, Vec<String>>,
     facts: BTreeMap<String, Map<String, Value>>,
     extra: Map<String, Value>,
+    /// Every inventory host's view, as `hostvars` shows it. Built on demand and dropped
+    /// whenever something below it changes, which only a fact or a rebase does.
+    hostvars: Option<Map<String, Value>>,
 }
 
 /// The value Ansible substitutes for `omit`: a parameter equal to it is dropped from the task.
@@ -71,7 +74,9 @@ impl VarStore {
         let mut host_line_vars = BTreeMap::new();
         let mut group_names = BTreeMap::new();
         for host in &groups["all"] {
-            let resolved = inventory.resolve(host).hosts.remove(0);
+            // Not `resolve`: a name that is both a group and a host resolves as the group, and
+            // an empty group would leave this host without its own inventory variables.
+            let resolved = inventory.host_with_vars(host);
             inventory_vars.insert(host.clone(), resolved.vars.into_iter().collect());
             host_line_vars.insert(
                 host.clone(),
@@ -96,6 +101,7 @@ impl VarStore {
             groups,
             facts: BTreeMap::new(),
             extra,
+            hostvars: None,
         })
     }
 
@@ -103,18 +109,29 @@ impl VarStore {
         &self.playbook_dir
     }
 
+    /// Moves the playbook-side roots to another playbook's directory, keeping the facts hosts
+    /// have gathered so far. Inventory-side sources do not move.
+    pub fn rebase(&mut self, playbook_dir: &Path) -> anyhow::Result<()> {
+        self.group_files[1] = load_vars_dir(&playbook_dir.join("group_vars"))?;
+        self.host_files[1] = load_vars_dir(&playbook_dir.join("host_vars"))?;
+        self.playbook_dir = playbook_dir.to_path_buf();
+        self.hostvars = None;
+        Ok(())
+    }
+
     pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
         self.facts
             .entry(host.to_string())
             .or_default()
             .insert(key.to_string(), value);
+        self.hostvars = None;
     }
 
     /// The merged view for one host, lowest precedence first: inventory `all`, `group_vars/all`
     /// (inventory then playbook), inventory groups by depth and name, `group_vars/<group>`
     /// (inventory then playbook), inventory host vars, `host_vars/<host>` (inventory then
     /// playbook), play vars, vars_files, task vars, facts, extra vars, then the magic variables.
-    pub fn for_host(&self, host: &str, scope: &Scope) -> Map<String, Value> {
+    pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
         let mut vars = self.host_base(host);
         extend(&mut vars, &scope.play_vars);
         for file in &scope.vars_files {
@@ -165,20 +182,35 @@ impl VarStore {
         vars
     }
 
-    fn add_magic(&self, vars: &mut Map<String, Value>, host: &str, scope: &Scope) {
-        let mut hostvars = Map::new();
-        for name in self.groups["all"]
-            .iter()
-            .chain(std::iter::once(&host.to_string()))
-        {
-            if !hostvars.contains_key(name) {
-                let mut base = self.host_base(name);
-                if let Some(facts) = self.facts.get(name) {
-                    extend(&mut base, facts);
-                }
-                extend(&mut base, &self.extra);
-                hostvars.insert(name.clone(), Value::Object(base));
+    /// What other hosts see of one host: inventory sources, its facts, then extra vars.
+    fn host_view(&self, host: &str) -> Map<String, Value> {
+        let mut base = self.host_base(host);
+        if let Some(facts) = self.facts.get(host) {
+            extend(&mut base, facts);
+        }
+        extend(&mut base, &self.extra);
+        base
+    }
+
+    fn hostvars(&mut self) -> &Map<String, Value> {
+        if self.hostvars.is_none() {
+            let names = self.groups["all"].clone();
+            let mut map = Map::new();
+            for name in names {
+                let view = self.host_view(&name);
+                map.insert(name, Value::Object(view));
             }
+            self.hostvars = Some(map);
+        }
+        self.hostvars.as_ref().expect("just built")
+    }
+
+    fn add_magic(&mut self, vars: &mut Map<String, Value>, host: &str, scope: &Scope) {
+        let mut hostvars = self.hostvars().clone();
+        if !hostvars.contains_key(host) {
+            // An implicit localhost is in no group, so it is not in the cached map.
+            let view = self.host_view(host);
+            hostvars.insert(host.to_string(), Value::Object(view));
         }
         let short = host.split('.').next().unwrap_or(host).to_string();
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
@@ -446,7 +478,7 @@ mod tests {
     #[test]
     fn directories_layer_in_ansible_order() {
         let dir = tree();
-        let (_, store) = store(&dir);
+        let (_, mut store) = store(&dir);
         let v = store.for_host("web1", &scope(&["web1"]));
         assert_eq!(
             v["layer"],
@@ -503,7 +535,7 @@ mod tests {
     #[test]
     fn magic_variables_are_present() {
         let dir = tree();
-        let (_, store) = store(&dir);
+        let (_, mut store) = store(&dir);
         let v = store.for_host("web1", &scope(&["web1"]));
         assert_eq!(v["inventory_hostname"], json!("web1"));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
@@ -537,9 +569,20 @@ mod tests {
     #[test]
     fn a_short_hostname_drops_the_domain() {
         let inv = Inventory::parse_ini("web1.example.com\n").unwrap();
-        let store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
         let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
+    }
+
+    #[test]
+    fn a_host_that_shares_a_group_name_still_gets_its_variables() {
+        // Ansible warns "Found both group and host with same name" and runs the host.
+        let inv = Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
+        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let v = store.for_host("db", &scope(&["db"]));
+        assert_eq!(v["inventory_hostname"], json!("db"));
+        assert_eq!(v["x"], json!(1));
+        assert_eq!(v["from"], json!("group"));
     }
 
     #[test]

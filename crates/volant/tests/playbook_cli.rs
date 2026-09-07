@@ -60,6 +60,32 @@ fn a_failing_task_stops_the_host_and_exits_2() {
 }
 
 #[test]
+fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
+    let out = volant(&["playbook", &fixture("local-conditions.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("changed: [localhost]\n")
+            && text.contains(r#"changed: [localhost] => {"msg": "changed"}"#),
+        "changed_when marks set_fact and debug as changed: {text}"
+    );
+    assert!(
+        text.contains(r#"fatal: [localhost]: FAILED! => {"msg": "assert"}"#),
+        "failed_when fails a debug task: {text}"
+    );
+    assert!(
+        !text.contains("Never reached"),
+        "the host stops after a failed_when: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=3    changed=2    unreachable=0    failed=1"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
 fn an_agent_that_dies_mid_batch_makes_its_host_unreachable() {
     let out = volant(&["playbook", &fixture("dying-agent.yml")]);
     let text = String::from_utf8(out.stdout).unwrap();
@@ -106,6 +132,68 @@ fn variables_loops_conditions_and_facts_render_like_ansible() {
         String::from_utf8_lossy(&out.stderr)
     );
     settings().bind(|| insta::assert_snapshot!(text));
+}
+
+#[test]
+fn a_variable_naming_a_later_bound_variable_still_renders() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("late/inventory.ini"),
+        &fixture("late/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("TASK [Say everything]"),
+        "a task name renders against the task's own vars: {text}"
+    );
+    assert!(
+        text.contains(r#"(item=a) => {"msg": "greet a"}"#)
+            && text.contains(r#"(item=b) => {"msg": "greet b"}"#),
+        "a play var naming the loop variable renders per item: {text}"
+    );
+    assert!(
+        text.contains(r#"ok: [alpha] => {"msg": "hello there"}"#),
+        "a templated value read through hostvars renders: {text}"
+    );
+}
+
+#[test]
+fn vars_files_are_resolved_for_each_host() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("pervars/inventory.ini"),
+        &fixture("pervars/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#"ok: [one] => {"msg": "one is red"}"#)
+            && text.contains(r#"ok: [two] => {"msg": "two is blue"}"#),
+        "each host reads the file its own variables name: {text}"
+    );
+}
+
+#[test]
+fn each_playbook_resolves_paths_against_its_own_directory() {
+    let out = volant(&[
+        "playbook",
+        &fixture("multi/first.yml"),
+        &fixture("multi/sub/second.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(r#"ok: [localhost] => {"msg": "kept here"}"#),
+        "the second playbook reads its own vars_files and keeps the first one's facts: {text}"
+    );
 }
 
 #[test]

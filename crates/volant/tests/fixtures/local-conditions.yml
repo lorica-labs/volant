@@ -1,0 +1,26 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Fact marked changed
+      set_fact:
+        a: 1
+      changed_when: true
+
+    - name: Fact rescued from a failure
+      set_fact:
+        b: 2
+      failed_when: false
+
+    - name: Debug marked changed
+      debug:
+        msg: changed
+      changed_when: true
+
+    - name: Debug asserting
+      debug:
+        msg: assert
+      failed_when: true
+
+    - name: Never reached
+      debug:
+        msg: never

@@ -362,7 +362,7 @@ fn compile(pattern: &str, kwargs: &Kwargs) -> Result<regex::Regex, Error> {
 /// at all (`\n`, `\t`, `\1`, `\x41`, even `\'` all stay perfectly literal in a string literal, see
 /// docs/superpowers/architecture.md). Undo the fold for the arguments that carry Python-style
 /// backreferences, so `'\1'` keeps meaning "backreference one" rather than a control byte.
-/// ponytail: only single-digit octal folds (`\0`-`\7`) are reversed, matching every golden case;
+/// Only single-digit octal folds (`\0`-`\7`) are reversed, matching every golden case;
 /// MiniJinja's multi-digit octal folds (`\12` -> one byte) lose which digits were consumed, so a
 /// two-digit backreference (`\10` and above) would need a real fix, not this inverse map.
 fn undo_octal_fold(s: &str) -> String {

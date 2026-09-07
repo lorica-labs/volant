@@ -1,0 +1,18 @@
+- name: Late binding
+  hosts: web
+  gather_facts: false
+  vars:
+    line: "greet {{ item }}"
+  tasks:
+    - name: Say {{ what }}
+      vars:
+        what: everything
+      debug:
+        msg: "{{ line }}"
+      loop:
+        - a
+        - b
+
+    - name: Through hostvars
+      debug:
+        msg: "{{ hostvars['alpha']['salute'] }}"

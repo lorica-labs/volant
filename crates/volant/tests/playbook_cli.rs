@@ -136,6 +136,33 @@ fn a_failed_host_leaves_the_following_plays() {
 }
 
 #[test]
+fn a_deferred_render_error_does_not_resurrect_a_host_that_already_failed() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("vars/inventory.ini"),
+        &fixture("deferred-error-after-failure.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let survivors = text
+        .split("TASK [Survivors only]")
+        .nth(1)
+        .expect("second play ran");
+    assert!(survivors.contains("changed: [alpha]"), "{text}");
+    assert!(
+        !survivors.contains("[beta]"),
+        "beta must be gone from the second play: {text}"
+    );
+    assert!(
+        text.contains(
+            "beta                       : ok=0    changed=0    unreachable=0    failed=1"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
 fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
     let out = volant(&[
         "playbook",

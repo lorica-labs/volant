@@ -68,7 +68,6 @@ enum Event {
     },
     Unreachable {
         host: String,
-        index: usize,
         msg: String,
     },
 }
@@ -79,8 +78,6 @@ struct PlayPlan {
     play_vars: Map<String, Value>,
     vars_files: Vec<Map<String, Value>>,
     play_hosts: Vec<String>,
-    #[allow(dead_code)]
-    playbook_dir: PathBuf,
 }
 
 pub async fn run_play(
@@ -117,7 +114,6 @@ pub async fn run_play(
         play_vars: play.vars.clone(),
         vars_files,
         play_hosts: play_hosts.clone(),
-        playbook_dir,
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
@@ -132,9 +128,13 @@ pub async fn run_play(
         );
         let (templar, vars) = (Arc::clone(&state.templar), Arc::clone(&state.vars));
         let verbosity = state.verbosity;
-        workers.push(tokio::spawn(async move {
-            drive_host(host, plan, agent, options, templar, vars, verbosity, tx).await
-        }));
+        let name = host.name.clone();
+        workers.push((
+            name,
+            tokio::spawn(async move {
+                drive_host(host, plan, agent, options, templar, vars, verbosity, tx).await
+            }),
+        ));
     }
     drop(tx);
 
@@ -193,12 +193,8 @@ pub async fn run_play(
                         }
                         gone.insert(host);
                     }
-                    Some(Event::Unreachable {
-                        host,
-                        index: at,
-                        msg,
-                    }) => {
-                        if at == index && !header_shown {
+                    Some(Event::Unreachable { host, msg }) => {
+                        if !header_shown {
                             out.task(&task_name(task, &host, &plan, state));
                             header_shown = true;
                         }
@@ -219,7 +215,7 @@ pub async fn run_play(
     // stopped here. Drain until every worker has dropped its sender.
     while let Some(event) = rx.recv().await {
         match event {
-            Event::Unreachable { host, msg, .. } => {
+            Event::Unreachable { host, msg } => {
                 stats.unreachable(&host);
                 out.unreachable(&host, &msg);
                 state.failed_hosts.insert(host);
@@ -230,8 +226,14 @@ pub async fn run_play(
             _ => {}
         }
     }
-    for worker in workers {
-        let _ = worker.await;
+    for (host, worker) in workers {
+        if let Err(err) = worker.await
+            && !gone.contains(&host)
+        {
+            stats.unreachable(&host);
+            out.unreachable(&host, &format!("driver panicked: {err}"));
+            state.failed_hosts.insert(host);
+        }
     }
     Ok(())
 }
@@ -532,10 +534,9 @@ fn apply_conditions(
         return Ok(result);
     }
     let mut vars = item.vars.clone();
-    vars.insert(
-        task.register.clone().unwrap_or_default(),
-        Value::Object(result.0.clone()),
-    );
+    if let Some(reg) = &task.register {
+        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+    }
     vars.insert("result".into(), Value::Object(result.0.clone()));
     if !task.changed_when.is_empty() {
         let changed = all_hold(&task.changed_when, &vars, templar)?;
@@ -633,6 +634,10 @@ async fn drive_host(
 ) {
     let name = host.name.clone();
     let mut stop = options.stop.clone();
+    // Set once the stop watch's sender is gone, so a dropped sender is never read as an
+    // interrupt and the select below stops polling a branch that would otherwise resolve
+    // immediately forever.
+    let mut stop_broken = false;
     let mut link: Option<AgentLink> = None;
     let mut failed = false;
     let mut pos = 0;
@@ -729,7 +734,6 @@ async fn drive_host(
                         let _ = tx
                             .send(Event::Unreachable {
                                 host: name.clone(),
-                                index: batch[0].0,
                                 msg: format!("{err:#}"),
                             })
                             .await;
@@ -766,7 +770,6 @@ async fn drive_host(
                 let _ = tx
                     .send(Event::Unreachable {
                         host: name.clone(),
-                        index: batch[0].0,
                         msg: format!("sending batch: {err}"),
                     })
                     .await;
@@ -779,7 +782,11 @@ async fn drive_host(
             let ended = loop {
                 let msg = tokio::select! {
                     msg = link.recv() => msg,
-                    _ = stop.changed() => {
+                    res = stop.changed(), if !stop_broken => {
+                        if res.is_err() {
+                            stop_broken = true;
+                            continue;
+                        }
                         link.cancel(batch_id, CANCEL_GRACE).await;
                         break Ok(BatchOutcome::Cancelled { at: 0 });
                     }
@@ -839,7 +846,6 @@ async fn drive_host(
                     let _ = tx
                         .send(Event::Unreachable {
                             host: name.clone(),
-                            index: batch[0].0,
                             msg,
                         })
                         .await;
@@ -850,7 +856,7 @@ async fn drive_host(
             }
         }
 
-        if let Some((index, err)) = deferred_error {
+        if !failed && let Some((index, err)) = deferred_error {
             let task = &plan.tasks[index];
             let results = vec![(None, TaskResult::failed_with(err.0))];
             failed = report_task(&tx, &name, index, task, &results, &[None], false).await;

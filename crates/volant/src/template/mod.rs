@@ -119,6 +119,14 @@ impl Templar {
     /// nothing changes. Best effort: a value that fails to render is left as written, so the
     /// error surfaces where the value is used, as it does in Ansible.
     pub fn resolve_vars(&self, vars: &Map<String, Value>) -> Map<String, Value> {
+        // Most maps hold no template at all, and `hostvars` is left alone below: walking them
+        // once is far cheaper than the two clones a pass costs.
+        if !vars
+            .iter()
+            .any(|(k, v)| k != "hostvars" && holds_template(v))
+        {
+            return vars.clone();
+        }
         let mut current = vars.clone();
         for _ in 0..5 {
             let mut next = current.clone();
@@ -173,6 +181,16 @@ impl Templar {
                 if truthy(&other) { "True" } else { "False" }
             ))),
         }
+    }
+}
+
+/// Whether any string inside a value still carries a template marker.
+fn holds_template(value: &Value) -> bool {
+    match value {
+        Value::String(s) => Templar::is_template(s),
+        Value::Array(items) => items.iter().any(holds_template),
+        Value::Object(map) => map.values().any(holds_template),
+        _ => false,
     }
 }
 

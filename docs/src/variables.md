@@ -15,7 +15,7 @@
 
 A fixed set of magic variables is added on top of every host's view and always wins: `inventory_hostname`, `inventory_hostname_short`, `group_names`, `groups`, `hostvars`, `play_hosts` and its aliases, `playbook_dir`, `inventory_dir`, `inventory_file`, `omit`, `ansible_check_mode`, `ansible_diff_mode`, `ansible_forks`, `ansible_version` and `volant_version` (see [ADR 0003](https://github.com/lorica-labs/volant/blob/main/docs/adr/0003-ansible-version-reports-the-reference-release.md)).
 
-`hostvars` is rebuilt from inventory and facts each time it is read, without the other host's own play or task variables: no facts are gathered from remote hosts yet, so cross-host variables are limited to what the inventory and `set_fact` already produced.
+`hostvars` holds what the inventory and `set_fact` produced for each host, without the other host's own play or task variables, and it is rebuilt whenever a fact changes. No facts are gathered from remote hosts yet, so that is all a cross-host lookup can see.
 
 ## Task keywords
 
@@ -51,4 +51,5 @@ For the modules whose arguments these variables and templates feed, see the [nat
 - `gather_facts` is accepted but does nothing: Volant warns and continues without facts. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
 - SSH connections: only `ansible_connection=local` runs today.
-- `hostvars` is rebuilt on every read rather than cached, and every host's view is computed even for inventories that only ever read one entry.
+- A host pattern, in a play's `hosts` or in `--limit`, is a list separated by `,` or `:`, and each entry is `all`, `*`, a group name or a host name. Volant reads no wildcard inside a name, no negation and no intersection, so `--limit 'web*'` matches nothing and stops the run.
+- `hostvars` is copied into every host's variables on every task, so the cost of resolving variables grows with the square of the inventory size. The map is cached between facts, which is enough for a few hundred hosts.

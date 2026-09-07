@@ -359,8 +359,8 @@ fn compile(pattern: &str, kwargs: &Kwargs) -> Result<regex::Regex, Error> {
 
 /// MiniJinja's string literals fold `\1`..`\7` into the raw byte `chr(1)`..`chr(7)` (a JSON-style
 /// octal escape); checked directly against ansible-core 2.19, its Jinja dialect does not do this
-/// at all (`\n`, `\t`, `\1`, `\x41`, even `\'` all stay perfectly literal in a string literal, see
-/// docs/superpowers/architecture.md). Undo the fold for the arguments that carry Python-style
+/// at all: `\n`, `\t`, `\1`, `\x41` and even `\'` all stay literal in a string literal.
+/// Undo the fold for the arguments that carry Python-style
 /// backreferences, so `'\1'` keeps meaning "backreference one" rather than a control byte.
 /// Only single-digit octal folds (`\0`-`\7`) are reversed, matching every golden case;
 /// MiniJinja's multi-digit octal folds (`\12` -> one byte) lose which digits were consumed, so a

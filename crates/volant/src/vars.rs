@@ -105,6 +105,15 @@ impl VarStore {
         &self.playbook_dir
     }
 
+    /// Moves the playbook-side roots to another playbook's directory, keeping the facts hosts
+    /// have gathered so far. Inventory-side sources do not move.
+    pub fn rebase(&mut self, playbook_dir: &Path) -> anyhow::Result<()> {
+        self.group_files[1] = load_vars_dir(&playbook_dir.join("group_vars"))?;
+        self.host_files[1] = load_vars_dir(&playbook_dir.join("host_vars"))?;
+        self.playbook_dir = playbook_dir.to_path_buf();
+        Ok(())
+    }
+
     pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
         self.facts
             .entry(host.to_string())

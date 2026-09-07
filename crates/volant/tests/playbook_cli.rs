@@ -177,6 +177,26 @@ fn vars_files_are_resolved_for_each_host() {
 }
 
 #[test]
+fn each_playbook_resolves_paths_against_its_own_directory() {
+    let out = volant(&[
+        "playbook",
+        &fixture("multi/first.yml"),
+        &fixture("multi/sub/second.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(r#"ok: [localhost] => {"msg": "kept here"}"#),
+        "the second playbook reads its own vars_files and keeps the first one's facts: {text}"
+    );
+}
+
+#[test]
 fn a_failed_host_leaves_the_following_plays() {
     let out = volant(&[
         "playbook",

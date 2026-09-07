@@ -1,0 +1,9 @@
+- name: Second
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/second.yml
+  tasks:
+    - name: Show both
+      debug:
+        msg: "{{ carried }} {{ from_second }}"

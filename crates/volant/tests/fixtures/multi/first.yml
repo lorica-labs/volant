@@ -1,0 +1,7 @@
+- name: First
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Remember
+      set_fact:
+        carried: kept

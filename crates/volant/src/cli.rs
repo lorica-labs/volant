@@ -115,6 +115,13 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         }
     };
 
+    // `resolve` recomputes inventory-load-time warnings (e.g. a host/group homonym) on every
+    // call, matching Ansible's own semantics for a single resolution; but a playbook with N plays
+    // calls `resolve` N times, and Ansible only ever prints such a warning once per run, at
+    // inventory load. Deduplicating here, at the point of printing, keeps `resolve`'s contract
+    // (its `Resolution.warnings` always reflects the truth for that one call, which callers other
+    // than this CLI loop may rely on) while matching the reference's once-per-run output.
+    let mut warned: HashSet<String> = HashSet::new();
     let mut current_dir = playbook_dir;
     'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
         let dir = base_dir(path);
@@ -128,6 +135,11 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 break 'plays;
             }
             let resolution = inventory.resolve(&play.hosts);
+            for warning in &resolution.warnings {
+                if warned.insert(warning.clone()) {
+                    out.warning(warning);
+                }
+            }
             for pattern in &resolution.unmatched {
                 out.warning(&format!(
                     "Could not match supplied host pattern, ignoring: {pattern}"

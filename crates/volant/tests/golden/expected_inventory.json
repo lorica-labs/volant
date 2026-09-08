@@ -1,0 +1,189 @@
+{
+  "groups": {
+    "db": [
+      "db1",
+      "db2"
+    ],
+    "same": [
+      "solo"
+    ],
+    "ungrouped": [
+      "lonely"
+    ],
+    "web": [
+      "web1",
+      "web2",
+      "web3"
+    ]
+  },
+  "homonym": {
+    "hosts": [
+      "same"
+    ],
+    "warning": true
+  },
+  "hostvars": {
+    "db1": {
+      "env": "prod"
+    },
+    "db2": {
+      "env": "prod"
+    },
+    "lonely": {
+      "ansible_connection": "local"
+    },
+    "web1": {
+      "ansible_host": "10.0.0.1",
+      "env": "prod",
+      "flag": true,
+      "grouped": 1000,
+      "http_port": 80,
+      "leading": "010",
+      "port": 8081,
+      "quoted": "a b",
+      "tier": "web",
+      "word": "yes"
+    },
+    "web2": {
+      "env": "prod",
+      "http_port": 80,
+      "tier": "web"
+    },
+    "web3": {
+      "env": "prod",
+      "http_port": 80,
+      "tier": "web"
+    }
+  },
+  "patterns": {
+    "!web": {
+      "hosts": [
+        "lonely",
+        "solo",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "*": {
+      "hosts": [
+        "lonely",
+        "solo",
+        "web1",
+        "web2",
+        "web3",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "all": {
+      "hosts": [
+        "lonely",
+        "solo",
+        "web1",
+        "web2",
+        "web3",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "all:!web": {
+      "hosts": [
+        "lonely",
+        "solo",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "missing": {
+      "hosts": [],
+      "warning": false
+    },
+    "prod:&web:!web3": {
+      "hosts": [
+        "web1",
+        "web2"
+      ],
+      "warning": false
+    },
+    "same": {
+      "hosts": [
+        "solo"
+      ],
+      "warning": false
+    },
+    "w*b1": {
+      "hosts": [
+        "web1"
+      ],
+      "warning": false
+    },
+    "web": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "warning": false
+    },
+    "web*": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "warning": false
+    },
+    "web,db": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "web,missing": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "warning": false
+    },
+    "web:&prod": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "warning": false
+    },
+    "web:db": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3",
+        "db1",
+        "db2"
+      ],
+      "warning": false
+    },
+    "web?": {
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "warning": false
+    },
+    "web[12]": {
+      "hosts": [],
+      "warning": false
+    }
+  }
+}

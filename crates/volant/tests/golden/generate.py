@@ -59,7 +59,54 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
+    return inventory()
+
+
+HOMONYM_WARNING = "Found both group and host with same name"
+
+
+def inventory():
+    inv = os.path.join(HERE, "inventory.ini")
+    dump = json.loads(subprocess.run(["ansible-inventory", "-i", inv, "--list"], capture_output=True, text=True, check=True).stdout)
+    hostvars = dump.get("_meta", {}).get("hostvars", {})
+    patterns = {}
+    with open(os.path.join(HERE, "patterns.txt"), encoding="utf-8") as f:
+        for line in f:
+            pattern = line.strip()
+            if not pattern:
+                continue
+            run = subprocess.run(["ansible", "-i", inv, pattern, "--list-hosts"], capture_output=True, text=True)
+            hosts = [h.strip() for h in run.stdout.splitlines()[1:] if h.strip()]
+            # Specifically the homonym warning, not any "WARNING" substring: ansible also warns
+            # on stderr for an unmatched term or an empty overall result ("Could not match
+            # supplied host pattern", "No hosts matched"), which is a distinct concept our
+            # Resolution keeps in `unmatched`, not `warnings`. Conflating the two here would make
+            # this field warn for reasons resolve() was never asked to reproduce.
+            patterns[pattern] = {"hosts": hosts, "warning": HOMONYM_WARNING in run.stderr}
+    groups = {name: sorted(body.get("hosts", [])) for name, body in dump.items() if name != "_meta" and "hosts" in body}
+    homonym = homonym_warning()
+    with open(os.path.join(HERE, "expected_inventory.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {"hostvars": hostvars, "groups": groups, "patterns": patterns, "homonym": homonym},
+            f,
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        f.write("\n")
+    print(f"inventory golden: {len(hostvars)} hosts, {len(patterns)} patterns")
     return 0
+
+
+def homonym_warning():
+    """A dedicated, minimal fixture where a group and one of its own hosts share a name: the one
+    case in this golden that must warn, kept apart from inventory.ini so that fixture's patterns
+    can test the opposite (that nothing there warns) without every one of them being drowned out
+    by a single homonym anywhere in the inventory triggering Ansible's load-time warning."""
+    inv = os.path.join(HERE, "homonym_inventory.ini")
+    run = subprocess.run(["ansible", "-i", inv, "same", "--list-hosts"], capture_output=True, text=True)
+    hosts = [h.strip() for h in run.stdout.splitlines()[1:] if h.strip()]
+    return {"hosts": hosts, "warning": HOMONYM_WARNING in run.stderr}
 
 
 if __name__ == "__main__":

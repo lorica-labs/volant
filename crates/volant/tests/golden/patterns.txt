@@ -1,0 +1,16 @@
+all
+*
+web
+web:db
+web,db
+!web
+all:!web
+web:&prod
+prod:&web:!web3
+web*
+web?
+web[12]
+w*b1
+same
+missing
+web,missing

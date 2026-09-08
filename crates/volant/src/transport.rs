@@ -179,10 +179,11 @@ impl Transport {
                     .local()
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
                 let agent = agent.display().to_string();
-                if let Some(escalation) = escalation {
-                    check_local_escalation(&agent, escalation).await?;
-                }
-                let argv = local_argv(&agent, escalation);
+                let escalated = match escalation {
+                    Some(e) => Some((e, check_local_escalation(&agent, e).await?)),
+                    None => None,
+                };
+                let argv = local_argv(&agent, escalated);
                 let child = Command::new(&argv[0])
                     .args(&argv[1..])
                     .stdin(Stdio::piped())
@@ -193,7 +194,7 @@ impl Transport {
                     .map_err(|e| {
                         ConnectError::Unreachable(format!("starting agent {agent}: {e}"))
                     })?;
-                AgentLink::new_with_preamble(child, preamble(escalation))
+                AgentLink::new_with_preamble(child, preamble(escalated))
                     .await
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
             }
@@ -202,39 +203,62 @@ impl Transport {
     }
 }
 
+/// Which `sudo` form a link uses. The escalation probe settles it and the link itself then
+/// uses the same one, so the two can never disagree about whether a password is offered.
+///
+/// `-n` is the form for a `sudo` that will not ask for anything: it never reads stdin, so
+/// nothing may be written to a link opened this way. That covers a `NOPASSWD` rule as much as
+/// an authentication still cached, and neither can be told from the other before asking.
+///
+/// `-k -S -p ''` is the form for a `sudo` that does ask, and `-k` there is not optional.
+/// Measured on `sudo` 1.9.15p5 and `sudo-rs` 0.2.13: while a previous authentication is still
+/// cached, `-S` does not read stdin at all, and the password written there would be read by the
+/// agent as the first bytes of its first frame. `-k` drops that cached authentication, so `-S`
+/// always consumes exactly the one line written for it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SudoForm {
+    NoPrompt,
+    ReadStdin,
+}
+
+impl SudoForm {
+    fn flags(self) -> &'static [&'static str] {
+        match self {
+            SudoForm::NoPrompt => &["-n"],
+            SudoForm::ReadStdin => &["-k", "-S", "-p", ""],
+        }
+    }
+}
+
+/// One escalation and the `sudo` form settled for it, or `None` for a link that does not
+/// escalate at all.
+type Escalated<'a> = Option<(&'a Escalation, SudoForm)>;
+
 /// The `sudo` password, as the bytes written to the child before any frame. Built here and
 /// nowhere else, so the only thing that ever holds it is a `Vec<u8>` on its way to a pipe.
-fn preamble(escalation: Option<&Escalation>) -> Option<Vec<u8>> {
-    let password = escalation?.password.as_ref()?;
+///
+/// Nothing is written unless the probe settled on the form that reads stdin. A `sudo` that
+/// needs no authentication leaves the line on the pipe, where the agent reads it as its first
+/// frame header and then never answers.
+fn preamble(escalated: Escalated<'_>) -> Option<Vec<u8>> {
+    let (escalation, form) = escalated?;
+    if form != SudoForm::ReadStdin {
+        return None;
+    }
+    let password = escalation.password.as_ref()?;
     let mut bytes = Vec::with_capacity(password.len() + 1);
     bytes.extend_from_slice(password.as_bytes());
     bytes.push(b'\n');
     Some(bytes)
 }
 
-/// The `sudo` options that decide how the password is obtained, as separate words.
-///
-/// Without a password, `-n` refuses to ask, so a host that wants one fails immediately instead
-/// of blocking on a prompt nothing will ever answer.
-///
-/// With one, `-k` is not optional. Measured on `sudo` 1.9.15p5 and `sudo-rs` 0.2.13: while a
-/// previous authentication is still cached, `-S` does not read stdin at all, and the password
-/// written there would be read by the agent as the first bytes of its first frame. `-k` drops
-/// that cached authentication, so `-S` always consumes exactly the one line written for it.
-fn sudo_auth_flags(escalation: &Escalation) -> &'static [&'static str] {
-    match escalation.password {
-        Some(_) => &["-k", "-S", "-p", ""],
-        None => &["-n"],
-    }
-}
-
 /// The command line that starts a local agent, under `sudo` when escalation is asked for.
-fn local_argv(agent: &str, escalation: Option<&Escalation>) -> Vec<String> {
-    let Some(escalation) = escalation else {
+fn local_argv(agent: &str, escalated: Escalated<'_>) -> Vec<String> {
+    let Some((escalation, form)) = escalated else {
         return vec![agent.to_string()];
     };
     let mut argv = vec!["sudo".to_string(), "-H".to_string()];
-    argv.extend(sudo_auth_flags(escalation).iter().map(|s| s.to_string()));
+    argv.extend(form.flags().iter().map(|s| s.to_string()));
     argv.extend([
         "-u".to_string(),
         escalation.user.clone(),
@@ -246,11 +270,12 @@ fn local_argv(agent: &str, escalation: Option<&Escalation>) -> Vec<String> {
 
 /// `sudo -H ... --`, up to but not including the agent, as shell words for a remote command.
 /// Empty without escalation, so one `format!` covers both cases at every call site.
-fn sudo_prefix(escalation: Option<&Escalation>) -> String {
-    let Some(escalation) = escalation else {
+fn sudo_prefix(escalated: Escalated<'_>) -> String {
+    let Some((escalation, form)) = escalated else {
         return String::new();
     };
-    let flags = sudo_auth_flags(escalation)
+    let flags = form
+        .flags()
         .iter()
         .map(|f| single_quoted(f))
         .collect::<Vec<_>>()
@@ -258,13 +283,64 @@ fn sudo_prefix(escalation: Option<&Escalation>) -> String {
     format!("sudo -H {flags} -u {} -- ", single_quoted(&escalation.user))
 }
 
+/// Which `sudo` form works for this link, asked of `sudo` itself rather than guessed from
+/// whether a password happens to be available.
+///
+/// `-n` goes first, because a `sudo` that needs no authentication never reads stdin and a
+/// password written to such a link would be read by the agent as its first frame header. Only
+/// a refusal for want of authentication opens the password path, and only when there is a
+/// password to offer: with none, `-n`'s refusal *is* the answer, and it is already worded for
+/// it. Any other refusal is final, since no password can fix a missing `sudo`, a rule that
+/// forbids the command, or a `sudo` that exited zero having run something else.
+async fn settle_form<F, Fut>(
+    escalation: &Escalation,
+    mut probe: F,
+) -> Result<SudoForm, ConnectError>
+where
+    F: FnMut(SudoForm) -> Fut,
+    Fut: std::future::Future<Output = Result<Captured, ConnectError>>,
+{
+    let quiet = probe(SudoForm::NoPrompt).await?;
+    let refusal = match escalation_outcome(quiet.code, &quiet.stdout, &quiet.stderr, None) {
+        Ok(()) => return Ok(SudoForm::NoPrompt),
+        Err(refusal) => refusal,
+    };
+    if escalation.password.is_none() || !refused_authentication(&quiet.stderr) {
+        return Err(refusal);
+    }
+    let offered = probe(SudoForm::ReadStdin).await?;
+    escalation_outcome(
+        offered.code,
+        &offered.stdout,
+        &offered.stderr,
+        escalation.password.as_deref(),
+    )
+    .map(|()| SudoForm::ReadStdin)
+}
+
 /// Asks `sudo` to print the agent's version as the escalated user, before the link itself is
 /// opened. A refusal is diagnosed here, from `sudo`'s own words, rather than turning up later
 /// as an agent that never answered; and because the agent has not started yet, nothing has to
 /// read a pipe the running agent also writes to.
-async fn check_local_escalation(agent: &str, escalation: &Escalation) -> Result<(), ConnectError> {
-    let mut argv = local_argv(agent, Some(escalation));
+async fn check_local_escalation(
+    agent: &str,
+    escalation: &Escalation,
+) -> Result<SudoForm, ConnectError> {
+    settle_form(escalation, move |form| {
+        local_escalation_probe(agent, escalation, form)
+    })
+    .await
+}
+
+/// One `sudo ... volant-agent --version` in the given form, and what it printed.
+async fn local_escalation_probe(
+    agent: &str,
+    escalation: &Escalation,
+    form: SudoForm,
+) -> Result<Captured, ConnectError> {
+    let mut argv = local_argv(agent, Some((escalation, form)));
     argv.push("--version".to_string());
+    let stdin = preamble(Some((escalation, form)));
     let mut command = Command::new(&argv[0]);
     command
         .args(&argv[1..])
@@ -272,14 +348,15 @@ async fn check_local_escalation(agent: &str, escalation: &Escalation) -> Result<
         .env("LC_ALL", "C")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(match escalation.password {
-            Some(_) => Stdio::piped(),
-            None => Stdio::null(),
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
         });
     let mut child = command
         .spawn()
         .map_err(|e| ConnectError::Become(format!("starting sudo: {e}")))?;
-    if let (Some(bytes), Some(mut pipe)) = (preamble(Some(escalation)), child.stdin.take()) {
+    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
         // A `sudo` that refuses before reading closes the pipe; its own words below say what
         // happened, so a broken pipe here is not the error worth reporting.
         let _ = pipe.write_all(&bytes).await;
@@ -289,12 +366,11 @@ async fn check_local_escalation(agent: &str, escalation: &Escalation) -> Result<
         .wait_with_output()
         .await
         .map_err(|e| ConnectError::Become(format!("waiting for sudo: {e}")))?;
-    escalation_outcome(
-        output.status.code(),
-        &String::from_utf8_lossy(&output.stdout),
-        &String::from_utf8_lossy(&output.stderr),
-        escalation.password.is_some(),
-    )
+    Ok(Captured {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 /// Whether `sudo` really did start the agent as the asked-for user, or why it did not.
@@ -305,17 +381,35 @@ async fn check_local_escalation(agent: &str, escalation: &Escalation) -> Result<
 /// The strings are the two `sudo` implementations' own, measured on the development machine
 /// (`sudo-rs` 0.2.13) and on the target machine (`sudo` 1.9.15p5); a host may run either, so
 /// both wordings are matched. Which of the two messages a match produces is decided by whether
-/// this link had a password to offer rather than by the text, whose split between "none given"
-/// and "wrong one" differs between the two implementations.
+/// `offered` carries the password this invocation wrote, rather than by the text, whose split
+/// between "none given" and "wrong one" differs between the two implementations.
 fn escalation_outcome(
     code: Option<i32>,
     stdout: &str,
     stderr: &str,
-    had_password: bool,
+    offered: Option<&str>,
 ) -> Result<(), ConnectError> {
     if code == Some(0) && stdout.trim() == format!("volant-agent {}", env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
+    if refused_authentication(stderr) {
+        return Err(ConnectError::Become(
+            if offered.is_some() {
+                INCORRECT_SUDO_PASSWORD
+            } else {
+                MISSING_SUDO_PASSWORD
+            }
+            .to_string(),
+        ));
+    }
+    Err(ConnectError::Become(first_words(
+        &redacted_stderr(stderr, offered),
+        "sudo refused without a message",
+    )))
+}
+
+/// Whether `sudo` refused because it wanted an authentication it did not get.
+fn refused_authentication(stderr: &str) -> bool {
     const AUTHENTICATION: &[&str] = &[
         "a password is required",
         "interactive authentication is required",
@@ -325,20 +419,23 @@ fn escalation_outcome(
         "Authentication failed",
         "Authentication required but not attempted",
     ];
-    if AUTHENTICATION.iter().any(|m| stderr.contains(m)) {
-        return Err(ConnectError::Become(
-            if had_password {
-                INCORRECT_SUDO_PASSWORD
-            } else {
-                MISSING_SUDO_PASSWORD
-            }
-            .to_string(),
-        ));
+    AUTHENTICATION.iter().any(|m| stderr.contains(m))
+}
+
+/// `sudo`'s own words on their way into a message an operator reads, with the password this
+/// invocation offered it taken back out.
+///
+/// No `sudo` measured for this echoes the password it was given, and this text only ever
+/// reaches a task result when `sudo` said something the two known implementations do not say.
+/// The password is the controller's own, so the path is closed by construction rather than by
+/// trusting every `sudo` on every host to keep it out of its stderr.
+fn redacted_stderr(stderr: &str, offered: Option<&str>) -> String {
+    match offered {
+        Some(password) if !password.is_empty() && stderr.contains(password) => {
+            stderr.replace(password, "<redacted>")
+        }
+        _ => stderr.to_string(),
     }
-    Err(ConnectError::Become(first_words(
-        stderr,
-        "sudo refused without a message",
-    )))
 }
 
 /// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
@@ -491,12 +588,13 @@ impl SshTarget {
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
         self.bootstrap(agents).await?;
-        if let Some(escalation) = escalation {
-            self.check_escalation(escalation).await?;
-        }
+        let escalated = match escalation {
+            Some(e) => Some((e, self.check_escalation(e).await?)),
+            None => None,
+        };
         let remote = format!(
             "exec {}{}",
-            sudo_prefix(escalation),
+            sudo_prefix(escalated),
             shell_word(&self.agent_path())
         );
         let child = Command::new("ssh")
@@ -507,29 +605,33 @@ impl SshTarget {
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| ConnectError::Unreachable(format!("starting ssh: {e}")))?;
-        AgentLink::new_with_preamble(child, preamble(escalation))
+        AgentLink::new_with_preamble(child, preamble(escalated))
             .await
             .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
     }
 
     /// The remote twin of `check_local_escalation`: one short `ssh` that asks `sudo` for the
     /// agent's version as the escalated user, so the link itself only ever opens once the host
-    /// has proved it will escalate.
-    async fn check_escalation(&self, escalation: &Escalation) -> Result<(), ConnectError> {
+    /// has proved it will escalate, in a form the host has proved it accepts.
+    async fn check_escalation(&self, escalation: &Escalation) -> Result<SudoForm, ConnectError> {
+        settle_form(escalation, move |form| {
+            self.escalation_probe(escalation, form)
+        })
+        .await
+    }
+
+    async fn escalation_probe(
+        &self,
+        escalation: &Escalation,
+        form: SudoForm,
+    ) -> Result<Captured, ConnectError> {
         let command = format!(
             "LC_ALL=C {}{} --version",
-            sudo_prefix(Some(escalation)),
+            sudo_prefix(Some((escalation, form))),
             shell_word(&self.agent_path())
         );
-        let captured = self
-            .run_capturing(&command, preamble(Some(escalation)).as_deref())
-            .await?;
-        escalation_outcome(
-            captured.code,
-            &captured.stdout,
-            &captured.stderr,
-            escalation.password.is_some(),
-        )
+        self.run_capturing(&command, preamble(Some((escalation, form))).as_deref())
+            .await
     }
 
     /// Makes sure the host has this exact agent version cached, uploading it if it does not.
@@ -755,13 +857,16 @@ mod tests {
         }
     }
 
-    /// Without a password `-n` refuses to ask, so a host that wants one fails fast. With one,
-    /// `-k` is what makes `-S` read stdin at all: measured on `sudo` 1.9.15p5 and `sudo-rs`
-    /// 0.2.13, a still-valid authentication makes `-S` leave the password on the pipe, where
-    /// the agent would read it as the first bytes of its first frame.
+    /// `-n` refuses to ask, so a host that wants a password fails fast instead of blocking on a
+    /// prompt nothing will ever answer. In the form that does read the password, `-k` is what
+    /// makes `-S` read stdin at all: measured on `sudo` 1.9.15p5 and `sudo-rs` 0.2.13, a
+    /// still-valid authentication makes `-S` leave the password on the pipe, where the agent
+    /// would read it as the first bytes of its first frame.
     #[test]
     fn the_sudo_command_line_names_the_user_and_asks_for_the_password_on_stdin() {
-        let argv = local_argv("/usr/bin/volant-agent", Some(&escalation(None)));
+        let password = format!("only-this-run-{}", std::process::id());
+        let secret = escalation(Some(password.as_str()));
+        let argv = local_argv("/usr/bin/volant-agent", Some((&secret, SudoForm::NoPrompt)));
         assert_eq!(
             argv,
             [
@@ -774,7 +879,10 @@ mod tests {
                 "/usr/bin/volant-agent"
             ]
         );
-        let argv = local_argv("/usr/bin/volant-agent", Some(&escalation(Some("s3cret"))));
+        let argv = local_argv(
+            "/usr/bin/volant-agent",
+            Some((&secret, SudoForm::ReadStdin)),
+        );
         assert_eq!(
             argv,
             [
@@ -791,7 +899,7 @@ mod tests {
             ]
         );
         assert!(
-            !argv.contains(&"s3cret".to_string()),
+            !argv.contains(&password),
             "the password never reaches a command line: {argv:?}"
         );
         assert_eq!(
@@ -801,16 +909,40 @@ mod tests {
         );
     }
 
+    /// The preamble follows the form the probe settled on, not whether a password happens to be
+    /// available: a `sudo` that needs no authentication never reads stdin, and the line written
+    /// for it would be read by the agent as its first frame header.
+    #[test]
+    fn only_the_form_that_reads_stdin_is_given_the_password() {
+        let password = format!("only-this-run-{}", std::process::id());
+        let secret = escalation(Some(password.as_str()));
+        assert_eq!(
+            preamble(Some((&secret, SudoForm::ReadStdin))),
+            Some(format!("{password}\n").into_bytes())
+        );
+        assert_eq!(preamble(Some((&secret, SudoForm::NoPrompt))), None);
+        assert_eq!(
+            preamble(Some((&escalation(None), SudoForm::ReadStdin))),
+            None
+        );
+        assert_eq!(preamble(None), None);
+    }
+
     #[test]
     fn the_remote_sudo_prefix_quotes_the_user_and_carries_no_password() {
-        let prefix = sudo_prefix(Some(&escalation(Some("s3cret"))));
+        let password = format!("only-this-run-{}", std::process::id());
+        let secret = escalation(Some(password.as_str()));
+        let prefix = sudo_prefix(Some((&secret, SudoForm::ReadStdin)));
         assert_eq!(prefix, "sudo -H '-k' '-S' '-p' '' -u 'deploy' -- ");
-        assert!(!prefix.contains("s3cret"), "{prefix}");
+        assert!(!prefix.contains(&password), "{prefix}");
         assert_eq!(
-            sudo_prefix(Some(&Escalation {
-                user: "it's me".into(),
-                password: None
-            })),
+            sudo_prefix(Some((
+                &Escalation {
+                    user: "it's me".into(),
+                    password: None
+                },
+                SudoForm::NoPrompt
+            ))),
             r"sudo -H '-n' -u 'it'\''s me' -- ",
             "a user name that would otherwise break out of the remote shell word is quoted"
         );
@@ -823,20 +955,17 @@ mod tests {
     /// implementations split their wording between the two cases differently.
     #[test]
     fn sudos_refusals_are_told_apart_by_whether_a_password_was_offered() {
-        let outcome = |stderr: &str, had_password| match escalation_outcome(
-            Some(1),
-            "",
-            stderr,
-            had_password,
-        ) {
+        let outcome = |stderr: &str, offered| match escalation_outcome(Some(1), "", stderr, offered)
+        {
             Err(ConnectError::Become(msg)) => msg,
             other => panic!("expected Become, got {other:?}"),
         };
+        let password = format!("only-this-run-{}", std::process::id());
         for stderr in [
             "sudo: a password is required",
             "sudo: interactive authentication is required",
         ] {
-            assert_eq!(outcome(stderr, false), MISSING_SUDO_PASSWORD, "{stderr}");
+            assert_eq!(outcome(stderr, None), MISSING_SUDO_PASSWORD, "{stderr}");
         }
         for stderr in [
             "Sorry, try again.\n\nsudo: no password was provided",
@@ -844,17 +973,145 @@ mod tests {
             "sudo: Authentication required but not attempted",
             "sudo: 1 incorrect password attempt",
         ] {
-            assert_eq!(outcome(stderr, true), INCORRECT_SUDO_PASSWORD, "{stderr}");
+            assert_eq!(
+                outcome(stderr, Some(password.as_str())),
+                INCORRECT_SUDO_PASSWORD,
+                "{stderr}"
+            );
         }
         assert_eq!(
-            outcome("sh: 1: sudo: not found", false),
+            outcome("sh: 1: sudo: not found", None),
             "sh: 1: sudo: not found",
             "a host without sudo gets the shell's own words, not a guess about passwords"
         );
         assert_eq!(
-            outcome("", false),
+            outcome("", None),
             "sudo refused without a message",
             "a silent refusal still says something"
+        );
+    }
+
+    /// `sudo`'s own words are the message when it says something neither known implementation
+    /// says, and that message reaches a task result. No measured `sudo` echoes the password it
+    /// was offered, but the password belongs to the controller, so the path is closed by
+    /// construction rather than by trusting every `sudo` on every host.
+    #[test]
+    fn sudos_own_words_cannot_carry_the_password_back_into_a_message() {
+        let password = format!("only-this-run-{}", std::process::id());
+        let stderr = format!("sudo: bespoke build read '{password}' and disliked it");
+        let Err(ConnectError::Become(msg)) =
+            escalation_outcome(Some(1), "", &stderr, Some(password.as_str()))
+        else {
+            panic!("expected Become");
+        };
+        assert!(!msg.contains(&password), "{msg}");
+        assert!(
+            msg.contains("<redacted>") && msg.contains("disliked it"),
+            "the rest of what sudo said survives: {msg}"
+        );
+    }
+
+    fn agent_version() -> Captured {
+        Captured {
+            code: Some(0),
+            stdout: format!("volant-agent {}", env!("CARGO_PKG_VERSION")),
+            stderr: String::new(),
+        }
+    }
+
+    fn refused(stderr: &str) -> Captured {
+        Captured {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: stderr.to_string(),
+        }
+    }
+
+    /// The `sudo` form is settled by asking `sudo`, not by whether a password happens to be
+    /// available. A `sudo` that answers `-n` needs no authentication - a `NOPASSWD` rule, or an
+    /// authentication still cached - and never reads stdin, so nothing may be written to a link
+    /// opened that way even when the operator did supply a password: the line would sit on the
+    /// pipe for the agent to read as its first frame header. Only a refusal for want of
+    /// authentication opens the password path, and with no password to offer that refusal is
+    /// itself the answer.
+    #[tokio::test]
+    async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
+        use std::cell::RefCell;
+        use std::future::ready;
+
+        let password = format!("only-this-run-{}", std::process::id());
+        let with = escalation(Some(password.as_str()));
+        let without = escalation(None);
+
+        let asked = RefCell::new(Vec::new());
+        let form = settle_form(&with, |form| {
+            asked.borrow_mut().push(form);
+            ready(Ok(agent_version()))
+        })
+        .await
+        .expect("a sudo that answers -n escalates");
+        assert_eq!(form, SudoForm::NoPrompt);
+        assert_eq!(
+            *asked.borrow(),
+            [SudoForm::NoPrompt],
+            "a sudo that needs no authentication is never asked a second time"
+        );
+        assert_eq!(
+            preamble(Some((&with, form))),
+            None,
+            "and is never written a password it would leave on the pipe"
+        );
+
+        let asked = RefCell::new(Vec::new());
+        let form = settle_form(&with, |form| {
+            asked.borrow_mut().push(form);
+            ready(Ok(match form {
+                SudoForm::NoPrompt => refused("sudo: a password is required"),
+                SudoForm::ReadStdin => agent_version(),
+            }))
+        })
+        .await
+        .expect("the password answers the refusal");
+        assert_eq!(form, SudoForm::ReadStdin);
+        assert_eq!(*asked.borrow(), [SudoForm::NoPrompt, SudoForm::ReadStdin]);
+        assert!(preamble(Some((&with, form))).is_some());
+
+        let asked = RefCell::new(Vec::new());
+        let err = settle_form(&without, |form| {
+            asked.borrow_mut().push(form);
+            ready(Ok(refused("sudo: a password is required")))
+        })
+        .await
+        .expect_err("no password to offer");
+        assert_eq!(err.to_string(), MISSING_SUDO_PASSWORD);
+        assert_eq!(
+            *asked.borrow(),
+            [SudoForm::NoPrompt],
+            "with nothing to offer there is nothing to try twice"
+        );
+
+        let err = settle_form(&with, |form| {
+            ready(Ok(match form {
+                SudoForm::NoPrompt => refused("sudo: a password is required"),
+                SudoForm::ReadStdin => refused("sudo: 1 incorrect password attempt"),
+            }))
+        })
+        .await
+        .expect_err("the password was wrong");
+        assert_eq!(err.to_string(), INCORRECT_SUDO_PASSWORD);
+
+        let asked = RefCell::new(Vec::new());
+        let err = settle_form(&with, |form| {
+            asked.borrow_mut().push(form);
+            ready(Ok(refused("sh: 1: sudo: not found")))
+        })
+        .await
+        .expect_err("no sudo at all");
+        assert_eq!(err.to_string(), "sh: 1: sudo: not found");
+        assert_eq!(
+            *asked.borrow(),
+            [SudoForm::NoPrompt],
+            "a refusal no password can answer is final"
         );
     }
 
@@ -864,17 +1121,17 @@ mod tests {
     #[test]
     fn escalation_succeeds_only_on_the_agents_own_version_line() {
         let version = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
-        assert!(escalation_outcome(Some(0), &version, "", false).is_ok());
+        assert!(escalation_outcome(Some(0), &version, "", None).is_ok());
         assert!(
-            escalation_outcome(Some(0), &format!("{version}\n"), "", false).is_ok(),
+            escalation_outcome(Some(0), &format!("{version}\n"), "", None).is_ok(),
             "a trailing newline is not a different version"
         );
         assert!(
-            escalation_outcome(Some(0), "volant-agent 0.0.0-stale", "", false).is_err(),
+            escalation_outcome(Some(0), "volant-agent 0.0.0-stale", "", None).is_err(),
             "another version is not this agent"
         );
         assert!(
-            escalation_outcome(Some(0), "", "", false).is_err(),
+            escalation_outcome(Some(0), "", "", None).is_err(),
             "a zero exit with nothing printed proves nothing"
         );
     }

@@ -99,9 +99,13 @@ impl Config {
         {
             config.become_user = user.trim().to_string();
         }
-        // Kept exactly as written, blank included, so the startup check refuses it by name
-        // rather than falling back to `sudo` for an operator who asked for something else.
-        if let Ok(method) = std::env::var("ANSIBLE_BECOME_METHOD") {
+        // Kept exactly as written, so the escalation check refuses an unsupported method by
+        // name rather than falling back to `sudo` for an operator who asked for something else.
+        // A blank value is no such request: an unset variable an exporting shell passed on as
+        // an empty one leaves the default alone, the way an empty `become_user` does.
+        if let Ok(method) = std::env::var("ANSIBLE_BECOME_METHOD")
+            && !method.trim().is_empty()
+        {
             config.become_method = method.trim().to_string();
         }
         config
@@ -152,8 +156,14 @@ fn parse(text: &str, base: &Path) -> Config {
                         config.become_user = user.to_string();
                     }
                 }
-                // Kept as written so an unsupported method is refused by name at startup.
-                "become_method" => config.become_method = value.trim().to_string(),
+                // Kept as written so an unsupported method is refused by name, but a blank
+                // `become_method =` line asks for nothing and leaves the default alone.
+                "become_method" => {
+                    let method = value.trim();
+                    if !method.is_empty() {
+                        config.become_method = method.to_string();
+                    }
+                }
                 _ => {}
             }
             continue;
@@ -326,7 +336,12 @@ mod tests {
         );
         assert_eq!(
             c.become_method, "su",
-            "kept as written so the startup check can refuse it by name"
+            "kept as written so the escalation check can refuse it by name"
+        );
+        let c = parse("[privilege_escalation]\nbecome_method =\n", Path::new("."));
+        assert_eq!(
+            c.become_method, DEFAULT_BECOME_METHOD,
+            "a blank line asks for nothing and must not refuse every escalated run"
         );
         let c = parse("[defaults]\nforks = 7\n", Path::new("."));
         assert_eq!(

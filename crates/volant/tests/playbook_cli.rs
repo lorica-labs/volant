@@ -607,6 +607,32 @@ fn unsupported_become_methods_are_refused_by_name() {
         "the environment variable is refused by name too: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // The same environment against a playbook that escalates nowhere: the method is never used,
+    // so there is nothing to refuse. Refusing here would abort every run on a machine whose
+    // operator set the variable for something else entirely.
+    let plain = dir.join("plain.yml");
+    std::fs::write(
+        &plain,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug:\n        msg: nothing escalates here\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &plain.display().to_string()])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_BECOME_METHOD", "doas")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a run that never escalates is unaffected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("nothing escalates here"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -678,6 +704,50 @@ fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
     assert!(text.contains(r#""msg": "escalated""#), "{text}");
     assert!(
         !text.contains(&expected),
+        "the password never reaches the output: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `sudo` that needs no authentication at all - a `NOPASSWD` rule - never reads stdin,
+/// whatever flags it is given: `-k` invalidates a cached authentication, and there is nothing
+/// cached to invalidate. So the presence of a password is no reason to write one. Written
+/// anyway, the line stays on the pipe and the agent reads it as the first bytes of its first
+/// frame; the escalation check still passes, and the run then dies as `UNREACHABLE` with no
+/// answer from the agent, which is exactly the unexplained failure this guards against.
+///
+/// The fake `sudo` here never reads a line, so a run that survives it is a run that wrote
+/// nothing. The `-K` answer is built from this process's own id rather than written as a
+/// literal, so two runs never share one.
+#[test]
+fn a_sudo_that_reads_no_password_is_never_written_one() {
+    let dir = fake_sudo(
+        "nopasswd",
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+         shift\n\
+         exec \"$@\"\n",
+    );
+    let answer = format!("only-this-run-{}", std::process::id());
+    let out = volant_with_password(
+        &["playbook", "-K", &fixture("become-password.yml")],
+        &dir,
+        &format!("{answer}\n"),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(r#""msg": "escalated""#),
+        "the agent's first frame is the handshake, not the password: {text}"
+    );
+    assert!(!text.contains("UNREACHABLE"), "{text}");
+    assert!(
+        !text.contains(&answer) && !String::from_utf8_lossy(&out.stderr).contains(&answer),
         "the password never reaches the output: {text}"
     );
     let _ = std::fs::remove_dir_all(&dir);

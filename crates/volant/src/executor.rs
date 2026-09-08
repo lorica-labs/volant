@@ -353,17 +353,6 @@ fn become_for(
     defaults: &ConnectionDefaults,
     templar: &Templar,
 ) -> Result<Option<Escalation>, TemplateError> {
-    // A method arriving as a variable is refused here, the way the playbook's own keyword is
-    // refused at load time. The inventory files themselves are checked before the run starts;
-    // this catches the same value reaching a host through `group_vars`, `host_vars`,
-    // `--extra-vars` or a `set_fact`.
-    if let Some(method) = vars.get("ansible_become_method").and_then(Value::as_str)
-        && method != crate::playbook::BECOME_METHOD
-    {
-        return Err(TemplateError(format!(
-            "ansible_become_method '{method}' is not supported yet"
-        )));
-    }
     let on = vars
         .get("ansible_become")
         .and_then(as_bool_value)
@@ -372,6 +361,29 @@ fn become_for(
         .unwrap_or(defaults.r#become);
     if !on {
         return Ok(None);
+    }
+    // The method is refused here, for the task that would actually use it, the way the
+    // playbook's own keyword is refused at load time. A task that escalates nowhere is not
+    // affected by a method it never runs.
+    //
+    // A variable beats the defaults, which carry `ansible.cfg`, its environment variables and
+    // the command line. The startup pass already refuses what it can see; this catches the same
+    // value reaching an escalating task through `group_vars`, `host_vars`, `--extra-vars` or a
+    // `set_fact`, and the defaults for a task whose escalation the startup pass could not see.
+    match vars.get("ansible_become_method").and_then(Value::as_str) {
+        Some(method) if method != crate::playbook::BECOME_METHOD => {
+            return Err(TemplateError(format!(
+                "ansible_become_method '{method}' is not supported yet"
+            )));
+        }
+        Some(_) => {}
+        None if defaults.become_method != crate::playbook::BECOME_METHOD => {
+            return Err(TemplateError(format!(
+                "become_method '{}' is not supported yet",
+                defaults.become_method
+            )));
+        }
+        None => {}
     }
     let user = match vars.get("ansible_become_user").and_then(Value::as_str) {
         Some(user) => user.to_string(),
@@ -405,7 +417,7 @@ fn become_for(
 
 /// A variable's boolean, whether the inventory typed it as one or spelled it the way Ansible
 /// content spells one (`yes`, `on`, `"true"`).
-fn as_bool_value(value: &Value) -> Option<bool> {
+pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
     match value {
         Value::Bool(b) => Some(*b),
         Value::String(s) => crate::yaml::bool_from_str(s.trim()),
@@ -1441,6 +1453,33 @@ mod tests {
             err.0.contains("su") && err.0.contains("not supported"),
             "{}",
             err.0
+        );
+        assert_eq!(
+            become_for(
+                &task("command"),
+                &plan(),
+                &vars(json!({"ansible_become_method": "su"})),
+                &defaults(),
+                &templar,
+            )
+            .unwrap(),
+            None,
+            "a task that escalates nowhere is not refused for a method it never runs"
+        );
+        let d = ConnectionDefaults {
+            become_method: "doas".into(),
+            ..defaults()
+        };
+        let err = become_for(&t, &plan(), &Map::new(), &d, &templar).unwrap_err();
+        assert!(
+            err.0.contains("doas") && err.0.contains("not supported"),
+            "the defaults are refused for an escalating task the startup pass could not see: {}",
+            err.0
+        );
+        assert_eq!(
+            become_for(&task("command"), &plan(), &Map::new(), &d, &templar).unwrap(),
+            None,
+            "and the same defaults leave a task that never escalates alone"
         );
     }
 

@@ -113,31 +113,48 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .map(|p| playbook::load(p))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let agents = agent::AgentSource::discover();
-    // Refused by name before a single host is reached, wherever it came from. Escalating with
-    // `sudo` because `su` is not implemented would run the task under rules the operator never
-    // wrote, so this is a startup refusal and not a warning.
+    // Refused by name before a single host is reached, wherever the method came from.
+    // Escalating with `sudo` because `su` is not implemented would run the task under rules the
+    // operator never wrote, so this is a startup refusal and not a warning.
+    //
+    // It speaks only for a run that escalates: an `ansible.cfg` or an `ANSIBLE_BECOME_METHOD`
+    // naming another program is no reason to refuse a playbook that never becomes anyone. What
+    // this pass cannot see - a task keyword, or a variable arriving through `group_vars`,
+    // `host_vars`, `--extra-vars` or a `set_fact` - is refused per task, as a failure, when
+    // that task resolves its escalation.
     let become_method = args
         .become_method
         .clone()
         .unwrap_or(config.become_method.clone());
-    if become_method != playbook::BECOME_METHOD {
-        anyhow::bail!("become_method '{become_method}' is not supported yet");
-    }
-    // The same refusal for the inventory's own variables, before the first host is reached.
-    // The value can still arrive later through `group_vars`, `host_vars`, `--extra-vars` or a
-    // `set_fact`, which no startup pass can see; those are refused per task, as a failure, when
-    // the escalation is resolved.
-    for host in inventory.resolve("all").hosts {
-        if let Some(method) = host
-            .vars
-            .get("ansible_become_method")
-            .and_then(|v| v.as_str())
-            && method != playbook::BECOME_METHOD
-        {
-            anyhow::bail!(
-                "host '{}': ansible_become_method '{method}' is not supported yet",
-                host.name
-            );
+    let all_hosts = inventory.resolve("all").hosts;
+    let escalates = args.r#become
+        || config.r#become
+        || playbooks
+            .iter()
+            .flat_map(|pb| &pb.plays)
+            .any(|play| play.r#become == Some(true))
+        || all_hosts.iter().any(|host| {
+            host.vars
+                .get("ansible_become")
+                .and_then(executor::as_bool_value)
+                == Some(true)
+        });
+    if escalates {
+        if become_method != playbook::BECOME_METHOD {
+            anyhow::bail!("become_method '{become_method}' is not supported yet");
+        }
+        for host in &all_hosts {
+            if let Some(method) = host
+                .vars
+                .get("ansible_become_method")
+                .and_then(|v| v.as_str())
+                && method != playbook::BECOME_METHOD
+            {
+                anyhow::bail!(
+                    "host '{}': ansible_become_method '{method}' is not supported yet",
+                    host.name
+                );
+            }
         }
     }
     let defaults = ConnectionDefaults {
@@ -280,16 +297,18 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
 /// stdout still carries only the run's own output.
 ///
 /// The echo is turned off by the shell that reads the line rather than from here, and that
-/// shell arms its `trap` before touching the terminal: a Ctrl-C or a `SIGTERM` while the
-/// operator is typing reaches the whole foreground process group, so the shell restores the
-/// echo on its way out even though this process is dying too. Doing it from Rust would need a
-/// `Drop` that a signal never runs, and a terminal left with the echo off is a poor parting
-/// gift. Where stdin is not a terminal, `stty` fails, its complaint is dropped and the line is
-/// read as it comes.
+/// shell arms its `trap` before touching the terminal: a Ctrl-C, a Ctrl-\ or a `SIGTERM` while
+/// the operator is typing reaches the whole foreground process group, so the shell restores the
+/// echo on its way out even though this process is dying too. `QUIT` is in the list because
+/// Ctrl-\ is a key an operator reaches for at a prompt that seems stuck, and it would otherwise
+/// kill the shell with the echo still off, leaving a terminal that types nothing back. Doing
+/// this from Rust would need a `Drop` that a signal never runs, and a terminal left with the
+/// echo off is a poor parting gift. Where stdin is not a terminal, `stty` fails, its complaint
+/// is dropped and the line is read as it comes.
 #[cfg(unix)]
 fn ask_become_password() -> anyhow::Result<String> {
     use std::process::Stdio;
-    const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT TERM HUP\n\
+    const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
          stty -echo 2>/dev/null\n\
          IFS= read -r password || exit 1\n\
          printf %s \"$password\"\n";

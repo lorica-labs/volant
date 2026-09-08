@@ -148,14 +148,18 @@ fn split_args(host: &Host, key: &str) -> anyhow::Result<Vec<String>> {
     })
 }
 
-/// One remote path as a single shell word. A leading `~` stays bare so the remote shell,
-/// the only thing that can, expands it; the rest is single-quoted, so a `remote_tmp` holding
-/// a space or a shell metacharacter cannot split into several words or run anything.
+/// One remote path as a single shell word. A leading `~` or `~user` stays bare, up to and
+/// including the first `/`, so the remote shell, the only thing that can, expands it; the rest
+/// is single-quoted, so a `remote_tmp` holding a space or a shell metacharacter cannot split
+/// into several words or run anything.
 fn shell_word(path: &str) -> String {
-    match path.strip_prefix('~') {
-        Some("") => "~".to_string(),
-        Some(rest) if rest.starts_with('/') => format!("~/{}", single_quoted(&rest[1..])),
-        _ => single_quoted(path),
+    let Some(rest) = path.strip_prefix('~') else {
+        return single_quoted(path);
+    };
+    match rest.find('/') {
+        Some(slash) => format!("~{}/{}", &rest[..slash], single_quoted(&rest[slash + 1..])),
+        // Just `~` or `~user`, with nothing after it to hold a space or a metacharacter.
+        None => path.to_string(),
     }
 }
 
@@ -249,7 +253,10 @@ impl SshTarget {
     /// transfer cut short never lands under the final name; older cached versions are removed
     /// afterwards, and failing to remove one does not fail an upload that has already landed.
     /// The temporary name carries the remote shell's pid, so two uploads racing on one host
-    /// write to separate files instead of interleaving into one of exactly the right size.
+    /// write to separate files instead of interleaving into one of exactly the right size. A
+    /// connection killed mid-transfer still orphans its own `.tmp.<pid>` file, since nothing
+    /// left running can clean it up; an hour-old sweep after a successful `mv` removes those
+    /// without ever touching a sibling upload still in flight.
     pub fn upload_command(&self, size: u64) -> String {
         format!(
             "d={dir}; mkdir -p \"$d\" || exit 1; \
@@ -261,6 +268,7 @@ impl SshTarget {
              [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \
              chmod 755 \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
              mv \"$t\" \"$d/volant-agent\" || {{ rm -f \"$t\"; exit 1; }}; \
+             find \"$d\" -name 'volant-agent.tmp.*' -mmin +60 -delete 2>/dev/null; \
              for old in {tmp}/volant-agent-*; do [ \"$old\" = \"$d\" ] || rm -rf \"$old\"; done; \
              exit 0",
             dir = shell_word(&self.cache_dir()),
@@ -291,23 +299,17 @@ impl SshTarget {
         if probe.code == Some(0) && probe.stdout.trim() == expected {
             return Ok(());
         }
-        // Exit 42 means the probe itself read the architecture off the machine. Anything else
-        // is a cached agent this controller cannot use (another version), a cached agent that
-        // cannot run at all, or a remote shell that failed outright, so its stdout cannot be
-        // read as a version string. Ask the machine again, separately.
+        // Exit 42 means the probe itself read the architecture off the machine. A cached agent
+        // that cannot run (45) takes the same fallback path as a wrong version: this
+        // controller wrote that file with a verified byte count and an atomic rename, but a
+        // truncated or `ENOEXEC` file it left behind before that check existed, or after a
+        // hard-killed run, wears the same symptom, and it used to heal on the next run. So
+        // exit 45 gets one more upload before it is reported; the post-upload re-probe is what
+        // errors if a fresh copy still cannot run. Anything else is a remote shell that failed
+        // outright, so its stdout cannot be read as a version string. Ask the machine again,
+        // separately.
         let arch = match probe.code {
             Some(EXIT_AGENT_MISSING) => probe.stdout.trim().to_string(),
-            // A cached agent that refuses to run is not something a fresh copy can settle:
-            // this controller writes that file with a verified byte count and an atomic
-            // rename, so a `noexec` mount, a wrapper script or a foreign architecture is the
-            // reason, and overwriting it would hide all three behind a silent re-upload.
-            Some(EXIT_AGENT_UNRUNNABLE) => {
-                return Err(ConnectError::Unreachable(format!(
-                    "the cached agent {} cannot be run: {}",
-                    self.agent_path(),
-                    first_words(&probe.stderr, "it failed without a message")
-                )));
-            }
             Some(EXIT_UNAME_FAILED) => {
                 return Err(ConnectError::Unreachable(format!(
                     "the remote shell failed: {}",
@@ -315,7 +317,9 @@ impl SshTarget {
                 )));
             }
             _ => {
-                let uname = self.run_capturing("uname -m", None).await?;
+                let uname = self
+                    .run_capturing(&format!("uname -m || exit {EXIT_UNAME_FAILED}"), None)
+                    .await?;
                 if uname.code != Some(0) {
                     return Err(ConnectError::Unreachable(format!(
                         "the remote shell failed: {}",
@@ -370,8 +374,19 @@ impl SshTarget {
                 )));
             }
         }
-        // Ask the host what it now has rather than trusting the write.
+        // Ask the host what it now has rather than trusting the write. A persisting 45 names
+        // the real cause instead of the generic mismatch message: the freshly uploaded copy is
+        // there, and still cannot run, so the fault is the host's (a `noexec` mount, SELinux,
+        // a wrapper script or a foreign architecture), not a stale file this controller can fix
+        // by trying again.
         let check = self.run_capturing(&self.probe_command(), None).await?;
+        if check.code == Some(EXIT_AGENT_UNRUNNABLE) {
+            return Err(ConnectError::Unreachable(format!(
+                "the cached agent {} cannot be run: {}",
+                self.agent_path(),
+                first_words(&check.stderr, "it failed without a message")
+            )));
+        }
         if check.code != Some(0) || check.stdout.trim() != expected {
             return Err(ConnectError::Unreachable(
                 "agent version mismatch after upload".to_string(),
@@ -654,6 +669,14 @@ mod tests {
             upload.find("wc -c").unwrap() < upload.find("chmod 755").unwrap(),
             "the size is checked before the file becomes executable: {upload}"
         );
+        assert!(
+            upload.contains("-name 'volant-agent.tmp.*' -mmin +60 -delete"),
+            "an orphaned temporary from a killed connection is swept, never a live sibling: {upload}"
+        );
+        assert!(
+            upload.find("mv ").unwrap() < upload.find("-mmin +60").unwrap(),
+            "the sweep runs after this upload's own file has already been renamed away: {upload}"
+        );
     }
 
     /// Run against a real `sh`, because the failure this guards against is a shell parsing
@@ -712,6 +735,23 @@ mod tests {
             String::from_utf8_lossy(&probe.stderr)
         );
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn shell_word_expands_only_the_tilde_prefix() {
+        assert_eq!(shell_word("~/a b/c"), "~/'a b/c'");
+        assert_eq!(shell_word("~"), "~");
+        assert_eq!(
+            shell_word("~deploy/a b"),
+            "~deploy/'a b'",
+            "a named user's home expands too, not just the caller's own"
+        );
+        assert_eq!(shell_word("/var/tmp/a b"), "'/var/tmp/a b'");
+        assert_eq!(
+            shell_word("~/it's here"),
+            r"~/'it'\''s here'",
+            "an embedded single quote in the quoted remainder is escaped"
+        );
     }
 
     #[test]

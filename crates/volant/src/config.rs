@@ -187,7 +187,8 @@ mod tests {
             parse("[defaults]\nremote_tmp =   \n", Path::new(".")).remote_tmp,
             DEFAULT_REMOTE_TMP
         );
-        let saved = std::env::var("ANSIBLE_REMOTE_TMP").ok();
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        let saved_tmp = std::env::var("ANSIBLE_REMOTE_TMP").ok();
         unsafe {
             std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
             std::env::set_var("ANSIBLE_REMOTE_TMP", "   ");
@@ -196,8 +197,11 @@ mod tests {
         unsafe { std::env::set_var("ANSIBLE_REMOTE_TMP", "/var/tmp/v") };
         assert_eq!(Config::load().remote_tmp, "/var/tmp/v");
         unsafe {
-            std::env::remove_var("ANSIBLE_CONFIG");
-            match saved {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+            match saved_tmp {
                 Some(v) => std::env::set_var("ANSIBLE_REMOTE_TMP", v),
                 None => std::env::remove_var("ANSIBLE_REMOTE_TMP"),
             }

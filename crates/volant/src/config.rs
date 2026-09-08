@@ -60,8 +60,12 @@ impl Config {
         {
             config.host_key_checking = on;
         }
-        if let Ok(tmp) = std::env::var("ANSIBLE_REMOTE_TMP") {
-            config.remote_tmp = tmp;
+        // A blank value is refused here as it is in the file: an empty `remote_tmp` makes the
+        // remote `mkdir` fail on an empty path, and the run then blames the upload.
+        if let Ok(tmp) = std::env::var("ANSIBLE_REMOTE_TMP")
+            && !tmp.trim().is_empty()
+        {
+            config.remote_tmp = tmp.trim().to_string();
         }
         config
     }
@@ -173,6 +177,31 @@ mod tests {
             parse("[defaults]\nhost_key_checking = maybe\n", Path::new(".")).host_key_checking,
             "an unreadable value leaves the safe default alone"
         );
+    }
+
+    /// `ANSIBLE_REMOTE_TMP=` used to be taken at face value, and an empty remote path makes
+    /// the agent's cache directory impossible to create. The file arm already refused it.
+    #[test]
+    fn a_blank_remote_tmp_is_refused_wherever_it_comes_from() {
+        assert_eq!(
+            parse("[defaults]\nremote_tmp =   \n", Path::new(".")).remote_tmp,
+            DEFAULT_REMOTE_TMP
+        );
+        let saved = std::env::var("ANSIBLE_REMOTE_TMP").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("ANSIBLE_REMOTE_TMP", "   ");
+        }
+        assert_eq!(Config::load().remote_tmp, DEFAULT_REMOTE_TMP);
+        unsafe { std::env::set_var("ANSIBLE_REMOTE_TMP", "/var/tmp/v") };
+        assert_eq!(Config::load().remote_tmp, "/var/tmp/v");
+        unsafe {
+            std::env::remove_var("ANSIBLE_CONFIG");
+            match saved {
+                Some(v) => std::env::set_var("ANSIBLE_REMOTE_TMP", v),
+                None => std::env::remove_var("ANSIBLE_REMOTE_TMP"),
+            }
+        }
     }
 
     #[test]

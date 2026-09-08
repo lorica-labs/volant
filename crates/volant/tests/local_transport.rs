@@ -169,14 +169,19 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
 async fn a_silent_agent_fails_the_handshake_within_the_timeout() {
     // A program that never answers stands in for a hung agent.
     let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
-    let mut link = transport.connect(&sleep_as_agent()).await;
-    // `/bin/sleep` needs an argument to run; a spawn failure is fine too, the point is below.
-    if let Ok(link) = link.as_mut() {
-        let started = std::time::Instant::now();
-        let err = tokio::time::timeout(std::time::Duration::from_secs(1), link.handshake()).await;
-        assert!(err.is_err() || err.unwrap().is_err());
-        assert!(started.elapsed().as_secs() < 3);
-    }
+    let mut link = transport
+        .connect(&sleep_as_agent())
+        .await
+        .expect("the stand-in agent must spawn");
+    let started = std::time::Instant::now();
+    // `/bin/sleep` with no argument prints its usage and leaves, so the handshake either
+    // times out or fails on the closed pipe; both mean the caller is not left waiting.
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), link.handshake()).await;
+    assert!(
+        outcome.is_err() || outcome.unwrap().is_err(),
+        "a silent agent must not look like a successful handshake"
+    );
+    assert!(started.elapsed().as_secs() < 3);
 }
 
 /// Spawns a process piping `script` to `sh -c`, wired up the same way `Transport::Local`
@@ -263,15 +268,26 @@ fn a_missing_agent_names_the_directories_it_looked_in() {
 #[test]
 fn a_cross_built_agent_is_found_by_its_target_triple() {
     let dir = tempdir("triples");
-    std::fs::write(dir.join("volant-agent-x86_64-unknown-linux-musl"), b"x").unwrap();
+    let built = dir.join("volant-agent-x86_64-unknown-linux-musl");
+    std::fs::write(&built, b"x").unwrap();
+    set_executable(&built);
+    // Same name, no execute bit: a stray artifact, not something to upload and run.
+    std::fs::write(dir.join("volant-agent-aarch64-unknown-linux-musl"), b"x").unwrap();
     temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
         let source = AgentSource::discover();
+        assert_eq!(source.for_target("x86_64-unknown-linux-musl"), Some(built));
         assert_eq!(
-            source.for_target("x86_64-unknown-linux-musl"),
-            Some(dir.join("volant-agent-x86_64-unknown-linux-musl"))
+            source.for_target("aarch64-unknown-linux-musl"),
+            None,
+            "a file with no execute bit is not an agent"
         );
-        assert_eq!(source.for_target("aarch64-unknown-linux-musl"), None);
+        assert_eq!(source.for_target("riscv64gc-unknown-linux-musl"), None);
     });
+}
+
+fn set_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 fn tempdir(name: &str) -> PathBuf {

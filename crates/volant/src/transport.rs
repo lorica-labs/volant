@@ -65,9 +65,15 @@ impl std::error::Error for ConnectError {}
 /// Exit codes the bootstrap shell uses to talk back before any frame exists. They are picked
 /// above every code the shell itself hands out (126, 127) and below 255, which belongs to
 /// `ssh`, so a code seen by `run_capturing` names exactly one situation.
+///
+/// Every command the bootstrap runs replaces the status of the programs it calls with one of
+/// these, so none of them can hand back 255 and be read as `ssh`'s own failure: the cached
+/// agent's status becomes `EXIT_AGENT_UNRUNNABLE` and `uname`'s becomes `EXIT_UNAME_FAILED`.
 const EXIT_AGENT_MISSING: i32 = 42;
 const EXIT_NO_SPACE: i32 = 43;
 const EXIT_SHORT_WRITE: i32 = 44;
+const EXIT_AGENT_UNRUNNABLE: i32 = 45;
+const EXIT_UNAME_FAILED: i32 = 46;
 /// `ssh` reports its own failures with this, whatever the remote command would have returned.
 const EXIT_SSH_FAILURE: i32 = 255;
 
@@ -88,12 +94,8 @@ impl Transport {
                 private_key: text("ansible_ssh_private_key_file")
                     .map(PathBuf::from)
                     .or_else(|| defaults.private_key.clone()),
-                common_args: text("ansible_ssh_common_args")
-                    .and_then(|s| shlex::split(&s))
-                    .unwrap_or_default(),
-                extra_args: text("ansible_ssh_extra_args")
-                    .and_then(|s| shlex::split(&s))
-                    .unwrap_or_default(),
+                common_args: split_args(host, "ansible_ssh_common_args")?,
+                extra_args: split_args(host, "ansible_ssh_extra_args")?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
                 remote_tmp: text("ansible_remote_tmp")
@@ -131,6 +133,36 @@ impl Transport {
     }
 }
 
+/// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
+/// rather than dropped: silently connecting without a `ProxyJump` or `ProxyCommand` the
+/// inventory asked for can reach a different machine than the operator meant.
+fn split_args(host: &Host, key: &str) -> anyhow::Result<Vec<String>> {
+    let Some(text) = host.vars.get(key).and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    shlex::split(text).ok_or_else(|| {
+        anyhow::anyhow!(
+            "host '{}': {key} has unbalanced quotes and cannot be turned into ssh options: {text}",
+            host.name
+        )
+    })
+}
+
+/// One remote path as a single shell word. A leading `~` stays bare so the remote shell,
+/// the only thing that can, expands it; the rest is single-quoted, so a `remote_tmp` holding
+/// a space or a shell metacharacter cannot split into several words or run anything.
+fn shell_word(path: &str) -> String {
+    match path.strip_prefix('~') {
+        Some("") => "~".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("~/{}", single_quoted(&rest[1..])),
+        _ => single_quoted(path),
+    }
+}
+
+fn single_quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// `ansible_port`, whether the inventory typed it as a number or quoted it as a string.
 fn port_of(host: &Host) -> Option<u16> {
     let value = host.vars.get("ansible_port")?;
@@ -144,13 +176,24 @@ fn port_of(host: &Host) -> Option<u16> {
 impl SshTarget {
     /// The `ssh` command line for one remote command. Options first, then the host, then `--`.
     pub fn ssh_argv(&self, remote_command: &str) -> Vec<String> {
-        let mut argv = vec![
-            "ssh".to_string(),
-            "-o".into(),
+        self.ssh_argv_with(remote_command, false)
+    }
+
+    /// The same, with `-C` when the command carries a payload on stdin. Compression is an
+    /// option of `ssh`, so it belongs before the address: everything from the address onwards
+    /// is the remote command's own argument list, and an option appended there would reach
+    /// the remote shell instead.
+    pub fn ssh_argv_with(&self, remote_command: &str, compress: bool) -> Vec<String> {
+        let mut argv = vec!["ssh".to_string()];
+        if compress {
+            argv.push("-C".into());
+        }
+        argv.extend([
+            "-o".to_string(),
             "BatchMode=yes".into(),
             "-o".into(),
             format!("ConnectTimeout={}", self.connect_timeout.as_secs()),
-        ];
+        ]);
         if !self.host_key_checking {
             argv.extend([
                 "-o".into(),
@@ -186,11 +229,18 @@ impl SshTarget {
         )
     }
 
-    /// Prints the cached agent's version, or the machine architecture followed by exit 42.
+    /// Where the agent itself sits on the host, as this controller writes it in a message.
+    fn agent_path(&self) -> String {
+        format!("{}/volant-agent", self.cache_dir())
+    }
+
+    /// Prints the cached agent's version, or the machine architecture followed by exit 42. A
+    /// cached agent that cannot run exits 45 and `uname` failing exits 46, so neither hands
+    /// its own status back to `ssh`, where 255 would read as a connection failure.
     pub fn probe_command(&self) -> String {
         format!(
-            "a={}/volant-agent; if [ -x \"$a\" ]; then \"$a\" --version; else uname -m; exit {EXIT_AGENT_MISSING}; fi",
-            self.cache_dir()
+            "a={agent}; if [ -x \"$a\" ]; then \"$a\" --version || {{ echo \"exit status $?\" >&2; exit {EXIT_AGENT_UNRUNNABLE}; }}; else uname -m || exit {EXIT_UNAME_FAILED}; exit {EXIT_AGENT_MISSING}; fi",
+            agent = shell_word(&self.agent_path())
         )
     }
 
@@ -198,28 +248,31 @@ impl SshTarget {
     /// byte count is verified before the temporary copy is made executable and renamed, so a
     /// transfer cut short never lands under the final name; older cached versions are removed
     /// afterwards, and failing to remove one does not fail an upload that has already landed.
+    /// The temporary name carries the remote shell's pid, so two uploads racing on one host
+    /// write to separate files instead of interleaving into one of exactly the right size.
     pub fn upload_command(&self, size: u64) -> String {
-        let dir = self.cache_dir();
         format!(
             "d={dir}; mkdir -p \"$d\" || exit 1; \
+             t=\"$d/volant-agent.tmp.$$\"; \
              avail=$(df -Pk \"$d\" | awk 'NR==2 {{print $4}}'); \
              case \"$avail\" in ''|*[!0-9]*) avail=0;; esac; \
              [ \"$avail\" -ge {need} ] || {{ echo \"$avail\"; exit {EXIT_NO_SPACE}; }}; \
-             cat > \"$d/volant-agent.tmp\" || exit 1; \
-             [ \"$(wc -c < \"$d/volant-agent.tmp\")\" -eq {size} ] || exit {EXIT_SHORT_WRITE}; \
-             chmod 755 \"$d/volant-agent.tmp\" || exit 1; \
-             mv \"$d/volant-agent.tmp\" \"$d/volant-agent\" || exit 1; \
+             cat > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
+             [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \
+             chmod 755 \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
+             mv \"$t\" \"$d/volant-agent\" || {{ rm -f \"$t\"; exit 1; }}; \
              for old in {tmp}/volant-agent-*; do [ \"$old\" = \"$d\" ] || rm -rf \"$old\"; done; \
              exit 0",
+            dir = shell_word(&self.cache_dir()),
             need = space_needed_kib(size),
-            tmp = self.remote_tmp,
+            tmp = shell_word(&self.remote_tmp),
         )
     }
 
     async fn connect(&self, agents: &AgentSource) -> Result<AgentLink, ConnectError> {
         self.bootstrap(agents).await?;
         let child = Command::new("ssh")
-            .args(&self.ssh_argv(&format!("exec {}/volant-agent", self.cache_dir()))[1..])
+            .args(&self.ssh_argv(&format!("exec {}", shell_word(&self.agent_path())))[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -239,21 +292,45 @@ impl SshTarget {
             return Ok(());
         }
         // Exit 42 means the probe itself read the architecture off the machine. Anything else
-        // is a cached agent this controller cannot use (another version, another
-        // architecture, a truncated file) or a remote shell that failed outright, so its
-        // stdout cannot be read as a version string. Ask the machine again, separately.
-        let arch = if probe.code == Some(EXIT_AGENT_MISSING) {
-            probe.stdout.trim().to_string()
-        } else {
-            let uname = self.run_capturing("uname -m", None).await?;
-            if uname.code != Some(0) {
+        // is a cached agent this controller cannot use (another version), a cached agent that
+        // cannot run at all, or a remote shell that failed outright, so its stdout cannot be
+        // read as a version string. Ask the machine again, separately.
+        let arch = match probe.code {
+            Some(EXIT_AGENT_MISSING) => probe.stdout.trim().to_string(),
+            // A cached agent that refuses to run is not something a fresh copy can settle:
+            // this controller writes that file with a verified byte count and an atomic
+            // rename, so a `noexec` mount, a wrapper script or a foreign architecture is the
+            // reason, and overwriting it would hide all three behind a silent re-upload.
+            Some(EXIT_AGENT_UNRUNNABLE) => {
                 return Err(ConnectError::Unreachable(format!(
-                    "the remote shell failed: {}",
-                    first_words(&uname.stderr, "uname -m returned no output")
+                    "the cached agent {} cannot be run: {}",
+                    self.agent_path(),
+                    first_words(&probe.stderr, "it failed without a message")
                 )));
             }
-            uname.stdout.trim().to_string()
+            Some(EXIT_UNAME_FAILED) => {
+                return Err(ConnectError::Unreachable(format!(
+                    "the remote shell failed: {}",
+                    first_words(&probe.stderr, "'uname -m' said nothing")
+                )));
+            }
+            _ => {
+                let uname = self.run_capturing("uname -m", None).await?;
+                if uname.code != Some(0) {
+                    return Err(ConnectError::Unreachable(format!(
+                        "the remote shell failed: {}",
+                        first_words(&uname.stderr, "uname -m returned no output")
+                    )));
+                }
+                uname.stdout.trim().to_string()
+            }
         };
+        if arch.is_empty() {
+            return Err(ConnectError::Unreachable(
+                "the host did not say what architecture it is: 'uname -m' printed nothing"
+                    .to_string(),
+            ));
+        }
         let triple = triple_for(&arch).ok_or_else(|| {
             ConnectError::Unreachable(format!(
                 "no agent binary for {arch}: unsupported architecture"
@@ -310,12 +387,7 @@ impl SshTarget {
         remote_command: &str,
         stdin: Option<&[u8]>,
     ) -> Result<Captured, ConnectError> {
-        let mut argv = self.ssh_argv(remote_command);
-        if stdin.is_some() {
-            // Right after `ssh`: everything from the address onwards is the remote command's
-            // own argument list, so an option appended there would reach the remote shell.
-            argv.insert(1, "-C".into());
-        }
+        let argv = self.ssh_argv_with(remote_command, stdin.is_some());
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
@@ -502,19 +574,40 @@ mod tests {
         assert_eq!(target.port, Some(2222));
     }
 
+    /// `run_capturing` builds its command line with this exact call, so the assertions below
+    /// are about the production path and not about a vector the test filled in itself.
     #[test]
     fn compression_is_an_option_not_an_argument_of_the_remote_command() {
         let Transport::Ssh(target) = Transport::for_host(&host(json!({})), &defaults()).unwrap()
         else {
             panic!()
         };
-        let mut argv = target.ssh_argv("cat > f");
-        argv.insert(1, "-C".into());
-        assert_eq!(argv[1], "-C");
+        let argv = target.ssh_argv_with("cat > f", true);
+        assert_eq!(argv[1], "-C", "{argv:?}");
         assert!(
             argv.join(" ").ends_with("web1 -- cat > f"),
             "nothing may follow the remote command: {argv:?}"
         );
+        assert!(
+            !target
+                .ssh_argv_with("true", false)
+                .contains(&"-C".to_string()),
+            "a command with no payload is not compressed"
+        );
+    }
+
+    #[test]
+    fn unbalanced_quotes_in_the_ssh_arguments_refuse_the_host() {
+        for key in ["ansible_ssh_common_args", "ansible_ssh_extra_args"] {
+            let err = Transport::for_host(
+                &host(json!({ key: "-o ProxyCommand='ssh bastion" })),
+                &defaults(),
+            )
+            .unwrap_err();
+            let text = format!("{err:#}");
+            assert!(text.contains(key), "the variable is named: {text}");
+            assert!(text.contains("ProxyCommand"), "the value is quoted: {text}");
+        }
     }
 
     #[test]
@@ -531,6 +624,14 @@ mod tests {
         assert!(
             probe.contains("--version") && probe.contains("uname -m") && probe.contains("exit 42"),
             "{probe}"
+        );
+        assert!(
+            probe.contains("exit 45"),
+            "a cached agent that cannot run has its own code, so its status never reaches ssh: {probe}"
+        );
+        assert!(
+            probe.contains("uname -m || exit 46"),
+            "a uname that fails must not be read as an architecture: {probe}"
         );
         let upload = target.upload_command(1_000_000);
         assert!(
@@ -553,6 +654,64 @@ mod tests {
             upload.find("wc -c").unwrap() < upload.find("chmod 755").unwrap(),
             "the size is checked before the file becomes executable: {upload}"
         );
+    }
+
+    /// Run against a real `sh`, because the failure this guards against is a shell parsing
+    /// one: an unquoted `remote_tmp` holding a space makes `mkdir -p ""` fail and the run then
+    /// reports a failed upload for a path it never tried. The uploaded payload exits 255 when
+    /// it is run, which is `ssh`'s own code for a connection failure, so the probe that finds
+    /// it has to come back as 45 rather than letting that status through.
+    #[cfg(unix)]
+    #[test]
+    fn a_remote_tmp_with_a_space_survives_the_shell() {
+        use std::io::Write;
+        use std::process::{Command as SyncCommand, Stdio};
+
+        let base = std::env::temp_dir().join(format!("volant quoting {}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let Transport::Ssh(target) = Transport::for_host(
+            &host(json!({ "ansible_remote_tmp": base.to_str().unwrap() })),
+            &defaults(),
+        )
+        .unwrap() else {
+            panic!()
+        };
+
+        let payload = b"#!/bin/sh\nexit 255\n";
+        let mut child = SyncCommand::new("sh")
+            .arg("-c")
+            .arg(target.upload_command(payload.len() as u64))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(payload).unwrap();
+        let upload = child.wait_with_output().unwrap();
+        assert_eq!(
+            upload.status.code(),
+            Some(0),
+            "upload: {}",
+            String::from_utf8_lossy(&upload.stderr)
+        );
+        let landed = base
+            .join(format!("volant-agent-{}", env!("CARGO_PKG_VERSION")))
+            .join("volant-agent");
+        assert_eq!(std::fs::read(&landed).unwrap(), payload, "{landed:?}");
+
+        let probe = SyncCommand::new("sh")
+            .arg("-c")
+            .arg(target.probe_command())
+            .output()
+            .unwrap();
+        assert_eq!(
+            probe.status.code(),
+            Some(EXIT_AGENT_UNRUNNABLE),
+            "a cached agent exiting 255 must not look like a connection failure: {}",
+            String::from_utf8_lossy(&probe.stderr)
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

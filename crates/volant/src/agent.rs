@@ -36,7 +36,7 @@ impl AgentSource {
         let file = format!("volant-agent{}", std::env::consts::EXE_SUFFIX);
         self.find(&file).with_context(|| {
             format!(
-                "agent binary '{file}' not found; looked in {}. Set VOLANT_AGENT_DIR to the directory that holds it",
+                "no executable agent binary '{file}' in {}. Set VOLANT_AGENT_DIR to the directory that holds it",
                 self.describe()
             )
         })
@@ -55,8 +55,22 @@ impl AgentSource {
     }
 
     fn find(&self, file: &str) -> Option<PathBuf> {
-        self.dirs.iter().map(|d| d.join(file)).find(|p| p.is_file())
+        self.dirs.iter().map(|d| d.join(file)).find(|p| runnable(p))
     }
+}
+
+/// A file that carries an execute bit. A stray artifact with the right name is not an agent:
+/// the local one would fail to spawn, and a cross-built one would be uploaded, made
+/// executable on the host and then refuse to run there.
+#[cfg(unix)]
+fn runnable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn runnable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 /// How long a bare `drop` waits for the agent to notice end of stream and clean up its task

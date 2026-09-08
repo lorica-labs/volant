@@ -1004,10 +1004,12 @@ mod tests {
         else {
             panic!("expected Become");
         };
-        assert!(!msg.contains(&password), "{msg}");
+        // Neither assertion prints `msg`. A failure here is a run where the redaction did not
+        // happen, so the failure output would be one more place carrying the password.
+        assert!(!msg.contains(&password));
         assert!(
             msg.contains("<redacted>") && msg.contains("disliked it"),
-            "the rest of what sudo said survives: {msg}"
+            "the rest of what sudo said survives"
         );
     }
 

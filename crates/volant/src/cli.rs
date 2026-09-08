@@ -80,10 +80,15 @@ pub fn run(args: PlaybookArgs) -> i32 {
 async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32> {
     let config = Config::load();
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
-    // from the command line, the environment or `ansible.cfg`.
+    // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
+    // exits 2 for `-f abc` or `-f -1` (clap's own default for a bad argument), so a refused `0`
+    // through this check stays on the same code rather than inventing a second one for the same
+    // flag; a refusal never prints a `PLAY` header or a recap, so it cannot be mistaken for a
+    // failed task, which is exit 2's other meaning.
     let forks = args.forks.unwrap_or(config.forks);
     if forks == 0 {
-        anyhow::bail!("The number of processes (--forks) must be >= 1");
+        eprintln!("ERROR! The number of processes (--forks) must be >= 1");
+        return Ok(2);
     }
     let inventory_path = args.inventory.clone().or(config.inventory);
     let inventory = match &inventory_path {

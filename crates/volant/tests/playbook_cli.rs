@@ -390,7 +390,10 @@ fn forks_bounds_the_hosts_running_at_once() {
 #[test]
 fn zero_forks_is_refused() {
     let out = volant(&["playbook", "-f", "0", &fixture("site.yml")]);
-    assert_eq!(out.status.code(), Some(1));
+    // Exit 2, matching the reference and matching clap's own exit code for `-f abc` or `-f -1`
+    // on this same flag today; kept at 1 would put a refused `0` on the only remaining flag
+    // value clap still hands off to this check, split three ways across two codes.
+    assert_eq!(out.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&out.stderr)
             .contains("The number of processes (--forks) must be >= 1"),

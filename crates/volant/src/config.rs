@@ -72,11 +72,13 @@ impl Config {
             config.remote_tmp = tmp.trim().to_string();
         }
         // A zero is kept rather than dropped: the reference refuses it from every source, and
-        // the single check at startup is what says so.
-        if let Ok(n) = std::env::var("ANSIBLE_FORKS")
-            && let Ok(forks) = n.trim().parse::<usize>()
-        {
-            config.forks = forks;
+        // the single check at startup is what says so. An unparsable value is refused the same
+        // way: measured on the development machine, `ANSIBLE_FORKS=-1` refuses with that exact
+        // message (exit 2) and `ANSIBLE_FORKS=abc` refuses too, through its own config-loading
+        // error (exit 5) -- neither is tolerated, so silently keeping whatever `forks` already
+        // held would run a playbook the reference never would.
+        if let Ok(n) = std::env::var("ANSIBLE_FORKS") {
+            config.forks = n.trim().parse::<usize>().unwrap_or(0);
         }
         config
     }
@@ -234,6 +236,35 @@ mod tests {
             parse("[defaults]\nforks = many\n", Path::new(".")).forks,
             DEFAULT_FORKS
         );
+    }
+
+    /// Measured on the development machine against `ansible-core 2.19.12`: neither
+    /// `ANSIBLE_FORKS=-1` nor `ANSIBLE_FORKS=abc` is tolerated (see architecture.md for the
+    /// exact output), so an unparsable value here refuses at the same startup check as a
+    /// literal zero instead of silently keeping the default of five.
+    #[test]
+    fn an_unparsable_ansible_forks_is_passed_through_like_a_zero() {
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        let saved_forks = std::env::var("ANSIBLE_FORKS").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("ANSIBLE_FORKS", "abc");
+        }
+        assert_eq!(Config::load().forks, 0);
+        unsafe { std::env::set_var("ANSIBLE_FORKS", "-1") };
+        assert_eq!(Config::load().forks, 0);
+        unsafe { std::env::set_var("ANSIBLE_FORKS", "3") };
+        assert_eq!(Config::load().forks, 3);
+        unsafe {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+            match saved_forks {
+                Some(v) => std::env::set_var("ANSIBLE_FORKS", v),
+                None => std::env::remove_var("ANSIBLE_FORKS"),
+            }
+        }
     }
 
     #[test]

@@ -58,12 +58,16 @@ pub struct RunState {
 }
 
 impl RunState {
-    /// Closes every kept connection. Draining the map makes a second call a no-op, so the
-    /// recap paths can each ask for it without closing one agent twice.
+    /// Closes every kept connection, concurrently: each `shutdown` waits up to a couple of
+    /// seconds for its own agent, and a run of N hosts closing them one at a time would pay
+    /// N times that before the recap ever shows. Draining the map makes a second call a no-op,
+    /// so the recap paths can each ask for it without closing one agent twice.
     pub async fn shutdown_links(&mut self) {
+        let mut closing = tokio::task::JoinSet::new();
         for (_, link) in self.links.drain() {
-            link.shutdown().await;
+            closing.spawn(link.shutdown());
         }
+        while closing.join_next().await.is_some() {}
     }
 }
 
@@ -144,8 +148,11 @@ pub async fn run_play(
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
-    // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`.
-    let forks = Arc::new(Semaphore::new(options.forks.clamp(1, hosts.len())));
+    // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
+    // as `min` then `max` rather than `clamp(1, hosts.len())`: `clamp` panics whenever its
+    // minimum exceeds its maximum, which an empty `hosts` would trigger here, and the only thing
+    // preventing that today is the `is_empty` return above, invisible from this line.
+    let forks = Arc::new(Semaphore::new(options.forks.min(hosts.len()).max(1)));
     let mut workers = Vec::new();
     for host in &hosts {
         let tx = tx.clone();
@@ -228,9 +235,15 @@ pub async fn run_play(
                         failed,
                         links,
                     }) => {
-                        state.links.extend(links);
                         if failed {
+                            // The host is leaving the run for good: keeping its connection open
+                            // would just idle until the run ends.
                             state.failed_hosts.insert(host.clone());
+                            for (_, link) in links {
+                                link.shutdown().await;
+                            }
+                        } else {
+                            state.links.extend(links);
                         }
                         gone.insert(host);
                     }
@@ -266,9 +279,13 @@ pub async fn run_play(
                 failed,
                 links,
             } => {
-                state.links.extend(links);
                 if failed {
                     state.failed_hosts.insert(host);
+                    for (_, link) in links {
+                        link.shutdown().await;
+                    }
+                } else {
+                    state.links.extend(links);
                 }
             }
             _ => {}
@@ -1011,22 +1028,37 @@ async fn reuse_or_connect<'a>(
     agents: &AgentSource,
     options: &RunOptions,
 ) -> Result<&'a mut AgentLink, ConnectError> {
+    // Why the kept connection was not reused, kept only in case the reconnection below fails
+    // too: on its own it is not a failure (a single reconnection is the designed recovery), but
+    // discarding it silently would leave a reconnect failure reporting only its own cause.
+    let mut stale: Option<String> = None;
     if !*checked {
         *checked = true;
         if let Some(mut link) = slot.take() {
             let alive =
                 tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
-            if matches!(alive, Ok(Ok(()))) {
-                *slot = Some(link);
-            } else {
-                // The agent died between the two plays. Close what is left of it and fall
-                // through to a single reconnection.
-                link.shutdown().await;
+            match alive {
+                Ok(Ok(())) => *slot = Some(link),
+                Ok(Err(err)) => {
+                    stale = Some(format!("{err:#}"));
+                    link.shutdown().await;
+                }
+                Err(_) => {
+                    stale = Some("no answer from the kept connection".to_string());
+                    link.shutdown().await;
+                }
             }
         }
     }
     if slot.is_none() {
-        *slot = Some(connect(host, agents, &options.defaults).await?);
+        *slot = Some(connect(host, agents, &options.defaults).await.map_err(
+            |err| match stale {
+                Some(reason) => ConnectError::Unreachable(format!(
+                    "the kept connection failed ({reason}), and reconnecting failed too: {err}"
+                )),
+                None => err,
+            },
+        )?);
     }
     Ok(slot.as_mut().expect("connected just above"))
 }

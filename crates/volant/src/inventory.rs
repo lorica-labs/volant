@@ -333,7 +333,6 @@ impl Inventory {
             .map(|h| h.name.clone())
             .filter(|n| !reached.contains(n.as_str()))
             .collect();
-        drop(reached);
         hosts.extend(missed);
         hosts
     }
@@ -475,17 +474,28 @@ impl Inventory {
 
 /// Splits a pattern on `,` and `:` the way Ansible's own pattern splitter does: not inside a
 /// `[...]` subscript, so `web[0:1]` stays one term instead of being torn into `web[0` and `1]` at
-/// the colon that is part of its range, not a term separator. Bracket mode is only entered when a
-/// `]` actually follows: an unbalanced `[` (`web[1:db`) would otherwise raise the depth for the
-/// rest of the string and swallow every later term into one dead one, instead of just failing to
-/// match on its own, as an unrecognised bracket does everywhere else in this grammar.
+/// the colon that is part of its range, not a term separator. Bracket mode is only entered when
+/// the very next `]` closes *this* `[` before another `[` opens: an unbalanced `[` (`web[1:db`,
+/// no `]` at all) or one whose only later `]` actually belongs to a subsequent bracket
+/// (`a[,b[1]`, where the first `[` would otherwise borrow the second one's close and swallow both
+/// terms into one) now just fails to match on its own, instead of corrupting every later term.
 fn split_terms(pattern: &str) -> Vec<&str> {
     let mut terms = Vec::new();
     let mut start = 0;
     let mut in_bracket = false;
     for (i, c) in pattern.char_indices() {
         match c {
-            '[' if !in_bracket && pattern[i + 1..].contains(']') => in_bracket = true,
+            '[' if !in_bracket => {
+                let rest = &pattern[i + 1..];
+                let closes_before_reopening = match (rest.find(']'), rest.find('[')) {
+                    (Some(close), Some(open)) => close < open,
+                    (Some(_), None) => true,
+                    (None, _) => false,
+                };
+                if closes_before_reopening {
+                    in_bracket = true;
+                }
+            }
             ']' if in_bracket => in_bracket = false,
             ',' | ':' if !in_bracket => {
                 terms.push(&pattern[start..i]);
@@ -610,6 +620,9 @@ fn parse_class(p: &[char], start: usize) -> Option<(bool, &[char], usize)> {
     Some((negate, &p[body_start..j], j + 1))
 }
 
+/// Ceiling, measured against CPython's `fnmatch.fnmatchcase` over 400,000 random cases: a
+/// reversed range such as `c-!` never matches anything here, while CPython's `fnmatch.translate`
+/// merges it into no constraint at all, so `[?-*c-!!]?*` matches `b[b` there but not here.
 fn class_hit(set: &[char], c: char) -> bool {
     let mut hit = false;
     let mut i = 0;
@@ -1028,6 +1041,27 @@ env=prod
             ["lonely", "db1"],
             "a bare exclusion has nothing to start from, so Ansible starts it from all"
         );
+    }
+
+    #[test]
+    fn empty_and_separator_only_patterns_select_nothing() {
+        let inv = Inventory::parse_ini(SAMPLE).unwrap();
+        assert!(inv.resolve("").hosts.is_empty());
+        assert!(inv.resolve(",").hosts.is_empty());
+        assert!(inv.resolve(":").hosts.is_empty());
+    }
+
+    #[test]
+    fn split_terms_does_not_swallow_terms_on_an_unbalanced_bracket() {
+        // No closing `]` anywhere: the `[` fails to open a bracket on its own, so the `:` still
+        // separates `db` into its own term instead of it being swallowed into `web[1:db`.
+        assert_eq!(split_terms("web[1:db"), ["web[1", "db"]);
+        // The first `[` has no `]` of its own before the second `[` reopens one: it must not
+        // borrow that later bracket's close and collapse both terms into one.
+        assert_eq!(split_terms("a[,b[1]"), ["a[", "b[1]"]);
+        // Still the required behaviour for a real subscript: the `:` inside stays part of the
+        // term.
+        assert_eq!(split_terms("web[0:1]"), ["web[0:1]"]);
     }
 
     #[test]

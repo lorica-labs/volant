@@ -14,6 +14,7 @@ This is a public open source repository. Everything visible in it follows the ru
 
 - Branch per change (`feat/`, `fix/`, `docs/`, `ci/`, `chore/`), pull request per branch, `gh pr merge --squash --delete-branch`. Never push to `main`, never merge locally.
 - Conventional Commits, imperative, subject under 72 characters, no mention of phases, tasks, milestones or plans. The `prepare-commit-msg` hook adds the sign-off trailer and git signs the commit with SSH; `just setup` installs the hooks.
+- A pull request body carries **no** `Signed-off-by` line. Squashing copies the trailer from the branch commits, so one written into the body lands twice in the merged commit. `gh pr create --fill` copies it out of the commit message: delete it from the body afterwards.
 - A workflow is run locally with `gh act` before it is committed.
 
 ## Code

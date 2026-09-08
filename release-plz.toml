@@ -10,6 +10,9 @@ semver_check = false
 name = "volant"
 git_tag_name = "v{{ version }}"
 version_group = "volant"
+# The repository changelog is this package's changelog. cargo-dist reads it for the release notes,
+# so a hand-maintained file left everything under Unreleased and every release republished it.
+changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "volant-agent"

@@ -7,14 +7,35 @@ use std::time::Duration;
 
 use serde_json::json;
 use tokio::process::Command;
-use volant::agent::AgentLink;
+use volant::agent::{AgentLink, AgentSource};
 use volant::inventory::Host;
-use volant::transport::Transport;
+use volant::transport::{ConnectionDefaults, Transport};
 use volant_protocol::{BatchOutcome, FromAgent, LogLevel, Task, ToAgent};
 
 /// The agent is built by the workspace into the same directory as the controller binary.
 fn agent_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_volant")).with_file_name("volant-agent")
+}
+
+fn defaults() -> ConnectionDefaults {
+    ConnectionDefaults {
+        remote_user: None,
+        private_key: None,
+        host_key_checking: true,
+        remote_tmp: "~/.ansible/tmp".to_string(),
+        connect_timeout: Duration::from_secs(10),
+    }
+}
+
+/// An `AgentSource` whose only directory is the one the workspace built the agent into, so
+/// these tests do not depend on the environment of whoever runs them.
+fn agents() -> AgentSource {
+    let dir = agent_path().parent().unwrap().to_path_buf();
+    let mut source = None;
+    temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
+        source = Some(AgentSource::discover());
+    });
+    source.unwrap()
 }
 
 fn local_host() -> Host {
@@ -28,8 +49,8 @@ fn local_host() -> Host {
 
 #[tokio::test]
 async fn runs_a_batch_through_the_local_transport() {
-    let transport = Transport::for_host(&local_host()).unwrap();
-    let mut link = transport.connect(&agent_path()).await.unwrap();
+    let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
+    let mut link = transport.connect(&agents()).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 1,
@@ -72,8 +93,8 @@ fn unique_sleep_marker(whole_seconds: u32) -> String {
 #[tokio::test]
 async fn cancel_stops_the_running_task_and_its_children() {
     let marker = unique_sleep_marker(40);
-    let transport = Transport::for_host(&local_host()).unwrap();
-    let mut link = transport.connect(&agent_path()).await.unwrap();
+    let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
+    let mut link = transport.connect(&agents()).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 9,
@@ -114,8 +135,8 @@ async fn cancel_stops_the_running_task_and_its_children() {
 #[tokio::test]
 async fn dropping_the_link_lets_the_agent_stop_its_task() {
     let marker = unique_sleep_marker(45);
-    let transport = Transport::for_host(&local_host()).unwrap();
-    let mut link = transport.connect(&agent_path()).await.unwrap();
+    let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
+    let mut link = transport.connect(&agents()).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 10,
@@ -147,8 +168,8 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
 #[tokio::test]
 async fn a_silent_agent_fails_the_handshake_within_the_timeout() {
     // A program that never answers stands in for a hung agent.
-    let transport = Transport::for_host(&local_host()).unwrap();
-    let mut link = transport.connect(std::path::Path::new("/bin/sleep")).await;
+    let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
+    let mut link = transport.connect(&sleep_as_agent()).await;
     // `/bin/sleep` needs an argument to run; a spawn failure is fine too, the point is below.
     if let Ok(link) = link.as_mut() {
         let started = std::time::Instant::now();
@@ -224,19 +245,53 @@ async fn dropping_a_racing_recv_does_not_desync_the_next_one() {
 }
 
 #[test]
-fn ssh_is_refused_until_it_exists() {
-    let mut host = local_host();
-    host.vars.remove("ansible_connection");
-    let err = Transport::for_host(&host).unwrap_err();
-    assert!(format!("{err:#}").contains("ssh"));
-}
-
-#[test]
 fn the_agent_is_found_in_a_directory_named_by_the_environment() {
     let dir = agent_path().parent().unwrap().to_path_buf();
     temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
-        assert_eq!(volant::agent::locate().unwrap(), agent_path());
+        assert_eq!(AgentSource::discover().local().unwrap(), agent_path());
     });
+}
+
+#[test]
+fn a_missing_agent_names_the_directories_it_looked_in() {
+    temp_env(&[("VOLANT_AGENT_DIR", Some("/nonexistent/agents"))], || {
+        let err = format!("{:#}", AgentSource::discover().local().unwrap_err());
+        assert!(err.contains("/nonexistent/agents"), "{err}");
+    });
+}
+
+#[test]
+fn a_cross_built_agent_is_found_by_its_target_triple() {
+    let dir = tempdir("triples");
+    std::fs::write(dir.join("volant-agent-x86_64-unknown-linux-musl"), b"x").unwrap();
+    temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
+        let source = AgentSource::discover();
+        assert_eq!(
+            source.for_target("x86_64-unknown-linux-musl"),
+            Some(dir.join("volant-agent-x86_64-unknown-linux-musl"))
+        );
+        assert_eq!(source.for_target("aarch64-unknown-linux-musl"), None);
+    });
+}
+
+fn tempdir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A directory whose `volant-agent` is `/bin/sleep`, so a transport that only knows how to
+/// look an agent up can still be pointed at a program that never answers.
+fn sleep_as_agent() -> AgentSource {
+    let dir = tempdir("silent-agent");
+    let link = dir.join("volant-agent");
+    let _ = std::fs::remove_file(&link);
+    std::fs::copy("/bin/sleep", &link).unwrap();
+    let mut source = None;
+    temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
+        source = Some(AgentSource::discover());
+    });
+    source.unwrap()
 }
 
 fn temp_env(vars: &[(&str, Option<&str>)], f: impl FnOnce()) {

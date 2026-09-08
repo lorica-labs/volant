@@ -32,6 +32,7 @@ pub struct Inventory {
 pub struct Resolution {
     pub hosts: Vec<Host>,
     pub unmatched: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -132,38 +133,116 @@ impl Inventory {
         Ok(inv)
     }
 
-    /// Resolves a host pattern: names separated by `,` or `:`, each one `all`, a group or a host.
+    /// Ansible's host pattern grammar: terms separated by `,` or `:`; `all` and `*`; shell
+    /// wildcards (`*`, `?`, `[abc]`) on host and group names; `!term` removes, `&term` keeps the
+    /// intersection; `name[N]`/`name[N:M]` indexes or slices the terms it follows (`M` inclusive,
+    /// as Ansible's `--limit` slicing is, unlike a Rust range). A name that is both a host and a
+    /// group means the host, as Ansible's own pattern evaluator checks hosts before groups.
+    /// Ansible warns about such a homonym once per run regardless of the pattern used, because the
+    /// check runs at inventory load time, not at pattern-resolution time; `resolve` matches that.
     /// `localhost` is implicit with a local connection when the inventory does not define it.
+    ///
+    /// Terms are not applied in the order they appear: Ansible's own `order_patterns`
+    /// (`inventory/manager.py`) sorts them into plain terms first, then `&` terms, then `!` terms,
+    /// regardless of how they were interleaved in the pattern text, and — measured — when there is
+    /// no plain term at all (`!web`, `&web` alone) it prepends an implicit `all` so the exclusion
+    /// or intersection has something to start from, rather than starting from nothing.
     pub fn resolve(&self, pattern: &str) -> Resolution {
         let mut res = Resolution::default();
-        let mut seen = HashSet::new();
-        for term in pattern
-            .split([',', ':'])
+        for name in self
+            .hosts
+            .iter()
+            .map(|h| h.name.as_str())
+            .filter(|n| self.groups.iter().any(|g| g.name == *n))
+        {
+            res.warnings
+                .push(format!("Found both group and host with same name: {name}"));
+        }
+        let mut regular: Vec<&str> = Vec::new();
+        let mut intersects: Vec<&str> = Vec::new();
+        let mut excludes: Vec<&str> = Vec::new();
+        for term in split_terms(pattern)
+            .into_iter()
             .map(str::trim)
             .filter(|t| !t.is_empty())
         {
-            let names: Vec<String> = if term == "all" || term == "*" {
-                self.hosts.iter().map(|h| h.name.clone()).collect()
-            } else if let Some(group) = self.groups.iter().find(|g| g.name == term) {
-                self.group_hosts(group)
-            } else if self.hosts.iter().any(|h| h.name == term) {
-                vec![term.to_string()]
-            } else if term == "localhost" || term == "127.0.0.1" {
-                if seen.insert(term.to_string()) {
-                    res.hosts.push(implicit_localhost(term));
-                }
-                continue;
-            } else {
-                res.unmatched.push(term.to_string());
-                continue;
-            };
-            for name in names {
-                if seen.insert(name.clone()) {
-                    res.hosts.push(self.host_with_vars(&name));
+            match term.chars().next() {
+                Some('!') => excludes.push(term[1..].trim()),
+                Some('&') => intersects.push(term[1..].trim()),
+                _ => regular.push(term),
+            }
+        }
+        if regular.is_empty() {
+            regular.push("all");
+        }
+        let mut selected: Vec<String> = Vec::new();
+        for name in regular {
+            for h in self.matching(name, &mut res) {
+                if !selected.contains(&h) {
+                    selected.push(h);
                 }
             }
         }
+        for name in intersects {
+            let keep: HashSet<String> = self.matching(name, &mut res).into_iter().collect();
+            selected.retain(|h| keep.contains(h));
+        }
+        for name in excludes {
+            let drop: HashSet<String> = self.matching(name, &mut res).into_iter().collect();
+            selected.retain(|h| !drop.contains(h));
+        }
+        for name in selected {
+            res.hosts
+                .push(match self.hosts.iter().any(|h| h.name == name) {
+                    true => self.host_with_vars(&name),
+                    false => implicit_localhost(&name),
+                });
+        }
         res
+    }
+
+    /// Hosts named by one term, in inventory order. Records unmatched terms. A name that exactly
+    /// matches a host always means that host, checked before groups and before wildcards, exactly
+    /// as Ansible's own `_evaluate_patterns` special-cases an exact host name before ever calling
+    /// its group-aware matcher.
+    fn matching(&self, term: &str, res: &mut Resolution) -> Vec<String> {
+        if let Some((base, sub)) = split_subscript(term) {
+            let names = self.matching(base, res);
+            return apply_subscript(&names, sub);
+        }
+        if self.hosts.iter().any(|h| h.name == term) {
+            return vec![term.to_string()];
+        }
+        if term == "all" || term == "*" {
+            return self.all_hosts();
+        }
+        if let Some(g) = self.group(term) {
+            return self.group_hosts(g);
+        }
+        if term.contains(['*', '?', '[']) {
+            let mut out: Vec<String> = self
+                .hosts
+                .iter()
+                .map(|h| h.name.clone())
+                .filter(|h| glob_match(term, h))
+                .collect();
+            for g in self.groups.iter().filter(|g| glob_match(term, &g.name)) {
+                for h in self.group_hosts(g) {
+                    if !out.contains(&h) {
+                        out.push(h);
+                    }
+                }
+            }
+            if out.is_empty() {
+                res.unmatched.push(term.to_string());
+            }
+            return out;
+        }
+        if term == "localhost" || term == "127.0.0.1" {
+            return vec![term.to_string()];
+        }
+        res.unmatched.push(term.to_string());
+        Vec::new()
     }
 
     fn add_host(&mut self, name: &str, vars: BTreeMap<String, Value>) {
@@ -191,29 +270,95 @@ impl Inventory {
         self.groups.iter().find(|g| g.name == name)
     }
 
-    /// Hosts of a group and of its descendants, in inventory order, without duplicates. `all`
-    /// holds every host in the inventory, whether or not any host line names it explicitly.
+    /// Hosts of a group and of its descendants, in the order `ansible-inventory` produces: the
+    /// group's own hosts first, then each descendant group's own hosts, breadth-first over
+    /// `:children`, without duplicates. This is not the inventory's global host order — a group
+    /// nested two levels down can list hosts declared earlier in the file than a shallower
+    /// sibling, and Ansible's traversal order (not the file's) is what wins.
     fn group_hosts(&self, group: &Group) -> Vec<String> {
         if group.name == "all" {
-            return self.hosts.iter().map(|h| h.name.clone()).collect();
+            return self.all_hosts();
         }
-        let mut members = HashSet::new();
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::from([group]);
-        while let Some(g) = queue.pop_front() {
-            if !visited.insert(g.name.as_str()) {
-                // A group can list a child that (directly or transitively) lists it back;
-                // skip a group already walked instead of re-enqueueing it forever.
-                continue;
-            }
-            members.extend(g.hosts.iter().cloned());
-            queue.extend(g.children.iter().filter_map(|c| self.group(c)));
-        }
-        self.hosts
+        let children: Vec<&Group> = group
+            .children
             .iter()
-            .filter(|h| members.contains(&h.name))
-            .map(|h| h.name.clone())
-            .collect()
+            .filter_map(|c| self.group(c))
+            .collect();
+        self.hosts_breadth_first(&group.name, &group.hosts, children)
+    }
+
+    /// `all`'s children are implicit: `ungrouped` first, then every other group nobody's
+    /// `:children` section lists, in the order those groups were first declared.
+    fn all_children(&self) -> Vec<&Group> {
+        let mut out = Vec::new();
+        if let Some(ungrouped) = self.group("ungrouped") {
+            out.push(ungrouped);
+        }
+        let has_parent: HashSet<&str> = self
+            .groups
+            .iter()
+            .flat_map(|g| g.children.iter().map(String::as_str))
+            .collect();
+        for g in &self.groups {
+            if g.name != "all" && g.name != "ungrouped" && !has_parent.contains(g.name.as_str()) {
+                out.push(g);
+            }
+        }
+        out
+    }
+
+    /// Every host in the inventory, in `ansible-inventory`'s order for the pattern `all`: not the
+    /// order hosts were declared, but a breadth-first walk of the implicit group tree rooted at
+    /// `all` (see `all_children`). Measured against the reference: a plain, ungrouped inventory
+    /// happens to produce file order, but one with nested `:children` groups does not.
+    pub fn all_hosts(&self) -> Vec<String> {
+        let own_hosts = self
+            .group("all")
+            .map(|g| g.hosts.clone())
+            .unwrap_or_default();
+        self.hosts_breadth_first("all", &own_hosts, self.all_children())
+    }
+
+    /// Ansible's `Group._get_hosts`: the root's own hosts, then a breadth-first walk of
+    /// `:children`, each group contributing its own hosts (not its descendants') in turn, hosts
+    /// deduplicated by first appearance.
+    fn hosts_breadth_first(
+        &self,
+        root_name: &str,
+        root_hosts: &[String],
+        initial_children: Vec<&Group>,
+    ) -> Vec<String> {
+        let mut ordered_groups: Vec<&Group> = Vec::new();
+        let mut seen_groups: HashSet<&str> = HashSet::from([root_name]);
+        for g in &initial_children {
+            if seen_groups.insert(g.name.as_str()) {
+                ordered_groups.push(g);
+            }
+        }
+        let mut frontier = initial_children;
+        while !frontier.is_empty() {
+            let mut next = Vec::new();
+            for g in &frontier {
+                for c in g.children.iter().filter_map(|c| self.group(c)) {
+                    if seen_groups.insert(c.name.as_str()) {
+                        ordered_groups.push(c);
+                        next.push(c);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        let mut hosts = Vec::new();
+        let mut seen_hosts: HashSet<&str> = HashSet::new();
+        for h in root_hosts
+            .iter()
+            .chain(ordered_groups.iter().flat_map(|g| g.hosts.iter()))
+        {
+            if seen_hosts.insert(h.as_str()) {
+                hosts.push(h.clone());
+            }
+        }
+        hosts
     }
 
     /// Group vars from the outermost group to the innermost, then host vars on top.
@@ -303,10 +448,32 @@ impl Inventory {
             .map(|g| (g.name.clone(), self.group_hosts(g)))
             .collect();
         out.entry("all".to_string())
-            .or_insert_with(|| self.hosts.iter().map(|h| h.name.clone()).collect());
+            .or_insert_with(|| self.all_hosts());
         out.entry("ungrouped".to_string()).or_default();
         out
     }
+}
+
+/// Splits a pattern on `,` and `:` the way Ansible's own pattern splitter does: not inside a
+/// `[...]` subscript, so `web[0:1]` stays one term instead of being torn into `web[0` and `1]` at
+/// the colon that is part of its range, not a term separator.
+fn split_terms(pattern: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    let mut start = 0;
+    let mut depth = 0i32;
+    for (i, c) in pattern.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            ',' | ':' if depth <= 0 => {
+                terms.push(&pattern[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    terms.push(&pattern[start..]);
+    terms
 }
 
 fn section_name(section: &Section) -> &str {
@@ -324,6 +491,119 @@ fn implicit_localhost(name: &str) -> Host {
     Host {
         name: name.to_string(),
         vars,
+    }
+}
+
+/// `fnmatch` as Python does it for host patterns: `*` any run, `?` one character, `[abc]` and
+/// `[a-z]` sets, `[!abc]` negated sets. No escaping, like Ansible. Ansible only reaches this for
+/// bracket content that isn't a bare `[N]`/`[N:M]` subscript; see `split_subscript`.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    fn go(p: &[char], t: &[char]) -> bool {
+        match p.split_first() {
+            None => t.is_empty(),
+            Some(('*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
+            Some(('?', rest)) => !t.is_empty() && go(rest, &t[1..]),
+            Some(('[', rest)) => {
+                let Some(close) = rest.iter().position(|c| *c == ']') else {
+                    return false;
+                };
+                let (set, after) = (&rest[..close], &rest[close + 1..]);
+                let Some((first, others)) = t.split_first() else {
+                    return false;
+                };
+                let (negate, set) = match set.split_first() {
+                    Some(('!', s)) => (true, s),
+                    _ => (false, set),
+                };
+                let mut hit = false;
+                let mut i = 0;
+                while i < set.len() {
+                    if i + 2 < set.len() && set[i + 1] == '-' {
+                        hit |= set[i] <= *first && *first <= set[i + 2];
+                        i += 3;
+                    } else {
+                        hit |= set[i] == *first;
+                        i += 1;
+                    }
+                }
+                hit != negate && go(after, others)
+            }
+            Some((c, rest)) => t.first() == Some(c) && go(rest, &t[1..]),
+        }
+    }
+    go(
+        &pattern.chars().collect::<Vec<_>>(),
+        &text.chars().collect::<Vec<_>>(),
+    )
+}
+
+/// A single index (`[N]`, `N` may be negative) or an inclusive range (`[N:M]` or the deprecated
+/// `[N-M]`, `N` and `M` plain digits, `M` optional meaning "to the end"). Measured against
+/// `ansible-core`'s `PATTERN_WITH_SUBSCRIPT` regex: the range's own bounds are never negative in
+/// text, only a lone index may be; anything else with a `[` (letters, a bare `:` with no leading
+/// digit, `~` regexes) is not a subscript and falls through to `glob_match` instead, exactly as
+/// the reference falls through to fnmatch for the same inputs.
+enum Subscript {
+    Index(i64),
+    Range(i64, Option<i64>),
+}
+
+fn split_subscript(term: &str) -> Option<(&str, Subscript)> {
+    if !term.ends_with(']') {
+        return None;
+    }
+    let open = term.rfind('[')?;
+    if open == 0 {
+        return None;
+    }
+    let base = &term[..open];
+    let inner = &term[open + 1..term.len() - 1];
+    let is_signed_digits = |s: &str| {
+        let s = s.strip_prefix('-').unwrap_or(s);
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+    };
+    if is_signed_digits(inner) {
+        return Some((base, Subscript::Index(inner.parse().ok()?)));
+    }
+    let sep = inner.find([':', '-'])?;
+    let (start, end) = (&inner[..sep], &inner[sep + 1..]);
+    let is_digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if !is_digits(start) || (!end.is_empty() && !is_digits(end)) {
+        return None;
+    }
+    let end = if end.is_empty() {
+        None
+    } else {
+        Some(end.parse().ok()?)
+    };
+    Some((base, Subscript::Range(start.parse().ok()?, end)))
+}
+
+/// Ansible's `_apply_subscript`: a Python-style negative index wraps from the end; a range's
+/// missing end means "to the last host" and, unlike a Rust or Python range, its given end is
+/// inclusive. Anything out of bounds is empty, not an error — the reference does not fail a
+/// playbook run over an over-large subscript, it just selects nothing.
+fn apply_subscript(names: &[String], sub: Subscript) -> Vec<String> {
+    let len = names.len() as i64;
+    let wrap = |i: i64| if i < 0 { i + len } else { i };
+    match sub {
+        Subscript::Index(i) => {
+            let i = wrap(i);
+            if (0..len).contains(&i) {
+                vec![names[i as usize].clone()]
+            } else {
+                Vec::new()
+            }
+        }
+        Subscript::Range(start, end) => {
+            let start = start.clamp(0, len);
+            let stop = (end.unwrap_or(len - 1) + 1).clamp(0, len);
+            if start >= stop {
+                Vec::new()
+            } else {
+                names[start as usize..stop as usize].to_vec()
+            }
+        }
     }
 }
 
@@ -350,12 +630,36 @@ fn key_values(words: &[String], line_no: usize) -> Result<BTreeMap<String, Value
         .collect()
 }
 
+/// An integer the way Python's `ast.literal_eval` accepts one: optional sign, `_` allowed only
+/// between digits (never leading, trailing, or doubled), and no leading zero unless the whole
+/// literal is `0`. Measured against the reference: `leading=010` in an INI stays the string
+/// `"010"` (Python's grammar rejects a leading zero as a syntax error, so `literal_eval` raises
+/// and the ini plugin falls back to the raw text), while `grouped=1_000` becomes the integer
+/// `1000` (`_` is a valid digit separator in Python's integer literals since 3.6).
+fn python_int(t: &str) -> Option<i64> {
+    let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
+        || !digits.chars().all(|c| c.is_ascii_digit() || c == '_')
+    {
+        return None;
+    }
+    let clean: String = digits.chars().filter(|c| *c != '_').collect();
+    if clean.len() > 1 && clean.starts_with('0') {
+        return None;
+    }
+    let value: i64 = clean.parse().ok()?;
+    Some(if t.starts_with('-') { -value } else { value })
+}
+
 /// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text.
 /// Integers, floats, `True`/`False`/`None`, quoted strings, and JSON-shaped lists and dicts
 /// are recognised; everything else, `yes` included, stays a string.
 fn literal(text: &str) -> Value {
     let t = text.trim();
-    if let Ok(i) = t.parse::<i64>() {
+    if let Some(i) = python_int(t) {
         return Value::from(i);
     }
     if t.contains('.')
@@ -555,5 +859,85 @@ env=prod
         assert_eq!(groups["prod"], ["web1", "web2", "db1"]);
         assert_eq!(groups["all"], ["lonely", "web1", "web2", "db1"]);
         assert_eq!(groups["ungrouped"], ["lonely"]);
+    }
+
+    #[test]
+    fn glob_matching_follows_fnmatch() {
+        assert!(
+            glob_match("web*", "web12")
+                && glob_match("web?", "web1")
+                && !glob_match("web?", "web12")
+        );
+        assert!(glob_match("web[12]", "web2") && !glob_match("web[12]", "web3"));
+        assert!(glob_match("web[!1]", "web2") && !glob_match("web[!1]", "web1"));
+        assert!(glob_match("w[a-z]b1", "web1") && !glob_match("w[a-z]b1", "w3b1"));
+        assert!(
+            !glob_match("web[", "web["),
+            "an unclosed set matches nothing"
+        );
+    }
+
+    #[test]
+    fn negation_and_intersection_compose() {
+        let inv = Inventory::parse_ini(SAMPLE).unwrap();
+        assert_eq!(names(&inv.resolve("all:!web").hosts), ["lonely", "db1"]);
+        assert_eq!(names(&inv.resolve("prod:&web").hosts), ["web1", "web2"]);
+        assert_eq!(names(&inv.resolve("prod:&web:!web2").hosts), ["web1"]);
+        assert_eq!(
+            names(&inv.resolve("!web").hosts),
+            ["lonely", "db1"],
+            "a bare exclusion has nothing to start from, so Ansible starts it from all"
+        );
+    }
+
+    #[test]
+    fn a_homonym_means_the_host_and_warns() {
+        let inv = Inventory::parse_ini("[same]\nsame\nother\n").unwrap();
+        let res = inv.resolve("same");
+        assert_eq!(names(&res.hosts), ["same"]);
+        assert_eq!(res.warnings.len(), 1);
+    }
+
+    #[test]
+    fn wildcards_also_match_group_names() {
+        let inv = Inventory::parse_ini(SAMPLE).unwrap();
+        assert_eq!(names(&inv.resolve("w*b1").hosts), ["web1"]);
+        assert_eq!(names(&inv.resolve("pro*").hosts), ["web1", "web2", "db1"]);
+    }
+
+    #[test]
+    fn subscripts_index_and_slice_a_resolved_pattern() {
+        let inv = Inventory::parse_ini(SAMPLE).unwrap();
+        assert_eq!(names(&inv.resolve("web[0]").hosts), ["web1"]);
+        assert_eq!(names(&inv.resolve("web[-1]").hosts), ["web2"]);
+        assert_eq!(names(&inv.resolve("web[0:1]").hosts), ["web1", "web2"]);
+        assert!(
+            inv.resolve("web[12]").hosts.is_empty(),
+            "an out-of-range index selects nothing, as the reference does, not an error"
+        );
+    }
+
+    /// The reference's own answer for a value ambiguous in Rust, taken from the inventory golden
+    /// rather than retyped, so the two never drift apart.
+    #[test]
+    fn ini_integers_follow_pythons_literal_grammar() {
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/golden/expected_inventory.json")).unwrap();
+        let web1 = &expected["hostvars"]["web1"];
+        let inv = Inventory::load(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden/inventory.ini")
+                .as_path(),
+        )
+        .unwrap();
+        let vars = inv.host_with_vars("web1").vars;
+        assert_eq!(
+            vars["leading"], web1["leading"],
+            "a leading zero stays text"
+        );
+        assert_eq!(
+            vars["grouped"], web1["grouped"],
+            "an underscore digit separator still parses"
+        );
     }
 }

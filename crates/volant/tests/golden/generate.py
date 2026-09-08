@@ -59,6 +59,27 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
+    return inventory()
+
+
+def inventory():
+    inv = os.path.join(HERE, "inventory.ini")
+    dump = json.loads(subprocess.run(["ansible-inventory", "-i", inv, "--list"], capture_output=True, text=True, check=True).stdout)
+    hostvars = dump.get("_meta", {}).get("hostvars", {})
+    patterns = {}
+    with open(os.path.join(HERE, "patterns.txt"), encoding="utf-8") as f:
+        for line in f:
+            pattern = line.strip()
+            if not pattern:
+                continue
+            run = subprocess.run(["ansible", "-i", inv, pattern, "--list-hosts"], capture_output=True, text=True)
+            hosts = [h.strip() for h in run.stdout.splitlines()[1:] if h.strip()]
+            patterns[pattern] = {"hosts": hosts, "warning": "WARNING" in run.stderr}
+    groups = {name: sorted(body.get("hosts", [])) for name, body in dump.items() if name != "_meta" and "hosts" in body}
+    with open(os.path.join(HERE, "expected_inventory.json"), "w", encoding="utf-8") as f:
+        json.dump({"hostvars": hostvars, "groups": groups, "patterns": patterns}, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+    print(f"inventory golden: {len(hostvars)} hosts, {len(patterns)} patterns")
     return 0
 
 

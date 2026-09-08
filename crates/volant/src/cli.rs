@@ -128,6 +128,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 break 'plays;
             }
             let resolution = inventory.resolve(&play.hosts);
+            for warning in &resolution.warnings {
+                out.warning(warning);
+            }
             for pattern in &resolution.unmatched {
                 out.warning(&format!(
                     "Could not match supplied host pattern, ignoring: {pattern}"

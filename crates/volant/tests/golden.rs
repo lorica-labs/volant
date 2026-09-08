@@ -112,3 +112,51 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn inventory_matches_the_reference() {
+    let expected: Value =
+        serde_json::from_str(include_str!("golden/expected_inventory.json")).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/inventory.ini");
+    let inv = volant::inventory::Inventory::load(&path).unwrap();
+    let mut failures = Vec::new();
+
+    for (host, want) in expected["hostvars"].as_object().unwrap() {
+        let got = inv.host_with_vars(host).vars;
+        for (k, v) in want.as_object().unwrap() {
+            if k.starts_with("ansible_") && k != "ansible_host" && k != "ansible_connection" {
+                continue;
+            }
+            match got.get(k) {
+                Some(ours) if same(ours, v) => {}
+                other => failures.push(format!("{host}.{k}: reference {v}, ours {other:?}")),
+            }
+        }
+    }
+    for (group, want) in expected["groups"].as_object().unwrap() {
+        let mut got = inv.groups().get(group).cloned().unwrap_or_default();
+        got.sort();
+        if serde_json::to_value(&got).unwrap() != *want {
+            failures.push(format!("group {group}: reference {want}, ours {got:?}"));
+        }
+    }
+    for (pattern, want) in expected["patterns"].as_object().unwrap() {
+        let res = inv.resolve(pattern);
+        let got: Vec<&str> = res.hosts.iter().map(|h| h.name.as_str()).collect();
+        if serde_json::to_value(&got).unwrap() != want["hosts"] {
+            failures.push(format!(
+                "pattern {pattern}: reference {}, ours {got:?}",
+                want["hosts"]
+            ));
+        }
+        if want["warning"].as_bool() == Some(true) && res.warnings.is_empty() {
+            failures.push(format!("pattern {pattern}: the reference warns, we do not"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} difference(s) with ansible-inventory:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}

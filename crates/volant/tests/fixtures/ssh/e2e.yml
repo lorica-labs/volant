@@ -1,0 +1,14 @@
+- name: Over ssh
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Where am I
+      command: hostname
+      register: where
+    - name: Say it
+      debug:
+        msg: "ran on {{ where.stdout }} as {{ lookup('pipe', 'id -un') }}"
+    - name: Shell with a pipe
+      shell: echo a b c | wc -w
+      register: words
+      failed_when: words.stdout | trim != '3'

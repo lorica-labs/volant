@@ -145,11 +145,18 @@ pub fn field<'a>(node: &'a Yaml<'a>, key: &str) -> Option<&'a Yaml<'a>> {
 pub fn as_bool(node: &Yaml) -> Option<bool> {
     match node {
         Yaml::Value(Scalar::Boolean(b)) => Some(*b),
-        Yaml::Value(Scalar::String(s)) => match s.as_ref() {
-            "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" => Some(true),
-            "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" => Some(false),
-            _ => None,
-        },
+        Yaml::Value(Scalar::String(s)) => bool_from_str(s.as_ref()),
+        _ => None,
+    }
+}
+
+/// The spellings above, on their own, for the places that read a boolean out of plain text
+/// rather than out of a YAML node: `ansible.cfg` keys and the environment variables that
+/// override them, which Ansible reads with the same set of words.
+pub fn bool_from_str(text: &str) -> Option<bool> {
+    match text {
+        "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" => Some(true),
+        "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" => Some(false),
         _ => None,
     }
 }

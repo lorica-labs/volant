@@ -10,25 +10,67 @@ use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
-/// Where the agent binary is: `VOLANT_AGENT_DIR`, then next to this executable.
-/// Embedding the agent in the controller comes with the release packaging.
-pub fn locate() -> anyhow::Result<PathBuf> {
-    let file = format!("volant-agent{}", std::env::consts::EXE_SUFFIX);
-    let mut candidates = Vec::new();
-    if let Ok(dir) = std::env::var("VOLANT_AGENT_DIR") {
-        candidates.push(PathBuf::from(dir).join(&file));
+/// Where agent binaries live: `VOLANT_AGENT_DIR`, then next to this executable. The local
+/// agent is `volant-agent`; cross-built ones are `volant-agent-<target triple>`. Embedding them
+/// in the controller comes with the release packaging.
+#[derive(Debug, Clone)]
+pub struct AgentSource {
+    dirs: Vec<PathBuf>,
+}
+
+impl AgentSource {
+    pub fn discover() -> Self {
+        let mut dirs = Vec::new();
+        if let Ok(dir) = std::env::var("VOLANT_AGENT_DIR") {
+            dirs.push(PathBuf::from(dir));
+        }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            dirs.push(dir.to_path_buf());
+        }
+        Self { dirs }
     }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        candidates.push(dir.join(&file));
+
+    pub fn local(&self) -> anyhow::Result<PathBuf> {
+        let file = format!("volant-agent{}", std::env::consts::EXE_SUFFIX);
+        self.find(&file).with_context(|| {
+            format!(
+                "no executable agent binary '{file}' in {}. Set VOLANT_AGENT_DIR to the directory that holds it",
+                self.describe()
+            )
+        })
     }
-    candidates.iter().find(|p| p.is_file()).cloned().with_context(|| {
-        format!(
-            "agent binary '{file}' not found; looked in {}. Set VOLANT_AGENT_DIR to the directory that holds it",
-            candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-        )
-    })
+
+    pub fn for_target(&self, triple: &str) -> Option<PathBuf> {
+        self.find(&format!("volant-agent-{triple}"))
+    }
+
+    pub fn describe(&self) -> String {
+        self.dirs
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn find(&self, file: &str) -> Option<PathBuf> {
+        self.dirs.iter().map(|d| d.join(file)).find(|p| runnable(p))
+    }
+}
+
+/// A file that carries an execute bit. A stray artifact with the right name is not an agent:
+/// the local one would fail to spawn, and a cross-built one would be uploaded, made
+/// executable on the host and then refuse to run there.
+#[cfg(unix)]
+fn runnable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn runnable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 /// How long a bare `drop` waits for the agent to notice end of stream and clean up its task

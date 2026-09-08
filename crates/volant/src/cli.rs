@@ -15,6 +15,7 @@ use crate::inventory::{Host, Inventory};
 use crate::render::Renderer;
 use crate::stats::{Stats, exit_code};
 use crate::template::Templar;
+use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
 use crate::{agent, playbook};
 
@@ -38,6 +39,15 @@ pub struct PlaybookArgs {
     /// Show module results for successful tasks too. Repeatable.
     #[arg(short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
+    /// Log in to remote hosts as this user.
+    #[arg(short = 'u', long = "user", value_name = "REMOTE_USER")]
+    pub user: Option<String>,
+    /// Private key file for ssh authentication.
+    #[arg(long = "private-key", value_name = "PRIVATE_KEY_FILE")]
+    pub private_key: Option<PathBuf>,
+    /// Seconds to wait for a connection.
+    #[arg(short = 'T', long = "timeout", value_name = "TIMEOUT")]
+    pub timeout: Option<u64>,
 }
 
 /// Runs the playbooks and returns the process exit code.
@@ -76,13 +86,23 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .iter()
         .map(|p| playbook::load(p))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let agent = agent::locate()?;
+    let agents = agent::AgentSource::discover();
+    let defaults = ConnectionDefaults {
+        remote_user: args.user.clone().or(config.remote_user),
+        private_key: args.private_key.clone().or(config.private_key_file),
+        host_key_checking: config.host_key_checking,
+        remote_tmp: config.remote_tmp,
+        connect_timeout: args
+            .timeout
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(config.timeout),
+    };
     let mut stats = Stats::default();
 
     let (stop_tx, stop_rx) = watch::channel(false);
     spawn_signal_watcher(stop_tx);
     let options = RunOptions {
-        connect_timeout: config.timeout,
+        defaults,
         stop: stop_rx.clone(),
     };
 
@@ -122,6 +142,10 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // (its `Resolution.warnings` always reflects the truth for that one call, which callers other
     // than this CLI loop may rely on) while matching the reference's once-per-run output.
     let mut warned: HashSet<String> = HashSet::new();
+    // A controller with no local agent can still drive remote hosts, so the local agent only
+    // has to be there once a play actually targets a host that runs one here. Saying so before
+    // that play starts beats one `UNREACHABLE` per local host.
+    let mut local_agent_checked = false;
     let mut current_dir = playbook_dir;
     'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
         let dir = base_dir(path);
@@ -153,7 +177,18 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     .collect(),
                 None => resolution.hosts,
             };
-            executor::run_play(play, hosts, &agent, &options, &mut state, out, &mut stats).await?;
+            if !local_agent_checked
+                && hosts.iter().any(|h| {
+                    matches!(
+                        Transport::for_host(h, &options.defaults),
+                        Ok(Transport::Local)
+                    )
+                })
+            {
+                agents.local()?;
+                local_agent_checked = true;
+            }
+            executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats).await?;
         }
     }
     if *stop_rx.borrow() {

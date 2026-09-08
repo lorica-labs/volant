@@ -7,10 +7,17 @@ use std::time::Duration;
 
 use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
+/// Ansible's own default for `remote_tmp`, where the agent is cached on a host.
+pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub inventory: Option<PathBuf>,
     pub timeout: Duration,
+    pub remote_user: Option<String>,
+    pub private_key_file: Option<PathBuf>,
+    pub host_key_checking: bool,
+    pub remote_tmp: String,
 }
 
 impl Default for Config {
@@ -18,6 +25,10 @@ impl Default for Config {
         Self {
             inventory: None,
             timeout: DEFAULT_CONNECT_TIMEOUT,
+            remote_user: None,
+            private_key_file: None,
+            host_key_checking: true,
+            remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
         }
     }
 }
@@ -37,6 +48,24 @@ impl Config {
             && let Ok(secs) = t.parse::<u64>()
         {
             config.timeout = Duration::from_secs(secs);
+        }
+        if let Ok(user) = std::env::var("ANSIBLE_REMOTE_USER") {
+            config.remote_user = Some(user);
+        }
+        if let Ok(key) = std::env::var("ANSIBLE_PRIVATE_KEY_FILE") {
+            config.private_key_file = Some(PathBuf::from(key));
+        }
+        if let Ok(flag) = std::env::var("ANSIBLE_HOST_KEY_CHECKING")
+            && let Some(on) = crate::yaml::bool_from_str(flag.trim())
+        {
+            config.host_key_checking = on;
+        }
+        // A blank value is refused here as it is in the file: an empty `remote_tmp` makes the
+        // remote `mkdir` fail on an empty path, and the run then blames the upload.
+        if let Ok(tmp) = std::env::var("ANSIBLE_REMOTE_TMP")
+            && !tmp.trim().is_empty()
+        {
+            config.remote_tmp = tmp.trim().to_string();
         }
         config
     }
@@ -87,6 +116,29 @@ fn parse(text: &str, base: &Path) -> Config {
                     config.timeout = Duration::from_secs(secs);
                 }
             }
+            "remote_user" => {
+                let user = value.trim();
+                if !user.is_empty() {
+                    config.remote_user = Some(user.to_string());
+                }
+            }
+            "private_key_file" => {
+                let path = value.trim();
+                if !path.is_empty() {
+                    config.private_key_file = Some(base.join(path));
+                }
+            }
+            "host_key_checking" => {
+                if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
+                    config.host_key_checking = on;
+                }
+            }
+            "remote_tmp" => {
+                let tmp = value.trim();
+                if !tmp.is_empty() {
+                    config.remote_tmp = tmp.to_string();
+                }
+            }
             _ => {}
         }
     }
@@ -105,6 +157,55 @@ mod tests {
         );
         assert_eq!(c.inventory, Some(PathBuf::from("/etc/x/hosts.ini")));
         assert_eq!(c.timeout, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn the_connection_keys_are_read_with_ansibles_boolean_spellings() {
+        let c = parse(
+            "[defaults]\nremote_user = ops\nprivate_key_file = keys/id\nhost_key_checking = no\nremote_tmp = /var/tmp/v\n",
+            Path::new("/etc/x"),
+        );
+        assert_eq!(c.remote_user.as_deref(), Some("ops"));
+        assert_eq!(c.private_key_file, Some(PathBuf::from("/etc/x/keys/id")));
+        assert!(!c.host_key_checking);
+        assert_eq!(c.remote_tmp, "/var/tmp/v");
+        assert!(
+            parse("[defaults]\nhost_key_checking = True\n", Path::new(".")).host_key_checking,
+            "checking is on by default and True keeps it on"
+        );
+        assert!(
+            parse("[defaults]\nhost_key_checking = maybe\n", Path::new(".")).host_key_checking,
+            "an unreadable value leaves the safe default alone"
+        );
+    }
+
+    /// `ANSIBLE_REMOTE_TMP=` used to be taken at face value, and an empty remote path makes
+    /// the agent's cache directory impossible to create. The file arm already refused it.
+    #[test]
+    fn a_blank_remote_tmp_is_refused_wherever_it_comes_from() {
+        assert_eq!(
+            parse("[defaults]\nremote_tmp =   \n", Path::new(".")).remote_tmp,
+            DEFAULT_REMOTE_TMP
+        );
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        let saved_tmp = std::env::var("ANSIBLE_REMOTE_TMP").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("ANSIBLE_REMOTE_TMP", "   ");
+        }
+        assert_eq!(Config::load().remote_tmp, DEFAULT_REMOTE_TMP);
+        unsafe { std::env::set_var("ANSIBLE_REMOTE_TMP", "/var/tmp/v") };
+        assert_eq!(Config::load().remote_tmp, "/var/tmp/v");
+        unsafe {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+            match saved_tmp {
+                Some(v) => std::env::set_var("ANSIBLE_REMOTE_TMP", v),
+                None => std::env::remove_var("ANSIBLE_REMOTE_TMP"),
+            }
+        }
     }
 
     #[test]

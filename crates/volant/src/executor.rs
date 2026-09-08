@@ -13,13 +13,13 @@ use tokio::sync::{mpsc, watch};
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
-use crate::agent::AgentLink;
+use crate::agent::{AgentLink, AgentSource};
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
 use crate::stats::{Outcome, Stats};
 use crate::template::{Templar, TemplateError};
-use crate::transport::Transport;
+use crate::transport::{ConnectError, ConnectionDefaults, Transport};
 use crate::vars::{Scope, VarStore, load_vars_file, omit_token};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
@@ -30,7 +30,8 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// Settings shared by every play of a run.
 #[derive(Clone)]
 pub struct RunOptions {
-    pub connect_timeout: Duration,
+    /// Connection settings every host starts from; its host variables override them.
+    pub defaults: ConnectionDefaults,
     /// Flips to `true` once when the user interrupts the run.
     pub stop: watch::Receiver<bool>,
 }
@@ -84,7 +85,7 @@ struct PlayPlan {
 pub async fn run_play(
     play: &Play,
     hosts: Vec<Host>,
-    agent: &Path,
+    agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
     out: &mut Renderer,
@@ -121,10 +122,10 @@ pub async fn run_play(
     let mut workers = Vec::new();
     for host in &hosts {
         let tx = tx.clone();
-        let (host, plan, agent, options) = (
+        let (host, plan, agents, options) = (
             host.clone(),
             Arc::clone(&plan),
-            agent.to_path_buf(),
+            agents.clone(),
             options.clone(),
         );
         let (templar, vars) = (Arc::clone(&state.templar), Arc::clone(&state.vars));
@@ -133,7 +134,7 @@ pub async fn run_play(
         workers.push((
             name,
             tokio::spawn(async move {
-                drive_host(host, plan, agent, options, templar, vars, verbosity, tx).await
+                drive_host(host, plan, agents, options, templar, vars, verbosity, tx).await
             }),
         ));
     }
@@ -654,7 +655,7 @@ fn classify(result: &TaskResult, ignore_errors: bool) -> Outcome {
 async fn drive_host(
     host: Host,
     plan: Arc<PlayPlan>,
-    agent: PathBuf,
+    agents: AgentSource,
     options: RunOptions,
     templar: Arc<Templar>,
     store: Arc<Mutex<VarStore>>,
@@ -762,13 +763,13 @@ async fn drive_host(
         if !batch.is_empty() {
             let link = match &mut link {
                 Some(l) => l,
-                None => match connect(&host, &agent, options.connect_timeout).await {
+                None => match connect(&host, &agents, &options.defaults).await {
                     Ok(l) => link.insert(l),
                     Err(err) => {
                         let _ = tx
                             .send(Event::Unreachable {
                                 host: name.clone(),
-                                msg: format!("{err:#}"),
+                                msg: err.to_string(),
                             })
                             .await;
                         return;
@@ -971,17 +972,26 @@ async fn report_task(
     any_failed && !task.ignore_errors
 }
 
-async fn connect(host: &Host, agent: &Path, timeout: Duration) -> anyhow::Result<AgentLink> {
-    let transport = Transport::for_host(host)?;
-    let mut link = transport.connect(agent).await?;
+/// Every way this can fail is a host the run cannot reach, so it all comes back as one
+/// `ConnectError` the driver renders as `UNREACHABLE`.
+async fn connect(
+    host: &Host,
+    agents: &AgentSource,
+    defaults: &ConnectionDefaults,
+) -> Result<AgentLink, ConnectError> {
+    let transport = Transport::for_host(host, defaults)
+        .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
+    let mut link = transport.connect(agents).await?;
+    let timeout = defaults.connect_timeout;
     tokio::time::timeout(timeout, link.handshake())
         .await
         .map_err(|_| {
-            anyhow::anyhow!(
+            ConnectError::Unreachable(format!(
                 "no answer from the agent after {} seconds",
                 timeout.as_secs()
-            )
-        })??;
+            ))
+        })?
+        .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
     Ok(link)
 }
 

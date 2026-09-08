@@ -87,3 +87,34 @@ jobs:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - run: cargo publish --dry-run --workspace
+
+  ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          target: x86_64-unknown-linux-musl
+      - uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2
+        with:
+          tool: nextest,just
+      - name: Start an sshd that accepts a throwaway key
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools openssh-server
+          sudo ssh-keygen -A
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd
+          # sshd reads authorized_keys under the home directory in the passwd database, which
+          # is not always the one $HOME names.
+          home="$(getent passwd "$(id -un)" | cut -d: -f6)"
+          mkdir -p "$home/.ssh"
+          chmod 700 "$home/.ssh"
+          ssh-keygen -q -t ed25519 -N "" -f "$home/.ssh/volant_test_key"
+          cat "$home/.ssh/volant_test_key.pub" >> "$home/.ssh/authorized_keys"
+          chmod 600 "$home/.ssh/authorized_keys"
+          ssh -i "$home/.ssh/volant_test_key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new localhost true
+          echo "VOLANT_SSH_TEST_KEY=$home/.ssh/volant_test_key" >> "$GITHUB_ENV"
+      - run: just ssh-test

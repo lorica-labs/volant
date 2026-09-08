@@ -19,7 +19,7 @@ use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
 use crate::stats::{Outcome, Stats};
 use crate::template::{Templar, TemplateError};
-use crate::transport::{ConnectError, ConnectionDefaults, Transport};
+use crate::transport::{ConnectError, ConnectionDefaults, Escalation, Transport};
 use crate::vars::{Scope, VarStore, load_vars_file, omit_token};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
@@ -108,6 +108,8 @@ struct PlayPlan {
     /// The `vars_files` maps of each host, in the order the play lists the files.
     vars_files: HashMap<String, Vec<Map<String, Value>>>,
     play_hosts: Vec<String>,
+    r#become: Option<bool>,
+    become_user: Option<String>,
 }
 
 pub async fn run_play(
@@ -144,6 +146,8 @@ pub async fn run_play(
         play_vars: play.vars.clone(),
         vars_files,
         play_hosts: play_hosts.clone(),
+        r#become: play.r#become,
+        become_user: play.become_user.clone(),
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
@@ -327,6 +331,85 @@ fn clone_task(t: &PlayTask) -> PlayTask {
         register: t.register.clone(),
         changed_when: t.changed_when.clone(),
         failed_when: t.failed_when.clone(),
+        r#become: t.r#become,
+        become_user: t.become_user.clone(),
+        become_method: t.become_method.clone(),
+    }
+}
+
+/// Resolves privilege escalation for one task: whether to escalate, to whom, and with what
+/// password. `None` means the task runs as the connecting user.
+///
+/// The order is measured, not assumed. Against `ansible-core 2.19.12`: a host's
+/// `ansible_become` variable beats both keywords in both directions (a play `become: false`
+/// with `ansible_become=true` ran as root, and a task `become: true` with
+/// `ansible_become=false` ran as the invoking user), and between the keywords the task beats
+/// the play. `ansible_become_user` follows the same order. The connection defaults, which carry
+/// `ansible.cfg`, its environment variables and the command line, speak last.
+fn become_for(
+    task: &PlayTask,
+    play: &PlayPlan,
+    vars: &Map<String, Value>,
+    defaults: &ConnectionDefaults,
+    templar: &Templar,
+) -> Result<Option<Escalation>, TemplateError> {
+    // A method arriving as a variable is refused here, the way the playbook's own keyword is
+    // refused at load time. The inventory files themselves are checked before the run starts;
+    // this catches the same value reaching a host through `group_vars`, `host_vars`,
+    // `--extra-vars` or a `set_fact`.
+    if let Some(method) = vars.get("ansible_become_method").and_then(Value::as_str)
+        && method != crate::playbook::BECOME_METHOD
+    {
+        return Err(TemplateError(format!(
+            "ansible_become_method '{method}' is not supported yet"
+        )));
+    }
+    let on = vars
+        .get("ansible_become")
+        .and_then(as_bool_value)
+        .or(task.r#become)
+        .or(play.r#become)
+        .unwrap_or(defaults.r#become);
+    if !on {
+        return Ok(None);
+    }
+    let user = match vars.get("ansible_become_user").and_then(Value::as_str) {
+        Some(user) => user.to_string(),
+        None => task
+            .become_user
+            .clone()
+            .or_else(|| play.become_user.clone())
+            .unwrap_or_else(|| defaults.become_user.clone()),
+    };
+    // `become_user: "{{ app_user }}"` is ordinary Ansible, and the rendered name is what the
+    // link is keyed by, so it has to be resolved before the connection is opened.
+    let user = if Templar::is_template(&user) {
+        templar
+            .render(&user, vars)?
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| {
+                TemplateError(format!("'become_user' must render to a user name: {user}"))
+            })?
+    } else {
+        user
+    };
+    let password = vars
+        .get("ansible_become_password")
+        .or_else(|| vars.get("ansible_become_pass"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| defaults.become_password.clone());
+    Ok(Some(Escalation { user, password }))
+}
+
+/// A variable's boolean, whether the inventory typed it as one or spelled it the way Ansible
+/// content spells one (`yes`, `on`, `"true"`).
+fn as_bool_value(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) => crate::yaml::bool_from_str(s.trim()),
+        _ => None,
     }
 }
 
@@ -424,8 +507,10 @@ enum Prepared {
     Skipped(Vec<Item>),
     /// `set_fact` or `debug`: run on the controller.
     Local(Vec<Item>),
-    /// Send to the agent, one `Task` per item.
-    Remote(Vec<Item>),
+    /// Send to the agent, one `Task` per item, over a link running as this task's escalated
+    /// user. Escalation belongs to the task rather than to an item: it decides which agent on
+    /// the host the whole task talks to, so every item of a loop shares it.
+    Remote(Vec<Item>, Option<Escalation>),
 }
 
 /// One loop item (or the whole task when there is no loop), rendered.
@@ -446,6 +531,7 @@ fn prepare(
     plan: &PlayPlan,
     templar: &Templar,
     store: &Mutex<VarStore>,
+    defaults: &ConnectionDefaults,
 ) -> Result<Prepared, TemplateError> {
     let base = host_vars(host, plan, &task.vars, templar, store);
     let elements: Vec<Option<Value>> = match &task.loop_items {
@@ -519,11 +605,11 @@ fn prepare(
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
     }
-    Ok(if is_local(&task.module) {
-        Prepared::Local(items)
-    } else {
-        Prepared::Remote(items)
-    })
+    if is_local(&task.module) {
+        return Ok(Prepared::Local(items));
+    }
+    let escalation = become_for(task, plan, &base, defaults, templar)?;
+    Ok(Prepared::Remote(items, escalation))
 }
 
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
@@ -736,28 +822,18 @@ async fn drive_host(
     tx: mpsc::Sender<Event>,
 ) {
     let name = host.name.clone();
-    let key = LinkKey {
-        host: name.clone(),
-        become_user: None,
-    };
     let mut stop = options.stop.clone();
     // Set once the stop watch's sender is gone, so a dropped sender is never read as an
     // interrupt and the select below stops polling a branch that would otherwise resolve
     // immediately forever.
     let mut stop_broken = false;
-    let mut link: Option<AgentLink> = None;
-    // Connections this play does not use itself but must not close either; they go straight
-    // back with `Finished`.
-    let mut kept: Vec<(LinkKey, AgentLink)> = Vec::new();
-    for (k, l) in existing {
-        if k == key && link.is_none() {
-            link = Some(l);
-        } else {
-            kept.push((k, l));
-        }
-    }
-    // A kept connection is proved alive once, at the first batch, and never again.
-    let mut checked = link.is_none();
+    // One entry per target user on this host: the connecting user's own agent, and one more
+    // for each `become_user` the play escalates to. Connections this play never uses itself
+    // stay in here untouched and go straight back with `Finished`.
+    let mut links: HashMap<LinkKey, AgentLink> = existing.into_iter().collect();
+    // Which of them this play has already proved alive: one liveness check per connection per
+    // play, and never again.
+    let mut checked: HashSet<LinkKey> = HashSet::new();
     // Ansible's `forks`: one permit per host, held from the connection to the results of a
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
@@ -773,10 +849,13 @@ async fn drive_host(
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
+        // The escalation every task of the batch shares. A batch is one message to one agent,
+        // so it cannot span two target users.
+        let mut batch_escalation: Option<Escalation> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         while pos < n {
             let task = &plan.tasks[pos];
-            match prepare(task, &name, &plan, &templar, &store) {
+            match prepare(task, &name, &plan, &templar, &store, &options.defaults) {
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;
@@ -842,7 +921,14 @@ async fn drive_host(
                         break 'run;
                     }
                 }
-                Ok(Prepared::Remote(items)) => {
+                Ok(Prepared::Remote(items, escalation)) => {
+                    // A different target user is a different agent on the host, so the batch
+                    // ends here and the next one opens its own link. `pos` does not move, so
+                    // this task is the first of that batch.
+                    if !batch.is_empty() && escalation != batch_escalation {
+                        break;
+                    }
+                    batch_escalation = escalation;
                     let boundary = task.register.is_some()
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty();
@@ -867,14 +953,40 @@ async fn drive_host(
                     }
                 }
             }
-            let link =
-                match reuse_or_connect(&mut link, &mut checked, &host, &agents, &options).await {
-                    Ok(l) => l,
-                    Err(err) => {
-                        unreachable = Some(err.to_string());
-                        break 'run;
-                    }
-                };
+            let key = LinkKey {
+                host: name.clone(),
+                become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
+            };
+            let link = match reuse_or_connect(
+                &mut links,
+                &mut checked,
+                &key,
+                batch_escalation.as_ref(),
+                &host,
+                &agents,
+                &options,
+            )
+            .await
+            {
+                Ok(l) => l,
+                // The host answered and then refused to escalate, so this is the task failing
+                // and not the host going away. `ignore_errors` is deliberately not honoured:
+                // the batch never ran, and a run that reported success while having quietly
+                // skipped every escalated task is the worst outcome available here.
+                Err(ConnectError::Become(msg)) => {
+                    let index = batch[0].0;
+                    let mut task = clone_task(&plan.tasks[index]);
+                    task.ignore_errors = false;
+                    let results = vec![(None, TaskResult::failed_with(msg))];
+                    report_task(&tx, &name, index, &task, &results, &[None], false).await;
+                    failed = true;
+                    break 'run;
+                }
+                Err(err) => {
+                    unreachable = Some(err.to_string());
+                    break 'run;
+                }
+            };
             batch_id += 1;
             // Flat list for the agent, with a map back to (task, item).
             let mut tasks = Vec::new();
@@ -992,8 +1104,8 @@ async fn drive_host(
     }
     drop(permit);
     if let Some(msg) = unreachable {
-        // Whatever went wrong, this connection is not one to hand to the next play.
-        if let Some(link) = link.take() {
+        // Whatever went wrong, none of these connections is one to hand to the next play.
+        for (_, link) in links.drain() {
             link.shutdown().await;
         }
         failed = true;
@@ -1004,26 +1116,26 @@ async fn drive_host(
             })
             .await;
     }
-    // A healthy connection outlives the play: the run closes it once, before the recap.
-    if let Some(link) = link.take() {
-        kept.push((key, link));
-    }
+    // Healthy connections outlive the play: the run closes them once, before the recap.
     let _ = tx
         .send(Event::Finished {
             host: name,
             failed,
-            links: kept,
+            links: links.into_iter().collect(),
         })
         .await;
 }
 
-/// The connection for the next batch: the one kept from an earlier play if its agent still
-/// answers, a fresh one otherwise. A kept connection gets exactly one liveness check per
-/// play, and a failed check exactly one reconnection; a failed reconnection is the host's
-/// `UNREACHABLE`.
+/// The connection for the next batch, under `key`'s target user: the one kept from an earlier
+/// play if its agent still answers, a fresh one otherwise. A kept connection gets exactly one
+/// liveness check per play, and a failed check exactly one reconnection; a failed reconnection
+/// is the host's `UNREACHABLE`.
+#[allow(clippy::too_many_arguments)]
 async fn reuse_or_connect<'a>(
-    slot: &'a mut Option<AgentLink>,
-    checked: &mut bool,
+    links: &'a mut HashMap<LinkKey, AgentLink>,
+    checked: &mut HashSet<LinkKey>,
+    key: &LinkKey,
+    escalation: Option<&Escalation>,
     host: &Host,
     agents: &AgentSource,
     options: &RunOptions,
@@ -1032,35 +1144,43 @@ async fn reuse_or_connect<'a>(
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
     let mut stale: Option<String> = None;
-    if !*checked {
-        *checked = true;
-        if let Some(mut link) = slot.take() {
-            let alive =
-                tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
-            match alive {
-                Ok(Ok(())) => *slot = Some(link),
-                Ok(Err(err)) => {
-                    stale = Some(format!("{err:#}"));
-                    link.shutdown().await;
-                }
-                Err(_) => {
-                    stale = Some("no answer from the kept connection".to_string());
-                    link.shutdown().await;
-                }
+    if checked.insert(key.clone())
+        && let Some(mut link) = links.remove(key)
+    {
+        let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
+        match alive {
+            Ok(Ok(())) => {
+                links.insert(key.clone(), link);
+            }
+            Ok(Err(err)) => {
+                stale = Some(format!("{err:#}"));
+                link.shutdown().await;
+            }
+            Err(_) => {
+                stale = Some("no answer from the kept connection".to_string());
+                link.shutdown().await;
             }
         }
     }
-    if slot.is_none() {
-        *slot = Some(connect(host, agents, &options.defaults).await.map_err(
-            |err| match stale {
-                Some(reason) => ConnectError::Unreachable(format!(
-                    "the kept connection failed ({reason}), and reconnecting failed too: {err}"
-                )),
-                None => err,
-            },
-        )?);
+    if !links.contains_key(key) {
+        let link = match connect(host, agents, &options.defaults, escalation).await {
+            Ok(link) => link,
+            Err(ConnectError::Unreachable(msg)) => {
+                return Err(ConnectError::Unreachable(match stale {
+                    Some(reason) => format!(
+                        "the kept connection failed ({reason}), and reconnecting failed too: {msg}"
+                    ),
+                    None => msg,
+                }));
+            }
+            // A refused escalation is the host's answer about this user, not a connection that
+            // failed, so it travels on untouched: adding the stale note would turn a failed
+            // task into something that reads like an unreachable host.
+            Err(err) => return Err(err),
+        };
+        links.insert(key.clone(), link);
     }
-    Ok(slot.as_mut().expect("connected just above"))
+    Ok(links.get_mut(key).expect("connected just above"))
 }
 
 /// Sends the result lines of one task and its `TaskDone`. Returns whether the host failed.
@@ -1131,16 +1251,18 @@ async fn report_task(
     any_failed && !task.ignore_errors
 }
 
-/// Every way this can fail is a host the run cannot reach, so it all comes back as one
-/// `ConnectError` the driver renders as `UNREACHABLE`.
+/// Opens one link, escalated when `escalation` is given. Every way this can fail is a host the
+/// run cannot reach and comes back as `ConnectError::Unreachable`, except a `sudo` that refused,
+/// which comes back as `ConnectError::Become` because the host itself answered.
 async fn connect(
     host: &Host,
     agents: &AgentSource,
     defaults: &ConnectionDefaults,
+    escalation: Option<&Escalation>,
 ) -> Result<AgentLink, ConnectError> {
     let transport = Transport::for_host(host, defaults)
         .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
-    let mut link = transport.connect(agents).await?;
+    let mut link = transport.connect(agents, escalation).await?;
     let timeout = defaults.connect_timeout;
     tokio::time::timeout(timeout, link.handshake())
         .await
@@ -1174,7 +1296,166 @@ mod tests {
             register: None,
             changed_when: Vec::new(),
             failed_when: Vec::new(),
+            r#become: None,
+            become_user: None,
+            become_method: None,
         }
+    }
+
+    fn plan() -> PlayPlan {
+        PlayPlan {
+            tasks: Vec::new(),
+            play_vars: Map::new(),
+            vars_files: HashMap::new(),
+            play_hosts: Vec::new(),
+            r#become: None,
+            become_user: None,
+        }
+    }
+
+    fn defaults() -> ConnectionDefaults {
+        ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".into(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".into(),
+            become_method: "sudo".into(),
+            become_password: None,
+        }
+    }
+
+    fn vars(v: Value) -> Map<String, Value> {
+        v.as_object().cloned().unwrap_or_default()
+    }
+
+    /// The order measured against `ansible-core 2.19.12`: `ansible_become` wins over both
+    /// keywords, in both directions, and the task keyword wins over the play's.
+    #[test]
+    fn a_host_variable_beats_both_become_keywords() {
+        let templar = Templar::new(std::env::temp_dir());
+        let escalate = |task_become, play_become, host: Value| {
+            let mut t = task("command");
+            t.r#become = task_become;
+            let mut p = plan();
+            p.r#become = play_become;
+            become_for(&t, &p, &vars(host), &defaults(), &templar).unwrap()
+        };
+        assert!(
+            escalate(None, Some(true), json!({"ansible_become": false})).is_none(),
+            "the variable turns a play's become off"
+        );
+        assert!(
+            escalate(None, Some(false), json!({"ansible_become": true})).is_some(),
+            "and turns it on where the play said no"
+        );
+        assert!(
+            escalate(Some(true), None, json!({"ansible_become": false})).is_none(),
+            "a task keyword loses to the variable too"
+        );
+        assert!(
+            escalate(Some(false), Some(true), json!({})).is_none(),
+            "with no variable, the task keyword beats the play's"
+        );
+        assert!(
+            escalate(None, Some(true), json!({})).is_some(),
+            "and the play keyword stands on its own"
+        );
+        assert!(
+            escalate(None, None, json!({"ansible_become": "yes"})).is_some(),
+            "a variable spelled the way Ansible content spells it is still a boolean"
+        );
+    }
+
+    #[test]
+    fn the_target_user_follows_the_same_order_and_defaults_to_root() {
+        let templar = Templar::new(std::env::temp_dir());
+        let mut t = task("command");
+        t.r#become = Some(true);
+        let mut p = plan();
+        p.become_user = Some("play".into());
+        assert_eq!(
+            become_for(&t, &p, &Map::new(), &defaults(), &templar)
+                .unwrap()
+                .unwrap()
+                .user,
+            "play"
+        );
+        t.become_user = Some("task".into());
+        assert_eq!(
+            become_for(&t, &p, &Map::new(), &defaults(), &templar)
+                .unwrap()
+                .unwrap()
+                .user,
+            "task"
+        );
+        let host = vars(json!({"ansible_become_user": "host"}));
+        assert_eq!(
+            become_for(&t, &p, &host, &defaults(), &templar)
+                .unwrap()
+                .unwrap()
+                .user,
+            "host",
+            "the variable wins here as well"
+        );
+        let bare = task("command");
+        let mut d = defaults();
+        d.r#become = true;
+        assert_eq!(
+            become_for(&bare, &plan(), &Map::new(), &d, &templar)
+                .unwrap()
+                .unwrap()
+                .user,
+            "root",
+            "nothing said anywhere means root, as in Ansible"
+        );
+        let templated = vars(json!({"ansible_become_user": "{{ who }}", "who": "deploy"}));
+        assert_eq!(
+            become_for(&t, &p, &templated, &defaults(), &templar)
+                .unwrap()
+                .unwrap()
+                .user,
+            "deploy",
+            "a templated user is resolved before the link is keyed by it"
+        );
+    }
+
+    /// A method arriving as a variable is refused by its name rather than quietly escalating
+    /// with `sudo`: running the task under rules nobody wrote is worse than not running it.
+    #[test]
+    fn an_unsupported_become_method_variable_fails_the_task() {
+        let templar = Templar::new(std::env::temp_dir());
+        let mut t = task("command");
+        t.r#become = Some(true);
+        let err = become_for(
+            &t,
+            &plan(),
+            &vars(json!({"ansible_become_method": "su"})),
+            &defaults(),
+            &templar,
+        )
+        .unwrap_err();
+        assert!(
+            err.0.contains("su") && err.0.contains("not supported"),
+            "{}",
+            err.0
+        );
+    }
+
+    /// The password never has to be quoted, logged or formatted, so the one place it could still
+    /// leak is a `Debug` that a `-vvv` diagnostic reaches.
+    #[test]
+    fn the_become_password_is_redacted_in_debug_output() {
+        let escalation = Escalation {
+            user: "root".into(),
+            password: Some("s3cret".into()),
+        };
+        assert!(!format!("{escalation:?}").contains("s3cret"));
+        let mut d = defaults();
+        d.become_password = Some("s3cret".into());
+        assert!(!format!("{d:?}").contains("s3cret"));
     }
 
     fn result(v: Value) -> TaskResult {

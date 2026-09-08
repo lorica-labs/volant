@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Who am I as root
+      command: id -un
+      register: root_id
+    - name: Back to myself
+      command: id -un
+      become: false
+      register: my_id
+    - name: Both
+      debug:
+        msg: "{{ root_id.stdout }} then {{ my_id.stdout }}"

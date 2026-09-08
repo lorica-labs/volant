@@ -107,6 +107,27 @@ impl AgentLink {
         })
     }
 
+    /// The same, having first written `preamble` to the child's stdin unframed. That is how a
+    /// `sudo -S` reading the escalation password gets it: on the pipe, ahead of every frame,
+    /// and never on a command line, in the environment or through a `format!`.
+    pub async fn new_with_preamble(
+        child: Child,
+        preamble: Option<Vec<u8>>,
+    ) -> anyhow::Result<Self> {
+        let mut link = Self::new(child)?;
+        if let Some(bytes) = preamble {
+            link.stdin()
+                .write_all(&bytes)
+                .await
+                .context("writing the escalation password")?;
+            link.stdin()
+                .flush()
+                .await
+                .context("writing the escalation password")?;
+        }
+        Ok(link)
+    }
+
     fn stdin(&mut self) -> &mut ChildStdin {
         self.stdin.as_mut().expect("stdin is only taken on drop")
     }

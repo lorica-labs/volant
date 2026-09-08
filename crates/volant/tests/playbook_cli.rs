@@ -417,3 +417,338 @@ fn ansible_forks_reports_the_run_setting() {
         "the default is five: {text}"
     );
 }
+
+/// The account these tests escalate from. Asked of the system rather than read from `USER`,
+/// which a container or a service manager can leave unset while the account is perfectly real.
+fn me() -> String {
+    let out = Command::new("id").arg("-un").output().unwrap();
+    assert!(out.status.success(), "'id -un' failed");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A directory holding one executable `sudo` that behaves the way `body` says, first on `PATH`.
+fn fake_sudo(name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sudo = dir.join("sudo");
+    std::fs::write(&sudo, body).unwrap();
+    std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+fn volant_with_path(args: &[&str], dir: &std::path::Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .expect("volant runs")
+}
+
+/// Needs passwordless sudo for the current user, as on the development machine and on the CI
+/// runner. The second task drops back to the invoking account, so the same run proves both
+/// that escalation happened and that it did not leak into the task that declined it: a
+/// `become` that quietly did nothing would print that account twice.
+#[test]
+fn become_switches_user_and_back() {
+    let out = volant(&["playbook", &fixture("become.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(&format!(r#""msg": "root then {}""#, me())),
+        "{text}"
+    );
+}
+
+/// A `sudo` that wants a password is a task that failed, never a host that could not be
+/// reached: the connection worked, and the run has to exit 2 rather than 4.
+#[test]
+fn a_missing_sudo_password_fails_the_task_not_the_host() {
+    let dir = fake_sudo(
+        "fakesudo",
+        "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n",
+    );
+    let out = volant_with_path(&["playbook", &fixture("become.yml")], &dir);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains("fatal: [localhost]: FAILED!")
+            && text.contains(volant::transport::MISSING_SUDO_PASSWORD),
+        "{text}"
+    );
+    assert!(
+        !text.contains("UNREACHABLE"),
+        "escalation failure is a task failure: {text}"
+    );
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same host, the same connection, a password that `sudo` rejects. The two messages have
+/// to be told apart, because the operator's next move differs.
+#[test]
+fn a_rejected_sudo_password_is_named_as_such() {
+    let dir = fake_sudo(
+        "badpassword",
+        "#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n",
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", "-K", &fixture("become.yml")])
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"not-the-password\n")
+                .unwrap();
+            child.wait_with_output().unwrap()
+        })
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains(volant::transport::INCORRECT_SUDO_PASSWORD),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!text.contains("UNREACHABLE"), "{text}");
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A host with no `sudo` at all: still a failed task, and the shell's own words rather than a
+/// guess about passwords.
+#[test]
+fn a_host_without_sudo_fails_the_task_with_the_shells_words() {
+    let dir = std::env::temp_dir().join(format!("volant-nosudo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // An empty directory as the whole PATH: nothing named `sudo` can be found from here.
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &fixture("become.yml")])
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .env("PATH", dir.display().to_string())
+        .output()
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("fatal: [localhost]: FAILED!"), "{text}");
+    assert!(
+        text.contains("sudo"),
+        "the message names the program: {text}"
+    );
+    assert!(!text.contains("UNREACHABLE"), "{text}");
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `become_method` other than `sudo` stops the run before anything executes: exit 1, and the
+/// method named. `sudo` is not silently substituted for the program the playbook asked for.
+#[test]
+fn unsupported_become_methods_are_refused_by_name() {
+    let dir = std::env::temp_dir().join(format!("volant-su-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("su.yml");
+    std::fs::write(
+        &path,
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_method: su\n  tasks:\n    - command: true\n",
+    )
+    .unwrap();
+    let out = volant(&["playbook", &path.display().to_string()]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        text.contains("su") && text.contains("not supported"),
+        "{text}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).is_empty(),
+        "nothing runs: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &fixture("become.yml")])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_BECOME_METHOD", "doas")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("doas"),
+        "the environment variable is refused by name too: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The same environment against a playbook that escalates nowhere: the method is never used,
+    // so there is nothing to refuse. Refusing here would abort every run on a machine whose
+    // operator set the variable for something else entirely.
+    let plain = dir.join("plain.yml");
+    std::fs::write(
+        &plain,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug:\n        msg: nothing escalates here\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &plain.display().to_string()])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_BECOME_METHOD", "doas")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a run that never escalates is unaffected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("nothing escalates here"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Runs `volant` with `dir` first on `PATH` and `password` on stdin, the way `-K` reads it.
+fn volant_with_password(args: &[&str], dir: &std::path::Path, password: &str) -> Output {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("volant runs");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(password.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The only path the password itself travels: `sudo -k -S` reads it off the link's stdin, ahead
+/// of the first protocol frame. The fake `sudo` here consumes exactly one line and then runs the
+/// command it was given, which is what a real `sudo -k -S` does, so the run exercises the whole
+/// sequence for real: the escalation check, the preamble on the link, the handshake and a batch.
+/// Left on the pipe, that line would be read by the agent as its first frame header and the
+/// handshake would fail, which is the failure this covers.
+///
+/// The answer the fake `sudo` accepts is built from this process's own id rather than written
+/// as a literal, so two runs never share one and a leftover directory from an earlier run
+/// cannot satisfy this one.
+#[test]
+fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
+    let expected = format!("only-this-run-{}", std::process::id());
+    let dir = fake_sudo(
+        "goodpassword",
+        &format!(
+            "#!/bin/sh\n\
+             IFS= read -r given\n\
+             [ \"$given\" = {expected} ] || {{ echo 'sudo: Sorry, try again.' >&2; exit 1; }}\n\
+             while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+             shift\n\
+             exec \"$@\"\n"
+        ),
+    );
+    let out = volant_with_password(
+        &["playbook", "-K", &fixture("become-password.yml")],
+        &dir,
+        &format!("{expected}\n"),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains(r#""msg": "escalated""#), "{text}");
+    assert!(
+        !text.contains(&expected),
+        "the password never reaches the output: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `sudo` that needs no authentication at all - a `NOPASSWD` rule - never reads stdin,
+/// whatever flags it is given: `-k` invalidates a cached authentication, and there is nothing
+/// cached to invalidate. So the presence of a password is no reason to write one. Written
+/// anyway, the line stays on the pipe and the agent reads it as the first bytes of its first
+/// frame; the escalation check still passes, and the run then dies as `UNREACHABLE` with no
+/// answer from the agent, which is exactly the unexplained failure this guards against.
+///
+/// The fake `sudo` here never reads a line, so a run that survives it is a run that wrote
+/// nothing. The `-K` answer is built from this process's own id rather than written as a
+/// literal, so two runs never share one.
+#[test]
+fn a_sudo_that_reads_no_password_is_never_written_one() {
+    let dir = fake_sudo(
+        "nopasswd",
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+         shift\n\
+         exec \"$@\"\n",
+    );
+    let answer = format!("only-this-run-{}", std::process::id());
+    let out = volant_with_password(
+        &["playbook", "-K", &fixture("become-password.yml")],
+        &dir,
+        &format!("{answer}\n"),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(r#""msg": "escalated""#),
+        "the agent's first frame is the handshake, not the password: {text}"
+    );
+    assert!(!text.contains("UNREACHABLE"), "{text}");
+    assert!(
+        !text.contains(&answer) && !String::from_utf8_lossy(&out.stderr).contains(&answer),
+        "the password never reaches the output: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

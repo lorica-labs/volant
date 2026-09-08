@@ -12,3 +12,8 @@
       shell: echo a b c | wc -w
       register: words
       failed_when: words.stdout | trim != '3'
+    - name: Escalate over a real ssh
+      command: id -u
+      become: true
+      register: uid
+      failed_when: uid.stdout | trim != '0'

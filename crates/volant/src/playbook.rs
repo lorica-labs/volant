@@ -23,6 +23,11 @@ pub struct Play {
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
     pub tasks: Vec<PlayTask>,
+    /// `become`, unset when the play says nothing: a task and the host variables both get to
+    /// speak before the connection defaults do.
+    pub r#become: Option<bool>,
+    pub become_user: Option<String>,
+    pub become_method: Option<String>,
 }
 
 #[derive(Debug)]
@@ -46,6 +51,9 @@ pub struct PlayTask {
     pub register: Option<String>,
     pub changed_when: Vec<String>,
     pub failed_when: Vec<String>,
+    pub r#become: Option<bool>,
+    pub become_user: Option<String>,
+    pub become_method: Option<String>,
 }
 
 /// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
@@ -56,6 +64,9 @@ const PLAY_KEYWORDS: &[&str] = &[
     "tasks",
     "vars",
     "vars_files",
+    "become",
+    "become_user",
+    "become_method",
 ];
 const TASK_KEYWORDS: &[&str] = &[
     "name",
@@ -70,7 +81,47 @@ const TASK_KEYWORDS: &[&str] = &[
     "register",
     "changed_when",
     "failed_when",
+    "become",
+    "become_user",
+    "become_method",
 ];
+
+/// The only escalation method this release implements. `su`, `doas`, `pbrun` and the rest are
+/// refused by name at load time: escalating through a different program is not the same
+/// operation, and quietly using `sudo` where the playbook asked for `su` would run the task
+/// under rules the operator never wrote.
+pub const BECOME_METHOD: &str = "sudo";
+
+/// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
+/// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
+/// do in Ansible.
+fn escalation(
+    yaml: &Yaml,
+    context: &str,
+) -> anyhow::Result<(Option<bool>, Option<String>, Option<String>)> {
+    let text = |key: &str| -> anyhow::Result<Option<String>> {
+        match field(yaml, key) {
+            None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+            Some(Yaml::Value(Scalar::String(s))) => Ok(Some(s.to_string())),
+            Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
+        }
+    };
+    let flag = match field(yaml, "become") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(node) => Some(
+            as_bool(node)
+                .ok_or_else(|| anyhow!("{context}'become' must be a boolean, found {node:?}"))?,
+        ),
+    };
+    let user = text("become_user")?;
+    let method = text("become_method")?;
+    if let Some(method) = &method
+        && method != BECOME_METHOD
+    {
+        bail!("{context}become_method '{method}' is not supported yet");
+    }
+    Ok((flag, user, method))
+}
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 fn is_free_form(module: &str) -> bool {
@@ -153,6 +204,7 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
         _ => bail!("'tasks' must be a list"),
     };
+    let (r#become, become_user, become_method) = escalation(yaml, "")?;
     Ok(Play {
         name,
         hosts,
@@ -160,6 +212,9 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         vars,
         vars_files,
         tasks,
+        r#become,
+        become_user,
+        become_method,
     })
 }
 
@@ -247,6 +302,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
                 .map(str::to_string),
         ),
     };
+    let (r#become, become_user, become_method) = escalation(yaml, &format!("task '{label}': "))?;
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
@@ -262,6 +318,9 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         register,
         changed_when,
         failed_when,
+        r#become,
+        become_user,
+        become_method,
     })
 }
 
@@ -289,8 +348,11 @@ fn conditions(yaml: &Yaml, key: &str, label: &str) -> anyhow::Result<Vec<String>
 fn is_reserved_task_keyword(key: &str) -> bool {
     matches!(
         key,
-        "become"
-            | "become_user"
+        // `become`, `become_user` and `become_method` are handled; the two keywords that tune
+        // how `sudo` itself is called are not, and a task that hands `sudo` extra flags or a
+        // different binary must not run as though it had.
+        "become_flags"
+            | "become_exe"
             | "until"
             | "retries"
             | "delay"
@@ -440,8 +502,68 @@ mod tests {
         let text = format!("{err:#}");
         assert!(text.contains("until"), "{text}");
         assert!(text.contains("Later"), "{text}");
-        let err = parse("- hosts: all\n  become: yes\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(format!("{err:#}").contains("become"));
+        let err = parse("- hosts: all\n  strategy: free\n  tasks: []\n", "x.yml").unwrap_err();
+        assert!(format!("{err:#}").contains("strategy"));
+    }
+
+    #[test]
+    fn escalation_keywords_are_read_at_both_levels() {
+        let pb = parse(
+            "- hosts: all\n  become: yes\n  become_user: deploy\n  become_method: sudo\n  tasks:\n    - command: id\n      become: 'false'\n      become_user: postgres\n",
+            "x.yml",
+        )
+        .unwrap();
+        let play = &pb.plays[0];
+        assert_eq!(play.r#become, Some(true), "'yes' is a boolean to Ansible");
+        assert_eq!(play.become_user.as_deref(), Some("deploy"));
+        assert_eq!(play.become_method.as_deref(), Some("sudo"));
+        let t = &play.tasks[0];
+        assert_eq!(t.r#become, Some(false), "a quoted spelling still reads");
+        assert_eq!(t.become_user.as_deref(), Some("postgres"));
+        assert_eq!(t.become_method, None);
+        let bare = parse("- hosts: all\n  tasks:\n    - command: id\n", "x.yml").unwrap();
+        assert_eq!(
+            (
+                bare.plays[0].r#become,
+                bare.plays[0].tasks[0].r#become.is_none()
+            ),
+            (None, true),
+            "silence at both levels leaves the decision to the variables and the defaults"
+        );
+    }
+
+    /// Every escalation program other than `sudo` is refused by its own name, at both levels,
+    /// and so are the two keywords that would change how `sudo` is invoked. Escalating through
+    /// a different program under the same keyword would run the task under rules nobody wrote.
+    #[test]
+    fn unsupported_become_methods_and_flags_are_refused_by_name() {
+        for method in ["su", "doas", "pbrun", "runas"] {
+            let err = parse(
+                &format!("- hosts: all\n  become: true\n  become_method: {method}\n  tasks: []\n"),
+                "x.yml",
+            )
+            .unwrap_err();
+            let text = format!("{err:#}");
+            assert!(text.contains(method), "{text}");
+            assert!(text.contains("not supported yet"), "{text}");
+            let err = parse(
+                &format!(
+                    "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: {method}\n"
+                ),
+                "x.yml",
+            )
+            .unwrap_err();
+            let text = format!("{err:#}");
+            assert!(text.contains(method) && text.contains('T'), "{text}");
+        }
+        for kw in ["become_flags", "become_exe"] {
+            let err = parse(
+                &format!("- hosts: all\n  tasks:\n    - command: id\n      {kw}: x\n"),
+                "x.yml",
+            )
+            .unwrap_err();
+            assert!(format!("{err:#}").contains(kw), "{kw}");
+        }
     }
 
     #[test]
@@ -609,7 +731,7 @@ mod tests {
 
     #[test]
     fn still_unsupported_keywords_are_refused() {
-        for kw in ["become", "until", "notify", "block", "delegate_to"] {
+        for kw in ["until", "notify", "block", "delegate_to", "become_flags"] {
             let err = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: true\n      {kw}: x\n"),
                 "x.yml",

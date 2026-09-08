@@ -11,6 +11,9 @@ use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
 /// Ansible's own default for `forks`: how many hosts a play runs at once.
 pub const DEFAULT_FORKS: usize = 5;
+/// Ansible's own defaults for `[privilege_escalation]`.
+pub const DEFAULT_BECOME_USER: &str = "root";
+pub const DEFAULT_BECOME_METHOD: &str = "sudo";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -21,6 +24,9 @@ pub struct Config {
     pub host_key_checking: bool,
     pub remote_tmp: String,
     pub forks: usize,
+    pub r#become: bool,
+    pub become_user: String,
+    pub become_method: String,
 }
 
 impl Default for Config {
@@ -33,6 +39,9 @@ impl Default for Config {
             host_key_checking: true,
             remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
             forks: DEFAULT_FORKS,
+            r#become: false,
+            become_user: DEFAULT_BECOME_USER.to_string(),
+            become_method: DEFAULT_BECOME_METHOD.to_string(),
         }
     }
 }
@@ -80,6 +89,25 @@ impl Config {
         if let Ok(n) = std::env::var("ANSIBLE_FORKS") {
             config.forks = n.trim().parse::<usize>().unwrap_or(0);
         }
+        if let Ok(flag) = std::env::var("ANSIBLE_BECOME")
+            && let Some(on) = crate::yaml::bool_from_str(flag.trim())
+        {
+            config.r#become = on;
+        }
+        if let Ok(user) = std::env::var("ANSIBLE_BECOME_USER")
+            && !user.trim().is_empty()
+        {
+            config.become_user = user.trim().to_string();
+        }
+        // Kept exactly as written, so the escalation check refuses an unsupported method by
+        // name rather than falling back to `sudo` for an operator who asked for something else.
+        // A blank value is no such request: an unset variable an exporting shell passed on as
+        // an empty one leaves the default alone, the way an empty `become_user` does.
+        if let Ok(method) = std::env::var("ANSIBLE_BECOME_METHOD")
+            && !method.trim().is_empty()
+        {
+            config.become_method = method.trim().to_string();
+        }
         config
     }
 }
@@ -98,25 +126,51 @@ fn locate() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-/// Reads `[defaults]` only. Relative paths are relative to the configuration file.
+/// Reads `[defaults]` and `[privilege_escalation]`. Relative paths are relative to the
+/// configuration file.
 fn parse(text: &str, base: &Path) -> Config {
     let mut config = Config::default();
-    let mut in_defaults = false;
+    let mut section = String::new();
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        if let Some(section) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            in_defaults = section.trim() == "defaults";
-            continue;
-        }
-        if !in_defaults {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.trim().to_string();
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
+        if section == "privilege_escalation" {
+            match key.trim() {
+                "become" => {
+                    if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
+                        config.r#become = on;
+                    }
+                }
+                "become_user" => {
+                    let user = value.trim();
+                    if !user.is_empty() {
+                        config.become_user = user.to_string();
+                    }
+                }
+                // Kept as written so an unsupported method is refused by name, but a blank
+                // `become_method =` line asks for nothing and leaves the default alone.
+                "become_method" => {
+                    let method = value.trim();
+                    if !method.is_empty() {
+                        config.become_method = method.to_string();
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if section != "defaults" {
+            continue;
+        }
         match key.trim() {
             "inventory" => {
                 let first = value.split(',').next().unwrap_or("").trim();
@@ -265,6 +319,36 @@ mod tests {
                 None => std::env::remove_var("ANSIBLE_FORKS"),
             }
         }
+    }
+
+    #[test]
+    fn the_privilege_escalation_section_is_read_and_stays_out_of_defaults() {
+        let c = parse(
+            "[defaults]\nbecome_user = ignored\n[privilege_escalation]\nbecome = yes\nbecome_user = deploy\nbecome_method = sudo\n",
+            Path::new("."),
+        );
+        assert!(c.r#become);
+        assert_eq!(c.become_user, "deploy");
+        assert_eq!(c.become_method, "sudo");
+        let c = parse(
+            "[privilege_escalation]\nbecome_method = su\n",
+            Path::new("."),
+        );
+        assert_eq!(
+            c.become_method, "su",
+            "kept as written so the escalation check can refuse it by name"
+        );
+        let c = parse("[privilege_escalation]\nbecome_method =\n", Path::new("."));
+        assert_eq!(
+            c.become_method, DEFAULT_BECOME_METHOD,
+            "a blank line asks for nothing and must not refuse every escalated run"
+        );
+        let c = parse("[defaults]\nforks = 7\n", Path::new("."));
+        assert_eq!(
+            (c.forks, c.r#become, c.become_user.as_str()),
+            (7, false, DEFAULT_BECOME_USER),
+            "a file with no escalation section escalates nothing"
+        );
     }
 
     #[test]

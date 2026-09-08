@@ -24,6 +24,10 @@ fn defaults() -> ConnectionDefaults {
         host_key_checking: true,
         remote_tmp: "~/.ansible/tmp".to_string(),
         connect_timeout: Duration::from_secs(10),
+        r#become: false,
+        become_user: "root".to_string(),
+        become_method: "sudo".to_string(),
+        become_password: None,
     }
 }
 
@@ -50,7 +54,7 @@ fn local_host() -> Host {
 #[tokio::test]
 async fn runs_a_batch_through_the_local_transport() {
     let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
-    let mut link = transport.connect(&agents()).await.unwrap();
+    let mut link = transport.connect(&agents(), None).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 1,
@@ -94,7 +98,7 @@ fn unique_sleep_marker(whole_seconds: u32) -> String {
 async fn cancel_stops_the_running_task_and_its_children() {
     let marker = unique_sleep_marker(40);
     let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
-    let mut link = transport.connect(&agents()).await.unwrap();
+    let mut link = transport.connect(&agents(), None).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 9,
@@ -136,7 +140,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
 async fn dropping_the_link_lets_the_agent_stop_its_task() {
     let marker = unique_sleep_marker(45);
     let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
-    let mut link = transport.connect(&agents()).await.unwrap();
+    let mut link = transport.connect(&agents(), None).await.unwrap();
     link.handshake().await.unwrap();
     link.send(&ToAgent::RunBatch {
         id: 10,
@@ -170,7 +174,7 @@ async fn a_silent_agent_fails_the_handshake_within_the_timeout() {
     // A program that never answers stands in for a hung agent.
     let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
     let mut link = transport
-        .connect(&sleep_as_agent())
+        .connect(&sleep_as_agent(), None)
         .await
         .expect("the stand-in agent must spawn");
     let started = std::time::Instant::now();

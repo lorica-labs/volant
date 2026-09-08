@@ -249,3 +249,27 @@ fn ssh_a_cached_agent_that_cannot_run_is_named() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Escalation over a real `ssh`, which is the only place the second link is actually a second
+/// `ssh` process running the same cached agent under `sudo`. The play escalates and one task
+/// declines, so the run proves both directions on one host: a `become` that quietly did nothing
+/// would print the invoking account where `root` is expected.
+///
+/// Needs passwordless sudo for the account these tests log in as, as on the development machine
+/// and on the CI runner.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_become_over_ssh() {
+    let dir = tmp("become");
+    // The fixture targets `localhost`, and an inventory that defines that name wins over the
+    // implicit local one: the run goes over `ssh` to 127.0.0.1 like every other test here.
+    let inv = inventory(&dir, &[("localhost", "")]);
+    let out = volant(&["playbook", "-i", &inv, &fixture("become.yml")]);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(&format!(r#""msg": "root then {}""#, user())),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

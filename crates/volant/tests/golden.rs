@@ -149,10 +149,41 @@ fn inventory_matches_the_reference() {
                 want["hosts"]
             ));
         }
-        if want["warning"].as_bool() == Some(true) && res.warnings.is_empty() {
-            failures.push(format!("pattern {pattern}: the reference warns, we do not"));
+        // inventory.ini deliberately carries no host/group homonym (see homonym_inventory.ini
+        // below), so every one of these patterns must come back warning-free; checking both
+        // directions means a spurious warning fails this just as loudly as a missing one, unlike
+        // the one-directional check this replaced, which passed regardless of whether `resolve`
+        // warned correctly because this fixture used to warn on every single pattern.
+        match (want["warning"].as_bool(), res.warnings.is_empty()) {
+            (Some(true), true) => {
+                failures.push(format!("pattern {pattern}: the reference warns, we do not"))
+            }
+            (Some(false), false) => failures.push(format!(
+                "pattern {pattern}: we warn, the reference does not: {:?}",
+                res.warnings
+            )),
+            _ => {}
         }
     }
+
+    // The one case in this golden that must warn: a group and one of its own hosts share a name.
+    // Kept in its own tiny fixture (see homonym_inventory.ini's own comment) precisely so it does
+    // not drown out the "must not warn" signal above.
+    let homonym_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/homonym_inventory.ini");
+    let homonym_inv = volant::inventory::Inventory::load(&homonym_path).unwrap();
+    let homonym_res = homonym_inv.resolve("same");
+    let homonym_got: Vec<&str> = homonym_res.hosts.iter().map(|h| h.name.as_str()).collect();
+    if serde_json::to_value(&homonym_got).unwrap() != expected["homonym"]["hosts"] {
+        failures.push(format!(
+            "homonym pattern same: reference {}, ours {homonym_got:?}",
+            expected["homonym"]["hosts"]
+        ));
+    }
+    if expected["homonym"]["warning"].as_bool() == Some(true) && homonym_res.warnings.is_empty() {
+        failures.push("homonym pattern same: the reference warns, we do not".to_string());
+    }
+
     assert!(
         failures.is_empty(),
         "{} difference(s) with ansible-inventory:\n{}",

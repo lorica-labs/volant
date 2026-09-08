@@ -172,7 +172,10 @@ impl Inventory {
                 _ => regular.push(term),
             }
         }
-        if regular.is_empty() {
+        if regular.is_empty() && (!intersects.is_empty() || !excludes.is_empty()) {
+            // A bare `!term`/`&term` pattern has nothing to start from but `all`, as Ansible's own
+            // `order_patterns` inserts; a genuinely empty pattern (`hosts: ""`) has no term at all
+            // and selects nothing, rather than silently meaning the whole inventory.
             regular.push("all");
         }
         let mut selected: Vec<String> = Vec::new();
@@ -311,12 +314,28 @@ impl Inventory {
     /// order hosts were declared, but a breadth-first walk of the implicit group tree rooted at
     /// `all` (see `all_children`). Measured against the reference: a plain, ungrouped inventory
     /// happens to produce file order, but one with nested `:children` groups does not.
-    pub fn all_hosts(&self) -> Vec<String> {
+    ///
+    /// `all_children` only lists groups no other group's `:children` names, so a group cycle
+    /// (every member has a parent, hence none is a root) is invisible to the walk above and its
+    /// hosts would otherwise never enter `all` at all. Ansible's own `all` holds every host
+    /// unconditionally, so anything the walk missed is appended here, in declaration order,
+    /// rather than silently dropped.
+    fn all_hosts(&self) -> Vec<String> {
         let own_hosts = self
             .group("all")
             .map(|g| g.hosts.clone())
             .unwrap_or_default();
-        self.hosts_breadth_first("all", &own_hosts, self.all_children())
+        let mut hosts = self.hosts_breadth_first("all", &own_hosts, self.all_children());
+        let reached: HashSet<&str> = hosts.iter().map(String::as_str).collect();
+        let missed: Vec<String> = self
+            .hosts
+            .iter()
+            .map(|h| h.name.clone())
+            .filter(|n| !reached.contains(n.as_str()))
+            .collect();
+        drop(reached);
+        hosts.extend(missed);
+        hosts
     }
 
     /// Ansible's `Group._get_hosts`: the root's own hosts, then a breadth-first walk of
@@ -456,16 +475,19 @@ impl Inventory {
 
 /// Splits a pattern on `,` and `:` the way Ansible's own pattern splitter does: not inside a
 /// `[...]` subscript, so `web[0:1]` stays one term instead of being torn into `web[0` and `1]` at
-/// the colon that is part of its range, not a term separator.
+/// the colon that is part of its range, not a term separator. Bracket mode is only entered when a
+/// `]` actually follows: an unbalanced `[` (`web[1:db`) would otherwise raise the depth for the
+/// rest of the string and swallow every later term into one dead one, instead of just failing to
+/// match on its own, as an unrecognised bracket does everywhere else in this grammar.
 fn split_terms(pattern: &str) -> Vec<&str> {
     let mut terms = Vec::new();
     let mut start = 0;
-    let mut depth = 0i32;
+    let mut in_bracket = false;
     for (i, c) in pattern.char_indices() {
         match c {
-            '[' => depth += 1,
-            ']' => depth -= 1,
-            ',' | ':' if depth <= 0 => {
+            '[' if !in_bracket && pattern[i + 1..].contains(']') => in_bracket = true,
+            ']' if in_bracket => in_bracket = false,
+            ',' | ':' if !in_bracket => {
                 terms.push(&pattern[start..i]);
                 start = i + c.len_utf8();
             }
@@ -497,44 +519,110 @@ fn implicit_localhost(name: &str) -> Host {
 /// `fnmatch` as Python does it for host patterns: `*` any run, `?` one character, `[abc]` and
 /// `[a-z]` sets, `[!abc]` negated sets. No escaping, like Ansible. Ansible only reaches this for
 /// bracket content that isn't a bare `[N]`/`[N:M]` subscript; see `split_subscript`.
+///
+/// Iterative, not recursive: a left-to-right scan that remembers only the most recent `*` and
+/// where it last resumed matching from (the standard glob-matching algorithm), so the cost is
+/// `O(pattern * text)`. The previous recursive form tried every split point of every `*` and
+/// revisited the same `(pattern, text)` position through more than one path, which made a pattern
+/// with many stars (`*a*a*a*a*a*a*a*a*a*a*b` against a 40-character miss) cost time exponential in
+/// the number of stars — a hang, not an error, on an ordinary `--limit` pattern.
+///
+/// Measured against CPython's own `fnmatch.fnmatchcase` (`ansible-core` 2.19.12's bundled
+/// 3.13.15), contrary to this function's own earlier doc comment and unit test: an unclosed `[`,
+/// an empty `[]`, and a bare `[!]` are not "matches nothing" — they are literal text, because
+/// CPython's `fnmatch.translate` falls back to a literal `[` (and re-scans the rest of the pattern
+/// normally) whenever no closing `]` can be found. `parse_class` below reproduces that closing-`]`
+/// search exactly, including its one subtlety: a `]` immediately after `[` or after `[!` counts as
+/// a literal first set member, not the terminator, which is also why an empty `[]` and a bare
+/// `[!]` fail to find a real close and fall back to literal text.
 fn glob_match(pattern: &str, text: &str) -> bool {
-    fn go(p: &[char], t: &[char]) -> bool {
-        match p.split_first() {
-            None => t.is_empty(),
-            Some(('*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
-            Some(('?', rest)) => !t.is_empty() && go(rest, &t[1..]),
-            Some(('[', rest)) => {
-                let Some(close) = rest.iter().position(|c| *c == ']') else {
-                    return false;
-                };
-                let (set, after) = (&rest[..close], &rest[close + 1..]);
-                let Some((first, others)) = t.split_first() else {
-                    return false;
-                };
-                let (negate, set) = match set.split_first() {
-                    Some(('!', s)) => (true, s),
-                    _ => (false, set),
-                };
-                let mut hit = false;
-                let mut i = 0;
-                while i < set.len() {
-                    if i + 2 < set.len() && set[i + 1] == '-' {
-                        hit |= set[i] <= *first && *first <= set[i + 2];
-                        i += 3;
-                    } else {
-                        hit |= set[i] == *first;
-                        i += 1;
-                    }
-                }
-                hit != negate && go(after, others)
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    // The pattern index of the most recent unconsumed `*`, and the text index it last resumed
+    // matching from — `None` until the first `*` is seen, at which point backtracking on a
+    // mismatch means "let that `*` eat one more character" instead of failing outright.
+    let mut backtrack: Option<(usize, usize)> = None;
+    while ti < t.len() {
+        if p.get(pi) == Some(&'*') {
+            backtrack = Some((pi, ti));
+            pi += 1;
+            continue;
+        }
+        if pi < p.len() {
+            let (hit, consumed) = atom_matches(&p, pi, t[ti]);
+            if hit {
+                pi += consumed;
+                ti += 1;
+                continue;
             }
-            Some((c, rest)) => t.first() == Some(c) && go(rest, &t[1..]),
+        }
+        match backtrack {
+            Some((star, resumed_from)) => {
+                ti = resumed_from + 1;
+                pi = star + 1;
+                backtrack = Some((star, ti));
+            }
+            None => return false,
         }
     }
-    go(
-        &pattern.chars().collect::<Vec<_>>(),
-        &text.chars().collect::<Vec<_>>(),
-    )
+    while p.get(pi) == Some(&'*') {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+/// Whether the pattern atom at `p[i]` (never `*`, the caller handles that separately) matches
+/// `c`, and how many pattern characters that atom occupies: `1` for a literal or `?`, or the
+/// whole bracket for a `[...]` class that actually closes, falling back to a single literal `[`
+/// otherwise.
+fn atom_matches(p: &[char], i: usize, c: char) -> (bool, usize) {
+    match p[i] {
+        '?' => (true, 1),
+        '[' => match parse_class(p, i + 1) {
+            Some((negate, set, end)) => (class_hit(set, c) != negate, end - i),
+            None => (c == '[', 1),
+        },
+        literal => (c == literal, 1),
+    }
+}
+
+/// A `[...]` class body starting right after the `[`, following CPython's `fnmatch.translate`:
+/// a leading `!` negates, and the `]` immediately after that (or after a plain `[`) is a literal
+/// first set member rather than the closing delimiter — the rule that makes an empty `[]` and a
+/// bare `[!]` never find a close and fall back to literal text. Returns the negation flag, the
+/// raw set body, and the pattern index right after the closing `]`; `None` when no `]` closes it.
+fn parse_class(p: &[char], start: usize) -> Option<(bool, &[char], usize)> {
+    let (negate, mut j) = match p.get(start) {
+        Some('!') => (true, start + 1),
+        _ => (false, start),
+    };
+    let body_start = j;
+    if p.get(j) == Some(&']') {
+        j += 1;
+    }
+    while j < p.len() && p[j] != ']' {
+        j += 1;
+    }
+    if j >= p.len() {
+        return None;
+    }
+    Some((negate, &p[body_start..j], j + 1))
+}
+
+fn class_hit(set: &[char], c: char) -> bool {
+    let mut hit = false;
+    let mut i = 0;
+    while i < set.len() {
+        if i + 2 < set.len() && set[i + 1] == '-' {
+            hit |= set[i] <= c && c <= set[i + 2];
+            i += 3;
+        } else {
+            hit |= set[i] == c;
+            i += 1;
+        }
+    }
+    hit
 }
 
 /// A single index (`[N]`, `N` may be negative) or an inclusive range (`[N:M]` or the deprecated
@@ -636,6 +724,12 @@ fn key_values(words: &[String], line_no: usize) -> Result<BTreeMap<String, Value
 /// `"010"` (Python's grammar rejects a leading zero as a syntax error, so `literal_eval` raises
 /// and the ini plugin falls back to the raw text), while `grouped=1_000` becomes the integer
 /// `1000` (`_` is a valid digit separator in Python's integer literals since 3.6).
+///
+/// Deliberate ceiling: Python's integers are unbounded, ours are not. A literal outside
+/// `i64::MIN..=i64::MAX` (`clean.parse` failing) falls back to a string here, same as any other
+/// value `ast.literal_eval` would refuse to call an int for — no inventory host var plausibly
+/// needs more than 63 bits, so this stays a documented ceiling rather than a `serde_json`
+/// arbitrary-precision dependency for a case that never comes up in practice.
 fn python_int(t: &str) -> Option<i64> {
     let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
     if digits.is_empty()
@@ -798,6 +892,18 @@ env=prod
         assert!(res.unmatched.is_empty());
     }
 
+    /// The circular fixture above has no host anywhere in the cycle, so `hosts.is_empty()` holds
+    /// whether or not `all` actually walks into the cycle — it cannot catch a root missing from
+    /// `all_children`. This one puts a real host inside the cycle: every member of `[a]`/`[b]` has
+    /// a parent (each other), so neither is a root, and `all` must still find `trapped` by falling
+    /// back to every host `self.hosts` knows about, not just the ones the walk reached.
+    #[test]
+    fn a_host_trapped_in_a_group_cycle_still_appears_in_all() {
+        let inv =
+            Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n\n[a]\ntrapped\n").unwrap();
+        assert_eq!(names(&inv.resolve("all").hosts), ["trapped"]);
+    }
+
     #[test]
     fn empty_host_name_is_rejected() {
         let err = Inventory::parse_ini("[web]\n\"\"\n").unwrap_err();
@@ -808,6 +914,19 @@ env=prod
     fn unbalanced_section_header_is_rejected() {
         let err = Inventory::parse_ini("[web\nweb1\n").unwrap_err();
         assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn integers_past_i64_fall_back_to_a_string() {
+        let inv =
+            Inventory::parse_ini("h ok=9223372036854775807 huge=9223372036854775808\n").unwrap();
+        let v = &inv.resolve("h").hosts[0].vars;
+        assert_eq!(v["ok"], json!(i64::MAX), "the ceiling itself still parses");
+        assert_eq!(
+            v["huge"],
+            json!("9223372036854775808"),
+            "one past i64::MAX is a documented ceiling, not an int"
+        );
     }
 
     #[test]
@@ -871,10 +990,31 @@ env=prod
         assert!(glob_match("web[12]", "web2") && !glob_match("web[12]", "web3"));
         assert!(glob_match("web[!1]", "web2") && !glob_match("web[!1]", "web1"));
         assert!(glob_match("w[a-z]b1", "web1") && !glob_match("w[a-z]b1", "w3b1"));
+        // Measured against CPython's fnmatch.fnmatchcase (ansible-core 2.19.12's bundled
+        // 3.13.15): an unclosed `[`, an empty `[]`, and a bare `[!]` are all literal text, not a
+        // character class that matches nothing.
         assert!(
-            !glob_match("web[", "web["),
-            "an unclosed set matches nothing"
+            glob_match("web[", "web["),
+            "an unclosed set is literal text"
         );
+        assert!(
+            glob_match("a[]", "a[]") && !glob_match("a[]", "a"),
+            "an empty [] is literal"
+        );
+        assert!(
+            glob_match("a[!]", "a[!]") && !glob_match("a[!]", "a!") && !glob_match("a[!]", "a]"),
+            "a bare [!] is literal"
+        );
+    }
+
+    #[test]
+    fn many_stars_do_not_blow_up() {
+        // Ten stars with no trailing 'b' in the text: the old recursive implementation tried
+        // every split point of every '*' before failing, on the order of 40^10 recursions on a
+        // 40-character miss. The iterative two-pointer scan fails in O(pattern * text) instead.
+        let text = "a".repeat(40);
+        let pattern = "*a*a*a*a*a*a*a*a*a*a*b";
+        assert!(!glob_match(pattern, &text));
     }
 
     #[test]

@@ -5,7 +5,7 @@
       "db2"
     ],
     "same": [
-      "same"
+      "solo"
     ],
     "ungrouped": [
       "lonely"
@@ -15,6 +15,12 @@
       "web2",
       "web3"
     ]
+  },
+  "homonym": {
+    "hosts": [
+      "same"
+    ],
+    "warning": true
   },
   "hostvars": {
     "db1": {
@@ -53,67 +59,67 @@
     "!web": {
       "hosts": [
         "lonely",
-        "same",
+        "solo",
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "*": {
       "hosts": [
         "lonely",
-        "same",
+        "solo",
         "web1",
         "web2",
         "web3",
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "all": {
       "hosts": [
         "lonely",
-        "same",
+        "solo",
         "web1",
         "web2",
         "web3",
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "all:!web": {
       "hosts": [
         "lonely",
-        "same",
+        "solo",
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "missing": {
       "hosts": [],
-      "warning": true
+      "warning": false
     },
     "prod:&web:!web3": {
       "hosts": [
         "web1",
         "web2"
       ],
-      "warning": true
+      "warning": false
     },
     "same": {
       "hosts": [
-        "same"
+        "solo"
       ],
-      "warning": true
+      "warning": false
     },
     "w*b1": {
       "hosts": [
         "web1"
       ],
-      "warning": true
+      "warning": false
     },
     "web": {
       "hosts": [
@@ -121,7 +127,7 @@
         "web2",
         "web3"
       ],
-      "warning": true
+      "warning": false
     },
     "web*": {
       "hosts": [
@@ -129,7 +135,7 @@
         "web2",
         "web3"
       ],
-      "warning": true
+      "warning": false
     },
     "web,db": {
       "hosts": [
@@ -139,7 +145,7 @@
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "web,missing": {
       "hosts": [
@@ -147,7 +153,7 @@
         "web2",
         "web3"
       ],
-      "warning": true
+      "warning": false
     },
     "web:&prod": {
       "hosts": [
@@ -155,7 +161,7 @@
         "web2",
         "web3"
       ],
-      "warning": true
+      "warning": false
     },
     "web:db": {
       "hosts": [
@@ -165,7 +171,7 @@
         "db1",
         "db2"
       ],
-      "warning": true
+      "warning": false
     },
     "web?": {
       "hosts": [
@@ -173,11 +179,11 @@
         "web2",
         "web3"
       ],
-      "warning": true
+      "warning": false
     },
     "web[12]": {
       "hosts": [],
-      "warning": true
+      "warning": false
     }
   }
 }

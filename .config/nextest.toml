@@ -1,0 +1,4 @@
+# A test that hangs must end as a failure, not as a job that runs until the CI timeout. The
+# ssh tests talk to a real sshd and a stuck connection there has no deadline of its own.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 10 }

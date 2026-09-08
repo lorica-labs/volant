@@ -438,6 +438,20 @@ fn redacted_stderr(stderr: &str, offered: Option<&str>) -> String {
     }
 }
 
+/// `run_capturing`'s message for an `ssh` that exited 255, with the same redaction
+/// `escalation_outcome` gives `sudo`'s own refusal. `ssh`'s own words are worth keeping here -
+/// they are how an operator tells a dead host from a refused key from a closed port - so this
+/// scrubs the password out rather than dropping `stderr` outright.
+fn unreachable_message(stderr: &str, offered: Option<&str>) -> String {
+    format!(
+        "Failed to connect to the host via ssh: {}",
+        first_words(
+            &redacted_stderr(stderr, offered),
+            "ssh failed without a message"
+        )
+    )
+}
+
 /// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
 /// rather than dropped: silently connecting without a `ProxyJump` or `ProxyCommand` the
 /// inventory asked for can reach a different machine than the operator meant.
@@ -630,7 +644,14 @@ impl SshTarget {
             sudo_prefix(Some((escalation, form))),
             shell_word(&self.agent_path())
         );
-        self.run_capturing(&command, preamble(Some((escalation, form))).as_deref())
+        let stdin = preamble(Some((escalation, form)));
+        // A password is only ever on this pipe when `stdin` carries it; asking `escalation`
+        // directly would say "offered" for a `NoPrompt` probe that never wrote it anywhere.
+        let offered = stdin
+            .is_some()
+            .then_some(escalation.password.as_deref())
+            .flatten();
+        self.run_capturing(&command, stdin.as_deref(), offered)
             .await
     }
 
@@ -639,7 +660,9 @@ impl SshTarget {
     /// missing, stale or wrong-architecture agent.
     async fn bootstrap(&self, agents: &AgentSource) -> Result<(), ConnectError> {
         let expected = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
-        let probe = self.run_capturing(&self.probe_command(), None).await?;
+        let probe = self
+            .run_capturing(&self.probe_command(), None, None)
+            .await?;
         if probe.code == Some(0) && probe.stdout.trim() == expected {
             return Ok(());
         }
@@ -662,7 +685,7 @@ impl SshTarget {
             }
             _ => {
                 let uname = self
-                    .run_capturing(&format!("uname -m || exit {EXIT_UNAME_FAILED}"), None)
+                    .run_capturing(&format!("uname -m || exit {EXIT_UNAME_FAILED}"), None, None)
                     .await?;
                 if uname.code != Some(0) {
                     return Err(ConnectError::Unreachable(format!(
@@ -694,7 +717,7 @@ impl SshTarget {
             .map_err(|e| ConnectError::Unreachable(format!("reading {}: {e}", local.display())))?;
         let size = bytes.len() as u64;
         let upload = self
-            .run_capturing(&self.upload_command(size), Some(&bytes))
+            .run_capturing(&self.upload_command(size), Some(&bytes), None)
             .await?;
         match upload.code {
             Some(0) => {}
@@ -723,7 +746,9 @@ impl SshTarget {
         // there, and still cannot run, so the fault is the host's (a `noexec` mount, SELinux,
         // a wrapper script or a foreign architecture), not a stale file this controller can fix
         // by trying again.
-        let check = self.run_capturing(&self.probe_command(), None).await?;
+        let check = self
+            .run_capturing(&self.probe_command(), None, None)
+            .await?;
         if check.code == Some(EXIT_AGENT_UNRUNNABLE) {
             return Err(ConnectError::Unreachable(format!(
                 "the cached agent {} cannot be run: {}",
@@ -741,10 +766,17 @@ impl SshTarget {
 
     /// Runs one remote command to completion, feeding `stdin` if given, and returns its
     /// output. An `ssh` exit of 255 is a connection failure, reported with ssh's own words.
+    ///
+    /// `offered` is the `sudo` password when `stdin` is the `ReadStdin` preamble carrying it,
+    /// and `None` otherwise (including when `stdin` is an upload's bytes, which are never a
+    /// password). It exists so the 255 message can be scrubbed the same way `escalation_outcome`
+    /// scrubs `sudo`'s own refusal: this is the only other place that password is ever written
+    /// to a child's stdin.
     async fn run_capturing(
         &self,
         remote_command: &str,
         stdin: Option<&[u8]>,
+        offered: Option<&str>,
     ) -> Result<Captured, ConnectError> {
         let argv = self.ssh_argv_with(remote_command, stdin.is_some());
         let mut command = Command::new(&argv[0]);
@@ -778,9 +810,9 @@ impl SshTarget {
         // `ssh` reports its own failures as 255 and none of the bootstrap commands ever
         // returns it, so this cannot swallow a remote command's own status.
         if captured.code == Some(EXIT_SSH_FAILURE) {
-            return Err(ConnectError::Unreachable(format!(
-                "Failed to connect to the host via ssh: {}",
-                first_words(&captured.stderr, "ssh failed without a message")
+            return Err(ConnectError::Unreachable(unreachable_message(
+                &captured.stderr,
+                offered,
             )));
         }
         Ok(captured)
@@ -1011,6 +1043,22 @@ mod tests {
             msg.contains("<redacted>") && msg.contains("disliked it"),
             "the rest of what sudo said survives"
         );
+    }
+
+    /// `run_capturing`'s 255 arm is fed by the same `ReadStdin` preamble that writes the
+    /// password to a child's stdin for the escalation probe, so it owes the password the same
+    /// redaction `sudo`'s own refusal gets. No `ssh` measured here echoes its stdin into its own
+    /// stderr, but this is the only other path a password reaches a captured stderr from, and a
+    /// scrubber with one way around it is worth less than it looks.
+    #[test]
+    fn a_dying_sshs_own_words_are_redacted_the_same_way_sudos_refusal_is() {
+        let password = format!("only-this-run-{}", std::process::id());
+        let stderr = format!("client_loop: send disconnect: Broken pipe reading '{password}'");
+        let msg = unreachable_message(&stderr, Some(password.as_str()));
+        // Neither assertion prints `msg`: a failure here is a run where the redaction did not
+        // happen, so the failure output would be one more place carrying the password.
+        assert!(!msg.contains(&password));
+        assert!(msg.contains("<redacted>") && msg.contains("Broken pipe"));
     }
 
     fn agent_version() -> Captured {

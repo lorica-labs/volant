@@ -56,11 +56,19 @@ fn cache_dir(dir: &Path) -> PathBuf {
     remote_tmp(dir).join(format!("volant-agent-{}", env!("CARGO_PKG_VERSION")))
 }
 
-fn inventory(dir: &Path, hosts: &[(&str, &str)]) -> String {
+/// Every host gets `-F /dev/null`, so a developer's own `~/.ssh/config` cannot reroute a local
+/// `just ssh-test` elsewhere through a `Host *` block carrying `ProxyJump`, `ProxyCommand` or a
+/// rewritten `Hostname`. `extra_ssh_args` adds options on top of it, never in place of it.
+fn inventory_with_ssh_args(dir: &Path, hosts: &[(&str, &str)], extra_ssh_args: &str) -> String {
+    let common_args = if extra_ssh_args.is_empty() {
+        "-F /dev/null".to_string()
+    } else {
+        format!("-F /dev/null {extra_ssh_args}")
+    };
     let mut text = String::new();
     for (name, extra) in hosts {
         text.push_str(&format!(
-            "{name} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} {extra}\n",
+            "{name} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='{common_args}' {extra}\n",
             user(),
             key(),
             remote_tmp(dir).display(),
@@ -69,6 +77,10 @@ fn inventory(dir: &Path, hosts: &[(&str, &str)]) -> String {
     let path = dir.join("inventory.ini");
     std::fs::write(&path, text).unwrap();
     path.display().to_string()
+}
+
+fn inventory(dir: &Path, hosts: &[(&str, &str)]) -> String {
+    inventory_with_ssh_args(dir, hosts, "")
 }
 
 fn write_executable(path: &Path, body: &str) {
@@ -112,6 +124,7 @@ fn ssh_playbook_runs_and_the_agent_is_cached() {
     assert_eq!(second.status.code(), Some(0), "{}", both(&second));
     let after = std::fs::metadata(&agent).unwrap().modified().unwrap();
     assert_eq!(before, after, "the second run must reuse the cached agent");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -128,6 +141,7 @@ fn ssh_an_outdated_cached_agent_is_replaced() {
         !replaced.starts_with(b"#!/bin/sh"),
         "the stale script must have been replaced by the real agent"
     );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -144,21 +158,17 @@ fn ssh_refused_connection_is_unreachable_with_a_recap() {
     );
     assert!(text.contains("PLAY RECAP"), "{text}");
     assert_eq!(out.status.code(), Some(4), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_unknown_host_key_is_refused_when_checking_is_on() {
     let dir = tmp("hostkey");
-    let inv = inventory(
+    let inv = inventory_with_ssh_args(
         &dir,
-        &[(
-            "box",
-            &format!(
-                "ansible_ssh_common_args='-F /dev/null -o UserKnownHostsFile={}/empty_known_hosts'",
-                dir.display()
-            ),
-        )],
+        &[("box", "")],
+        &format!("-o UserKnownHostsFile={}/empty_known_hosts", dir.display()),
     );
     let out = Command::new(env!("CARGO_BIN_EXE_volant"))
         .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
@@ -172,6 +182,7 @@ fn ssh_unknown_host_key_is_refused_when_checking_is_on() {
         "{text}"
     );
     assert_eq!(out.status.code(), Some(4), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -194,6 +205,7 @@ fn ssh_missing_agent_for_the_architecture_is_unreachable() {
         "{text}"
     );
     assert_eq!(out.status.code(), Some(4), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The one path that cannot be reached without a real host: the cached agent still refuses to
@@ -235,4 +247,5 @@ fn ssh_a_cached_agent_that_cannot_run_is_named() {
         cache_dir(&dir).join("volant-agent").exists(),
         "the upload landed, so the fault is the host's and not a missing file"
     );
+    let _ = std::fs::remove_dir_all(&dir);
 }

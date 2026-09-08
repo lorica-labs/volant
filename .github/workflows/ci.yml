@@ -106,7 +106,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends musl-tools openssh-server
           sudo ssh-keygen -A
           sudo mkdir -p /run/sshd
-          sudo /usr/sbin/sshd
+          # A log, because sshd exits 0 even when it cannot bind the port; the smoke test below
+          # is the real guard, but a bind failure is otherwise legible only by reproducing it.
+          sudo /usr/sbin/sshd -E /tmp/sshd.log
           # sshd reads authorized_keys under the home directory in the passwd database, which
           # is not always the one $HOME names.
           home="$(getent passwd "$(id -un)" | cut -d: -f6)"
@@ -117,4 +119,7 @@ jobs:
           chmod 600 "$home/.ssh/authorized_keys"
           ssh -i "$home/.ssh/volant_test_key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new localhost true
           echo "VOLANT_SSH_TEST_KEY=$home/.ssh/volant_test_key" >> "$GITHUB_ENV"
+      - name: Show the sshd log
+        if: failure()
+        run: sudo cat /tmp/sshd.log
       - run: just ssh-test

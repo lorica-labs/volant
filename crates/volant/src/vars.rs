@@ -17,8 +17,10 @@ pub struct Scope {
     pub play_vars: Map<String, Value>,
     pub vars_files: Vec<Map<String, Value>>,
     pub task_vars: Map<String, Value>,
-    /// Hosts of the current play, in inventory order.
+    /// Hosts still in the current play, in inventory order.
     pub play_hosts: Vec<String>,
+    /// Every host the play started with, whether it is still in it or not.
+    pub all_play_hosts: Vec<String>,
 }
 
 /// Every variable source that does not depend on the play, resolved once per run, plus the
@@ -50,6 +52,11 @@ pub struct VarStore {
 /// and keeps output reproducible.
 pub fn omit_token() -> &'static str {
     "__omit_place_holder__6d24c2dd6a8f2e0e2a6e5cce6b1f9c4a"
+}
+
+/// An inventory name without its domain, which is what `inventory_hostname_short` reports.
+fn short_name(host: &str) -> String {
+    host.split('.').next().unwrap_or(host).to_string()
 }
 
 impl VarStore {
@@ -191,13 +198,20 @@ impl VarStore {
         vars
     }
 
-    /// What other hosts see of one host: inventory sources, its facts, then extra vars.
+    /// What other hosts see of one host: inventory sources, its facts, then extra vars, and its
+    /// own identity. The reference carries `inventory_hostname` inside `hostvars[x]`, so a task
+    /// naming another host can ask who that host is.
     fn host_view(&self, host: &str) -> Map<String, Value> {
         let mut base = self.host_base(host);
         if let Some(facts) = self.facts.get(host) {
             extend(&mut base, facts);
         }
         extend(&mut base, &self.extra);
+        base.insert("inventory_hostname".into(), Value::String(host.to_string()));
+        base.insert(
+            "inventory_hostname_short".into(),
+            Value::String(short_name(host)),
+        );
         base
     }
 
@@ -221,7 +235,7 @@ impl VarStore {
             let view = self.host_view(host);
             hostvars.insert(host.to_string(), Value::Object(view));
         }
-        let short = host.split('.').next().unwrap_or(host).to_string();
+        let short = short_name(host);
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
         let insert = |vars: &mut Map<String, Value>, k: &str, v: Value| {
             vars.insert(k.to_string(), v);
@@ -247,7 +261,7 @@ impl VarStore {
         insert(
             vars,
             "ansible_play_hosts_all",
-            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
+            serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
         );
         insert(
             vars,
@@ -481,6 +495,7 @@ mod tests {
             vars_files: Vec::new(),
             task_vars: Map::new(),
             play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            all_play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
         }
     }
 
@@ -555,6 +570,11 @@ mod tests {
             v["hostvars"]["web1"].get("hostvars").is_none(),
             "hostvars does not nest"
         );
+        assert_eq!(
+            v["hostvars"]["web1"]["inventory_hostname"],
+            json!("web1"),
+            "the reference exposes a host's own identity through hostvars"
+        );
         assert_eq!(v["ansible_play_hosts"], json!(["web1"]));
         assert_eq!(v["ansible_play_hosts_all"], json!(["web1"]));
         assert_eq!(v["ansible_play_batch"], json!(["web1"]));
@@ -573,6 +593,26 @@ mod tests {
         assert_eq!(v["omit"], json!(omit_token()));
         assert_eq!(v["ansible_check_mode"], json!(false));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `ansible_play_hosts_all` keeps the list the play started with while the other three
+    /// follow the hosts still in it.
+    #[test]
+    fn the_live_host_list_and_the_starting_one_are_separate() {
+        let inv = Inventory::parse_ini("[web]\nalpha\nbeta\n").unwrap();
+        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let v = store.for_host(
+            "beta",
+            &Scope {
+                play_hosts: vec!["beta".into()],
+                all_play_hosts: vec!["alpha".into(), "beta".into()],
+                ..Scope::default()
+            },
+        );
+        assert_eq!(v["ansible_play_hosts"], json!(["beta"]));
+        assert_eq!(v["ansible_play_batch"], json!(["beta"]));
+        assert_eq!(v["play_hosts"], json!(["beta"]));
+        assert_eq!(v["ansible_play_hosts_all"], json!(["alpha", "beta"]));
     }
 
     #[test]

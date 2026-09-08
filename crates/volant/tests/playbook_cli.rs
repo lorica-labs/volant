@@ -20,6 +20,35 @@ fn volant(args: &[&str]) -> Output {
         .expect("volant runs")
 }
 
+/// Runs volant and fails if it has not finished within `deadline`. A barrier that never opens
+/// hangs instead of returning, and a hung run only ends at the harness's own timeout, so the
+/// tests that prove a wait ends say so with a deadline rather than with elapsed time alone.
+fn volant_within(args: &[&str], deadline: std::time::Duration) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("volant starts");
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().expect("volant is waitable") {
+            Some(_) => return child.wait_with_output().expect("volant output"),
+            None if started.elapsed() >= deadline => {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("volant output");
+                panic!(
+                    "volant did not finish within {deadline:?}, so a host is still waiting:\n{}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
+        }
+    }
+}
+
 fn settings() -> insta::Settings {
     let mut s = insta::Settings::clone_current();
     s.add_filter(r#""start": "[^"]*""#, r#""start": "[time]""#);
@@ -750,5 +779,125 @@ fn a_sudo_that_reads_no_password_is_never_written_one() {
         !text.contains(&answer) && !String::from_utf8_lossy(&out.stderr).contains(&answer),
         "the password never reaches the output: {text}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Measured against the reference: `beta` reads the stamp `alpha` registered at the previous
+/// task, on every run, and both hosts see each other in the play's live list. Ten runs, because
+/// a barrier that does nothing passes this once by luck.
+#[test]
+fn a_host_reading_hostvars_waits_for_the_others() {
+    for _ in 0..10 {
+        let out = volant(&[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            &fixture("hostvars-barrier.yml"),
+        ]);
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{text}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains(r#"ok: [beta] => {"msg": "stamped-alpha"}"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"ok: [alpha] => {"msg": "alpha,beta of alpha,beta"}"#)
+                && text.contains(r#"ok: [beta] => {"msg": "alpha,beta of alpha,beta"}"#),
+            "both hosts are still in the play: {text}"
+        );
+    }
+}
+
+/// `ansible_play_hosts` follows the hosts still in the play while `ansible_play_hosts_all` keeps
+/// the list it started with, as the reference does.
+#[test]
+fn play_hosts_shrink_when_a_host_fails_but_all_stays() {
+    let dir = std::env::temp_dir().join(format!("volant-live-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("live.yml"),
+        "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"{{ (inventory_hostname == 'alpha') | ternary('false', 'true') }}\"\n    - debug:\n        msg: \"{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}\"\n",
+    )
+    .unwrap();
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("vars/inventory.ini"),
+        &dir.join("live.yml").display().to_string(),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains(r#"ok: [beta] => {"msg": "beta of alpha,beta"}"#),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The failure path the barrier has to survive: `beta` waits for a host that is dying, so the
+/// live set shrinks under it and the wait ends instead of outliving `alpha`.
+#[test]
+fn a_waiting_host_is_released_when_the_others_die() {
+    let dir = std::env::temp_dir().join(format!("volant-release-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("die.yml"),
+        "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"{{ (inventory_hostname == 'alpha') | ternary('false', 'true') }}\"\n    - debug:\n        msg: \"{{ hostvars['beta'].inventory_hostname }}\"\n",
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            &dir.join("die.yml").display().to_string(),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains(r#"ok: [beta] => {"msg": "beta"}"#), "{text}");
+    assert!(
+        started.elapsed().as_secs() < 5,
+        "beta must not wait for a dead alpha"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A host that fails still reports the task it failed on, so the test above is released by the
+/// play's progress rather than by the live set shrinking. This one removes that: `alpha` never
+/// reaches the first task at all, so nothing but the shrinking live set can end `beta`'s wait.
+#[test]
+fn a_waiting_host_is_released_when_the_others_never_report() {
+    let dir = std::env::temp_dir().join(format!("volant-silent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("hosts.ini"),
+        "[web]\nalpha ansible_connection=carrier_pigeon\nbeta ansible_connection=local\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("silent.yml"),
+        "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"true\"\n    - debug:\n        msg: \"{{ hostvars['beta'].inventory_hostname }}\"\n",
+    )
+    .unwrap();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &dir.join("hosts.ini").display().to_string(),
+            &dir.join("silent.yml").display().to_string(),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("fatal: [alpha]: UNREACHABLE!"), "{text}");
+    assert!(text.contains(r#"ok: [beta] => {"msg": "beta"}"#), "{text}");
+    assert_eq!(out.status.code(), Some(4), "unreachable alpha: {text}");
     let _ = std::fs::remove_dir_all(&dir);
 }

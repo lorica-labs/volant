@@ -38,6 +38,45 @@ pub struct RunOptions {
     pub stop: watch::Receiver<bool>,
 }
 
+/// What the coordinator knows about the play's shared progress and every host driver may wait
+/// on. Republished after every event that can change the live set, so a driver blocked on it is
+/// never blocked on a host that has left the play.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Progress {
+    /// Highest task index every live host has finished, if any.
+    pub completed_through: Option<usize>,
+    /// Hosts still in the play, in inventory order.
+    pub live_hosts: Vec<String>,
+}
+
+/// Names whose value depends on what the other hosts have done: another host's variables, and
+/// the play's own live host list. A task whose raw text mentions one of them must not run ahead
+/// of the others, so `linear` puts a boundary in front of it.
+const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
+
+/// Whether a task reads across hosts, decided once per play from its unrendered text.
+fn reads_across_hosts(task: &PlayTask) -> bool {
+    let mentions = |s: &str| CROSS_HOST_NAMES.iter().any(|n| s.contains(n));
+    if mentions(&task.name) {
+        return true;
+    }
+    if task
+        .when
+        .iter()
+        .chain(&task.changed_when)
+        .chain(&task.failed_when)
+        .any(|s| mentions(s))
+    {
+        return true;
+    }
+    let mut text = serde_json::to_string(&task.args).unwrap_or_default();
+    text.push_str(&serde_json::to_string(&task.vars).unwrap_or_default());
+    if let Some(items) = &task.loop_items {
+        text.push_str(&items.to_string());
+    }
+    mentions(&text)
+}
+
 /// Which agent a kept connection belongs to. The escalated user is part of the identity
 /// because two connections to one host under two users are two different agents.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -104,6 +143,9 @@ enum Event {
 /// Everything a host driver needs about the play, shared read-only.
 struct PlayPlan {
     tasks: Vec<PlayTask>,
+    /// Parallel to `tasks`: whether the task is a `linear` boundary because it reads across
+    /// hosts. Decided here rather than per host, since it depends only on the task's text.
+    barriers: Vec<bool>,
     play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
     vars_files: HashMap<String, Vec<Map<String, Value>>>,
@@ -143,6 +185,7 @@ pub async fn run_play(
     let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state)?;
     let plan = Arc::new(PlayPlan {
         tasks: play.tasks.iter().map(clone_task).collect(),
+        barriers: play.tasks.iter().map(reads_across_hosts).collect(),
         play_vars: play.vars.clone(),
         vars_files,
         play_hosts: play_hosts.clone(),
@@ -151,6 +194,11 @@ pub async fn run_play(
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
+    // The play's shared progress. Every driver reads it; only this loop writes it.
+    let (progress_tx, progress_rx) = watch::channel(Progress {
+        completed_through: None,
+        live_hosts: play_hosts.clone(),
+    });
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
     // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
     // as `min` then `max` rather than `clamp(1, hosts.len())`: `clamp` panics whenever its
@@ -160,6 +208,7 @@ pub async fn run_play(
     let mut workers = Vec::new();
     for host in &hosts {
         let tx = tx.clone();
+        let watchdog_tx = tx.clone();
         // Connections kept from an earlier play. Taken out of the map for the duration of the
         // play so the driver owns them, and handed back with `Finished`.
         let existing = take_links(&mut state.links, &host.name);
@@ -172,14 +221,38 @@ pub async fn run_play(
         let (templar, vars) = (Arc::clone(&state.templar), Arc::clone(&state.vars));
         let verbosity = state.verbosity;
         let forks = Arc::clone(&forks);
+        let progress = progress_rx.clone();
         let name = host.name.clone();
+        let reported = name.clone();
         workers.push((
             name,
             tokio::spawn(async move {
-                drive_host(
-                    host, plan, agents, options, templar, vars, verbosity, existing, forks, tx,
-                )
-                .await
+                // A driver that panics would never report, so it would stay in the live set
+                // for good and a host waiting at a barrier would wait for a host that is gone.
+                // Reporting the panic from outside the driver keeps that promise: every host
+                // in the live set either reports or leaves it.
+                let driver = tokio::spawn(async move {
+                    drive_host(
+                        host, plan, agents, options, templar, vars, verbosity, existing, forks,
+                        progress, tx,
+                    )
+                    .await
+                });
+                if let Err(err) = driver.await {
+                    let _ = watchdog_tx
+                        .send(Event::Unreachable {
+                            host: reported.clone(),
+                            msg: format!("driver panicked: {err}"),
+                        })
+                        .await;
+                    let _ = watchdog_tx
+                        .send(Event::Finished {
+                            host: reported,
+                            failed: true,
+                            links: Vec::new(),
+                        })
+                        .await;
+                }
             }),
         ));
     }
@@ -188,6 +261,9 @@ pub async fn run_play(
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
     let mut done: HashSet<(String, usize)> = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
+    // Highest task index each host has reported. Reports arrive in task order over one channel,
+    // so for a host still in the play this is also the index it has finished every task through.
+    let mut last_done: HashMap<String, usize> = HashMap::new();
     for (index, task) in plan.tasks.iter().enumerate() {
         let mut header_shown = false;
         for host in &play_hosts {
@@ -195,7 +271,8 @@ pub async fn run_play(
                 let key = (host.clone(), index);
                 if done.contains(&key) {
                     if !header_shown {
-                        out.task(&task_name(task, host, &plan, state));
+                        let live = progress_tx.borrow().live_hosts.clone();
+                        out.task(&task_name(task, host, &plan, &live, state));
                         header_shown = true;
                     }
                     for event in pending.remove(&key).unwrap_or_default() {
@@ -224,15 +301,32 @@ pub async fn run_play(
                 }
                 match rx.recv().await {
                     Some(event @ Event::Result { .. }) => {
-                        let key = if let Event::Result { host, index, .. } = &event {
-                            (host.clone(), *index)
+                        let (key, lost) = if let Event::Result {
+                            host,
+                            index,
+                            outcome,
+                            ..
+                        } = &event
+                        {
+                            ((host.clone(), *index), *outcome == Outcome::Failed)
                         } else {
                             unreachable!()
                         };
+                        // A failed result is the host leaving the play, and it arrives before
+                        // that task's `TaskDone`. Taking it out of the live set here, rather
+                        // than waiting for its `Finished`, is what lets the next task read the
+                        // shrunken host list without racing the driver that is shutting down.
+                        if lost {
+                            state.failed_hosts.insert(key.0.clone());
+                            publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                        }
                         pending.entry(key).or_default().push(event);
                     }
                     Some(Event::TaskDone { host, index }) => {
+                        let seen = last_done.entry(host.clone()).or_insert(index);
+                        *seen = (*seen).max(index);
                         done.insert((host, index));
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
                     }
                     Some(Event::Finished {
                         host,
@@ -250,16 +344,19 @@ pub async fn run_play(
                             state.links.extend(links);
                         }
                         gone.insert(host);
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
                     }
                     Some(Event::Unreachable { host, msg }) => {
                         if !header_shown {
-                            out.task(&task_name(task, &host, &plan, state));
+                            let live = progress_tx.borrow().live_hosts.clone();
+                            out.task(&task_name(task, &host, &plan, &live, state));
                             header_shown = true;
                         }
                         stats.unreachable(&host);
                         out.unreachable(&host, &msg);
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
                     }
                     None => break,
                 }
@@ -277,6 +374,7 @@ pub async fn run_play(
                 stats.unreachable(&host);
                 out.unreachable(&host, &msg);
                 state.failed_hosts.insert(host);
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
             Event::Finished {
                 host,
@@ -291,6 +389,12 @@ pub async fn run_play(
                 } else {
                     state.links.extend(links);
                 }
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+            }
+            Event::TaskDone { host, index } => {
+                let seen = last_done.entry(host).or_insert(index);
+                *seen = (*seen).max(index);
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
             _ => {}
         }
@@ -305,6 +409,34 @@ pub async fn run_play(
         }
     }
     Ok(())
+}
+
+/// Republishes the play's progress. `live_hosts` is the play's starting list minus the hosts
+/// that have failed or gone unreachable, which is what `ansible_play_hosts` reports;
+/// `completed_through` is the lowest task index reached by any of them, so a driver waiting for
+/// it to reach `i - 1` is waiting only on hosts that are still expected to report.
+fn publish(
+    tx: &watch::Sender<Progress>,
+    play_hosts: &[String],
+    lost: &HashSet<String>,
+    last_done: &HashMap<String, usize>,
+) {
+    let live_hosts: Vec<String> = play_hosts
+        .iter()
+        .filter(|h| !lost.contains(*h))
+        .cloned()
+        .collect();
+    // `None` sorts below every `Some`, so a live host that has reported nothing yet holds the
+    // minimum at `None` and no barrier opens on it.
+    let completed_through = live_hosts
+        .iter()
+        .map(|h| last_done.get(h).copied())
+        .min()
+        .flatten();
+    tx.send_replace(Progress {
+        completed_through,
+        live_hosts,
+    });
 }
 
 /// Takes every connection belonging to one host out of the run's map.
@@ -446,6 +578,7 @@ fn load_play_vars_files(
             vars_files: Vec::new(),
             task_vars: Map::new(),
             play_hosts: play_hosts.to_vec(),
+            all_play_hosts: play_hosts.to_vec(),
         };
         let vars = state.templar.resolve_vars(
             &state
@@ -482,11 +615,24 @@ fn load_play_vars_files(
     Ok(per_host)
 }
 
-fn task_name(task: &PlayTask, host: &str, plan: &PlayPlan, state: &RunState) -> String {
+fn task_name(
+    task: &PlayTask,
+    host: &str,
+    plan: &PlayPlan,
+    live: &[String],
+    state: &RunState,
+) -> String {
     if !Templar::is_template(&task.name) {
         return task.name.clone();
     }
-    let vars = host_vars(host, plan, &task.vars, state.templar.as_ref(), &state.vars);
+    let vars = host_vars(
+        host,
+        plan,
+        &task.vars,
+        live,
+        state.templar.as_ref(),
+        &state.vars,
+    );
     state
         .templar
         .render(&task.name, &vars)
@@ -495,11 +641,13 @@ fn task_name(task: &PlayTask, host: &str, plan: &PlayPlan, state: &RunState) -> 
         .unwrap_or_else(|| task.name.clone())
 }
 
-/// The merged, self-resolved variables of a host for one task.
+/// The merged, self-resolved variables of a host for one task. `live` is the play's host list as
+/// the coordinator last published it, which is what `ansible_play_hosts` reports.
 fn host_vars(
     host: &str,
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
+    live: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
 ) -> Map<String, Value> {
@@ -507,7 +655,8 @@ fn host_vars(
         play_vars: plan.play_vars.clone(),
         vars_files: plan.vars_files.get(host).cloned().unwrap_or_default(),
         task_vars: task_vars.clone(),
-        play_hosts: plan.play_hosts.clone(),
+        play_hosts: live.to_vec(),
+        all_play_hosts: plan.play_hosts.clone(),
     };
     let raw = store.lock().expect("vars lock").for_host(host, &scope);
     templar.resolve_vars(&raw)
@@ -541,11 +690,12 @@ fn prepare(
     task: &PlayTask,
     host: &str,
     plan: &PlayPlan,
+    live: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
 ) -> Result<Prepared, TemplateError> {
-    let base = host_vars(host, plan, &task.vars, templar, store);
+    let base = host_vars(host, plan, &task.vars, live, templar, store);
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) => {
@@ -831,6 +981,7 @@ async fn drive_host(
     verbosity: u8,
     existing: Vec<(LinkKey, AgentLink)>,
     forks: Arc<Semaphore>,
+    mut progress: watch::Receiver<Progress>,
     tx: mpsc::Sender<Event>,
 ) {
     let name = host.name.clone();
@@ -867,7 +1018,52 @@ async fn drive_host(
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         while pos < n {
             let task = &plan.tasks[pos];
-            match prepare(task, &name, &plan, &templar, &store, &options.defaults) {
+            // A task that reads across hosts is a boundary before itself: the batch in hand
+            // goes out first, and then this host waits for the others to reach the previous
+            // task, the way `linear` does.
+            if plan.barriers[pos] && pos > 0 {
+                if !batch.is_empty() {
+                    break;
+                }
+                loop {
+                    if *stop.borrow() {
+                        break 'run;
+                    }
+                    let p = progress.borrow().clone();
+                    // Alone in the play there is nobody left to wait for, which is also how a
+                    // wait ends when every other host has died.
+                    if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos)
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        changed = progress.changed() => {
+                            // The coordinator is gone, so no further progress can be published
+                            // and waiting on it would never end.
+                            if changed.is_err() {
+                                break;
+                            }
+                        }
+                        res = stop.changed(), if !stop_broken => {
+                            if res.is_err() {
+                                stop_broken = true;
+                            } else {
+                                break 'run;
+                            }
+                        }
+                    }
+                }
+            }
+            let live = progress.borrow().live_hosts.clone();
+            match prepare(
+                task,
+                &name,
+                &plan,
+                &live,
+                &templar,
+                &store,
+                &options.defaults,
+            ) {
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;
@@ -1317,6 +1513,7 @@ mod tests {
     fn plan() -> PlayPlan {
         PlayPlan {
             tasks: Vec::new(),
+            barriers: Vec::new(),
             play_vars: Map::new(),
             vars_files: HashMap::new(),
             play_hosts: Vec::new(),
@@ -1557,6 +1754,75 @@ mod tests {
         assert_eq!(display(&json!("one")), "one");
         assert_eq!(display(&json!({"name": "one"})), r#"{"name": "one"}"#);
         assert_eq!(display(&json!(3)), "3");
+    }
+
+    /// Everything a playbook can hide a cross-host read in has to be searched, or a barrier
+    /// silently does nothing and the ordering it promised was never there.
+    #[test]
+    fn a_cross_host_read_is_found_wherever_the_task_spells_it() {
+        let mut t = task("command");
+        assert!(!reads_across_hosts(&t));
+        t.args
+            .insert("cmd".into(), json!("echo {{ hostvars['a'].x }}"));
+        assert!(reads_across_hosts(&t), "arguments");
+        let mut t = task("debug");
+        t.when = vec!["inventory_hostname in ansible_play_hosts".into()];
+        assert!(reads_across_hosts(&t), "when");
+        let mut t = task("debug");
+        t.name = "count {{ ansible_play_batch | length }}".into();
+        assert!(reads_across_hosts(&t), "name");
+        let mut t = task("debug");
+        t.vars.insert("peer".into(), json!("{{ hostvars['a'].y }}"));
+        assert!(reads_across_hosts(&t), "vars");
+        let mut t = task("command");
+        t.loop_items = Some(json!("{{ ansible_play_hosts }}"));
+        assert!(reads_across_hosts(&t), "loop");
+        let mut t = task("command");
+        t.changed_when = vec!["hostvars['a'].rc == 0".into()];
+        assert!(reads_across_hosts(&t), "changed_when");
+        let mut t = task("command");
+        t.failed_when = vec!["play_hosts | length > 1".into()];
+        assert!(reads_across_hosts(&t), "failed_when");
+    }
+
+    /// The barrier opens on the slowest live host, and a host that has left the play stops
+    /// holding it: this is what keeps a wait from outliving the host it waits for.
+    #[test]
+    fn progress_follows_the_slowest_live_host_and_forgets_the_others() {
+        let hosts: Vec<String> = vec!["alpha".into(), "beta".into()];
+        let (tx, rx) = watch::channel(Progress::default());
+        let mut last_done = HashMap::new();
+        let mut lost = HashSet::new();
+
+        publish(&tx, &hosts, &lost, &last_done);
+        assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
+        assert_eq!(rx.borrow().live_hosts, hosts);
+
+        last_done.insert("beta".to_string(), 3);
+        publish(&tx, &hosts, &lost, &last_done);
+        assert_eq!(
+            rx.borrow().completed_through,
+            None,
+            "alpha has reported nothing, so the barrier stays shut"
+        );
+
+        last_done.insert("alpha".to_string(), 1);
+        publish(&tx, &hosts, &lost, &last_done);
+        assert_eq!(rx.borrow().completed_through, Some(1));
+
+        lost.insert("alpha".to_string());
+        publish(&tx, &hosts, &lost, &last_done);
+        assert_eq!(
+            rx.borrow().completed_through,
+            Some(3),
+            "a host out of the play no longer holds the barrier"
+        );
+        assert_eq!(rx.borrow().live_hosts, vec!["beta".to_string()]);
+
+        lost.insert("beta".to_string());
+        publish(&tx, &hosts, &lost, &last_done);
+        assert!(rx.borrow().live_hosts.is_empty());
+        assert_eq!(rx.borrow().completed_through, None);
     }
 
     #[test]

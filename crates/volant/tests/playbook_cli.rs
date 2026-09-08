@@ -645,21 +645,28 @@ fn volant_with_password(args: &[&str], dir: &std::path::Path, password: &str) ->
 /// sequence for real: the escalation check, the preamble on the link, the handshake and a batch.
 /// Left on the pipe, that line would be read by the agent as its first frame header and the
 /// handshake would fail, which is the failure this covers.
+///
+/// The answer the fake `sudo` accepts is built from this process's own id rather than written
+/// as a literal, so two runs never share one and a leftover directory from an earlier run
+/// cannot satisfy this one.
 #[test]
 fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
+    let expected = format!("only-this-run-{}", std::process::id());
     let dir = fake_sudo(
         "goodpassword",
-        "#!/bin/sh\n\
-         IFS= read -r password\n\
-         [ \"$password\" = s3cret ] || { echo 'sudo: Sorry, try again.' >&2; exit 1; }\n\
-         while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
-         shift\n\
-         exec \"$@\"\n",
+        &format!(
+            "#!/bin/sh\n\
+             IFS= read -r given\n\
+             [ \"$given\" = {expected} ] || {{ echo 'sudo: Sorry, try again.' >&2; exit 1; }}\n\
+             while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+             shift\n\
+             exec \"$@\"\n"
+        ),
     );
     let out = volant_with_password(
         &["playbook", "-K", &fixture("become-password.yml")],
         &dir,
-        "s3cret\n",
+        &format!("{expected}\n"),
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -670,7 +677,7 @@ fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
     );
     assert!(text.contains(r#""msg": "escalated""#), "{text}");
     assert!(
-        !text.contains("s3cret"),
+        !text.contains(&expected),
         "the password never reaches the output: {text}"
     );
     let _ = std::fs::remove_dir_all(&dir);

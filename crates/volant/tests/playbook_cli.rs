@@ -788,12 +788,15 @@ fn a_sudo_that_reads_no_password_is_never_written_one() {
 #[test]
 fn a_host_reading_hostvars_waits_for_the_others() {
     for _ in 0..10 {
-        let out = volant(&[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            &fixture("hostvars-barrier.yml"),
-        ]);
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &fixture("vars/inventory.ini"),
+                &fixture("hostvars-barrier.yml"),
+            ],
+            std::time::Duration::from_secs(20),
+        );
         let text = String::from_utf8(out.stdout).unwrap();
         assert_eq!(
             out.status.code(),
@@ -824,12 +827,15 @@ fn play_hosts_shrink_when_a_host_fails_but_all_stays() {
         "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"{{ (inventory_hostname == 'alpha') | ternary('false', 'true') }}\"\n    - debug:\n        msg: \"{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}\"\n",
     )
     .unwrap();
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("vars/inventory.ini"),
-        &dir.join("live.yml").display().to_string(),
-    ]);
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            &dir.join("live.yml").display().to_string(),
+        ],
+        std::time::Duration::from_secs(20),
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
         text.contains(r#"ok: [beta] => {"msg": "beta of alpha,beta"}"#),

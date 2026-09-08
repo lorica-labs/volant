@@ -56,7 +56,14 @@ const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
 
 /// Whether a task reads across hosts, decided once per play from its unrendered text.
 fn reads_across_hosts(task: &PlayTask) -> bool {
-    let mentions = |s: &str| CROSS_HOST_NAMES.iter().any(|n| s.contains(n));
+    // `ansible_play_hosts_all` is a static copy of the play's starting host list: no host can
+    // ever change it, so matching it buys no ordering guarantee and only costs a barrier. Strip
+    // it before matching so it does not trip the `play_hosts` needle on its own; a task that
+    // separately mentions `ansible_play_hosts` or `play_batch` still is a boundary.
+    let mentions = |s: &str| {
+        let s = s.replace("play_hosts_all", "");
+        CROSS_HOST_NAMES.iter().any(|n| s.contains(n))
+    };
     if mentions(&task.name) {
         return true;
     }
@@ -1783,6 +1790,30 @@ mod tests {
         let mut t = task("command");
         t.failed_when = vec!["play_hosts | length > 1".into()];
         assert!(reads_across_hosts(&t), "failed_when");
+    }
+
+    /// `ansible_play_hosts_all` never changes once the play starts, so a task mentioning it and
+    /// nothing else needs no barrier. The live list and the batch keyword still hold one.
+    #[test]
+    fn ansible_play_hosts_all_alone_is_not_a_boundary() {
+        let mut t = task("debug");
+        t.args.insert(
+            "msg".into(),
+            json!("{{ ansible_play_hosts_all | join(',') }}"),
+        );
+        assert!(!reads_across_hosts(&t), "the static list on its own");
+        let mut t = task("debug");
+        t.args.insert(
+            "msg".into(),
+            json!(
+                "{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}"
+            ),
+        );
+        assert!(reads_across_hosts(&t), "the live list is still present");
+        let mut t = task("debug");
+        t.args
+            .insert("msg".into(), json!("{{ ansible_play_batch }}"));
+        assert!(reads_across_hosts(&t), "play_batch is unaffected");
     }
 
     /// The barrier opens on the slowest live host, and a host that has left the play stops

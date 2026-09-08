@@ -1,0 +1,13 @@
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Alpha is slow to stamp
+      shell: "{{ (inventory_hostname == 'alpha') | ternary('sleep 1; ', '') }}echo stamped-{{ inventory_hostname }}"
+      register: stamp
+    - name: Beta reads alpha
+      debug:
+        msg: "{{ hostvars['alpha'].stamp.stdout }}"
+      when: inventory_hostname == 'beta'
+    - name: Who is still here
+      debug:
+        msg: "{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}"

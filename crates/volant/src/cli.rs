@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `playbook` command: the same arguments as `ansible-playbook`, for the subset that exists.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -48,6 +48,9 @@ pub struct PlaybookArgs {
     /// Seconds to wait for a connection.
     #[arg(short = 'T', long = "timeout", value_name = "TIMEOUT")]
     pub timeout: Option<u64>,
+    /// Number of hosts to run at once.
+    #[arg(short = 'f', long = "forks", value_name = "FORKS")]
+    pub forks: Option<usize>,
 }
 
 /// Runs the playbooks and returns the process exit code.
@@ -76,6 +79,12 @@ pub fn run(args: PlaybookArgs) -> i32 {
 
 async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32> {
     let config = Config::load();
+    // Refused before anything is loaded, the way the reference refuses it, whether it comes
+    // from the command line, the environment or `ansible.cfg`.
+    let forks = args.forks.unwrap_or(config.forks);
+    if forks == 0 {
+        anyhow::bail!("The number of processes (--forks) must be >= 1");
+    }
     let inventory_path = args.inventory.clone().or(config.inventory);
     let inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
@@ -103,18 +112,21 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     spawn_signal_watcher(stop_tx);
     let options = RunOptions {
         defaults,
+        forks,
         stop: stop_rx.clone(),
     };
 
     let playbook_dir = base_dir(&args.playbooks[0]);
     let cwd = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
-    let store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
+    let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
+    store.set_forks(forks);
     let mut state = RunState {
         templar: Arc::new(Templar::new(playbook_dir.clone())),
         vars: Arc::new(Mutex::new(store)),
         failed_hosts: HashSet::new(),
         verbosity: args.verbose,
+        links: HashMap::new(),
     };
 
     let limit: Option<HashSet<String>> = match &args.limit {
@@ -188,9 +200,18 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 agents.local()?;
                 local_agent_checked = true;
             }
-            executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats).await?;
+            if let Err(err) =
+                executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats)
+                    .await
+            {
+                // Closing them here rather than letting the state drop keeps the wait for
+                // each agent off a blocking drop inside the runtime.
+                state.shutdown_links().await;
+                return Err(err);
+            }
         }
     }
+    state.shutdown_links().await;
     if *stop_rx.borrow() {
         eprintln!("[ERROR]: User interrupted execution");
         out.recap(&stats);

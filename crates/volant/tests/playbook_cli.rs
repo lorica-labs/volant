@@ -333,3 +333,84 @@ fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
         "failed good host (2) and unreachable bad host (4): {text}"
     );
 }
+
+#[test]
+fn the_agent_connection_survives_across_plays() {
+    let out = volant(&["playbook", &fixture("reuse.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#""msg": "same""#),
+        "the shell's parent must be the same agent in both plays: {text}"
+    );
+}
+
+/// Two measured durations in the same process, never a constant: six one-second sleeps run
+/// six at a time against the same six run one at a time.
+#[test]
+fn forks_bounds_the_hosts_running_at_once() {
+    let dir = std::env::temp_dir().join(format!("volant-forks-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let inv: String = (1..=6)
+        .map(|i| format!("h{i} ansible_connection=local\n"))
+        .collect();
+    std::fs::write(dir.join("inv.ini"), inv).unwrap();
+    std::fs::write(
+        dir.join("sleep.yml"),
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - shell: sleep 1\n",
+    )
+    .unwrap();
+    let inv_path = dir.join("inv.ini").display().to_string();
+    let pb = dir.join("sleep.yml").display().to_string();
+    let started = std::time::Instant::now();
+    let out = volant(&["playbook", "-i", &inv_path, "-f", "6", &pb]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let wide = started.elapsed();
+    let started = std::time::Instant::now();
+    let out = volant(&["playbook", "-i", &inv_path, "-f", "1", &pb]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let narrow = started.elapsed();
+    assert!(
+        narrow.as_secs_f64() > wide.as_secs_f64() * 2.5,
+        "forks=1 must serialise six one-second sleeps (wide {wide:?}, narrow {narrow:?})"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn zero_forks_is_refused() {
+    let out = volant(&["playbook", "-f", "0", &fixture("site.yml")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("The number of processes (--forks) must be >= 1"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The reference reports the run's own `forks` through `ansible_forks`, whatever the host
+/// count; a fixed five would have lied as soon as `-f` existed.
+#[test]
+fn ansible_forks_reports_the_run_setting() {
+    let out = volant(&["playbook", "-f", "3", &fixture("forks-var.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""ansible_forks": 3"#), "{text}");
+    let out = volant(&["playbook", &fixture("forks-var.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains(r#""ansible_forks": 5"#),
+        "the default is five: {text}"
+    );
+}

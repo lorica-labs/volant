@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
@@ -32,17 +32,39 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 pub struct RunOptions {
     /// Connection settings every host starts from; its host variables override them.
     pub defaults: ConnectionDefaults,
+    /// How many hosts of a play run at once, Ansible's `forks`. Never zero.
+    pub forks: usize,
     /// Flips to `true` once when the user interrupts the run.
     pub stop: watch::Receiver<bool>,
 }
 
-/// What outlives a play: the templar, the variable store hosts write into, and the hosts that
-/// are out of the run.
+/// Which agent a kept connection belongs to. The escalated user is part of the identity
+/// because two connections to one host under two users are two different agents.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LinkKey {
+    pub host: String,
+    pub become_user: Option<String>,
+}
+
+/// What outlives a play: the templar, the variable store hosts write into, the hosts that
+/// are out of the run, and the agents still connected.
 pub struct RunState {
     pub templar: Arc<Templar>,
     pub vars: Arc<Mutex<VarStore>>,
     pub failed_hosts: HashSet<String>,
     pub verbosity: u8,
+    /// Agents kept alive between plays, the way Ansible keeps its ssh connections open.
+    pub links: HashMap<LinkKey, AgentLink>,
+}
+
+impl RunState {
+    /// Closes every kept connection. Draining the map makes a second call a no-op, so the
+    /// recap paths can each ask for it without closing one agent twice.
+    pub async fn shutdown_links(&mut self) {
+        for (_, link) in self.links.drain() {
+            link.shutdown().await;
+        }
+    }
 }
 
 enum Event {
@@ -63,9 +85,11 @@ enum Event {
         host: String,
         index: usize,
     },
+    /// A host is done with this play and hands back the connections it wants kept open.
     Finished {
         host: String,
         failed: bool,
+        links: Vec<(LinkKey, AgentLink)>,
     },
     Unreachable {
         host: String,
@@ -119,9 +143,15 @@ pub async fn run_play(
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
+    // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
+    // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`.
+    let forks = Arc::new(Semaphore::new(options.forks.clamp(1, hosts.len())));
     let mut workers = Vec::new();
     for host in &hosts {
         let tx = tx.clone();
+        // Connections kept from an earlier play. Taken out of the map for the duration of the
+        // play so the driver owns them, and handed back with `Finished`.
+        let existing = take_links(&mut state.links, &host.name);
         let (host, plan, agents, options) = (
             host.clone(),
             Arc::clone(&plan),
@@ -130,11 +160,15 @@ pub async fn run_play(
         );
         let (templar, vars) = (Arc::clone(&state.templar), Arc::clone(&state.vars));
         let verbosity = state.verbosity;
+        let forks = Arc::clone(&forks);
         let name = host.name.clone();
         workers.push((
             name,
             tokio::spawn(async move {
-                drive_host(host, plan, agents, options, templar, vars, verbosity, tx).await
+                drive_host(
+                    host, plan, agents, options, templar, vars, verbosity, existing, forks, tx,
+                )
+                .await
             }),
         ));
     }
@@ -189,7 +223,12 @@ pub async fn run_play(
                     Some(Event::TaskDone { host, index }) => {
                         done.insert((host, index));
                     }
-                    Some(Event::Finished { host, failed }) => {
+                    Some(Event::Finished {
+                        host,
+                        failed,
+                        links,
+                    }) => {
+                        state.links.extend(links);
                         if failed {
                             state.failed_hosts.insert(host.clone());
                         }
@@ -222,8 +261,15 @@ pub async fn run_play(
                 out.unreachable(&host, &msg);
                 state.failed_hosts.insert(host);
             }
-            Event::Finished { host, failed: true } => {
-                state.failed_hosts.insert(host);
+            Event::Finished {
+                host,
+                failed,
+                links,
+            } => {
+                state.links.extend(links);
+                if failed {
+                    state.failed_hosts.insert(host);
+                }
             }
             _ => {}
         }
@@ -238,6 +284,14 @@ pub async fn run_play(
         }
     }
     Ok(())
+}
+
+/// Takes every connection belonging to one host out of the run's map.
+fn take_links(links: &mut HashMap<LinkKey, AgentLink>, host: &str) -> Vec<(LinkKey, AgentLink)> {
+    let keys: Vec<LinkKey> = links.keys().filter(|k| k.host == host).cloned().collect();
+    keys.into_iter()
+        .filter_map(|k| links.remove(&k).map(|link| (k, link)))
+        .collect()
 }
 
 fn clone_task(t: &PlayTask) -> PlayTask {
@@ -660,15 +714,39 @@ async fn drive_host(
     templar: Arc<Templar>,
     store: Arc<Mutex<VarStore>>,
     verbosity: u8,
+    existing: Vec<(LinkKey, AgentLink)>,
+    forks: Arc<Semaphore>,
     tx: mpsc::Sender<Event>,
 ) {
     let name = host.name.clone();
+    let key = LinkKey {
+        host: name.clone(),
+        become_user: None,
+    };
     let mut stop = options.stop.clone();
     // Set once the stop watch's sender is gone, so a dropped sender is never read as an
     // interrupt and the select below stops polling a branch that would otherwise resolve
     // immediately forever.
     let mut stop_broken = false;
     let mut link: Option<AgentLink> = None;
+    // Connections this play does not use itself but must not close either; they go straight
+    // back with `Finished`.
+    let mut kept: Vec<(LinkKey, AgentLink)> = Vec::new();
+    for (k, l) in existing {
+        if k == key && link.is_none() {
+            link = Some(l);
+        } else {
+            kept.push((k, l));
+        }
+    }
+    // A kept connection is proved alive once, at the first batch, and never again.
+    let mut checked = link.is_none();
+    // Ansible's `forks`: one permit per host, held from the connection to the results of a
+    // batch. It lives in this binding and releases itself when dropped, so no way out of this
+    // function can leak it, whether that is a return, an error, a cancellation or a panic.
+    let mut permit: Option<OwnedSemaphorePermit> = None;
+    // Set when the host leaves the run without finishing: the message the recap shows.
+    let mut unreachable: Option<String> = None;
     let mut failed = false;
     let mut pos = 0;
     let n = plan.tasks.len();
@@ -761,21 +839,25 @@ async fn drive_host(
         }
 
         if !batch.is_empty() {
-            let link = match &mut link {
-                Some(l) => l,
-                None => match connect(&host, &agents, &options.defaults).await {
-                    Ok(l) => link.insert(l),
-                    Err(err) => {
-                        let _ = tx
-                            .send(Event::Unreachable {
-                                host: name.clone(),
-                                msg: err.to_string(),
-                            })
-                            .await;
-                        return;
+            if permit.is_none() {
+                match Arc::clone(&forks).acquire_owned().await {
+                    Ok(p) => permit = Some(p),
+                    // Nothing in this run closes the semaphore, so this is a bug rather than
+                    // a shutdown. Reporting it beats returning as if the host had run.
+                    Err(_) => {
+                        unreachable = Some("the run's fork limit is gone".to_string());
+                        break 'run;
                     }
-                },
-            };
+                }
+            }
+            let link =
+                match reuse_or_connect(&mut link, &mut checked, &host, &agents, &options).await {
+                    Ok(l) => l,
+                    Err(err) => {
+                        unreachable = Some(err.to_string());
+                        break 'run;
+                    }
+                };
             batch_id += 1;
             // Flat list for the agent, with a map back to (task, item).
             let mut tasks = Vec::new();
@@ -802,13 +884,8 @@ async fn drive_host(
                 })
                 .await
             {
-                let _ = tx
-                    .send(Event::Unreachable {
-                        host: name.clone(),
-                        msg: format!("sending batch: {err}"),
-                    })
-                    .await;
-                return;
+                unreachable = Some(format!("sending batch: {err}"));
+                break 'run;
             }
             let mut received: Vec<Vec<Option<TaskResult>>> = batch
                 .iter()
@@ -873,15 +950,13 @@ async fn drive_host(
                     break;
                 }
             }
+            // The results are in and reported, so the next host may start while this one
+            // renders its remaining local tasks.
+            permit = None;
             match ended {
                 Err(msg) => {
-                    let _ = tx
-                        .send(Event::Unreachable {
-                            host: name.clone(),
-                            msg,
-                        })
-                        .await;
-                    return;
+                    unreachable = Some(msg);
+                    break 'run;
                 }
                 Ok(BatchOutcome::Cancelled { .. }) => break 'run,
                 Ok(_) => {}
@@ -898,10 +973,62 @@ async fn drive_host(
             }
         }
     }
-    if let Some(link) = link {
-        link.shutdown().await;
+    drop(permit);
+    if let Some(msg) = unreachable {
+        // Whatever went wrong, this connection is not one to hand to the next play.
+        if let Some(link) = link.take() {
+            link.shutdown().await;
+        }
+        failed = true;
+        let _ = tx
+            .send(Event::Unreachable {
+                host: name.clone(),
+                msg,
+            })
+            .await;
     }
-    let _ = tx.send(Event::Finished { host: name, failed }).await;
+    // A healthy connection outlives the play: the run closes it once, before the recap.
+    if let Some(link) = link.take() {
+        kept.push((key, link));
+    }
+    let _ = tx
+        .send(Event::Finished {
+            host: name,
+            failed,
+            links: kept,
+        })
+        .await;
+}
+
+/// The connection for the next batch: the one kept from an earlier play if its agent still
+/// answers, a fresh one otherwise. A kept connection gets exactly one liveness check per
+/// play, and a failed check exactly one reconnection; a failed reconnection is the host's
+/// `UNREACHABLE`.
+async fn reuse_or_connect<'a>(
+    slot: &'a mut Option<AgentLink>,
+    checked: &mut bool,
+    host: &Host,
+    agents: &AgentSource,
+    options: &RunOptions,
+) -> Result<&'a mut AgentLink, ConnectError> {
+    if !*checked {
+        *checked = true;
+        if let Some(mut link) = slot.take() {
+            let alive =
+                tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
+            if matches!(alive, Ok(Ok(()))) {
+                *slot = Some(link);
+            } else {
+                // The agent died between the two plays. Close what is left of it and fall
+                // through to a single reconnection.
+                link.shutdown().await;
+            }
+        }
+    }
+    if slot.is_none() {
+        *slot = Some(connect(host, agents, &options.defaults).await?);
+    }
+    Ok(slot.as_mut().expect("connected just above"))
 }
 
 /// Sends the result lines of one task and its `TaskDone`. Returns whether the host failed.

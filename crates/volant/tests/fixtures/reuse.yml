@@ -1,0 +1,16 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Remember the agent
+      shell: echo $PPID
+      register: first
+
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Same agent
+      shell: echo $PPID
+      register: second
+    - name: Compare
+      debug:
+        msg: "{{ 'same' if first.stdout == second.stdout else 'different' }}"

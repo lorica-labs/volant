@@ -38,6 +38,8 @@ pub struct VarStore {
     groups: BTreeMap<String, Vec<String>>,
     facts: BTreeMap<String, Map<String, Value>>,
     extra: Map<String, Value>,
+    /// What `ansible_forks` reports, which the reference sets from the run's own `forks`.
+    forks: usize,
     /// Every inventory host's view, as `hostvars` shows it. Built on demand and dropped
     /// whenever something below it changes, which only a fact or a rebase does.
     hostvars: Option<Map<String, Value>>,
@@ -101,8 +103,15 @@ impl VarStore {
             groups,
             facts: BTreeMap::new(),
             extra,
+            forks: crate::config::DEFAULT_FORKS,
             hostvars: None,
         })
+    }
+
+    /// What `ansible_forks` reports for this run.
+    pub fn set_forks(&mut self, forks: usize) {
+        self.forks = forks;
+        self.hostvars = None;
     }
 
     pub fn playbook_dir(&self) -> &Path {
@@ -272,7 +281,7 @@ impl VarStore {
         insert(vars, "omit", Value::String(omit_token().to_string()));
         insert(vars, "ansible_check_mode", Value::Bool(false));
         insert(vars, "ansible_diff_mode", Value::Bool(false));
-        insert(vars, "ansible_forks", Value::from(5));
+        insert(vars, "ansible_forks", Value::from(self.forks));
         insert(vars, "ansible_version", ansible_version());
         insert(
             vars,

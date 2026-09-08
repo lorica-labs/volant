@@ -9,6 +9,8 @@ use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
 /// Ansible's own default for `remote_tmp`, where the agent is cached on a host.
 pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
+/// Ansible's own default for `forks`: how many hosts a play runs at once.
+pub const DEFAULT_FORKS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -18,6 +20,7 @@ pub struct Config {
     pub private_key_file: Option<PathBuf>,
     pub host_key_checking: bool,
     pub remote_tmp: String,
+    pub forks: usize,
 }
 
 impl Default for Config {
@@ -29,6 +32,7 @@ impl Default for Config {
             private_key_file: None,
             host_key_checking: true,
             remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
+            forks: DEFAULT_FORKS,
         }
     }
 }
@@ -66,6 +70,13 @@ impl Config {
             && !tmp.trim().is_empty()
         {
             config.remote_tmp = tmp.trim().to_string();
+        }
+        // A zero is kept rather than dropped: the reference refuses it from every source, and
+        // the single check at startup is what says so.
+        if let Ok(n) = std::env::var("ANSIBLE_FORKS")
+            && let Ok(forks) = n.trim().parse::<usize>()
+        {
+            config.forks = forks;
         }
         config
     }
@@ -139,6 +150,11 @@ fn parse(text: &str, base: &Path) -> Config {
                     config.remote_tmp = tmp.to_string();
                 }
             }
+            "forks" => {
+                if let Ok(forks) = value.trim().parse::<usize>() {
+                    config.forks = forks;
+                }
+            }
             _ => {}
         }
     }
@@ -206,6 +222,18 @@ mod tests {
                 None => std::env::remove_var("ANSIBLE_REMOTE_TMP"),
             }
         }
+    }
+
+    /// A zero reaches the caller untouched: refusing it is the startup check's job, and
+    /// silently falling back to five would run a playbook the reference refuses outright.
+    #[test]
+    fn forks_is_read_and_a_zero_is_passed_through() {
+        assert_eq!(parse("[defaults]\nforks = 12\n", Path::new(".")).forks, 12);
+        assert_eq!(parse("[defaults]\nforks = 0\n", Path::new(".")).forks, 0);
+        assert_eq!(
+            parse("[defaults]\nforks = many\n", Path::new(".")).forks,
+            DEFAULT_FORKS
+        );
     }
 
     #[test]

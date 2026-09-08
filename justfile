@@ -47,4 +47,22 @@ ci-local:
 # Copy the working tree to the machine named by VOLANT_DEV_HOST and run a recipe there
 remote +recipe:
     tar -C . --exclude=./target --exclude=./.git --exclude=./docs/superpowers --exclude=./docs/book -czf - . | ssh "$VOLANT_DEV_HOST" 'mkdir -p volant && tar -xzf - -C volant'
-    ssh "$VOLANT_DEV_HOST" '. ~/.cargo/env && export PATH=$HOME/.local/bin:$PATH && cd volant && just {{recipe}}'
+    ssh "$VOLANT_DEV_HOST" '. ~/.profile && cd volant && just {{recipe}}'
+
+# Build the agent as a static musl binary, the only form that can be uploaded to another host
+agent-musl:
+    cargo build -p volant-agent --release --target x86_64-unknown-linux-musl
+    mkdir -p target/agents
+    cp target/x86_64-unknown-linux-musl/release/volant-agent target/agents/volant-agent-x86_64-unknown-linux-musl
+
+# Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING)
+ssh-test: agent-musl
+    test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
+    VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only -E 'test(/^ssh_/)'
+
+# Run the end-to-end playbook against the machine named by VOLANT_TARGET_HOST (never in CI)
+e2e-target: agent-musl
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    cargo build -p volant
+    printf '[targets]\n%s ansible_host=%s\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST" > target/e2e-inventory.ini
+    VOLANT_AGENT_DIR="$PWD/target/agents" ./target/debug/volant playbook -i target/e2e-inventory.ini crates/volant/tests/fixtures/ssh/e2e.yml

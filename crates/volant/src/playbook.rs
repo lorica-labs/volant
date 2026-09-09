@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
-use volant_protocol::modules::native;
+use volant_protocol::modules::{is_known, native};
 
 use crate::yaml::{as_bool, field, to_json};
 
@@ -133,8 +133,14 @@ fn is_free_form(module: &str) -> bool {
 /// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
 /// that is there and does not make sense stops it with exit 4. Both codes are the reference's
 /// own, measured against ansible-core 2.19.12: `the playbook: x.yml could not be found` exits 1,
-/// while a YAML error, a play that is not a mapping, an unknown keyword, an unknown module and
-/// `a playbook must be a list of plays` all exit 4.
+/// while a YAML error, a play that is not a mapping, an unknown keyword, a module that cannot be
+/// resolved and `a playbook must be a list of plays` all exit 4, with no `PLAY RECAP`.
+///
+/// A module counts as resolvable here when `volant_protocol::modules::is_known` has it. The
+/// reference resolves an action while it loads the play, so a name it cannot find refuses the
+/// whole run before the first task; the set it can find is every collection installed, and the
+/// set this engine can find is its two module tables. Refusing at load is what keeps a playbook
+/// naming a module Volant has not written yet from applying half of itself.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading playbook {}", path.display()))?;
@@ -250,6 +256,9 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         }
     }
     let (module, value) = module.ok_or_else(|| anyhow!("task '{label}': no module given"))?;
+    if !is_known(&module) {
+        bail!("task '{label}': couldn't resolve module/action '{module}'");
+    }
     let mut args = module_args(&module, value).with_context(|| format!("task '{label}'"))?;
     if let Some(Yaml::Mapping(extra)) = field(yaml, "args") {
         for (k, v) in extra {
@@ -486,15 +495,15 @@ mod tests {
     }
 
     #[test]
-    fn key_value_free_form_is_parsed_for_other_modules() {
+    fn key_value_is_parsed_for_a_module_that_is_not_free_form() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - file: path=/tmp/x state=touch\n",
+            "- hosts: all\n  tasks:\n    - set_fact: owner=root state=here\n",
             "x.yml",
         )
         .unwrap();
         let t = &pb.plays[0].tasks[0];
-        assert_eq!(t.args["path"], "/tmp/x");
-        assert_eq!(t.args["state"], "touch");
+        assert_eq!(t.args["owner"], "root");
+        assert_eq!(t.args["state"], "here");
     }
 
     #[test]
@@ -601,15 +610,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "echo a=b");
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - community.general.command: echo a\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("expected key=value"),
-            "another collection's command is not free-form here"
-        );
+    }
+
+    /// The reference resolves a task's action while it loads the play and refuses the whole run
+    /// with exit 4 on a name it cannot find, printing no `PLAY RECAP`. Measured against
+    /// ansible-core 2.19.12. The set this engine can resolve is its two module tables, so a
+    /// module it has not written yet is refused the same way rather than failing on the agent
+    /// halfway through the play.
+    #[test]
+    fn a_module_that_cannot_be_resolved_refuses_the_load_with_four() {
+        for module in ["nosuchmodule", "file", "community.general.command"] {
+            let err = load_from(&format!(
+                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: echo a\n"
+            ));
+            assert_eq!(crate::stats::error_code(&err), 4, "{module}");
+            let text = format!("{err:#}");
+            assert!(
+                text.contains("couldn't resolve module/action") && text.contains(module),
+                "{text}"
+            );
+            assert!(text.contains("Later"), "the task is named: {text}");
+        }
+    }
+
+    /// `parse` on its own returns a plain error; `load` is what carries the exit code, so a test
+    /// about the code has to go through a file.
+    fn load_from(text: &str) -> anyhow::Error {
+        let dir = std::env::temp_dir().join(format!("volant-load-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("x.yml");
+        std::fs::write(&path, text).unwrap();
+        let err = load(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        err
     }
 
     #[test]

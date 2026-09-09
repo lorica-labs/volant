@@ -34,6 +34,20 @@ pub const SHELL: ModuleSpec = ModuleSpec {
 /// Every module the agent implements natively, sorted by name.
 pub const NATIVE_MODULES: &[ModuleSpec] = &[COMMAND, RAW, SHELL];
 
+pub const DEBUG: ModuleSpec = ModuleSpec {
+    name: "debug",
+    free_form: false,
+    summary: "Print a message or the value of a variable.",
+};
+pub const SET_FACT: ModuleSpec = ModuleSpec {
+    name: "set_fact",
+    free_form: false,
+    summary: "Set facts for a host, for the rest of the run.",
+};
+
+/// Modules the controller runs itself and never sends to a host, sorted by name.
+pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, SET_FACT];
+
 /// `ansible.builtin.` and `ansible.legacy.` name the same modules as the bare name does.
 /// Other collections are returned whole: `community.general.command` is not our `command`.
 pub fn short_name(module: &str) -> &str {
@@ -48,19 +62,38 @@ pub fn native(module: &str) -> Option<&'static ModuleSpec> {
     NATIVE_MODULES.iter().find(|m| m.name == short)
 }
 
+pub fn local(module: &str) -> Option<&'static ModuleSpec> {
+    let short = short_name(module);
+    LOCAL_MODULES.iter().find(|m| m.name == short)
+}
+
+/// Whether this engine can run the module at all, natively on the agent or on the controller.
+/// The two tables are all there is, so a playbook naming anything else can be refused while it
+/// is being loaded, which is where the reference refuses a module it cannot resolve.
+pub fn is_known(module: &str) -> bool {
+    native(module).is_some() || local(module).is_some()
+}
+
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "# Native modules\n\nModules the agent runs without Python. Every other module runs through the warm Python path once it exists.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
+        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
     );
-    for m in NATIVE_MODULES {
-        out.push_str(&format!(
-            "| `{}` | {} | {} |\n",
-            m.name,
-            if m.free_form { "yes" } else { "no" },
-            m.summary
-        ));
-    }
+    let rows = |specs: &[ModuleSpec], out: &mut String| {
+        for m in specs {
+            out.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                m.name,
+                if m.free_form { "yes" } else { "no" },
+                m.summary
+            ));
+        }
+    };
+    rows(NATIVE_MODULES, &mut out);
+    out.push_str(
+        "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
+    );
+    rows(LOCAL_MODULES, &mut out);
     out
 }
 
@@ -88,11 +121,31 @@ mod tests {
 
     #[test]
     fn names_are_unique_and_sorted() {
-        let names: Vec<&str> = NATIVE_MODULES.iter().map(|m| m.name).collect();
-        let mut sorted = names.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(names, sorted);
+        for table in [NATIVE_MODULES, LOCAL_MODULES] {
+            let names: Vec<&str> = table.iter().map(|m| m.name).collect();
+            let mut sorted = names.clone();
+            sorted.sort_unstable();
+            assert_eq!(names, sorted);
+        }
+        let mut all: Vec<&str> = NATIVE_MODULES
+            .iter()
+            .chain(LOCAL_MODULES)
+            .map(|m| m.name)
+            .collect();
+        let total = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), total, "a module name is in both tables");
+    }
+
+    #[test]
+    fn only_the_two_tables_are_known() {
+        assert!(is_known("ansible.builtin.shell"));
+        assert!(is_known("set_fact"));
+        assert!(is_known("ansible.legacy.debug"));
+        assert!(!is_known("nosuchmodule"));
+        assert!(!is_known("file"), "not implemented yet, so not known");
+        assert!(!is_known("community.general.debug"));
     }
 
     #[test]

@@ -270,6 +270,10 @@ fn ssh_a_cached_agent_that_cannot_run_is_named() {
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
     let target = format!("volant-t{}", std::process::id());
+    // Read before the account exists, so nothing that can panic sits between the `useradd` and
+    // the guard that undoes it.
+    let home = home_of(&user());
+    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
     let added = Command::new("sudo")
         .args(["-n", "useradd", "-m", "-s", "/bin/sh", &target])
         .output()
@@ -279,8 +283,12 @@ fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
         "creating the unprivileged account this test escalates to: {}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let home = home_of(&user());
-    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
+    let mut restore = Restore {
+        home: home.clone(),
+        mode,
+        target: target.clone(),
+        done: false,
+    };
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
     let dir = tmp("becomeunprivileged");
     // No `ansible_remote_tmp` here, unlike every other test in this file: the default
@@ -316,10 +324,9 @@ fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
     let text = both(&out);
     // The machine goes back to what it was before anything is asserted: a failure here must
     // leave neither the account behind nor the invoking user's own home at 0700.
-    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(mode)).unwrap();
-    let removed = Command::new("sudo")
-        .args(["-n", "userdel", "-r", &target])
-        .output()
+    let removed = restore
+        .now()
+        .expect("the restore runs here rather than in Drop")
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
@@ -332,6 +339,43 @@ fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
         String::from_utf8_lossy(&removed.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Puts the machine back whichever way the test above leaves it. The account and the 0700 home
+/// have to survive a panic between the `chmod` and the assertions - four `unwrap`s and a whole
+/// playbook run sit in there - and a leaked account with somebody else's home locked at 0700 is
+/// not something a later test can recover from. `Drop` is the only thing a panic still runs.
+struct Restore {
+    home: PathBuf,
+    mode: u32,
+    target: String,
+    done: bool,
+}
+
+impl Restore {
+    /// Undoes both changes and hands back what `userdel` said, once. Calling it explicitly
+    /// before the assertions is what lets the test assert on that; the `Drop` after a panic
+    /// then finds the work already done and returns `None`.
+    fn now(&mut self) -> Option<std::io::Result<Output>> {
+        if std::mem::replace(&mut self.done, true) {
+            return None;
+        }
+        // Nothing panics here: on the panicking path a second panic inside `Drop` aborts the
+        // process and buries the message that says what actually failed. The caller decides
+        // what to make of the outcome instead.
+        let _ = std::fs::set_permissions(&self.home, std::fs::Permissions::from_mode(self.mode));
+        Some(
+            Command::new("sudo")
+                .args(["-n", "userdel", "-r", &self.target])
+                .output(),
+        )
+    }
+}
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        self.now();
+    }
 }
 
 /// One account's home directory, asked of the system rather than read from `HOME`, which the

@@ -600,21 +600,27 @@ fn become_for(
     // to split across links and interleave the answers. Saying which keyword could not be
     // rendered, and why, is what keeps that from reading as the operator's own typo - it used
     // to fail with nothing but "an option with an undefined variable".
+    //
+    // The name of the loop variable only explains the failure on a task that actually loops.
+    // On a loopless task it is an ordinary undefined variable that happens to be spelled like
+    // one, and the divergence is not what went wrong.
     let user = if Templar::is_template(&user) {
         templar
             .render(&user, vars)
             .map_err(|err| {
-                let per_item = user.contains(&task.loop_var);
-                TemplateError(format!(
-                    "rendering 'become_user' {user}: {}{}",
-                    err.0,
-                    if per_item {
+                let hint = match (task.loop_items.is_some(), user.contains(&task.loop_var)) {
+                    (true, true) => {
                         ". A 'become_user' that changes per loop item is not supported yet: one \
                          batch escalates to one user"
-                    } else {
-                        ""
+                            .to_string()
                     }
-                ))
+                    (false, true) => format!(
+                        ". '{}' is only defined while a task loops, and this task has no 'loop'",
+                        task.loop_var
+                    ),
+                    _ => String::new(),
+                };
+                TemplateError(format!("rendering 'become_user' {user}: {}{hint}", err.0))
             })?
             .as_str()
             .map(str::to_string)
@@ -922,7 +928,7 @@ fn flatten_once(list: Vec<Value>) -> Vec<Value> {
 }
 
 fn is_local(module: &str) -> bool {
-    matches!(short_name(module), "set_fact" | "debug")
+    volant_protocol::modules::local(module).is_some()
 }
 
 /// Ansible prints a string item as is and anything else as JSON.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.3...volant-agent-v0.1.0-alpha.4) - 2026-09-09
+
+### Other
+
+- describe connections, the agent cache and privilege escalation ([#89](https://github.com/lorica-labs/volant/pull/89))
+
 ## [0.1.0-alpha.3](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.2...volant-agent-v0.1.0-alpha.3) - 2026-09-07
 
 ### Added

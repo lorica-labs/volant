@@ -44,9 +44,12 @@ docs-modules:
 ci-local:
     gh act pull_request -W .github/workflows/ci.yml
 
-# Copy the working tree to the machine named by VOLANT_DEV_HOST and run a recipe there
+# Copy the working tree to the machine named by VOLANT_DEV_HOST and run a recipe there. The file
+# list comes from git, so tracked and new files travel while everything git ignores stays behind.
+# The copy adds and overwrites but never deletes, so a file you removed here still exists over
+# there and can still be compiled; remove it by hand when that matters.
 remote +recipe:
-    tar -C . --exclude=./target --exclude=./.git --exclude=./docs/superpowers --exclude=./docs/book -czf - . | ssh "$VOLANT_DEV_HOST" 'mkdir -p volant && tar -xzf - -C volant'
+    set -o pipefail; git ls-files -z --cached --others --exclude-standard | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" 'mkdir -p volant && tar -xzf - -C volant'
     ssh "$VOLANT_DEV_HOST" '. ~/.profile && cd volant && just {{recipe}}'
 
 # Build the agent as a static musl binary, the only form that can be uploaded to another host
@@ -59,6 +62,20 @@ agent-musl:
 ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only --no-tests=fail -E 'test(/^ssh_/)'
+
+# Time the compilation of a real 900-task role next to ansible-playbook, which has to be on PATH.
+# The role is cloned under target/. Both sides only list the tasks; nothing runs on any host.
+bench-compile:
+    command -v ansible-playbook > /dev/null || { echo "ansible-playbook is not on PATH"; exit 1; }
+    /usr/bin/time -f '%e' true 2> /dev/null || { echo "GNU /usr/bin/time is not installed"; exit 1; }
+    mkdir -p target/corpus/roles
+    test -d target/corpus/roles/ubuntu22_cis || git clone -q --depth 1 https://github.com/ansible-lockdown/UBUNTU22-CIS target/corpus/roles/ubuntu22_cis
+    printf -- '- hosts: localhost\n  gather_facts: false\n  roles: [ubuntu22_cis]\n' > target/corpus/site.yml
+    printf -- 'localhost ansible_connection=local\n' > target/corpus/inv.ini
+    cd target/corpus && for i in 1 2 3; do /usr/bin/time -f 'ansible-playbook %e s  %M KB' env ANSIBLE_ROLES_PATH=roles ansible-playbook -i inv.ini --list-tasks site.yml > ansible.txt; done
+    cargo build --release -p volant
+    cd target/corpus && for i in 1 2 3; do /usr/bin/time -f 'volant           %e s  %M KB' env ANSIBLE_ROLES_PATH=roles ../release/volant playbook -i inv.ini --list-tasks site.yml > volant.txt; done
+    cd target/corpus && diff volant.txt ansible.txt > /dev/null && echo "listings identical" || echo "listings differ: diff target/corpus/volant.txt target/corpus/ansible.txt"
 
 # Run the end-to-end playbook against the machine named by VOLANT_TARGET_HOST (never in CI)
 e2e-target: agent-musl

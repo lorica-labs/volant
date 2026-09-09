@@ -15,7 +15,7 @@ pub struct Playbook {
     pub plays: Vec<Play>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Play {
     pub name: String,
     pub hosts: String,
@@ -30,7 +30,7 @@ pub struct Play {
     pub become_method: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlayTask {
     pub name: String,
     pub module: String,

@@ -51,76 +51,114 @@ fn char_to_byte(text: &str, chars: usize) -> usize {
         .map_or(text.len(), |(i, _)| i)
 }
 
-/// Re-resolves a scalar the way ansible-core's PyYAML (YAML 1.1) would, for the spellings
-/// measured to diverge from saphyr's YAML 1.2 core schema: `yes`/`no`/`on`/`off` (plain,
-/// capitalised or upper-case) as booleans, leading-zero or underscore-grouped plain integers,
-/// and a leading zero followed by a digit outside `0`-`7` (e.g. `08`), which PyYAML's own
-/// integer resolver rejects and leaves a string even though it looks numeric. `raw` is the
-/// node's exact source text; quoting it, or writing it as a block scalar, makes `raw` start
-/// with something other than the bare word or digits, which leaves `scalar` untouched here too
-/// — matching PyYAML, which also only resolves *plain* scalars this way, so a deliberately
-/// quoted `"yes"` stays the string a playbook wrote.
+/// Every spelling PyYAML reads as `true`. The single source for both the scalar resolver
+/// below and [`bool_from_str`]; the `bool` filter's set is a different one and lives with the
+/// filter (see [`crate::template`]).
+pub const PYYAML_TRUE: &[&str] = &[
+    "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON",
+];
+
+/// Every spelling PyYAML reads as `false`, the counterpart of [`PYYAML_TRUE`].
+pub const PYYAML_FALSE: &[&str] = &[
+    "false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF",
+];
+
+/// Re-resolves a scalar the way ansible-core's PyYAML (YAML 1.1) would. `raw` is the node's
+/// exact source text; quoting it, or writing it as a block scalar, makes `raw` start with
+/// something other than the bare word or digits, so none of the spellings below match and
+/// `scalar` is returned untouched — matching PyYAML, which also only resolves *plain* scalars,
+/// so a deliberately quoted `"yes"` stays the string a playbook wrote.
+///
+/// The last arm is the general form of what used to be a list of one-off exceptions: whenever
+/// PyYAML's own resolvers refuse a plain scalar that saphyr's YAML 1.2 core schema typed as a
+/// number, PyYAML leaves a string, so we do too. Measured against ansible-core 2.19.12, that
+/// covers `08` (no valid octal digit), `0o10` (the `0o` prefix is YAML 1.2 only) and `1e3` or
+/// `1e+3` (PyYAML's float needs a `.` in the mantissa).
 fn pyyaml_scalar<'a>(scalar: Scalar<'a>, raw: &'a str) -> Scalar<'a> {
-    match raw {
-        "yes" | "Yes" | "YES" | "on" | "On" | "ON" => return Scalar::Boolean(true),
-        "no" | "No" | "NO" | "off" | "Off" | "OFF" => return Scalar::Boolean(false),
-        _ => {}
+    if PYYAML_TRUE.contains(&raw) {
+        return Scalar::Boolean(true);
     }
-    if let Some(i) = pyyaml_octal(raw) {
+    if PYYAML_FALSE.contains(&raw) {
+        return Scalar::Boolean(false);
+    }
+    if let Some(i) = pyyaml_int(raw) {
         return Scalar::Integer(i);
     }
-    if let Some(i) = pyyaml_underscored_decimal(raw) {
-        return Scalar::Integer(i);
+    if let Some(f) = pyyaml_float(raw) {
+        return Scalar::FloatingPoint(f.into());
     }
-    if pyyaml_rejects_as_int(raw) {
+    if matches!(scalar, Scalar::Integer(_) | Scalar::FloatingPoint(_)) {
         return Scalar::String(raw.into());
     }
     scalar
 }
 
-/// PyYAML's octal spelling: an optional sign, a leading `0`, then one or more further octal
-/// digits or `_` separators, e.g. `010` (8) or `0_755` (493).
-fn pyyaml_octal(raw: &str) -> Option<i64> {
+/// PyYAML's YAML 1.1 integer spellings: an optional sign, then `0b` binary, `0x` hexadecimal, a
+/// bare leading `0` for octal, or a decimal starting `1`-`9` (or the single digit `0`). Every
+/// digit run may carry `_` separators. `0o10` is deliberately absent: that prefix arrived with
+/// YAML 1.2 and PyYAML leaves it a string.
+fn pyyaml_int(raw: &str) -> Option<i64> {
     let (negative, rest) = split_sign(raw);
-    let digits = rest.strip_prefix('0')?;
-    if digits.is_empty() || !digits.bytes().all(|b| matches!(b, b'0'..=b'7' | b'_')) {
+    let value = if let Some(digits) = rest.strip_prefix("0b") {
+        digit_run(digits, 2, |b| matches!(b, b'0' | b'1'))?
+    } else if let Some(digits) = rest.strip_prefix("0x") {
+        digit_run(digits, 16, |b| b.is_ascii_hexdigit())?
+    } else if rest == "0" {
+        0
+    } else if let Some(digits) = rest.strip_prefix('0') {
+        digit_run(digits, 8, |b| matches!(b, b'0'..=b'7'))?
+    } else if matches!(rest.as_bytes().first(), Some(b'1'..=b'9')) {
+        digit_run(rest, 10, |b| b.is_ascii_digit())?
+    } else {
         return None;
-    }
-    let value = i64::from_str_radix(&digits.replace('_', ""), 8).ok()?;
+    };
     Some(if negative { -value } else { value })
 }
 
-/// A leading zero followed only by more digits and/or `_`, but with at least one `8` or `9` in
-/// them (so [`pyyaml_octal`] already refused it): not valid octal, and PyYAML's decimal branch
-/// only ever matches a bare `0` or a run starting `1`-`9`, so it doesn't match that either.
-/// PyYAML leaves it an unresolved string; saphyr's own decimal parser doesn't share PyYAML's
-/// no-leading-zero rule and would otherwise read it as a number, e.g. `08` as `8`. Measured
-/// directly against ansible-core.
-fn pyyaml_rejects_as_int(raw: &str) -> bool {
-    let (_, rest) = split_sign(raw);
-    match rest.strip_prefix('0') {
-        Some(digits) if !digits.is_empty() => {
-            digits.bytes().all(|b| b.is_ascii_digit() || b == b'_')
-        }
-        _ => false,
+/// One run of `radix` digits, `_` separators allowed anywhere in it, as an `i64`. A run that is
+/// empty, holds a digit `ok` refuses, or overflows is no match at all: the caller then falls
+/// back to what saphyr resolved.
+fn digit_run(digits: &str, radix: u32, ok: impl Fn(u8) -> bool) -> Option<i64> {
+    if digits.is_empty() || !digits.bytes().all(|b| ok(b) || b == b'_') {
+        return None;
     }
+    i64::from_str_radix(&digits.replace('_', ""), radix).ok()
 }
 
-/// PyYAML's underscore-grouped decimal spelling: an optional sign, a first digit `1`-`9`, then
-/// further digits or `_` separators, e.g. `1_000` (1000). Plain digits with no underscore
-/// already resolve identically on both sides, so this only fires when `raw` contains one.
-fn pyyaml_underscored_decimal(raw: &str) -> Option<i64> {
-    if !raw.contains('_') {
-        return None;
-    }
+/// PyYAML's YAML 1.1 float spellings: `.inf`, `.nan`, or a mantissa that must contain a `.`,
+/// optionally followed by an exponent whose sign PyYAML **requires**. Measured against
+/// ansible-core 2.19.12: `1.0e+3` is the float 1000.0 while `1.0e3`, `1e3` and `1e+3` are all
+/// strings there.
+fn pyyaml_float(raw: &str) -> Option<f64> {
     let (negative, rest) = split_sign(raw);
-    if !matches!(rest.as_bytes().first(), Some(b'1'..=b'9')) {
-        return None;
+    if matches!(rest, ".nan" | ".NaN" | ".NAN") {
+        // PyYAML's not-a-number spelling carries no sign.
+        return (!negative).then_some(f64::NAN);
     }
-    if !rest.bytes().all(|b| b.is_ascii_digit() || b == b'_') {
-        return None;
-    }
-    let value: i64 = rest.replace('_', "").parse().ok()?;
+    let value = if matches!(rest, ".inf" | ".Inf" | ".INF") {
+        f64::INFINITY
+    } else {
+        let (mantissa, exponent) = match rest.split_once(['e', 'E']) {
+            Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+            None => (rest, None),
+        };
+        let (whole, fraction) = mantissa.split_once('.')?;
+        let digits = |run: &str| run.bytes().all(|b| b.is_ascii_digit() || b == b'_');
+        match whole.as_bytes().first() {
+            // `.5`: nothing before the dot means at least one digit after it.
+            None if fraction.is_empty() || !digits(fraction) => return None,
+            Some(b'0'..=b'9') if !digits(whole) || !digits(fraction) => return None,
+            None | Some(b'0'..=b'9') => {}
+            _ => return None,
+        }
+        if let Some(exponent) = exponent {
+            let signed = exponent.strip_prefix('+').or(exponent.strip_prefix('-'))?;
+            if signed.is_empty() || !signed.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+        }
+        rest.replace('_', "").parse().ok()?
+    };
     Some(if negative { -value } else { value })
 }
 
@@ -154,11 +192,10 @@ pub fn as_bool(node: &Yaml) -> Option<bool> {
 /// rather than out of a YAML node: `ansible.cfg` keys and the environment variables that
 /// override them, which Ansible reads with the same set of words.
 pub fn bool_from_str(text: &str) -> Option<bool> {
-    match text {
-        "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" => Some(true),
-        "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" => Some(false),
-        _ => None,
+    if PYYAML_TRUE.contains(&text) {
+        return Some(true);
     }
+    PYYAML_FALSE.contains(&text).then_some(false)
 }
 
 /// Converts a node to JSON. Tagged nodes are refused with a message naming the tag: vault
@@ -241,34 +278,64 @@ mod tests {
         );
     }
 
+    /// Every spelling in the two constants, through all three readers, so the resolver,
+    /// `as_bool` and `bool_from_str` cannot drift apart: they share one list by construction,
+    /// and this fails if a future edit gives any of them a list of its own.
     #[test]
-    fn pyyaml_octal_and_underscored_integers_are_measured_against_the_reference() {
-        let docs = load(
-            "octal: 010\nquoted_octal: \"010\"\nbad_octal: 08\ngrouped: 1_000\nplain: 1000\n",
-            "t.yml",
-        )
-        .unwrap();
-        assert_eq!(
-            to_json(field(&docs[0], "octal").unwrap()).unwrap(),
-            json!(8)
-        );
-        assert_eq!(
-            to_json(field(&docs[0], "quoted_octal").unwrap()).unwrap(),
-            json!("010")
-        );
-        assert_eq!(
-            to_json(field(&docs[0], "bad_octal").unwrap()).unwrap(),
-            json!("08"),
-            "08 has no valid octal digit after the leading zero"
-        );
-        assert_eq!(
-            to_json(field(&docs[0], "grouped").unwrap()).unwrap(),
-            json!(1000)
-        );
-        assert_eq!(
-            to_json(field(&docs[0], "plain").unwrap()).unwrap(),
-            json!(1000)
-        );
+    fn one_list_of_boolean_spellings_serves_every_reader() {
+        for (spellings, want) in [(PYYAML_TRUE, true), (PYYAML_FALSE, false)] {
+            for spelling in spellings {
+                assert_eq!(bool_from_str(spelling), Some(want), "{spelling}");
+                let text = format!("flag: {spelling}\n");
+                let docs = load(&text, "t.yml").unwrap();
+                let node = field(&docs[0], "flag").unwrap();
+                assert_eq!(as_bool(node), Some(want), "{spelling} as a keyword");
+                assert_eq!(to_json(node).unwrap(), json!(want), "{spelling} as data");
+            }
+        }
+        assert_eq!(bool_from_str("maybe"), None);
+    }
+
+    /// Each spelling and its type as `ansible-core 2.19.12`'s own PyYAML reads it, measured
+    /// directly. `0o10` and `1e3` are the two saphyr resolves as numbers under YAML 1.2 and
+    /// PyYAML leaves alone; the exponent forms show that PyYAML wants both a `.` in the
+    /// mantissa and a sign on the exponent.
+    #[test]
+    fn integer_and_float_spellings_are_measured_against_the_reference() {
+        let cases: &[(&str, Value)] = &[
+            ("010", json!(8)),
+            ("\"010\"", json!("010")),
+            ("0_755", json!(493)),
+            ("08", json!("08")),
+            ("0o10", json!("0o10")),
+            ("0b1010", json!(10)),
+            ("0b_1010", json!(10)),
+            ("0x1F", json!(31)),
+            ("0x_1F", json!(31)),
+            ("1_000", json!(1000)),
+            ("1000", json!(1000)),
+            ("+12", json!(12)),
+            ("-07", json!(-7)),
+            ("+0b11", json!(3)),
+            ("0", json!(0)),
+            ("00", json!(0)),
+            ("0_0", json!(0)),
+            ("1e3", json!("1e3")),
+            ("1e+3", json!("1e+3")),
+            ("1.0e3", json!("1.0e3")),
+            ("1.0e+3", json!(1000.0)),
+            ("2.5", json!(2.5)),
+            (".5", json!(0.5)),
+            ("1_0.5", json!(10.5)),
+            ("1e", json!("1e")),
+            ("0xg", json!("0xg")),
+        ];
+        for (raw, want) in cases {
+            let text = format!("x: {raw}\n");
+            let docs = load(&text, "t.yml").unwrap();
+            let got = to_json(field(&docs[0], "x").unwrap()).unwrap();
+            assert_eq!(&got, want, "{raw}");
+        }
     }
 
     #[test]

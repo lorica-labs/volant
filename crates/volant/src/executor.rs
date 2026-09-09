@@ -191,7 +191,7 @@ pub async fn run_play(
         .to_path_buf();
     let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state, out)?;
     let plan = Arc::new(PlayPlan {
-        tasks: play.tasks.iter().map(clone_task).collect(),
+        tasks: play.tasks.clone(),
         barriers: play.tasks.iter().map(reads_across_hosts).collect(),
         play_vars: play.vars.clone(),
         vars_files,
@@ -473,25 +473,22 @@ fn take_links(links: &mut HashMap<LinkKey, AgentLink>, host: &str) -> Vec<(LinkK
         .collect()
 }
 
-fn clone_task(t: &PlayTask) -> PlayTask {
-    PlayTask {
-        name: t.name.clone(),
-        module: t.module.clone(),
-        args: t.args.clone(),
-        ignore_errors: t.ignore_errors,
-        timeout: t.timeout,
-        vars: t.vars.clone(),
-        when: t.when.clone(),
-        loop_items: t.loop_items.clone(),
-        with_items: t.with_items,
-        loop_var: t.loop_var.clone(),
-        loop_label: t.loop_label.clone(),
-        register: t.register.clone(),
-        changed_when: t.changed_when.clone(),
-        failed_when: t.failed_when.clone(),
-        r#become: t.r#become,
-        become_user: t.become_user.clone(),
-        become_method: t.become_method.clone(),
+/// Drops every value the `omit` variable rendered to, at any depth. Measured against
+/// ansible-core 2.19.12, where `omit` is a sentinel the templating engine removes from any
+/// container it survives in, sequences included: a mapping loses the key and a list loses the
+/// element. Only the value goes, never the container around it, so `{k: omit}` comes back as an
+/// empty mapping and `[omit]` as an empty list.
+fn remove_omit(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|_, v| v.as_str() != Some(omit_token()));
+            map.values_mut().for_each(remove_omit);
+        }
+        Value::Array(items) => {
+            items.retain(|v| v.as_str() != Some(omit_token()));
+            items.iter_mut().for_each(remove_omit);
+        }
+        _ => {}
     }
 }
 
@@ -817,11 +814,11 @@ fn prepare(
         let args = if skipped.is_some() {
             Map::new()
         } else {
-            let rendered = templar.render_value(&Value::Object(task.args.clone()), &vars)?;
-            let Value::Object(mut map) = rendered else {
+            let mut rendered = templar.render_value(&Value::Object(task.args.clone()), &vars)?;
+            remove_omit(&mut rendered);
+            let Value::Object(map) = rendered else {
                 unreachable!("an object renders to an object")
             };
-            map.retain(|_, v| v.as_str() != Some(omit_token()));
             map
         };
         items.push(Item {
@@ -1275,7 +1272,7 @@ async fn drive_host(
                 // skipped every escalated task is the worst outcome available here.
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
-                    let mut task = clone_task(&plan.tasks[index]);
+                    let mut task = plan.tasks[index].clone();
                     task.ignore_errors = false;
                     let results = vec![(None, TaskResult::failed_with(msg))];
                     report_task(&tx, &name, index, &task, &results, &[None], false).await;
@@ -1585,6 +1582,35 @@ async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each shape below was run through `ansible-core 2.19.12` as a `debug: msg=` argument
+    /// first, and the expectations are what it printed: a key nested three levels down goes,
+    /// a bare list element goes too, and every emptied container stays.
+    #[test]
+    fn omit_leaves_containers_behind_but_never_its_own_value() {
+        let omit = json!(omit_token());
+        let mut args = json!({
+            "toplevel_keep": 9,
+            "toplevel_drop": omit,
+            "nested": {"keep": 1, "drop": omit, "deeper": {"dropme": omit, "stay": 2}},
+            "alist": [omit, 1, {"inlist": omit, "other": 3}],
+            "nested_list": [[1, omit], 3],
+            "only_omit_list": [omit],
+            "empty_after": {"k": omit},
+        });
+        remove_omit(&mut args);
+        assert_eq!(
+            args,
+            json!({
+                "toplevel_keep": 9,
+                "nested": {"keep": 1, "deeper": {"stay": 2}},
+                "alist": [1, {"other": 3}],
+                "nested_list": [[1], 3],
+                "only_omit_list": [],
+                "empty_after": {},
+            })
+        );
+    }
 
     fn task(module: &str) -> PlayTask {
         PlayTask {

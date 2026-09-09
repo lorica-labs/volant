@@ -211,37 +211,37 @@
   },
   {
     "case": {
+      "when": "x > 3",
       "vars": {
         "x": 5
-      },
-      "when": "x > 3"
+      }
     },
     "result": "ran"
   },
   {
     "case": {
+      "when": "x > 3",
       "vars": {
         "x": 1
-      },
-      "when": "x > 3"
+      }
     },
     "skipped": true
   },
   {
     "case": {
+      "when": "flag",
       "vars": {
         "flag": false
-      },
-      "when": "flag"
+      }
     },
     "skipped": true
   },
   {
     "case": {
+      "when": "x is defined",
       "vars": {
         "x": 1
-      },
-      "when": "x is defined"
+      }
     },
     "result": "ran"
   },
@@ -261,23 +261,23 @@
     "case": {
       "when": "'yes'"
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp4y5k1h9k/golden.yml:182:11'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp5j0fxu5d/golden.yml:182:11'. Conditionals must have a boolean result."
   },
   {
     "case": {
+      "when": "x",
       "vars": {
         "x": "false"
-      },
-      "when": "x"
+      }
     },
-    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp4y5k1h9k/golden.yml:188:10'. Conditionals must have a boolean result."
+    "error": "Task failed: Conditional result (True) was derived from value of type 'str' at '/tmp/tmp5j0fxu5d/golden.yml:186:10'. Conditionals must have a boolean result."
   },
   {
     "case": {
+      "when": "{{ x > 3 }}",
       "vars": {
         "x": 5
-      },
-      "when": "{{ x > 3 }}"
+      }
     },
     "result": "ran"
   },
@@ -784,26 +784,26 @@
       "template": "{{ d | to_json }}",
       "vars": {
         "d": {
+          "b": 1,
           "a": [
             1,
             2
-          ],
-          "b": 1
+          ]
         }
       }
     },
-    "result": "{\"a\": [1, 2], \"b\": 1}"
+    "result": "{\"b\": 1, \"a\": [1, 2]}"
   },
   {
     "case": {
       "template": "{{ d | to_nice_json }}",
       "vars": {
         "d": {
+          "b": 1,
           "a": [
             1,
             2
-          ],
-          "b": 1
+          ]
         }
       }
     },
@@ -915,19 +915,19 @@
   },
   {
     "case": {
+      "when": "x is truthy",
       "vars": {
         "x": "0"
-      },
-      "when": "x is truthy"
+      }
     },
     "result": "ran"
   },
   {
     "case": {
+      "when": "x is falsy",
       "vars": {
         "x": []
-      },
-      "when": "x is falsy"
+      }
     },
     "result": "ran"
   },
@@ -957,25 +957,25 @@
   },
   {
     "case": {
+      "when": "'b' in items",
       "vars": {
         "items": [
           "a",
           "b"
         ]
-      },
-      "when": "'b' in items"
+      }
     },
     "result": "ran"
   },
   {
     "case": {
+      "when": "items is contains('b')",
       "vars": {
         "items": [
           "a",
           "b"
         ]
-      },
-      "when": "items is contains('b')"
+      }
     },
     "result": "ran"
   },
@@ -1011,5 +1011,162 @@
       "template": "{{ lookup('file', 'golden_lookup.txt') }}"
     },
     "result": "file contents"
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 8
+      }
+    },
+    "result": 8
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": "0o10"
+      }
+    },
+    "result": "0o10"
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 10
+      }
+    },
+    "result": 10
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 1000
+      }
+    },
+    "result": 1000
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 31
+      }
+    },
+    "result": 31
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": "1e3"
+      }
+    },
+    "result": "1e3"
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 12
+      }
+    },
+    "result": 12
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 0
+      }
+    },
+    "result": 0
+  },
+  {
+    "case": {
+      "template": "{{ x }}",
+      "vars": {
+        "x": 0
+      }
+    },
+    "result": 0
+  },
+  {
+    "case": {
+      "template": "{{ 'y' | bool }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 't' | bool }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 'yEs' | bool }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ' yes ' | bool }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ d | to_json }}",
+      "vars": {
+        "d": {
+          "b": 1,
+          "a": 2,
+          "c": 3
+        }
+      }
+    },
+    "result": "{\"b\": 1, \"a\": 2, \"c\": 3}"
+  },
+  {
+    "case": {
+      "template": "{{ d | to_nice_json }}",
+      "vars": {
+        "d": {
+          "b": 1,
+          "a": 2,
+          "c": 3
+        }
+      }
+    },
+    "result": "{\n    \"a\": 2,\n    \"b\": 1,\n    \"c\": 3\n}"
+  },
+  {
+    "case": {
+      "template": "{{ d | dict2items }}",
+      "vars": {
+        "d": {
+          "b": 1,
+          "a": 2,
+          "c": 3
+        }
+      }
+    },
+    "result": [
+      {
+        "key": "b",
+        "value": 1
+      },
+      {
+        "key": "a",
+        "value": 2
+      },
+      {
+        "key": "c",
+        "value": 3
+      }
+    ]
   }
 ]

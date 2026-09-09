@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0-or-later"
@@ -33,7 +33,7 @@ tokio = { version = "1", features = [
   "signal",
   "time",
 ] }
-volant-protocol = { path = "crates/volant-protocol", version = "0.1.0-alpha.3" }
+volant-protocol = { path = "crates/volant-protocol", version = "0.1.0-alpha.4" }
 
 [profile.dev]
 debug = "line-tables-only"

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) - 2026-09-09
+
+### Added
+
+- *(controller)* wait for the other hosts before reading hostvars ([#85](https://github.com/lorica-labs/volant/pull/85))
+- *(controller)* escalate with sudo via become keywords and variables ([#83](https://github.com/lorica-labs/volant/pull/83))
+- *(controller)* keep agent connections across plays and honour forks ([#82](https://github.com/lorica-labs/volant/pull/82))
+- *(controller)* reach hosts over ssh and cache the agent remotely ([#79](https://github.com/lorica-labs/volant/pull/79))
+- *(controller)* add wildcards, negation and intersection to patterns ([#78](https://github.com/lorica-labs/volant/pull/78))
+
+### Fixed
+
+- *(controller)* escalate to any user, bound links, match exit codes ([#90](https://github.com/lorica-labs/volant/pull/90))
+- *(controller)* key order, nested omit and yaml 1.1 integers ([#87](https://github.com/lorica-labs/volant/pull/87))
+- *(controller)* loop failures, empty loops, per-playbook recaps ([#86](https://github.com/lorica-labs/volant/pull/86))
+
+### Other
+
+- describe connections, the agent cache and privilege escalation ([#89](https://github.com/lorica-labs/volant/pull/89))
+- run the ssh end-to-end tests against a local sshd ([#81](https://github.com/lorica-labs/volant/pull/81))
+- let release-plz own the repository changelog ([#75](https://github.com/lorica-labs/volant/pull/75))
+
 ### Added
 
 - `volant playbook` and `volant-playbook`: run playbooks made of `command`, `shell` and `raw` tasks, with ansible-playbook's output, recap and exit codes.

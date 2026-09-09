@@ -1,0 +1,68 @@
+- name: Loop and register edges
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: An empty loop
+      command: echo never
+      loop: []
+      register: empty
+
+    - name: What the empty loop registered
+      debug:
+        msg: "reason={{ empty.skipped_reason }} items={{ empty.results | length }}"
+
+    - name: The empty loop registered a skip
+      debug:
+        msg: the empty loop was skipped
+      when: empty.skipped
+
+    - name: A loop whose second item fails
+      command: "{{ item }}"
+      loop:
+        - "true"
+        - "false"
+        - "true"
+      ignore_errors: true
+
+    - name: A loop whose failure a condition cancels
+      command: "{{ item }}"
+      loop:
+        - "true"
+        - "false"
+        - "true"
+      failed_when: false
+
+    - name: A registered debug
+      debug:
+        msg: hello
+      register: said
+
+    - name: The registered debug carries changed
+      debug:
+        msg: changed is defined
+      when: said.changed is defined
+
+    - name: The registered debug is not changed
+      debug:
+        msg: not changed
+      when: not said.changed
+
+    - name: The registered debug carries failed but not skipped
+      debug:
+        msg: failed is defined and skipped is not
+      when: said.failed is defined and said.skipped is not defined
+
+- name: A loop that fails without ignore_errors
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: A hard loop failure
+      command: "{{ item }}"
+      loop:
+        - "true"
+        - "false"
+        - "true"
+
+    - name: Never reached
+      debug:
+        msg: never

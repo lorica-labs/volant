@@ -138,8 +138,15 @@ impl Renderer {
         };
         let _ = writeln!(self.out, "{line}");
         if outcome == Outcome::Ignored && label.is_none() {
-            let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
+            self.ignoring();
         }
+    }
+
+    /// The line that follows a failure `ignore_errors` swallowed. A looping task prints it on its
+    /// own, with no result line before it: the reference shows the items and then this, never an
+    /// aggregate line of its own.
+    pub fn ignoring(&mut self) {
+        let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
     }
 
     pub fn unreachable(&mut self, host: &str, msg: &str) {

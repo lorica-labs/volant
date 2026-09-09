@@ -907,3 +907,251 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
     assert_eq!(out.status.code(), Some(4), "unreachable alpha: {text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The lines one task printed: everything between its header and the next banner.
+fn section<'a>(text: &'a str, task: &str) -> &'a str {
+    let after = text
+        .split_once(&format!("TASK [{task}]"))
+        .unwrap_or_else(|| panic!("no task named {task} in:\n{text}"))
+        .1;
+    match after.find("\nTASK [").or_else(|| after.find("\nPLAY ")) {
+        Some(end) => &after[..end],
+        None => after,
+    }
+}
+
+/// Measured against ansible-core 2.19.12: a loop over an empty list prints
+/// `skipping: [localhost]`, never `ok`, and registers
+/// `{"changed": false, "results": [], "skipped": true, "skipped_reason": "No items in the list"}`.
+#[test]
+fn an_empty_loop_is_skipped_and_registers_no_items() {
+    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    let empty = section(&text, "An empty loop");
+    assert!(
+        empty.contains("skipping: [localhost]"),
+        "an empty loop is skipped: {text}"
+    );
+    assert!(
+        !empty.contains("ok: [localhost]") && !empty.contains("changed: [localhost]"),
+        "an empty loop must not report as ok: {text}"
+    );
+    assert!(
+        section(&text, "What the empty loop registered")
+            .contains(r#"ok: [localhost] => {"msg": "reason=No items in the list items=0"}"#),
+        "the registered value carries the reference's reason and no items: {text}"
+    );
+    assert!(
+        section(&text, "The empty loop registered a skip")
+            .contains(r#"ok: [localhost] => {"msg": "the empty loop was skipped"}"#),
+        "`when: empty.skipped` holds: {text}"
+    );
+}
+
+/// Measured against the reference: every item of a loop runs, the one that failed and the ones
+/// behind it alike, whether or not `ignore_errors` is on the task. The reference prints no
+/// aggregate line for the task, only the items and then `...ignoring` where the failure was
+/// swallowed, and its recap for this playbook reads
+/// `ok=8 changed=2 unreachable=0 failed=1 skipped=1 rescued=0 ignored=1`.
+#[test]
+fn a_loop_runs_every_item_after_one_fails() {
+    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+
+    let hard = section(&text, "A hard loop failure");
+    let failed = hard
+        .find("failed: [localhost] (item=false)")
+        .unwrap_or_else(|| panic!("the second item must fail: {text}"));
+    let last = hard
+        .rfind("changed: [localhost] => (item=true)")
+        .unwrap_or_else(|| panic!("no successful item: {text}"));
+    assert!(
+        last > failed,
+        "the third item must run after the second one failed: {text}"
+    );
+    assert_eq!(
+        hard.matches("changed: [localhost] => (item=true)").count(),
+        2,
+        "both successful items run: {text}"
+    );
+    assert!(
+        !hard.contains("fatal: [localhost]"),
+        "the reference prints no aggregate line for a loop: {text}"
+    );
+    assert!(
+        !text.contains("Never reached"),
+        "a loop that failed without ignore_errors still stops the host: {text}"
+    );
+
+    let ignored = section(&text, "A loop whose second item fails");
+    assert_eq!(
+        ignored
+            .matches("changed: [localhost] => (item=true)")
+            .count(),
+        2,
+        "ignore_errors changes nothing about the items that run: {text}"
+    );
+    assert!(
+        ignored.trim_end().ends_with("...ignoring") && !ignored.contains("fatal: [localhost]"),
+        "the swallowed failure says so with no aggregate line: {text}"
+    );
+
+    let cancelled = section(&text, "A loop whose failure a condition cancels");
+    assert_eq!(
+        cancelled.matches("changed: [localhost] => (item=").count(),
+        3,
+        "failed_when clears every item's failure: {text}"
+    );
+    assert!(
+        !cancelled.contains("...ignoring") && !cancelled.contains("failed: [localhost]"),
+        "nothing was ignored, the condition spoke: {text}"
+    );
+
+    assert!(
+        text.contains(
+            "localhost                  : ok=8    changed=2    unreachable=0    failed=1    skipped=1    rescued=0    ignored=1"
+        ),
+        "the recap matches the reference's counters: {text}"
+    );
+}
+
+/// Measured against the reference: a registered `debug` stores `changed: false` and
+/// `failed: false` and no `skipped`, so `when: reg.changed is defined` and `when: not
+/// reg.changed` both hold instead of raising an undefined variable.
+#[test]
+fn a_registered_debug_carries_changed_and_failed() {
+    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    for msg in [
+        "changed is defined",
+        "not changed",
+        "failed is defined and skipped is not",
+    ] {
+        assert!(
+            text.contains(&format!(r#"ok: [localhost] => {{"msg": "{msg}"}}"#)),
+            "`{msg}` must be reached: {text}"
+        );
+    }
+    assert!(
+        !text.contains("undefined variable"),
+        "nothing about the registered debug is undefined: {text}"
+    );
+    assert!(
+        text.contains(r#"ok: [localhost] => {"msg": "hello"}"#),
+        "the debug itself still prints only its message: {text}"
+    );
+}
+
+/// Measured against the reference: a `vars_files` entry that names no file is skipped without a
+/// word and the play runs; an entry whose template has no value is skipped with one warning.
+/// Exit code 0 on both counts, and a recap for every host.
+#[test]
+fn a_missing_vars_files_entry_is_skipped() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("vars/inventory.ini"),
+        &fixture("bad-vars-file.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(r#"ok: [alpha] => {"msg": "reached on alpha"}"#)
+            && text.contains(r#"ok: [beta] => {"msg": "reached on beta"}"#),
+        "both hosts run the play: {text}"
+    );
+    assert!(
+        text.contains("[WARNING]: skipping vars_files item due to an undefined variable"),
+        "the unresolvable entry is warned about: {text}"
+    );
+    assert_eq!(
+        text.matches("skipping vars_files item").count(),
+        1,
+        "one warning for the entry, not one per host: {text}"
+    );
+    assert!(
+        !text.contains("does-not-exist.yml"),
+        "a missing file is skipped without a word: {text}"
+    );
+    assert!(
+        text.contains("alpha                      : ok=1")
+            && text.contains("beta                       : ok=1"),
+        "the recap has a line per host: {text}"
+    );
+}
+
+/// Measured against the reference: two playbook arguments print two `PLAY RECAP` blocks, and
+/// the counters carry over rather than resetting, so the same playbook run twice reads `ok=1
+/// changed=1` and then `ok=2 changed=2`.
+#[test]
+fn each_playbook_prints_its_own_recap() {
+    let out = volant(&["playbook", &fixture("second.yml"), &fixture("second.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        text.matches("PLAY RECAP").count(),
+        2,
+        "one recap per playbook argument: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
+        ),
+        "the first recap counts the first playbook: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
+        ),
+        "the second recap carries the first one's counters: {text}"
+    );
+}
+
+/// The bounded event channel at scale: seventy hosts, seventy forks, each sending several
+/// events while the coordinator waits on the slowest one, and every one of them reaching the
+/// recap. `volant_within` is what makes a wedge a failure here: an elapsed-time assertion
+/// cannot fire on a run that never returns.
+#[test]
+fn seventy_hosts_finish_with_a_full_recap() {
+    let dir = std::env::temp_dir().join(format!("volant-many-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let inv: String = (1..=70)
+        .map(|i| format!("h{i:02} ansible_connection=local\n"))
+        .collect();
+    std::fs::write(dir.join("inv.ini"), inv).unwrap();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &dir.join("inv.ini").display().to_string(),
+            "-f",
+            "70",
+            &fixture("many-hosts.yml"),
+        ],
+        std::time::Duration::from_secs(60),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        text.matches("ok=2").count(),
+        70,
+        "every host must reach the recap: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

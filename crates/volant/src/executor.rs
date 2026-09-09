@@ -189,7 +189,7 @@ pub async fn run_play(
         .expect("vars lock")
         .playbook_dir()
         .to_path_buf();
-    let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state)?;
+    let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state, out)?;
     let plan = Arc::new(PlayPlan {
         tasks: play.tasks.iter().map(clone_task).collect(),
         barriers: play.tasks.iter().map(reads_across_hosts).collect(),
@@ -298,6 +298,10 @@ pub async fn run_play(
                             }
                             if show {
                                 out.result(host, outcome, &result, label.as_deref(), dump);
+                            } else if outcome == Outcome::Ignored {
+                                // A loop's aggregate prints no line of its own, but the
+                                // failure it swallowed still has to say so.
+                                out.ignoring();
                             }
                         }
                     }
@@ -374,7 +378,10 @@ pub async fn run_play(
         }
     }
     // The channel is bounded, so a host still owing a send would block forever if reading
-    // stopped here. Drain until every worker has dropped its sender.
+    // stopped here: the coordinator's own `worker.await` below would then wait on a task that
+    // is waiting on the coordinator. Every host owes at least its `Finished`, and a host whose
+    // driver panicked owes the watchdog's `Unreachable` too. Drain until every worker has
+    // dropped its sender.
     while let Some(event) = rx.recv().await {
         match event {
             Event::Unreachable { host, msg } => {
@@ -567,18 +574,26 @@ pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
 /// `vars_files` paths are templates over play vars and the host's own variables, and Ansible
 /// resolves them per host, so two hosts can read two different files. Each rendered path is
 /// read once.
+///
+/// An entry that names nothing is not an error: the reference skips a `vars_files` path that
+/// does not exist without a word and runs the play, and warns once for an entry whose template
+/// has no value. A file that is there but cannot be read still stops the run, as it does there.
 fn load_play_vars_files(
     play: &Play,
     hosts: &[Host],
     play_hosts: &[String],
     playbook_dir: &Path,
     state: &RunState,
+    out: &mut Renderer,
 ) -> anyhow::Result<HashMap<String, Vec<Map<String, Value>>>> {
     let mut per_host = HashMap::new();
     if play.vars_files.is_empty() {
         return Ok(per_host);
     }
     let mut loaded: HashMap<PathBuf, Map<String, Value>> = HashMap::new();
+    // One warning per entry, not one per host: two hosts reading the same unresolvable entry
+    // are one complaint.
+    let mut warned: HashSet<&String> = HashSet::new();
     for host in hosts {
         let scope = Scope {
             play_vars: play.vars.clone(),
@@ -596,10 +611,12 @@ fn load_play_vars_files(
         );
         let mut files = Vec::new();
         for raw in &play.vars_files {
-            let rendered = state
-                .templar
-                .render(raw, &vars)
-                .map_err(|e| anyhow::anyhow!("vars_files '{raw}': {e}"))?;
+            let Ok(rendered) = state.templar.render(raw, &vars) else {
+                if warned.insert(raw) {
+                    out.warning("skipping vars_files item due to an undefined variable");
+                }
+                continue;
+            };
             let path = rendered
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("vars_files entry must render to a path: {raw}"))?;
@@ -608,6 +625,9 @@ fn load_play_vars_files(
             } else {
                 playbook_dir.join(path)
             };
+            if !path.exists() {
+                continue;
+            }
             files.push(match loaded.get(&path) {
                 Some(file) => file.clone(),
                 None => {
@@ -827,6 +847,7 @@ fn run_local(
             }
             r.insert("ansible_facts".into(), Value::Object(facts));
             r.insert("changed".into(), json!(false));
+            r.insert("failed".into(), json!(false));
         }
         "debug" => {
             let wanted: u8 = item
@@ -860,8 +881,11 @@ fn run_local(
                         .unwrap_or_else(|| json!("Hello world!")),
                 );
             }
-            // `debug` only ever prints `msg` or the named `var`, never `changed`, matching what
-            // ansible-playbook's callback actually displays for it.
+            // The callback never prints these for a `debug`, but `register` stores them, so a
+            // later `when: reg.changed` or `when: not reg.failed` has something to read. The
+            // renderer drops them again on the way out.
+            r.insert("changed".into(), json!(false));
+            r.insert("failed".into(), json!(false));
         }
         other => {
             return TaskResult::failed_with(format!("{other} is not a controller-side module"));
@@ -927,6 +951,16 @@ fn all_hold(
     Ok(true)
 }
 
+/// What a loop over an empty list reports and registers. The reference shows the task as
+/// `skipping` and gives `skipped_reason` this exact wording, with no items behind it.
+fn empty_loop_result() -> TaskResult {
+    let mut r = Map::new();
+    r.insert("changed".into(), json!(false));
+    r.insert("skipped".into(), json!(true));
+    r.insert("skipped_reason".into(), json!("No items in the list"));
+    TaskResult(r)
+}
+
 /// What `register` stores: the single result, or Ansible's loop aggregate.
 fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) -> Value {
     if task.loop_items.is_none() {
@@ -934,6 +968,11 @@ fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) ->
             .first()
             .map(|(_, r)| Value::Object(r.0.clone()))
             .unwrap_or(Value::Null);
+    }
+    if results.is_empty() {
+        let mut agg = empty_loop_result().0;
+        agg.insert("results".into(), Value::Array(Vec::new()));
+        return Value::Object(agg);
     }
     let mut list = Vec::new();
     for (element, r) in results {
@@ -1144,7 +1183,12 @@ async fn drive_host(
                         break;
                     }
                     batch_escalation = escalation;
+                    // A looping task ends the batch because its items travel with
+                    // `ignore_errors` set, so the agent runs all of them the way Ansible does.
+                    // Only `report_task` may decide the task failed, from the aggregate, and
+                    // nothing behind it in the same batch is allowed to run before it has.
                     let boundary = task.register.is_some()
+                        || task.loop_items.is_some()
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty();
                     batch.push((pos, items));
@@ -1215,7 +1259,10 @@ async fn drive_host(
                     tasks.push(Task {
                         module: task.module.clone(),
                         args: item.args.clone(),
-                        ignore_errors: task.ignore_errors,
+                        // An item is not the task: a failing item never stops the ones behind
+                        // it, exactly as in Ansible. The task's own failure is decided later,
+                        // by `report_task`, from every item's result.
+                        ignore_errors: task.ignore_errors || task.loop_items.is_some(),
                         timeout: task.timeout,
                     });
                     origin.push((bi, ii));
@@ -1430,20 +1477,23 @@ async fn report_task(
             .await;
     }
     if is_loop {
-        let mut aggregate = match registered_value(task, results) {
-            Value::Object(mut m) => {
-                m.remove("results");
-                TaskResult(m)
-            }
-            _ => TaskResult::default(),
+        // A loop over an empty list has no item lines to carry it, so the aggregate is the whole
+        // display: one `skipping` line for the task.
+        let (aggregate, show) = if results.is_empty() {
+            (empty_loop_result(), true)
+        } else {
+            let aggregate = match registered_value(task, results) {
+                Value::Object(mut m) => {
+                    m.remove("results");
+                    TaskResult(m)
+                }
+                _ => TaskResult::default(),
+            };
+            // The reference prints no aggregate line for a loop that had items: the failing
+            // item's own line carries the message, and `...ignoring` follows the items alone.
+            (aggregate, false)
         };
         let outcome = classify(&aggregate, task.ignore_errors);
-        let show = aggregate.failed();
-        if show {
-            aggregate
-                .0
-                .insert("msg".into(), json!("One or more items failed"));
-        }
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),

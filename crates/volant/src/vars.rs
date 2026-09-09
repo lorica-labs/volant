@@ -237,69 +237,59 @@ impl VarStore {
         }
         let short = short_name(host);
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
-        let insert = |vars: &mut Map<String, Value>, k: &str, v: Value| {
-            vars.insert(k.to_string(), v);
-        };
-        insert(vars, "inventory_hostname", Value::String(host.to_string()));
-        insert(vars, "inventory_hostname_short", Value::String(short));
-        insert(
-            vars,
-            "group_names",
+        vars.insert(
+            "inventory_hostname".to_string(),
+            Value::String(host.to_string()),
+        );
+        vars.insert("inventory_hostname_short".to_string(), Value::String(short));
+        vars.insert(
+            "group_names".to_string(),
             serde_json::to_value(group_names).unwrap_or_default(),
         );
-        insert(
-            vars,
-            "groups",
+        vars.insert(
+            "groups".to_string(),
             serde_json::to_value(&self.groups).unwrap_or_default(),
         );
-        insert(vars, "hostvars", Value::Object(hostvars));
-        insert(
-            vars,
-            "ansible_play_hosts",
+        vars.insert("hostvars".to_string(), Value::Object(hostvars));
+        vars.insert(
+            "ansible_play_hosts".to_string(),
             serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
         );
-        insert(
-            vars,
-            "ansible_play_hosts_all",
+        vars.insert(
+            "ansible_play_hosts_all".to_string(),
             serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
         );
-        insert(
-            vars,
-            "ansible_play_batch",
+        vars.insert(
+            "ansible_play_batch".to_string(),
             serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
         );
-        insert(
-            vars,
-            "play_hosts",
+        vars.insert(
+            "play_hosts".to_string(),
             serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
         );
-        insert(
-            vars,
-            "playbook_dir",
+        vars.insert(
+            "playbook_dir".to_string(),
             Value::String(self.playbook_dir.display().to_string()),
         );
         if let Some(dir) = &self.inventory_dir {
-            insert(
-                vars,
-                "inventory_dir",
+            vars.insert(
+                "inventory_dir".to_string(),
                 Value::String(dir.display().to_string()),
             );
         }
         if let Some(file) = &self.inventory_file {
-            insert(
-                vars,
-                "inventory_file",
+            vars.insert(
+                "inventory_file".to_string(),
                 Value::String(file.display().to_string()),
             );
         }
-        insert(vars, "omit", Value::String(omit_token().to_string()));
-        insert(vars, "ansible_check_mode", Value::Bool(false));
-        insert(vars, "ansible_diff_mode", Value::Bool(false));
-        insert(vars, "ansible_forks", Value::from(self.forks));
-        insert(vars, "ansible_version", ansible_version());
-        insert(
-            vars,
-            "volant_version",
+        vars.insert("omit".to_string(), Value::String(omit_token().to_string()));
+        vars.insert("ansible_check_mode".to_string(), Value::Bool(false));
+        vars.insert("ansible_diff_mode".to_string(), Value::Bool(false));
+        vars.insert("ansible_forks".to_string(), Value::from(self.forks));
+        vars.insert("ansible_version".to_string(), ansible_version());
+        vars.insert(
+            "volant_version".to_string(),
             Value::String(env!("CARGO_PKG_VERSION").to_string()),
         );
     }

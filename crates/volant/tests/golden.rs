@@ -26,6 +26,26 @@ fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// `same` above is deliberately order-insensitive. This one is not: it walks two already-`same`
+/// values and additionally requires every mapping to iterate its keys in the same order, so
+/// `our_yaml_loading_of_vars_matches_the_reference` can actually gate key order through our own
+/// `yaml::load`/`to_json` instead of only through `Map`'s order-blind `PartialEq`.
+fn same_key_order(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same_key_order(a, b))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.keys().eq(y.keys())
+                && x.values()
+                    .zip(y.values())
+                    .all(|(a, b)| same_key_order(a, b))
+        }
+        _ => true,
+    }
+}
+
 #[test]
 fn every_golden_case_matches_the_reference() {
     let base = std::env::temp_dir().join(format!("volant-golden-{}", std::process::id()));
@@ -103,6 +123,10 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
         let want = entry["case"]["vars"].clone();
         if !same(&ours, &want) {
             failures.push(format!("{case:?}\n  reference: {want}\n  ours: {ours}"));
+        } else if !same_key_order(&ours, &want) {
+            failures.push(format!(
+                "{case:?}\n  key order differs\n  reference: {want}\n  ours: {ours}"
+            ));
         }
     }
     assert!(

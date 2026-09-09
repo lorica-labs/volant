@@ -191,3 +191,39 @@
   vars: {name: found}
 - template: "{{ lookup('pipe', 'echo piped') }}"
 - template: "{{ lookup('file', 'golden_lookup.txt') }}"
+# YAML 1.1 scalar resolution: PyYAML types these `vars` before any template runs, so the
+# reference type of each spelling is what expected.json records.
+- template: "{{ x }}"
+  vars: {x: 010}
+- template: "{{ x }}"
+  vars: {x: 0o10}
+- template: "{{ x }}"
+  vars: {x: 0b1010}
+- template: "{{ x }}"
+  vars: {x: 1_000}
+- template: "{{ x }}"
+  vars: {x: 0x1F}
+- template: "{{ x }}"
+  vars: {x: 1e3}
+- template: "{{ x }}"
+  vars: {x: +12}
+- template: "{{ x }}"
+  vars: {x: 0}
+- template: "{{ x }}"
+  vars: {x: 00}
+# The `bool` filter's own spellings, which are not PyYAML's
+- template: "{{ 'y' | bool }}"
+- template: "{{ 't' | bool }}"
+- template: "{{ 'yEs' | bool }}"
+- template: "{{ ' yes ' | bool }}"
+# Measured against ansible-core 2.19.12: None coerces to False, with a deprecation warning that
+# a future release will stop doing this. Not None, which is what an unchanged-argument reading
+# of `to_bool` would predict.
+- template: "{{ none | bool }}"
+# Key order: a mapping written out of alphabetical order
+- template: "{{ d | to_json }}"
+  vars: {d: {b: 1, a: 2, c: 3}}
+- template: "{{ d | to_nice_json }}"
+  vars: {d: {b: 1, a: 2, c: 3}}
+- template: "{{ d | dict2items }}"
+  vars: {d: {b: 1, a: 2, c: 3}}

@@ -86,15 +86,22 @@ fn default(value: Value, other: Option<Value>, boolean: Option<bool>) -> Value {
     }
 }
 
-/// Ansible's `boolean()` with strict=False: recognised spellings, everything else is false.
+/// The `bool` filter's own set of spellings, which is **not** PyYAML's (see
+/// [`crate::yaml::PYYAML_TRUE`]): it lower-cases the string and compares it against
+/// `yes`, `on`, `1` and `true` only. Measured against ansible-core 2.19.12: `'yEs' | bool` is
+/// true while `'y' | bool` and `'t' | bool` are false, and surrounding space is not stripped,
+/// so a padded spelling is false too. Numbers are true only at exactly one (`1`, `1.00`), and
+/// everything else, a non-empty list included, is false. `none | bool` is `false` too: measured
+/// against ansible-core 2.19.12, `to_bool` coerces `None` to `False` (with a deprecation warning
+/// that a future release will stop doing this), not the unchanged argument a stricter reading of
+/// `to_bool`'s source would predict.
 fn to_bool(value: Value) -> bool {
     match json(&value) {
         serde_json::Value::Bool(b) => b,
         serde_json::Value::Number(n) => n.as_f64() == Some(1.0),
-        serde_json::Value::String(s) => matches!(
-            s.trim().to_ascii_lowercase().as_str(),
-            "y" | "yes" | "on" | "1" | "true" | "t"
-        ),
+        serde_json::Value::String(s) => {
+            matches!(s.to_lowercase().as_str(), "yes" | "on" | "1" | "true")
+        }
         _ => false,
     }
 }
@@ -253,17 +260,31 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 }
 
 /// Python's `json.dumps` default separators: `", "` and `": "`, keys in insertion order.
+/// Measured against ansible-core 2.19.12: `{b: 1, a: 2, c: 3} | to_json` gives
+/// `{"b": 1, "a": 2, "c": 3}`, so `to_json` keeps the order the mapping was written in.
 fn to_json(value: Value) -> Result<Value, Error> {
-    Ok(Value::from(python_json(&json(&value), None, 0)))
+    Ok(Value::from(python_json(&json(&value), None, false, 0)))
 }
 
+/// `to_nice_json` is the one that sorts: the reference calls `json.dumps` with
+/// `sort_keys=True`, and the same mapping comes back as `{"a": 2, "b": 1, "c": 3}`.
 fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let indent: usize = kwargs.get::<Option<usize>>("indent")?.unwrap_or(4);
     kwargs.assert_all_used()?;
-    Ok(Value::from(python_json(&json(&value), Some(indent), 0)))
+    Ok(Value::from(python_json(
+        &json(&value),
+        Some(indent),
+        true,
+        0,
+    )))
 }
 
-fn python_json(v: &serde_json::Value, indent: Option<usize>, depth: usize) -> String {
+fn python_json(
+    v: &serde_json::Value,
+    indent: Option<usize>,
+    sort_keys: bool,
+    depth: usize,
+) -> String {
     let pad = |d: usize| {
         indent
             .map(|i| format!("\n{}", " ".repeat(i * d)))
@@ -274,14 +295,18 @@ fn python_json(v: &serde_json::Value, indent: Option<usize>, depth: usize) -> St
         serde_json::Value::Array(items) if items.is_empty() => "[]".to_string(),
         serde_json::Value::Object(map) => {
             let sep = if indent.is_some() { "," } else { ", " };
-            let fields: Vec<String> = map
-                .iter()
-                .map(|(k, v)| {
+            let mut keys: Vec<&String> = map.keys().collect();
+            if sort_keys {
+                keys.sort();
+            }
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
                     format!(
                         "{}{}: {}",
                         pad(depth + 1),
                         serde_json::to_string(k).unwrap_or_default(),
-                        python_json(v, indent, depth + 1)
+                        python_json(&map[k], indent, sort_keys, depth + 1)
                     )
                 })
                 .collect();
@@ -291,7 +316,13 @@ fn python_json(v: &serde_json::Value, indent: Option<usize>, depth: usize) -> St
             let sep = if indent.is_some() { "," } else { ", " };
             let fields: Vec<String> = items
                 .iter()
-                .map(|v| format!("{}{}", pad(depth + 1), python_json(v, indent, depth + 1)))
+                .map(|v| {
+                    format!(
+                        "{}{}",
+                        pad(depth + 1),
+                        python_json(v, indent, sort_keys, depth + 1)
+                    )
+                })
                 .collect();
             format!("[{}{}]", fields.join(sep), pad(depth))
         }
@@ -552,12 +583,15 @@ mod tests {
         assert_eq!(python_replacement("plain"), "plain");
     }
 
+    /// `to_json` keeps the order the mapping was written in and `to_nice_json` sorts, both
+    /// measured against ansible-core 2.19.12. The golden corpus carries the same pair, but
+    /// only since its generator stopped sorting every mapping on the way in.
     #[test]
-    fn python_json_uses_pythons_separators_and_indent() {
+    fn python_json_uses_pythons_separators_indent_and_key_order() {
         let v = serde_json::json!({"b": 1, "a": [1, 2]});
-        assert_eq!(python_json(&v, None, 0), r#"{"a": [1, 2], "b": 1}"#);
+        assert_eq!(python_json(&v, None, false, 0), r#"{"b": 1, "a": [1, 2]}"#);
         assert_eq!(
-            python_json(&v, Some(4), 0),
+            python_json(&v, Some(4), true, 0),
             "{\n    \"a\": [\n        1,\n        2\n    ],\n    \"b\": 1\n}"
         );
     }

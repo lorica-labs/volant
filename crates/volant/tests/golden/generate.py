@@ -39,7 +39,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         playbook = os.path.join(tmp, "golden.yml")
         with open(playbook, "w", encoding="utf-8") as f:
-            yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True)
+            # sort_keys=False for the same reason as the json.dump below: safe_dump sorts every
+            # mapping by default, which would hand the reference a case's `vars` in an order
+            # cases.yml never wrote and silently make key order untestable.
+            yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         with open(os.path.join(tmp, "golden_lookup.txt"), "w", encoding="utf-8") as f:
             f.write("file contents")
         run = subprocess.run(["ansible-playbook", "-i", "localhost,", playbook], env=env, capture_output=True, text=True)
@@ -55,8 +58,10 @@ def main() -> int:
         else:
             entry["result"] = outcome.get("msg")
         results.append(entry)
+    # Deliberately not sort_keys: a case's `vars` must reach the Rust side in the order
+    # cases.yml wrote them, or no case could measure what a filter does to key order.
     with open(os.path.join(HERE, "expected.json"), "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False, sort_keys=True)
+        json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
     return inventory()

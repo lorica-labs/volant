@@ -1043,6 +1043,68 @@ fn a_registered_debug_carries_changed_and_failed() {
     );
 }
 
+/// Measured against the reference: an undefined variable is the only `vars_files` template
+/// failure it forgives. `"{{ 1 + [] }}.yml"` gives `[ERROR]: Error rendering template:
+/// unsupported operand type(s) for +: 'int' and 'list'`, `"{{ nope | badfilter }}.yml"` gives
+/// `[ERROR]: Syntax error in template: No filter named 'badfilter'.` and an unclosed
+/// `"{{ unclosed "` gives `[ERROR]: Syntax error in template: unexpected end of template,
+/// expected 'end of print statement'.` — each of the three on stderr with no `PLAY RECAP` and
+/// exit 1. So the run must fail, and it must not blame an undefined variable.
+#[test]
+fn a_broken_vars_files_template_fails_the_run() {
+    for case in ["illegal-operation", "bad-filter", "unclosed"] {
+        let out = volant(&[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            &fixture(&format!("vars-file-errors/{case}.yml")),
+        ]);
+        let text = String::from_utf8(out.stdout).unwrap();
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{case}: {text}\n{err}");
+        assert!(
+            err.contains("ERROR! rendering vars_files entry"),
+            "{case}: the run says which entry it could not render: {err}"
+        );
+        assert!(
+            !err.contains("undefined variable") && !text.contains("undefined variable"),
+            "{case}: a broken template is not an undefined variable: {err}"
+        );
+        assert!(
+            !text.contains("PLAY RECAP") && !text.contains("Never reached"),
+            "{case}: the play does not run: {text}"
+        );
+    }
+}
+
+/// Measured against the reference: a `vars_files` entry that renders to something other than a
+/// string prints "Invalid `vars_files` value of type 'int'. A `vars_files` value should either be
+/// a string or list of strings." on stderr, with no recap. The reference exits 4 where every
+/// run-level refusal here exits 1; the message itself is matched word for word.
+#[test]
+fn a_vars_files_entry_that_is_not_a_string_is_refused() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("vars/inventory.ini"),
+        &fixture("vars-file-errors/not-a-string.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{text}\n{err}");
+    assert!(
+        err.contains(
+            "Invalid `vars_files` value of type 'int'. A `vars_files` value should either be a \
+             string or list of strings."
+        ),
+        "the reference's wording, verbatim: {err}"
+    );
+    assert!(
+        !text.contains("PLAY RECAP"),
+        "the play does not run: {text}"
+    );
+}
+
 /// Measured against the reference: a `vars_files` entry that names no file is skipped without a
 /// word and the play runs; an entry whose template has no value is skipped with one warning.
 /// Exit code 0 on both counts, and a recap for every host.

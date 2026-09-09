@@ -283,27 +283,7 @@ pub async fn run_play(
                         header_shown = true;
                     }
                     for event in pending.remove(&key).unwrap_or_default() {
-                        if let Event::Result {
-                            outcome,
-                            result,
-                            label,
-                            dump,
-                            show,
-                            counts,
-                            ..
-                        } = event
-                        {
-                            if counts {
-                                stats.record(host, outcome, result.changed());
-                            }
-                            if show {
-                                out.result(host, outcome, &result, label.as_deref(), dump);
-                            } else if outcome == Outcome::Ignored {
-                                // A loop's aggregate prints no line of its own, but the
-                                // failure it swallowed still has to say so.
-                                out.ignoring();
-                            }
-                        }
+                        report_result(event, stats, out);
                     }
                     break;
                 }
@@ -410,7 +390,11 @@ pub async fn run_play(
                 *seen = (*seen).max(index);
                 publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
-            _ => {}
+            // A driver sends a result and the `TaskDone` behind it over the same channel, so
+            // the task loop above has consumed every result it will ever see. Should that order
+            // ever change, a result arriving here is a task missing from the recap, which is
+            // the one failure this file cannot afford: report it rather than drop it.
+            event @ Event::Result { .. } => report_result(event, stats, out),
         }
     }
     for (host, worker) in workers {
@@ -423,6 +407,34 @@ pub async fn run_play(
         }
     }
     Ok(())
+}
+
+/// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
+/// ignored, so both event loops can hand it whatever they hold.
+fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
+    let Event::Result {
+        host,
+        outcome,
+        result,
+        label,
+        dump,
+        show,
+        counts,
+        ..
+    } = event
+    else {
+        return;
+    };
+    if counts {
+        stats.record(&host, outcome, result.changed());
+    }
+    if show {
+        out.result(&host, outcome, &result, label.as_deref(), dump);
+    } else if outcome == Outcome::Ignored {
+        // A loop's aggregate prints no line of its own, but the failure it swallowed still has
+        // to say so.
+        out.ignoring();
+    }
 }
 
 /// Republishes the play's progress. `live_hosts` is the play's starting list minus the hosts
@@ -577,7 +589,8 @@ pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
 ///
 /// An entry that names nothing is not an error: the reference skips a `vars_files` path that
 /// does not exist without a word and runs the play, and warns once for an entry whose template
-/// has no value. A file that is there but cannot be read still stops the run, as it does there.
+/// has no value. Every other template failure stops the run, as it does there. A file that is
+/// there but cannot be read stops the run too.
 fn load_play_vars_files(
     play: &Play,
     hosts: &[Host],
@@ -611,20 +624,34 @@ fn load_play_vars_files(
         );
         let mut files = Vec::new();
         for raw in &play.vars_files {
-            let Ok(rendered) = state.templar.render(raw, &vars) else {
-                if warned.insert(raw) {
-                    out.warning("skipping vars_files item due to an undefined variable");
+            let rendered = match state.templar.render(raw, &vars) {
+                Ok(rendered) => rendered,
+                // Only a variable without a value is recoverable. Every other template failure
+                // stops the run there, and swallowing them all as one undefined variable both
+                // named the wrong cause and let a broken playbook exit 0.
+                Err(err) if err.is_undefined() => {
+                    if warned.insert(raw) {
+                        out.warning("skipping vars_files item due to an undefined variable");
+                    }
+                    continue;
                 }
-                continue;
+                Err(err) => anyhow::bail!("rendering vars_files entry {raw}: {err}"),
             };
-            let path = rendered
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("vars_files entry must render to a path: {raw}"))?;
+            let path = rendered.as_str().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid `vars_files` value of type '{}'. A `vars_files` value should either \
+                     be a string or list of strings.",
+                    python_type(&rendered)
+                )
+            })?;
             let path = if Path::new(path).is_absolute() {
                 PathBuf::from(path)
             } else {
                 playbook_dir.join(path)
             };
+            // `exists` answers "no" both for a path that is not there and for one it cannot
+            // stat, a parent directory refusing access included. The reference asks the same
+            // question the same way and skips either without a word, so both stay a skip here.
             if !path.exists() {
                 continue;
             }
@@ -640,6 +667,20 @@ fn load_play_vars_files(
         per_host.insert(host.name.clone(), files);
     }
     Ok(per_host)
+}
+
+/// The name Python would give a value, so a message about a mistyped playbook key reads the way
+/// the reference's does.
+fn python_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Number(n) if n.is_f64() => "float",
+        Value::Number(_) => "int",
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+    }
 }
 
 fn task_name(

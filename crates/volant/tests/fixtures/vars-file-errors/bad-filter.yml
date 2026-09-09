@@ -1,0 +1,9 @@
+- name: A vars_files entry whose template names no filter
+  hosts: web
+  gather_facts: false
+  vars_files:
+    - "{{ nope | badfilter }}.yml"
+  tasks:
+    - name: Never reached
+      debug:
+        msg: "reached on {{ inventory_hostname }}"

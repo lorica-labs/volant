@@ -1,0 +1,9 @@
+- name: A vars_files entry whose template adds a list to a number
+  hosts: web
+  gather_facts: false
+  vars_files:
+    - "{{ 1 + [] }}.yml"
+  tasks:
+    - name: Never reached
+      debug:
+        msg: "reached on {{ inventory_hostname }}"

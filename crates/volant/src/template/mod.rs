@@ -10,8 +10,20 @@ use serde_json::{Map, Value};
 
 mod filters;
 
+/// Prefix of every error raised because a variable had no value, the one template failure
+/// Ansible treats as recoverable in places such as `vars_files`.
+const UNDEFINED: &str = "The task includes an option with an undefined variable.";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateError(pub String);
+
+impl TemplateError {
+    /// Whether the render failed on a variable that had no value, as opposed to a syntax error,
+    /// an unknown filter or an illegal operation.
+    pub fn is_undefined(&self) -> bool {
+        self.0.starts_with(UNDEFINED)
+    }
+}
 
 impl fmt::Display for TemplateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -231,9 +243,7 @@ pub(crate) fn truthy(v: &Value) -> bool {
 fn convert_error(err: minijinja::Error) -> TemplateError {
     let text = err.to_string();
     if err.kind() == ErrorKind::UndefinedError {
-        return TemplateError(format!(
-            "The task includes an option with an undefined variable. The error was: {text}"
-        ));
+        return TemplateError(format!("{UNDEFINED} The error was: {text}"));
     }
     TemplateError(text)
 }

@@ -91,7 +91,10 @@ fn default(value: Value, other: Option<Value>, boolean: Option<bool>) -> Value {
 /// `yes`, `on`, `1` and `true` only. Measured against ansible-core 2.19.12: `'yEs' | bool` is
 /// true while `'y' | bool` and `'t' | bool` are false, and surrounding space is not stripped,
 /// so a padded spelling is false too. Numbers are true only at exactly one (`1`, `1.00`), and
-/// everything else, a non-empty list included, is false.
+/// everything else, a non-empty list included, is false. `none | bool` is `false` too: measured
+/// against ansible-core 2.19.12, `to_bool` coerces `None` to `False` (with a deprecation warning
+/// that a future release will stop doing this), not the unchanged argument a stricter reading of
+/// `to_bool`'s source would predict.
 fn to_bool(value: Value) -> bool {
     match json(&value) {
         serde_json::Value::Bool(b) => b,

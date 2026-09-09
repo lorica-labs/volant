@@ -216,6 +216,10 @@
 - template: "{{ 't' | bool }}"
 - template: "{{ 'yEs' | bool }}"
 - template: "{{ ' yes ' | bool }}"
+# Measured against ansible-core 2.19.12: None coerces to False, with a deprecation warning that
+# a future release will stop doing this. Not None, which is what an unchanged-argument reading
+# of `to_bool` would predict.
+- template: "{{ none | bool }}"
 # Key order: a mapping written out of alphabetical order
 - template: "{{ d | to_json }}"
   vars: {d: {b: 1, a: 2, c: 3}}

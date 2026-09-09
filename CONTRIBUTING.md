@@ -22,6 +22,8 @@ just setup
 
 The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them out and `just ssh-test` runs them on their own. That recipe wants an sshd listening on `localhost` and `VOLANT_SSH_TEST_KEY` pointing at a private key this account accepts; a throwaway key appended to your own `authorized_keys` does the job. The tests talk to `localhost` and to nothing else, which is why CI can run them unchanged.
 
+`just bench-compile` times the compilation of a large public role and compares the result with the reference `ansible-playbook`. It clones that role, which is licensed under MIT, into `target/`, and neither side runs anything on a host.
+
 ## Workflow
 
 1. Fork the repository and create a branch from `main`: `feat/…`, `fix/…`, `docs/…`, `ci/…` or `chore/…`.

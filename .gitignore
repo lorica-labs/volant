@@ -6,5 +6,6 @@
 
 # planning notes and local assistant files stay out of the repository
 /docs/superpowers/
+/.superpowers/
 /.claude/*
 !/.claude/skills/

@@ -6,7 +6,9 @@
 //! Every test gets its own `ansible_remote_tmp`, so the cache the host is asked about is the
 //! one this test put there. Sharing `~/.ansible/tmp` would let one test's upload decide
 //! another's outcome, and a test of the "no agent is cached" path would pass or fail on the
-//! order the suite happened to run in.
+//! order the suite happened to run in. The one exception is
+//! `ssh_become_to_an_unprivileged_user_reaches_the_agent`, which is about the default
+//! `~/.ansible/tmp` itself and says why.
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
@@ -248,6 +250,106 @@ fn ssh_a_cached_agent_that_cannot_run_is_named() {
         "the upload landed, so the fault is the host's and not a missing file"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Escalation to an account that cannot read the connecting user's home directory. This is the
+/// case every other `become` test misses: they all escalate to `root`, which traverses anything.
+///
+/// A home directory at mode 0700 - the default wherever `HOME_MODE` says so, which includes RHEL
+/// and Fedora - hides the connecting user's agent cache from everybody else, so an agent cached
+/// there and then run through `sudo -u someone-else` cannot be reached at all, and every
+/// escalated task on the host failed with whatever the remote shell said about the file. The
+/// agent for an escalated link is cached under the target user's own home instead.
+///
+/// The test makes its own throwaway account and removes it again, because there is no ordinary
+/// unprivileged account on a machine whose home directory an agent can be written to: the
+/// service accounts that exist have `/nonexistent` or `/` for a home. It needs the same
+/// passwordless `sudo` the escalation tests beside it already need, and it fails loudly if it
+/// cannot have it rather than passing while proving nothing.
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
+    let target = format!("volant-t{}", std::process::id());
+    let added = Command::new("sudo")
+        .args(["-n", "useradd", "-m", "-s", "/bin/sh", &target])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "creating the unprivileged account this test escalates to: {}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let home = home_of(&user());
+    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let dir = tmp("becomeunprivileged");
+    // No `ansible_remote_tmp` here, unlike every other test in this file: the default
+    // `~/.ansible/tmp` is the whole point, because it is the path that lands inside the home
+    // directory the escalated user may not enter.
+    let inv = dir.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!(
+            "localhost ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} \
+             ansible_ssh_common_args='-F /dev/null'\n",
+            user(),
+            key(),
+        ),
+    )
+    .unwrap();
+    let play = dir.join("become-unprivileged.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_user: {target}\n  \
+             tasks:\n    - shell: id -un\n      register: who\n    - debug:\n        msg: \
+             \"{{{{ who.stdout }}}}\"\n"
+        ),
+    )
+    .unwrap();
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &inv.display().to_string(),
+        &play.display().to_string(),
+    ]);
+    let text = both(&out);
+    // The machine goes back to what it was before anything is asserted: a failure here must
+    // leave neither the account behind nor the invoking user's own home at 0700.
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(mode)).unwrap();
+    let removed = Command::new("sudo")
+        .args(["-n", "userdel", "-r", &target])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(&format!(r#""msg": "{target}""#)),
+        "the task must run as {target}: {text}"
+    );
+    assert!(
+        removed.status.success(),
+        "removing {target} again: {}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One account's home directory, asked of the system rather than read from `HOME`, which the
+/// account running the tests may have pointed somewhere else entirely.
+fn home_of(name: &str) -> PathBuf {
+    let out = Command::new("getent")
+        .args(["passwd", name])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "'getent passwd {name}' failed");
+    let line = String::from_utf8(out.stdout).unwrap();
+    let home = line
+        .trim_end()
+        .split(':')
+        .nth(5)
+        .expect("a passwd entry has a home field");
+    assert!(!home.is_empty(), "'{name}' has no home directory");
+    PathBuf::from(home)
 }
 
 /// Escalation over a real `ssh`, which is the only place the second link is actually a second

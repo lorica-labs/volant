@@ -27,7 +27,6 @@ pub struct Play {
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
-    pub become_method: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +52,6 @@ pub struct PlayTask {
     pub failed_when: Vec<String>,
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
-    pub become_method: Option<String>,
 }
 
 /// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
@@ -95,10 +93,10 @@ pub const BECOME_METHOD: &str = "sudo";
 /// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
 /// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
 /// do in Ansible.
-fn escalation(
-    yaml: &Yaml,
-    context: &str,
-) -> anyhow::Result<(Option<bool>, Option<String>, Option<String>)> {
+///
+/// `become_method` comes back as nothing: refusing everything but `sudo` right here is all a
+/// caller could ever do with it, so it is refused here and not stored.
+fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
     let text = |key: &str| -> anyhow::Result<Option<String>> {
         match field(yaml, key) {
             None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
@@ -114,13 +112,17 @@ fn escalation(
         ),
     };
     let user = text("become_user")?;
-    let method = text("become_method")?;
-    if let Some(method) = &method
+    if let Some(method) = text("become_method")?
         && method != BECOME_METHOD
     {
-        bail!("{context}become_method '{method}' is not supported yet");
+        // Exit 2, not the 4 the rest of a refused playbook gets: measured, the reference reads
+        // this keyword happily and then fails the task that would have used it, which is 2.
+        return Err(crate::stats::Refusal::at(
+            2,
+            format!("{context}become_method '{method}' is not supported yet"),
+        ));
     }
-    Ok((flag, user, method))
+    Ok((flag, user))
 }
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
@@ -128,10 +130,15 @@ fn is_free_form(module: &str) -> bool {
     native(module).is_some_and(|m| m.free_form)
 }
 
+/// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
+/// that is there and does not make sense stops it with exit 4. Both codes are the reference's
+/// own, measured against ansible-core 2.19.12: `the playbook: x.yml could not be found` exits 1,
+/// while a YAML error, a play that is not a mapping, an unknown keyword, an unknown module and
+/// `a playbook must be a list of plays` all exit 4.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading playbook {}", path.display()))?;
-    parse(&text, &path.display().to_string())
+    parse(&text, &path.display().to_string()).map_err(|err| crate::stats::Refusal::or(4, err))
 }
 
 pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
@@ -204,7 +211,7 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
         _ => bail!("'tasks' must be a list"),
     };
-    let (r#become, become_user, become_method) = escalation(yaml, "")?;
+    let (r#become, become_user) = escalation(yaml, "")?;
     Ok(Play {
         name,
         hosts,
@@ -214,7 +221,6 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         tasks,
         r#become,
         become_user,
-        become_method,
     })
 }
 
@@ -302,7 +308,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
                 .map(str::to_string),
         ),
     };
-    let (r#become, become_user, become_method) = escalation(yaml, &format!("task '{label}': "))?;
+    let (r#become, become_user) = escalation(yaml, &format!("task '{label}': "))?;
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
@@ -320,7 +326,6 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         failed_when,
         r#become,
         become_user,
-        become_method,
     })
 }
 
@@ -516,11 +521,9 @@ mod tests {
         let play = &pb.plays[0];
         assert_eq!(play.r#become, Some(true), "'yes' is a boolean to Ansible");
         assert_eq!(play.become_user.as_deref(), Some("deploy"));
-        assert_eq!(play.become_method.as_deref(), Some("sudo"));
         let t = &play.tasks[0];
         assert_eq!(t.r#become, Some(false), "a quoted spelling still reads");
         assert_eq!(t.become_user.as_deref(), Some("postgres"));
-        assert_eq!(t.become_method, None);
         let bare = parse("- hosts: all\n  tasks:\n    - command: id\n", "x.yml").unwrap();
         assert_eq!(
             (

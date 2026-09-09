@@ -47,11 +47,23 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load() -> Config {
+    /// Reads the configuration file, if there is one, and lets the environment override it.
+    ///
+    /// A file that is there and cannot be read stops the run. It used to fall back to the
+    /// defaults, which quietly threw away `inventory`, `forks` and the whole
+    /// `[privilege_escalation]` section: the run then targeted the implicit localhost, did
+    /// nothing and exited 0. The reference does exactly that - measured, an `ansible.cfg` at
+    /// mode 000 leaves it warning only that no inventory was parsed, and it exits 0 - and this
+    /// is a deliberate divergence from it: half a configuration is not a configuration, and
+    /// this release already refuses a `forks` value it cannot parse for the same reason.
+    pub fn load() -> anyhow::Result<Config> {
         let mut config = match locate() {
-            Some(path) => std::fs::read_to_string(&path)
-                .map(|text| parse(&text, path.parent().unwrap_or(Path::new("."))))
-                .unwrap_or_default(),
+            Some(path) => {
+                let text = std::fs::read_to_string(&path).map_err(|err| {
+                    crate::stats::Refusal::at(2, format!("reading {}: {err}", path.display()))
+                })?;
+                parse(&text, path.parent().unwrap_or(Path::new(".")))
+            }
             None => Config::default(),
         };
         if let Ok(inv) = std::env::var("ANSIBLE_INVENTORY") {
@@ -108,7 +120,7 @@ impl Config {
         {
             config.become_method = method.trim().to_string();
         }
-        config
+        Ok(config)
     }
 }
 
@@ -265,9 +277,9 @@ mod tests {
             std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
             std::env::set_var("ANSIBLE_REMOTE_TMP", "   ");
         }
-        assert_eq!(Config::load().remote_tmp, DEFAULT_REMOTE_TMP);
+        assert_eq!(Config::load().unwrap().remote_tmp, DEFAULT_REMOTE_TMP);
         unsafe { std::env::set_var("ANSIBLE_REMOTE_TMP", "/var/tmp/v") };
-        assert_eq!(Config::load().remote_tmp, "/var/tmp/v");
+        assert_eq!(Config::load().unwrap().remote_tmp, "/var/tmp/v");
         unsafe {
             match saved_config {
                 Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
@@ -315,11 +327,11 @@ mod tests {
             std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
             std::env::set_var("ANSIBLE_FORKS", "abc");
         }
-        assert_eq!(Config::load().forks, 0);
+        assert_eq!(Config::load().unwrap().forks, 0);
         unsafe { std::env::set_var("ANSIBLE_FORKS", "-1") };
-        assert_eq!(Config::load().forks, 0);
+        assert_eq!(Config::load().unwrap().forks, 0);
         unsafe { std::env::set_var("ANSIBLE_FORKS", "3") };
-        assert_eq!(Config::load().forks, 3);
+        assert_eq!(Config::load().unwrap().forks, 3);
         unsafe {
             match saved_config {
                 Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),

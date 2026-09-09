@@ -99,7 +99,9 @@ pub struct SshTarget {
     pub extra_args: Vec<String>,
     pub host_key_checking: bool,
     pub connect_timeout: Duration,
-    /// Where the agent is cached on the host, `~` expanded by the remote shell.
+    /// Where the agent is cached on the host. A leading `~` is expanded by the shell that will
+    /// run the agent, so a link that escalates caches it under the target user's own home and
+    /// a link that does not caches it under the connecting user's.
     pub remote_tmp: String,
 }
 
@@ -136,6 +138,18 @@ const EXIT_AGENT_UNRUNNABLE: i32 = 45;
 const EXIT_UNAME_FAILED: i32 = 46;
 /// `ssh` reports its own failures with this, whatever the remote command would have returned.
 const EXIT_SSH_FAILURE: i32 = 255;
+
+/// Whether the bootstrap probe itself answered, which is what an escalation probe has to
+/// establish before anything is written to the link. Every exit the probe script can make is
+/// one of these, and nothing else on the path produces one: `sudo` refuses with its own 1, and
+/// a shell that cannot find or run it says 126 or 127. So one of these codes proves the command
+/// really did run as the asked-for user, whatever it then found there.
+fn bootstrap_probe_ran(probe: &Captured) -> bool {
+    matches!(
+        probe.code,
+        Some(0 | EXIT_AGENT_MISSING | EXIT_AGENT_UNRUNNABLE | EXIT_UNAME_FAILED)
+    )
+}
 
 impl Transport {
     pub fn for_host(host: &Host, defaults: &ConnectionDefaults) -> anyhow::Result<Transport> {
@@ -268,6 +282,20 @@ fn local_argv(agent: &str, escalated: Escalated<'_>) -> Vec<String> {
     argv
 }
 
+/// One remote command as the escalated user, or unchanged when the link does not escalate.
+///
+/// The command travels as a single word to an inner `sh -c` rather than straight to `sudo`,
+/// because `remote_tmp` starts with `~`: the outer remote shell would expand it to the
+/// *connecting* user's home, which is the one directory an unprivileged `become_user` may not
+/// be able to enter. Inside the shell `sudo -H` starts, `~` is the escalated user's own home,
+/// so the agent is cached where that user can read it and nowhere else.
+fn escalated_command(escalated: Escalated<'_>, command: &str) -> String {
+    match escalated {
+        None => command.to_string(),
+        Some(_) => format!("{}sh -c {}", sudo_prefix(escalated), single_quoted(command)),
+    }
+}
+
 /// `sudo -H ... --`, up to but not including the agent, as shell words for a remote command.
 /// Empty without escalation, so one `format!` covers both cases at every call site.
 fn sudo_prefix(escalated: Escalated<'_>) -> String {
@@ -292,17 +320,20 @@ fn sudo_prefix(escalated: Escalated<'_>) -> String {
 /// password to offer: with none, `-n`'s refusal *is* the answer, and it is already worded for
 /// it. Any other refusal is final, since no password can fix a missing `sudo`, a rule that
 /// forbids the command, or a `sudo` that exited zero having run something else.
+/// Returns the form and what the probe that settled it printed, so a caller whose probe is a
+/// command it was going to run anyway does not have to run it twice.
 async fn settle_form<F, Fut>(
     escalation: &Escalation,
+    ran: fn(&Captured) -> bool,
     mut probe: F,
-) -> Result<SudoForm, ConnectError>
+) -> Result<(SudoForm, Captured), ConnectError>
 where
     F: FnMut(SudoForm) -> Fut,
     Fut: std::future::Future<Output = Result<Captured, ConnectError>>,
 {
     let quiet = probe(SudoForm::NoPrompt).await?;
-    let refusal = match escalation_outcome(quiet.code, &quiet.stdout, &quiet.stderr, None) {
-        Ok(()) => return Ok(SudoForm::NoPrompt),
+    let refusal = match escalation_outcome(ran(&quiet), &quiet.stderr, None) {
+        Ok(()) => return Ok((SudoForm::NoPrompt, quiet)),
         Err(refusal) => refusal,
     };
     if escalation.password.is_none() || !refused_authentication(&quiet.stderr) {
@@ -310,12 +341,11 @@ where
     }
     let offered = probe(SudoForm::ReadStdin).await?;
     escalation_outcome(
-        offered.code,
-        &offered.stdout,
+        ran(&offered),
         &offered.stderr,
         escalation.password.as_deref(),
     )
-    .map(|()| SudoForm::ReadStdin)
+    .map(|()| (SudoForm::ReadStdin, offered))
 }
 
 /// Asks `sudo` to print the agent's version as the escalated user, before the link itself is
@@ -326,10 +356,19 @@ async fn check_local_escalation(
     agent: &str,
     escalation: &Escalation,
 ) -> Result<SudoForm, ConnectError> {
-    settle_form(escalation, move |form| {
+    settle_form(escalation, agent_version_ran, move |form| {
         local_escalation_probe(agent, escalation, form)
     })
     .await
+    .map(|(form, _)| form)
+}
+
+/// Whether `sudo` really did start the local agent as the asked-for user: the agent's own
+/// version line, not `sudo`'s exit status alone. A `sudo` that exited zero having run something
+/// else - a wrapper, an alias, a stale cached binary - is not an escalation that worked.
+fn agent_version_ran(probe: &Captured) -> bool {
+    probe.code == Some(0)
+        && probe.stdout.trim() == format!("volant-agent {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// One `sudo ... volant-agent --version` in the given form, and what it printed.
@@ -373,23 +412,19 @@ async fn local_escalation_probe(
     })
 }
 
-/// Whether `sudo` really did start the agent as the asked-for user, or why it did not.
-///
-/// Success is the agent's own version line, not `sudo`'s exit status alone: a `sudo` that
-/// exited zero having run something else is not an escalation that worked.
+/// Why `sudo` did not escalate, given that it demonstrably did not run the command it was
+/// handed. `ran` is that proof, and each transport owes its own: the local one asks the agent
+/// for its version, and the remote one reads one of the bootstrap's private exit codes, which
+/// nothing but the bootstrap itself can produce. Either way a `sudo` that exited zero having
+/// run something else is not an escalation that worked.
 ///
 /// The strings are the two `sudo` implementations' own, measured on the development machine
 /// (`sudo-rs` 0.2.13) and on the target machine (`sudo` 1.9.15p5); a host may run either, so
 /// both wordings are matched. Which of the two messages a match produces is decided by whether
 /// `offered` carries the password this invocation wrote, rather than by the text, whose split
 /// between "none given" and "wrong one" differs between the two implementations.
-fn escalation_outcome(
-    code: Option<i32>,
-    stdout: &str,
-    stderr: &str,
-    offered: Option<&str>,
-) -> Result<(), ConnectError> {
-    if code == Some(0) && stdout.trim() == format!("volant-agent {}", env!("CARGO_PKG_VERSION")) {
+fn escalation_outcome(ran: bool, stderr: &str, offered: Option<&str>) -> Result<(), ConnectError> {
+    if ran {
         return Ok(());
     }
     if refused_authentication(stderr) {
@@ -601,16 +636,38 @@ impl SshTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
-        self.bootstrap(agents).await?;
-        let escalated = match escalation {
-            Some(e) => Some((e, self.check_escalation(e).await?)),
-            None => None,
+        // The escalation is settled first, because the bootstrap itself now runs as the target
+        // user: the agent is cached under that user's own `remote_tmp`, which is the only place
+        // an unprivileged `become_user` is sure to be able to read it. A home directory left at
+        // mode 0700, the default on several distributions, makes the connecting user's cache
+        // unreachable to anybody else, and every escalated task on the host then failed with
+        // whatever the remote shell said about a file it could not reach.
+        // The probe that settles the form is the bootstrap's own first probe, so its answer is
+        // carried over rather than asked for twice: on a host whose agent is already cached
+        // that makes an escalated link two `ssh` invocations, one fewer than before.
+        let (escalated, probed) = match escalation {
+            Some(e) => {
+                let (form, probe) = self.check_escalation(e).await?;
+                (Some((e, form)), Some(probe))
+            }
+            None => (None, None),
         };
-        let remote = format!(
-            "exec {}{}",
-            sudo_prefix(escalated),
-            shell_word(&self.agent_path())
-        );
+        self.bootstrap(agents, escalated, probed)
+            .await
+            .map_err(|err| match (err, escalated) {
+                (ConnectError::Unreachable(msg), Some((e, _))) => ConnectError::Unreachable(
+                    format!("preparing the agent for user {}: {msg}", e.user),
+                ),
+                (err, _) => err,
+            })?;
+        let agent = shell_word(&self.agent_path());
+        let remote = match escalated {
+            None => format!("exec {agent}"),
+            Some(_) => format!(
+                "exec {}",
+                escalated_command(escalated, &format!("exec {agent}"))
+            ),
+        };
         let child = Command::new("ssh")
             .args(&self.ssh_argv(&remote)[1..])
             .stdin(Stdio::piped())
@@ -624,45 +681,76 @@ impl SshTarget {
             .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
     }
 
-    /// The remote twin of `check_local_escalation`: one short `ssh` that asks `sudo` for the
-    /// agent's version as the escalated user, so the link itself only ever opens once the host
-    /// has proved it will escalate, in a form the host has proved it accepts.
-    async fn check_escalation(&self, escalation: &Escalation) -> Result<SudoForm, ConnectError> {
-        settle_form(escalation, move |form| {
-            self.escalation_probe(escalation, form)
+    /// The remote twin of `check_local_escalation`: one short `ssh` that runs the bootstrap
+    /// probe as the escalated user, so the link itself only ever opens once the host has proved
+    /// it will escalate, in a form the host has proved it accepts.
+    ///
+    /// The probe cannot ask for the agent's version the way the local one does, because on a
+    /// host connected to for the first time the agent is not there yet - and it is that very
+    /// upload this settles the form for. It reads the probe's exit code instead, which is
+    /// proof of the same thing: only the bootstrap's own script produces one of those codes.
+    async fn check_escalation(
+        &self,
+        escalation: &Escalation,
+    ) -> Result<(SudoForm, Captured), ConnectError> {
+        let command = self.probe_command();
+        settle_form(escalation, bootstrap_probe_ran, |form| {
+            self.run_bootstrap(Some((escalation, form)), &command, None)
         })
         .await
     }
 
-    async fn escalation_probe(
+    /// One bootstrap command, run as the escalated user where the link escalates.
+    ///
+    /// The `sudo` password goes on stdin ahead of any payload, never after it: with the
+    /// `ReadStdin` form `sudo` reads exactly one line before the command it starts sees
+    /// anything, so an upload whose first line went to `sudo` would land one line short.
+    async fn run_bootstrap(
         &self,
-        escalation: &Escalation,
-        form: SudoForm,
+        escalated: Escalated<'_>,
+        command: &str,
+        payload: Option<&[u8]>,
     ) -> Result<Captured, ConnectError> {
-        let command = format!(
-            "LC_ALL=C {}{} --version",
-            sudo_prefix(Some((escalation, form))),
-            shell_word(&self.agent_path())
-        );
-        let stdin = preamble(Some((escalation, form)));
-        // A password is only ever on this pipe when `stdin` carries it; asking `escalation`
+        let secret = preamble(escalated);
+        // A password is only ever on this pipe when `secret` carries it; asking the escalation
         // directly would say "offered" for a `NoPrompt` probe that never wrote it anywhere.
-        let offered = stdin
+        let offered = secret
             .is_some()
-            .then_some(escalation.password.as_deref())
+            .then(|| escalated.and_then(|(e, _)| e.password.as_deref()))
             .flatten();
+        let stdin = match (secret, payload) {
+            (None, payload) => payload.map(<[u8]>::to_vec),
+            (Some(secret), None) => Some(secret),
+            (Some(secret), Some(payload)) => Some([secret.as_slice(), payload].concat()),
+        };
+        let command = match escalated {
+            None => command.to_string(),
+            // The messages `escalation_outcome` matches are `sudo`'s English ones.
+            Some(_) => format!("LC_ALL=C {}", escalated_command(escalated, command)),
+        };
         self.run_capturing(&command, stdin.as_deref(), offered)
             .await
     }
 
-    /// Makes sure the host has this exact agent version cached, uploading it if it does not.
-    /// Every way out other than `Ok(())` is a `ConnectError`, so no caller can go on to run a
-    /// missing, stale or wrong-architecture agent.
-    async fn bootstrap(&self, agents: &AgentSource) -> Result<(), ConnectError> {
+    /// Makes sure the host has this exact agent version cached for the link's target user,
+    /// uploading it if it does not. Every way out other than `Ok(())` is a `ConnectError`, so
+    /// no caller can go on to run a missing, stale or wrong-architecture agent.
+    /// `probed` is that first probe already run, which is what the escalation check runs to
+    /// settle the `sudo` form.
+    async fn bootstrap(
+        &self,
+        agents: &AgentSource,
+        escalated: Escalated<'_>,
+        probed: Option<Captured>,
+    ) -> Result<(), ConnectError> {
         let expected = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
-        let probe = self
-            .run_capturing(&self.probe_command(), None, None)
-            .await?;
+        let probe = match probed {
+            Some(probe) => probe,
+            None => {
+                self.run_bootstrap(escalated, &self.probe_command(), None)
+                    .await?
+            }
+        };
         if probe.code == Some(0) && probe.stdout.trim() == expected {
             return Ok(());
         }
@@ -685,7 +773,11 @@ impl SshTarget {
             }
             _ => {
                 let uname = self
-                    .run_capturing(&format!("uname -m || exit {EXIT_UNAME_FAILED}"), None, None)
+                    .run_bootstrap(
+                        escalated,
+                        &format!("uname -m || exit {EXIT_UNAME_FAILED}"),
+                        None,
+                    )
                     .await?;
                 if uname.code != Some(0) {
                     return Err(ConnectError::Unreachable(format!(
@@ -717,7 +809,7 @@ impl SshTarget {
             .map_err(|e| ConnectError::Unreachable(format!("reading {}: {e}", local.display())))?;
         let size = bytes.len() as u64;
         let upload = self
-            .run_capturing(&self.upload_command(size), Some(&bytes), None)
+            .run_bootstrap(escalated, &self.upload_command(size), Some(&bytes))
             .await?;
         match upload.code {
             Some(0) => {}
@@ -747,7 +839,7 @@ impl SshTarget {
         // a wrapper script or a foreign architecture), not a stale file this controller can fix
         // by trying again.
         let check = self
-            .run_capturing(&self.probe_command(), None, None)
+            .run_bootstrap(escalated, &self.probe_command(), None)
             .await?;
         if check.code == Some(EXIT_AGENT_UNRUNNABLE) {
             return Err(ConnectError::Unreachable(format!(
@@ -819,6 +911,7 @@ impl SshTarget {
     }
 }
 
+#[derive(Debug)]
 struct Captured {
     code: Option<i32>,
     stdout: String,
@@ -987,8 +1080,7 @@ mod tests {
     /// implementations split their wording between the two cases differently.
     #[test]
     fn sudos_refusals_are_told_apart_by_whether_a_password_was_offered() {
-        let outcome = |stderr: &str, offered| match escalation_outcome(Some(1), "", stderr, offered)
-        {
+        let outcome = |stderr: &str, offered| match escalation_outcome(false, stderr, offered) {
             Err(ConnectError::Become(msg)) => msg,
             other => panic!("expected Become, got {other:?}"),
         };
@@ -1032,7 +1124,7 @@ mod tests {
         let password = format!("only-this-run-{}", std::process::id());
         let stderr = format!("sudo: bespoke build read '{password}' and disliked it");
         let Err(ConnectError::Become(msg)) =
-            escalation_outcome(Some(1), "", &stderr, Some(password.as_str()))
+            escalation_outcome(false, &stderr, Some(password.as_str()))
         else {
             panic!("expected Become");
         };
@@ -1094,7 +1186,7 @@ mod tests {
         let without = escalation(None);
 
         let asked = RefCell::new(Vec::new());
-        let form = settle_form(&with, |form| {
+        let (form, _) = settle_form(&with, agent_version_ran, |form| {
             asked.borrow_mut().push(form);
             ready(Ok(agent_version()))
         })
@@ -1113,7 +1205,7 @@ mod tests {
         );
 
         let asked = RefCell::new(Vec::new());
-        let form = settle_form(&with, |form| {
+        let (form, _) = settle_form(&with, agent_version_ran, |form| {
             asked.borrow_mut().push(form);
             ready(Ok(match form {
                 SudoForm::NoPrompt => refused("sudo: a password is required"),
@@ -1127,7 +1219,7 @@ mod tests {
         assert!(preamble(Some((&with, form))).is_some());
 
         let asked = RefCell::new(Vec::new());
-        let err = settle_form(&without, |form| {
+        let err = settle_form(&without, agent_version_ran, |form| {
             asked.borrow_mut().push(form);
             ready(Ok(refused("sudo: a password is required")))
         })
@@ -1140,7 +1232,7 @@ mod tests {
             "with nothing to offer there is nothing to try twice"
         );
 
-        let err = settle_form(&with, |form| {
+        let err = settle_form(&with, agent_version_ran, |form| {
             ready(Ok(match form {
                 SudoForm::NoPrompt => refused("sudo: a password is required"),
                 SudoForm::ReadStdin => refused("sudo: 1 incorrect password attempt"),
@@ -1151,7 +1243,7 @@ mod tests {
         assert_eq!(err.to_string(), INCORRECT_SUDO_PASSWORD);
 
         let asked = RefCell::new(Vec::new());
-        let err = settle_form(&with, |form| {
+        let err = settle_form(&with, agent_version_ran, |form| {
             asked.borrow_mut().push(form);
             ready(Ok(refused("sh: 1: sudo: not found")))
         })
@@ -1169,21 +1261,103 @@ mod tests {
     /// Checking the agent's own version line is what keeps a wrapper, an alias or a stale
     /// cached binary from being read as a success and then running the task as the wrong user.
     #[test]
-    fn escalation_succeeds_only_on_the_agents_own_version_line() {
+    fn local_escalation_succeeds_only_on_the_agents_own_version_line() {
+        let printed = |code, stdout: &str| {
+            agent_version_ran(&Captured {
+                code,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        };
         let version = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
-        assert!(escalation_outcome(Some(0), &version, "", None).is_ok());
+        assert!(printed(Some(0), &version));
         assert!(
-            escalation_outcome(Some(0), &format!("{version}\n"), "", None).is_ok(),
+            printed(Some(0), &format!("{version}\n")),
             "a trailing newline is not a different version"
         );
         assert!(
-            escalation_outcome(Some(0), "volant-agent 0.0.0-stale", "", None).is_err(),
+            !printed(Some(0), "volant-agent 0.0.0-stale"),
             "another version is not this agent"
         );
         assert!(
-            escalation_outcome(Some(0), "", "", None).is_err(),
+            !printed(Some(0), ""),
             "a zero exit with nothing printed proves nothing"
         );
+        assert!(!printed(Some(1), &version), "a refusal is a refusal");
+    }
+
+    /// The remote probe cannot ask for a version, because it is the upload of that very agent
+    /// it settles the `sudo` form for. It reads the probe script's own exit codes instead: no
+    /// `sudo` refusal and no shell complaint about a command it could not start produces one,
+    /// so any of them proves the script ran as the asked-for user.
+    #[test]
+    fn the_remote_escalation_probe_is_proved_by_the_bootstraps_own_exit_codes() {
+        let exited = |code| {
+            bootstrap_probe_ran(&Captured {
+                code,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        };
+        for code in [
+            0,
+            EXIT_AGENT_MISSING,
+            EXIT_AGENT_UNRUNNABLE,
+            EXIT_UNAME_FAILED,
+        ] {
+            assert!(exited(Some(code)), "the probe script's own code {code}");
+        }
+        for code in [1, 126, 127, EXIT_SSH_FAILURE] {
+            assert!(
+                !exited(Some(code)),
+                "{code} belongs to sudo, the shell or ssh, not to the probe"
+            );
+        }
+        assert!(!exited(None), "a command killed by a signal proves nothing");
+    }
+
+    /// A bootstrap command that escalates goes to an inner `sh -c`, because `remote_tmp` starts
+    /// with `~`: expanded by the outer remote shell it would name the connecting user's home,
+    /// the one directory an unprivileged `become_user` may not be allowed to enter.
+    #[test]
+    fn an_escalated_bootstrap_command_is_expanded_by_a_shell_running_as_that_user() {
+        let secret = escalation(None);
+        let plain = escalated_command(None, "d=~/'.ansible/tmp'; mkdir -p \"$d\"");
+        assert_eq!(
+            plain, "d=~/'.ansible/tmp'; mkdir -p \"$d\"",
+            "a link that does not escalate is not wrapped at all"
+        );
+        let wrapped = escalated_command(
+            Some((&secret, SudoForm::NoPrompt)),
+            "d=~/'.ansible/tmp'; mkdir -p \"$d\"",
+        );
+        assert_eq!(
+            wrapped,
+            r#"sudo -H '-n' -u 'deploy' -- sh -c 'd=~/'\''.ansible/tmp'\''; mkdir -p "$d"'"#
+        );
+        // Run the wrapping against a real `sh`, with the `sudo` words dropped: the failure this
+        // guards against is a quoting one, and what has to hold is that the tilde reaches the
+        // inner shell unexpanded, so the escalated user's own `HOME` is what it names. The
+        // outer shell stands in for the remote one and the inner for the one `sudo` starts.
+        #[cfg(unix)]
+        {
+            let inner = format!("printf %s {}", shell_word("~/a b/c"));
+            let wrapped = escalated_command(Some((&secret, SudoForm::NoPrompt)), &inner);
+            let (_, sh) = wrapped
+                .split_once("-- ")
+                .expect("the sudo words end with --");
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(sh)
+                .env("HOME", "/tmp/volant home")
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                "/tmp/volant home/a b/c",
+                "the tilde expands where it should and the rest stays one word"
+            );
+        }
     }
 
     #[test]

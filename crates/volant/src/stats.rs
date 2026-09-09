@@ -65,6 +65,54 @@ impl Stats {
     }
 }
 
+/// A refusal that stops a run before any recap, carrying the exit status the reference gives
+/// it. Everything the reference refuses at that level does *not* exit 1: a playbook it cannot
+/// read or make sense of exits 4, and a setting it will not accept exits 2. The code travels
+/// with the error rather than being decided where it is printed, because the same `?` in the
+/// run carries all three.
+#[derive(Debug)]
+pub struct Refusal {
+    pub code: i32,
+    pub message: String,
+}
+
+impl Refusal {
+    /// Wraps an error so the run exits with `code` instead of 1. The message is flattened here
+    /// because it is only ever printed: `{:#}` on an `anyhow::Error` keeps its whole context
+    /// chain, which is the text the operator already reads today.
+    pub fn at(code: i32, err: impl std::fmt::Display) -> anyhow::Error {
+        anyhow::Error::new(Refusal {
+            code,
+            message: format!("{err}"),
+        })
+    }
+
+    /// Gives `err` this code unless it already carries one of its own, so a blanket code for a
+    /// whole family of refusals cannot bury the one a member of it measured for itself.
+    pub fn or(code: i32, err: anyhow::Error) -> anyhow::Error {
+        if err.chain().any(|link| link.is::<Refusal>()) {
+            err
+        } else {
+            Refusal::at(code, format!("{err:#}"))
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// The exit status an error out of a run gives the process: whatever refusal it carries, or 1.
+pub fn error_code(err: &anyhow::Error) -> i32 {
+    err.chain()
+        .find_map(|e| e.downcast_ref::<Refusal>())
+        .map_or(1, |refusal| refusal.code)
+}
+
 /// ansible-playbook's exit status: 2 for failed hosts, 4 for unreachable hosts, combined.
 pub fn exit_code(stats: &Stats) -> i32 {
     let mut code = 0;

@@ -1,6 +1,9 @@
 /target/
 /docs/book/
 
+# editor project files, wherever they show up in the tree
+**/.idea/
+
 # planning notes and local assistant files stay out of the repository
 /docs/superpowers/
 /.claude/*

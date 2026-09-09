@@ -1,0 +1,6 @@
+- name: The second playbook
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Say it once more
+      command: echo again

@@ -282,6 +282,13 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 return Err(err);
             }
         }
+        // One recap per playbook argument, as the reference prints it, and the counters carry
+        // over: the second playbook's recap shows the whole run so far. An interrupted run
+        // skips this one and prints its own below, so a stop never doubles the last recap.
+        if *stop_rx.borrow() {
+            break 'plays;
+        }
+        out.recap(&stats);
     }
     state.shutdown_links().await;
     if *stop_rx.borrow() {
@@ -289,7 +296,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         out.recap(&stats);
         return Ok(99);
     }
-    out.recap(&stats);
+    // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))
 }
 

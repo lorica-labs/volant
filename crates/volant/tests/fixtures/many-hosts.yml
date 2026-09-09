@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - shell: sleep 1; echo {{ inventory_hostname }}
+      register: said
+    - debug:
+        msg: "{{ said.stdout }}"

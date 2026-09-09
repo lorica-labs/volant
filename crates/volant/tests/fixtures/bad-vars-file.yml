@@ -1,0 +1,10 @@
+- name: A vars_files entry that is not there
+  hosts: web
+  gather_facts: false
+  vars_files:
+    - does-not-exist.yml
+    - "{{ undefined_on_purpose }}.yml"
+  tasks:
+    - name: Reached anyway
+      debug:
+        msg: "reached on {{ inventory_hostname }}"

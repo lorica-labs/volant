@@ -1,0 +1,9 @@
+- name: A vars_files entry whose template is unclosed
+  hosts: web
+  gather_facts: false
+  vars_files:
+    - "{{ unclosed "
+  tasks:
+    - name: Never reached
+      debug:
+        msg: "reached on {{ inventory_hostname }}"

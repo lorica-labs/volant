@@ -77,13 +77,20 @@ The agent is a single static executable. Volant uploads it once per host and reu
 later run.
 
 It lives at `<remote_tmp>/volant-agent-<version>/volant-agent`, so with the default `remote_tmp`
-that is under `~/.ansible/tmp/` in the home directory of the account you log in as. The
-`<version>` in that path is the controller's own version, which is how an upgraded controller
-avoids running an older agent.
+that is under `~/.ansible/tmp/` in a home directory. The `<version>` in that path is the
+controller's own version, which is how an upgraded controller avoids running an older agent.
 
-The published x86_64 agent is 672,480 bytes, around 290 KB inside the release archive. It sits on
-the host uncompressed, since an executable has to be uncompressed to run, and it travels through
-`ssh -C`, so OpenSSH compresses it on the wire and nothing has to be unpacked before a run.
+Whose home directory depends on who runs the agent. A task that does not escalate runs it as the
+account you log in as, and caches it there. A task that escalates runs it as the `become_user`,
+and caches it in that user's own home, written through `sudo` on the way in. That is what lets a
+`become_user` other than `root` work at all: a home directory at mode 0700, which is the default
+on several distributions, is one no other account can read, so an agent cached under the account
+you log in as would be out of reach of everybody you might become. One host therefore holds one
+cache per account the run acts as, each owned by that account and readable by nobody else.
+
+The agent is a few hundred kilobytes. It sits on the host uncompressed, since an executable has
+to be uncompressed to run, and it travels through `ssh -C`, so OpenSSH compresses it on the wire
+and nothing has to be unpacked before a run.
 
 Before every connection Volant asks the cached agent for its version. A version that does not
 match, a missing file and a file that will not run at all each lead to a fresh upload, which means
@@ -106,11 +113,35 @@ A host keeps its agent link for the whole run, across plays. Tasks travel as bat
 one link instead of one connection per task. If a link dies between two plays, Volant reconnects
 once; a second failure reports the host unreachable.
 
-Escalation adds a link rather than replacing one: the controller holds one link per (host,
-target user) pair until the recap. Those links are not bounded by `forks`, which counts hosts,
-and each one is a separate `ssh` process. An escalated link also costs one extra `ssh`
-connection for the `sudo` probe, two when a password is wanted. There is no `ControlMaster`
-yet, so a wide inventory pays for every one of those connections separately.
+Escalation adds a link rather than replacing one: while a batch runs, a host that escalates
+holds two links, one for the user that batch escalates to and one for the account you log in as.
+Only that second one lives longer than the batch. What persistence is for is the connection to
+the host itself, and that is the link that stays.
+
+An escalated link closes as soon as its batch is answered, and is reopened by the next batch
+that needs it. That is more often than once per play: a task carrying `register`, `loop`,
+`changed_when` or `failed_when` ends the batch it is in, and so does a task reading another
+host's variables or escalating to a different user. A play built from those pays for a fresh
+escalated link at each one. The reopen is one probe and one `ssh`, because the agent is already
+cached for that user, so it still beats the connection per task the same play costs under
+Ansible, but it is not free: grouping escalated work into runs of plain tasks is what keeps the
+count down.
+
+Each link is a separate `ssh` process and costs the controller three file descriptors, so a run
+is limited by `ulimit -n` as well as by the hosts it names. `forks` bounds the escalated links,
+since a host holds one only while it is one of the hosts working; the link to the host itself is
+held from the play that first reached it to the recap, so a run of N hosts escalating to any
+number of users settles at N plus `forks` links. That is the figure it settles at, not a ceiling
+it never crosses: a link being closed gets up to two seconds to tell its agent to stop, and it is
+closed off to one side rather than waited for, so a play working through batches quickly can hold
+a few descriptors more than the arithmetic says for as long as those closes take. With the usual
+`ulimit -n 1024` the room runs out past roughly 338 links, and `ssh` then stops starting: the
+hosts it happens to hit are reported unreachable although nothing is wrong with them. Raise
+`ulimit -n` before a run that wide.
+
+An escalated link also costs one extra `ssh` connection for the `sudo` probe, two when a
+password is wanted. There is no `ControlMaster` yet, so a wide inventory pays for every one of
+those connections separately.
 
 ## Privilege escalation
 

@@ -341,6 +341,103 @@ fn a_limit_that_matches_nothing_is_an_error() {
     );
 }
 
+/// A `--limit` naming a host that is not there narrows the run and says so, rather than
+/// narrowing it silently. Measured against the reference: `-l web1,web-typo` prints
+/// `[WARNING]: Could not match supplied host pattern, ignoring: web-typo` and then runs on
+/// `web1`, exit 0. The wording is the reference's, word for word, and it is the same line a
+/// play's own `hosts` already printed for an unmatched pattern.
+#[test]
+fn a_limit_naming_a_host_that_is_not_there_warns_and_runs_the_rest() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("cfg/hosts.ini"),
+        "-l",
+        "one,not-a-host",
+        &fixture("cfg/site.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}\n{err}");
+    assert!(
+        format!("{text}{err}")
+            .contains("Could not match supplied host pattern, ignoring: not-a-host"),
+        "the mistyped name is named: {text}\n{err}"
+    );
+    assert!(
+        text.contains("ok: [one]") && !text.contains("ok: [two]"),
+        "the limit still applies: {text}"
+    );
+}
+
+/// A playbook that is there and does not parse exits 4, not 1. Measured against the reference:
+/// a YAML error, an unknown play keyword, an unknown module and `a playbook must be a list of
+/// plays` all exit 4, while a playbook file that is not there exits 1 (covered above).
+#[test]
+fn a_playbook_that_does_not_parse_exits_4() {
+    let dir = std::env::temp_dir().join(format!("volant-parse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = [
+        ("yaml.yml", "- hosts: all\n  tasks: [unclosed\n"),
+        (
+            "keyword.yml",
+            "- hosts: all\n  strategy: free\n  tasks: []\n",
+        ),
+        ("not-a-list.yml", "hosts: all\n"),
+    ];
+    for (name, body) in cases {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        let out = volant(&["playbook", &path.display().to_string()]);
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        assert_eq!(out.status.code(), Some(4), "{name}: {err}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).is_empty(),
+            "{name}: nothing runs"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A configuration file that is there and cannot be read stops the run instead of falling back
+/// to the defaults. It used to fall back, which threw away `inventory`, `forks` and the whole
+/// `[privilege_escalation]` section: the run then targeted the implicit localhost, did nothing
+/// and exited 0. A deliberate divergence from the reference, which does exactly that - measured,
+/// an `ansible.cfg` at mode 000 leaves it warning only about the inventory it did not get, and
+/// it exits 0.
+///
+/// The unreadable file here is one that is not text, because that fails for `root` too and this
+/// suite has to give the same answer whoever runs it; a file at mode 000 takes the same path.
+#[test]
+fn an_unreadable_ansible_cfg_refuses_the_run() {
+    let dir = std::env::temp_dir().join(format!("volant-badcfg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = dir.join("ansible.cfg");
+    std::fs::write(&cfg, b"[defaults]\ninventory = ./hosts.ini\n# \xff\xfe\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &fixture("cfg/site.yml")])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_CONFIG", cfg.display().to_string())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a configuration it cannot read must not be read as no configuration, and a refused \
+         setting is exit 2 here as it is for a refused `forks`: {text}\n{err}"
+    );
+    assert!(
+        err.contains("ansible.cfg"),
+        "the file is named: {text}\n{err}"
+    );
+    assert!(!text.contains("PLAY RECAP"), "nothing runs: {text}\n{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
     let out = volant(&[
@@ -374,8 +471,11 @@ fn the_agent_connection_survives_across_plays() {
     );
 }
 
-/// Two measured durations in the same process, never a constant: six one-second sleeps run
-/// six at a time against the same six run one at a time.
+/// Six one-second sleeps, run six at a time and then one at a time. The bounds are absolute
+/// rather than a ratio between the two durations: comparing them made the noisier of the two
+/// the denominator, so a loaded runner that took 2.4 s for the wide run failed a required CI
+/// job with a correct implementation. `narrow >= 5s` cannot be reached by an implementation
+/// that ignores `-f 1`, and `wide < 3s` cannot be reached by one that serialises everything.
 #[test]
 fn forks_bounds_the_hosts_running_at_once() {
     let dir = std::env::temp_dir().join(format!("volant-forks-{}", std::process::id()));
@@ -410,8 +510,12 @@ fn forks_bounds_the_hosts_running_at_once() {
     );
     let narrow = started.elapsed();
     assert!(
-        narrow.as_secs_f64() > wide.as_secs_f64() * 2.5,
-        "forks=1 must serialise six one-second sleeps (wide {wide:?}, narrow {narrow:?})"
+        narrow.as_secs_f64() >= 5.0,
+        "forks=1 must serialise six one-second sleeps (narrow {narrow:?})"
+    );
+    assert!(
+        wide.as_secs_f64() < 3.0,
+        "forks=6 must run six one-second sleeps together (wide {wide:?})"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -623,8 +727,12 @@ fn a_host_without_sudo_fails_the_task_with_the_shells_words() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `become_method` other than `sudo` stops the run before anything executes: exit 1, and the
-/// method named. `sudo` is not silently substituted for the program the playbook asked for.
+/// `become_method` other than `sudo` stops the run before anything executes, with the method
+/// named. `sudo` is not silently substituted for the program the playbook asked for.
+///
+/// Exit 2, measured: the reference reads the keyword happily, finds no plugin for the method and
+/// fails the task that would have used it. Volant refuses earlier, so nothing runs and there is
+/// no recap, but the code an operator's script reads is the same one.
 #[test]
 fn unsupported_become_methods_are_refused_by_name() {
     let dir = std::env::temp_dir().join(format!("volant-su-{}", std::process::id()));
@@ -637,7 +745,7 @@ fn unsupported_become_methods_are_refused_by_name() {
     )
     .unwrap();
     let out = volant(&["playbook", &path.display().to_string()]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(
         text.contains("su") && text.contains("not supported"),
@@ -654,7 +762,7 @@ fn unsupported_become_methods_are_refused_by_name() {
         .env("ANSIBLE_BECOME_METHOD", "doas")
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("doas"),
         "the environment variable is refused by name too: {}",
@@ -1103,8 +1211,10 @@ fn a_broken_vars_files_template_fails_the_run() {
 
 /// Measured against the reference: a `vars_files` entry that renders to something other than a
 /// string prints "Invalid `vars_files` value of type 'int'. A `vars_files` value should either be
-/// a string or list of strings." on stderr, with no recap. The reference exits 4 where every
-/// run-level refusal here exits 1; the message itself is matched word for word.
+/// a string or list of strings." on stderr, with no recap, and exits 4. The message is matched
+/// word for word and so is the code, which is the reference's own for a playbook it cannot make
+/// sense of. A `vars_files` entry whose *template* fails is a different case and exits 1 there,
+/// also measured; the test above covers it.
 #[test]
 fn a_vars_files_entry_that_is_not_a_string_is_refused() {
     let out = volant(&[
@@ -1115,7 +1225,7 @@ fn a_vars_files_entry_that_is_not_a_string_is_refused() {
     ]);
     let text = String::from_utf8(out.stdout).unwrap();
     let err = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(out.status.code(), Some(1), "{text}\n{err}");
+    assert_eq!(out.status.code(), Some(4), "{text}\n{err}");
     assert!(
         err.contains(
             "Invalid `vars_files` value of type 'int'. A `vars_files` value should either be a \

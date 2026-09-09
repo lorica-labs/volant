@@ -10,17 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `volant playbook` and `volant-playbook`: run playbooks made of `command`, `shell` and `raw` tasks, with ansible-playbook's output, recap and exit codes.
 - Static INI inventories with groups, children and group variables; implicit `localhost`.
-- The agent binary, uploaded to hosts in later releases, running task batches with fail-fast and cancellation.
+- The agent binary, running task batches with fail-fast and cancellation.
 - Variables from inventories, `group_vars/` and `host_vars/` directories, play `vars` and `vars_files`, task `vars`, `--extra-vars`, `register` and `set_fact`, with Ansible's precedence.
 - Jinja2 templating in strict mode, with the common Ansible filters, tests and lookups, checked against ansible-core.
 - Task keywords `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`; controller-side `set_fact` and `debug`.
 - `--limit`, `ansible.cfg` inventory and timeout, `ansible_version` and `volant_version` variables.
 - The `ssh` connection: the agent is uploaded once per host, cached under `remote_tmp` per version, and reused by every later run. Space is checked before the write and the upload is atomic.
-- `become` through `sudo`, as a play or task keyword and as `ansible_become*` host variables, with the escalation password read from `-K` or from a variable and never written anywhere.
+- `become` through `sudo`, as a play or task keyword and as `ansible_become*` host variables, with the escalation password read from `-K` or from a variable and never written anywhere. The agent an escalated task runs is cached under the target user's own home, so escalating to an account other than `root` works on a host whose home directories are private.
 - `forks`, bounding how many hosts a play works on at once, readable as `ansible_forks`.
-- One agent link per host and target user, held for the whole run across plays, with a single reconnect when a link dies between plays.
+- One agent link per host and target user. The host's own link is held for the whole run across plays, with a single reconnect when a link dies between plays; an escalated link lasts as long as the batch that needs it, so `forks` bounds the connections open as well as the hosts working.
 - The full host-pattern grammar: wildcards inside names, `!` exclusions, `&` intersections and `[N]`, `[N:M]`, `[N-M]` subscripts.
 - New flags `-u`, `--private-key`, `-f`, `-b`, `--become-user`, `--become-method` and `-K`, and the `ansible.cfg` keys `remote_user`, `private_key_file`, `host_key_checking`, `remote_tmp`, `forks` and the `[privilege_escalation]` section.
+- Run-level refusals exit with the code the reference gives them: 4 for a playbook that does not parse and for a `vars_files` value of the wrong type, 1 for a playbook file that is not there and for a pattern that leaves no hosts, 2 for a setting that is refused.
+- A `--limit` pattern that matches no host warns and narrows the run to what it did match, instead of narrowing it silently.
+- A configuration file that is there and cannot be read stops the run instead of falling back to the defaults.
 
 ### Changed
 

@@ -99,7 +99,8 @@ pub struct RunState {
     pub vars: Arc<Mutex<VarStore>>,
     pub failed_hosts: HashSet<String>,
     pub verbosity: u8,
-    /// Agents kept alive between plays, the way Ansible keeps its ssh connections open.
+    /// Agents kept alive between plays, the way Ansible keeps its ssh connections open. Only
+    /// the connecting user's own link per host is kept; see `keep_links`.
     pub links: HashMap<LinkKey, AgentLink>,
 }
 
@@ -328,12 +329,8 @@ pub async fn run_play(
                             // The host is leaving the run for good: keeping its connection open
                             // would just idle until the run ends.
                             state.failed_hosts.insert(host.clone());
-                            for (_, link) in links {
-                                link.shutdown().await;
-                            }
-                        } else {
-                            state.links.extend(links);
                         }
+                        keep_links(&mut state.links, links, failed).await;
                         gone.insert(host);
                         publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
                     }
@@ -377,12 +374,8 @@ pub async fn run_play(
             } => {
                 if failed {
                     state.failed_hosts.insert(host);
-                    for (_, link) in links {
-                        link.shutdown().await;
-                    }
-                } else {
-                    state.links.extend(links);
                 }
+                keep_links(&mut state.links, links, failed).await;
                 publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
             Event::TaskDone { host, index } => {
@@ -390,11 +383,22 @@ pub async fn run_play(
                 *seen = (*seen).max(index);
                 publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
-            // A driver sends a result and the `TaskDone` behind it over the same channel, so
-            // the task loop above has consumed every result it will ever see. Should that order
-            // ever change, a result arriving here is a task missing from the recap, which is
-            // the one failure this file cannot afford: report it rather than drop it.
+            // A driver sends a result and the `TaskDone` behind it over the same channel, so a
+            // result reaching here is one the task loop above never read - which happens when
+            // its host entered `gone` before that task's `TaskDone`. Report it rather than drop
+            // it: a task missing from the recap is the one failure this file cannot afford.
             event @ Event::Result { .. } => report_result(event, stats, out),
+        }
+    }
+    // Results the task loop left behind for the same reason: a host that entered `gone` between
+    // a result and that task's `TaskDone` breaks the inner loop without draining what it had
+    // already queued. Sorted by task and then by the play's own host order, so a leftover reads
+    // where it would have read.
+    let mut leftover: Vec<((String, usize), Vec<Event>)> = pending.into_iter().collect();
+    leftover.sort_by_key(|((host, index), _)| (*index, play_hosts.iter().position(|h| h == host)));
+    for (_, events) in leftover {
+        for event in events {
+            report_result(event, stats, out);
         }
     }
     for (host, worker) in workers {
@@ -463,6 +467,44 @@ fn publish(
         completed_through,
         live_hosts,
     });
+}
+
+/// Files the connections one host handed back, keeping only the one worth keeping.
+///
+/// What connection persistence buys is the connection to the host itself, and that is the
+/// `become_user: None` link: it is the one whose `ssh`, host key exchange and authentication a
+/// later play would otherwise pay for again. An escalated link is cheap to reopen on top of it,
+/// because its bootstrap short-circuits on the agent already cached for that user, so it is
+/// closed here instead of idling until the recap.
+///
+/// A driver normally releases its escalated links with its fork permit, well before it gets
+/// here; this is what closes the ones a driver still held when it left the play, and everything
+/// a failed host hands back. Between the two, no escalated link outlives the batch that needed
+/// it, and the run carries one link per host to the recap instead of one per host per user.
+async fn keep_links(
+    links: &mut HashMap<LinkKey, AgentLink>,
+    handed_back: Vec<(LinkKey, AgentLink)>,
+    failed: bool,
+) {
+    let mut closing = tokio::task::JoinSet::new();
+    for (key, link) in handed_back {
+        if failed || key.become_user.is_some() {
+            closing.spawn(link.shutdown());
+        } else {
+            links.insert(key, link);
+        }
+    }
+    while closing.join_next().await.is_some() {}
+}
+
+/// The keys of the connections that escalate, the ones a driver only holds while it holds a
+/// fork permit.
+fn escalated_links(links: &HashMap<LinkKey, AgentLink>) -> Vec<LinkKey> {
+    links
+        .keys()
+        .filter(|key| key.become_user.is_some())
+        .cloned()
+        .collect()
 }
 
 /// Takes every connection belonging to one host out of the run's map.
@@ -550,9 +592,36 @@ fn become_for(
     };
     // `become_user: "{{ app_user }}"` is ordinary Ansible, and the rendered name is what the
     // link is keyed by, so it has to be resolved before the connection is opened.
+    //
+    // It renders against the task's variables and not against one loop item's, so a
+    // `become_user` naming the loop variable has nothing to render against and the task fails.
+    // The reference escalates per item there, which is a divergence: one batch is one message
+    // to one agent under one user, and a task whose items each want a different user would have
+    // to split across links and interleave the answers. Saying which keyword could not be
+    // rendered, and why, is what keeps that from reading as the operator's own typo - it used
+    // to fail with nothing but "an option with an undefined variable".
+    //
+    // The name of the loop variable only explains the failure on a task that actually loops.
+    // On a loopless task it is an ordinary undefined variable that happens to be spelled like
+    // one, and the divergence is not what went wrong.
     let user = if Templar::is_template(&user) {
         templar
-            .render(&user, vars)?
+            .render(&user, vars)
+            .map_err(|err| {
+                let hint = match (task.loop_items.is_some(), user.contains(&task.loop_var)) {
+                    (true, true) => {
+                        ". A 'become_user' that changes per loop item is not supported yet: one \
+                         batch escalates to one user"
+                            .to_string()
+                    }
+                    (false, true) => format!(
+                        ". '{}' is only defined while a task loops, and this task has no 'loop'",
+                        task.loop_var
+                    ),
+                    _ => String::new(),
+                };
+                TemplateError(format!("rendering 'become_user' {user}: {}{hint}", err.0))
+            })?
             .as_str()
             .map(str::to_string)
             .ok_or_else(|| {
@@ -634,11 +703,17 @@ fn load_play_vars_files(
                 }
                 Err(err) => anyhow::bail!("rendering vars_files entry {raw}: {err}"),
             };
+            // Exit 4, the reference's own code for a playbook it cannot make sense of, measured
+            // alongside the wording. A template that fails to render stays at 1, also measured:
+            // the reference splits those two the same way.
             let path = rendered.as_str().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Invalid `vars_files` value of type '{}'. A `vars_files` value should either \
-                     be a string or list of strings.",
-                    python_type(&rendered)
+                crate::stats::Refusal::at(
+                    4,
+                    format!(
+                        "Invalid `vars_files` value of type '{}'. A `vars_files` value should \
+                         either be a string or list of strings.",
+                        python_type(&rendered)
+                    ),
                 )
             })?;
             let path = if Path::new(path).is_absolute() {
@@ -655,7 +730,11 @@ fn load_play_vars_files(
             files.push(match loaded.get(&path) {
                 Some(file) => file.clone(),
                 None => {
-                    let file = load_vars_file(&path)?;
+                    // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
+                    // does not parse stops the reference with the same code a broken playbook
+                    // gets.
+                    let file =
+                        load_vars_file(&path).map_err(|err| crate::stats::Refusal::or(4, err))?;
                     loaded.insert(path, file.clone());
                     file
                 }
@@ -849,7 +928,7 @@ fn flatten_once(list: Vec<Value>) -> Vec<Value> {
 }
 
 fn is_local(module: &str) -> bool {
-    matches!(short_name(module), "set_fact" | "debug")
+    volant_protocol::modules::local(module).is_some()
 }
 
 /// Ansible prints a string item as is and anything else as JSON.
@@ -1381,7 +1460,28 @@ async fn drive_host(
             }
             // The results are in and reported, so the next host may start while this one
             // renders its remaining local tasks.
+            //
+            // The escalated links go with the permit, which is what makes `forks` bound the
+            // connections open as well as the hosts working. It bounded only the latter, and a
+            // driver keeps its links from its first batch to the end of the play, so a wide
+            // play held one link per host per target user however narrow `-f` was. Measured on
+            // the development machine: three controller descriptors per link, so the usual
+            // `ulimit -n 1024` runs out past roughly 338 links, and 20 hosts escalating to root
+            // under `ulimit -n 128` and `-f 5` reported `UNREACHABLE! ... starting ssh: Too
+            // many open files` for a host that was perfectly reachable. The link to the host
+            // itself stays - that is the expensive one, and the one persistence is for - and
+            // the escalated agent is already cached for its user, so reopening it is one probe
+            // and one `ssh`.
+            //
+            // Closed off-task rather than awaited here: `shutdown` gives its own agent up to
+            // two seconds, and a driver paying that between batches would serialise exactly
+            // what releasing the permit just freed.
             permit = None;
+            for key in escalated_links(&links) {
+                if let Some(link) = links.remove(&key) {
+                    tokio::spawn(link.shutdown());
+                }
+            }
             match ended {
                 Err(msg) => {
                     unreachable = Some(msg);
@@ -1416,7 +1516,8 @@ async fn drive_host(
             })
             .await;
     }
-    // Healthy connections outlive the play: the run closes them once, before the recap.
+    // The healthy connection to the host itself outlives the play; `keep_links` decides which
+    // of these that is and closes the rest. The run closes what is left once, before the recap.
     let _ = tx
         .send(Event::Finished {
             host: name,
@@ -1630,7 +1731,6 @@ mod tests {
             failed_when: Vec::new(),
             r#become: None,
             become_user: None,
-            become_method: None,
         }
     }
 
@@ -1752,6 +1852,27 @@ mod tests {
                 .user,
             "deploy",
             "a templated user is resolved before the link is keyed by it"
+        );
+    }
+
+    /// `become_user: "{{ item }}"` escalates per item in the reference, measured on the
+    /// development machine: two items, `root` then the invoking account, and each ran as its
+    /// own. Here it fails the task, because escalation is settled once per batch and one batch
+    /// is one message to one agent under one user. What this pins is the message: it names the
+    /// keyword and says why, where it used to say only that some option held an undefined
+    /// variable.
+    #[test]
+    fn a_become_user_that_changes_per_loop_item_says_why_it_cannot() {
+        let templar = Templar::new(std::env::temp_dir());
+        let mut t = task("command");
+        t.r#become = Some(true);
+        t.become_user = Some("{{ item }}".into());
+        t.loop_items = Some(json!(["root", "deploy"]));
+        let err = become_for(&t, &plan(), &Map::new(), &defaults(), &templar).unwrap_err();
+        assert!(
+            err.0.contains("become_user") && err.0.contains("per loop item"),
+            "{}",
+            err.0
         );
     }
 

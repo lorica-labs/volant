@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
-use volant_protocol::modules::native;
+use volant_protocol::modules::{is_known, native};
 
 use crate::yaml::{as_bool, field, to_json};
 
@@ -27,7 +27,6 @@ pub struct Play {
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
-    pub become_method: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +52,6 @@ pub struct PlayTask {
     pub failed_when: Vec<String>,
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
-    pub become_method: Option<String>,
 }
 
 /// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
@@ -95,10 +93,10 @@ pub const BECOME_METHOD: &str = "sudo";
 /// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
 /// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
 /// do in Ansible.
-fn escalation(
-    yaml: &Yaml,
-    context: &str,
-) -> anyhow::Result<(Option<bool>, Option<String>, Option<String>)> {
+///
+/// `become_method` comes back as nothing: refusing everything but `sudo` right here is all a
+/// caller could ever do with it, so it is refused here and not stored.
+fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
     let text = |key: &str| -> anyhow::Result<Option<String>> {
         match field(yaml, key) {
             None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
@@ -114,13 +112,17 @@ fn escalation(
         ),
     };
     let user = text("become_user")?;
-    let method = text("become_method")?;
-    if let Some(method) = &method
+    if let Some(method) = text("become_method")?
         && method != BECOME_METHOD
     {
-        bail!("{context}become_method '{method}' is not supported yet");
+        // Exit 2, not the 4 the rest of a refused playbook gets: measured, the reference reads
+        // this keyword happily and then fails the task that would have used it, which is 2.
+        return Err(crate::stats::Refusal::at(
+            2,
+            format!("{context}become_method '{method}' is not supported yet"),
+        ));
     }
-    Ok((flag, user, method))
+    Ok((flag, user))
 }
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
@@ -128,10 +130,21 @@ fn is_free_form(module: &str) -> bool {
     native(module).is_some_and(|m| m.free_form)
 }
 
+/// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
+/// that is there and does not make sense stops it with exit 4. Both codes are the reference's
+/// own, measured against ansible-core 2.19.12: `the playbook: x.yml could not be found` exits 1,
+/// while a YAML error, a play that is not a mapping, an unknown keyword, a module that cannot be
+/// resolved and `a playbook must be a list of plays` all exit 4, with no `PLAY RECAP`.
+///
+/// A module counts as resolvable here when `volant_protocol::modules::is_known` has it. The
+/// reference resolves an action while it loads the play, so a name it cannot find refuses the
+/// whole run before the first task; the set it can find is every collection installed, and the
+/// set this engine can find is its two module tables. Refusing at load is what keeps a playbook
+/// naming a module Volant has not written yet from applying half of itself.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading playbook {}", path.display()))?;
-    parse(&text, &path.display().to_string())
+    parse(&text, &path.display().to_string()).map_err(|err| crate::stats::Refusal::or(4, err))
 }
 
 pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
@@ -204,7 +217,7 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
         _ => bail!("'tasks' must be a list"),
     };
-    let (r#become, become_user, become_method) = escalation(yaml, "")?;
+    let (r#become, become_user) = escalation(yaml, "")?;
     Ok(Play {
         name,
         hosts,
@@ -214,7 +227,6 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         tasks,
         r#become,
         become_user,
-        become_method,
     })
 }
 
@@ -244,6 +256,9 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         }
     }
     let (module, value) = module.ok_or_else(|| anyhow!("task '{label}': no module given"))?;
+    if !is_known(&module) {
+        bail!("task '{label}': couldn't resolve module/action '{module}'");
+    }
     let mut args = module_args(&module, value).with_context(|| format!("task '{label}'"))?;
     if let Some(Yaml::Mapping(extra)) = field(yaml, "args") {
         for (k, v) in extra {
@@ -302,7 +317,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
                 .map(str::to_string),
         ),
     };
-    let (r#become, become_user, become_method) = escalation(yaml, &format!("task '{label}': "))?;
+    let (r#become, become_user) = escalation(yaml, &format!("task '{label}': "))?;
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
@@ -320,7 +335,6 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         failed_when,
         r#become,
         become_user,
-        become_method,
     })
 }
 
@@ -481,15 +495,15 @@ mod tests {
     }
 
     #[test]
-    fn key_value_free_form_is_parsed_for_other_modules() {
+    fn key_value_is_parsed_for_a_module_that_is_not_free_form() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - file: path=/tmp/x state=touch\n",
+            "- hosts: all\n  tasks:\n    - set_fact: owner=root state=here\n",
             "x.yml",
         )
         .unwrap();
         let t = &pb.plays[0].tasks[0];
-        assert_eq!(t.args["path"], "/tmp/x");
-        assert_eq!(t.args["state"], "touch");
+        assert_eq!(t.args["owner"], "root");
+        assert_eq!(t.args["state"], "here");
     }
 
     #[test]
@@ -516,11 +530,9 @@ mod tests {
         let play = &pb.plays[0];
         assert_eq!(play.r#become, Some(true), "'yes' is a boolean to Ansible");
         assert_eq!(play.become_user.as_deref(), Some("deploy"));
-        assert_eq!(play.become_method.as_deref(), Some("sudo"));
         let t = &play.tasks[0];
         assert_eq!(t.r#become, Some(false), "a quoted spelling still reads");
         assert_eq!(t.become_user.as_deref(), Some("postgres"));
-        assert_eq!(t.become_method, None);
         let bare = parse("- hosts: all\n  tasks:\n    - command: id\n", "x.yml").unwrap();
         assert_eq!(
             (
@@ -598,15 +610,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "echo a=b");
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - community.general.command: echo a\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("expected key=value"),
-            "another collection's command is not free-form here"
-        );
+    }
+
+    /// The reference resolves a task's action while it loads the play and refuses the whole run
+    /// with exit 4 on a name it cannot find, printing no `PLAY RECAP`. Measured against
+    /// ansible-core 2.19.12. The set this engine can resolve is its two module tables, so a
+    /// module it has not written yet is refused the same way rather than failing on the agent
+    /// halfway through the play.
+    #[test]
+    fn a_module_that_cannot_be_resolved_refuses_the_load_with_four() {
+        for module in ["nosuchmodule", "file", "community.general.command"] {
+            let err = load_from(&format!(
+                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: echo a\n"
+            ));
+            assert_eq!(crate::stats::error_code(&err), 4, "{module}");
+            let text = format!("{err:#}");
+            assert!(
+                text.contains("couldn't resolve module/action") && text.contains(module),
+                "{text}"
+            );
+            assert!(text.contains("Later"), "the task is named: {text}");
+        }
+    }
+
+    /// `parse` on its own returns a plain error; `load` is what carries the exit code, so a test
+    /// about the code has to go through a file.
+    fn load_from(text: &str) -> anyhow::Error {
+        let dir = std::env::temp_dir().join(format!("volant-load-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("x.yml");
+        std::fs::write(&path, text).unwrap();
+        let err = load(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        err
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::config::Config;
 use crate::executor::{self, RunOptions, RunState};
 use crate::inventory::{Host, Inventory};
 use crate::render::Renderer;
-use crate::stats::{Stats, exit_code};
+use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
@@ -84,13 +84,13 @@ pub fn run(args: PlaybookArgs) -> i32 {
         Ok(code) => code,
         Err(err) => {
             eprintln!("ERROR! {err:#}");
-            1
+            error_code(&err)
         }
     }
 }
 
 async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32> {
-    let config = Config::load();
+    let config = Config::load()?;
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
     // exits 2 for `-f abc` or `-f -1` (clap's own default for a bad argument), so a refused `0`
@@ -139,9 +139,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 .and_then(executor::as_bool_value)
                 == Some(true)
         });
+    // Exit 2, the reference's own code, measured: `--become-method doas` there loads no plugin
+    // for it and fails the task, which is exit 2. This refuses before the play instead, so no
+    // recap is printed, but the code an operator's script reads is the same one.
     if escalates {
         if become_method != playbook::BECOME_METHOD {
-            anyhow::bail!("become_method '{become_method}' is not supported yet");
+            return Err(Refusal::at(
+                2,
+                format!("become_method '{become_method}' is not supported yet"),
+            ));
         }
         for host in &all_hosts {
             if let Some(method) = host
@@ -150,10 +156,13 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 .and_then(|v| v.as_str())
                 && method != playbook::BECOME_METHOD
             {
-                anyhow::bail!(
-                    "host '{}': ansible_become_method '{method}' is not supported yet",
-                    host.name
-                );
+                return Err(Refusal::at(
+                    2,
+                    format!(
+                        "host '{}': ansible_become_method '{method}' is not supported yet",
+                        host.name
+                    ),
+                ));
             }
         }
     }
@@ -204,13 +213,20 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let limit: Option<HashSet<String>> = match &args.limit {
         None => None,
         Some(pattern) => {
-            let names: HashSet<String> = inventory
-                .resolve(pattern)
-                .hosts
-                .into_iter()
-                .map(|h| h.name)
-                .collect();
+            let resolution = inventory.resolve(pattern);
+            // A `--limit` naming a host that is not there is a warning and not a refusal, the
+            // way it is in a play's own `hosts`: measured, `-l web1,web-typo` warns
+            // `Could not match supplied host pattern, ignoring: web-typo` and then runs on
+            // `web1`. Losing it meant a mistyped name silently narrowed the run to nothing it
+            // was asked about.
+            for unmatched in &resolution.unmatched {
+                out.warning(&format!(
+                    "Could not match supplied host pattern, ignoring: {unmatched}"
+                ));
+            }
+            let names: HashSet<String> = resolution.hosts.into_iter().map(|h| h.name).collect();
             if names.is_empty() {
+                // Exit 1, which is the reference's own code here, measured.
                 anyhow::bail!(
                     "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
                 );
@@ -231,66 +247,70 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // that play starts beats one `UNREACHABLE` per local host.
     let mut local_agent_checked = false;
     let mut current_dir = playbook_dir;
-    'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
-        let dir = base_dir(path);
-        if dir != current_dir {
-            state.templar = Arc::new(Templar::new(dir.clone()));
-            state.vars.lock().expect("vars lock").rebase(&dir)?;
-            current_dir = dir;
-        }
-        for play in &pb.plays {
+    // Every way out of the loop below runs `shutdown_links` once, which is why the loop is a
+    // block whose result is read afterwards rather than a stretch of `?`. `AgentLink::drop`
+    // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
+    // so a `?` returning past the shutdown would pay that for every live link in series.
+    let plays: anyhow::Result<()> = async {
+        'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
+            let dir = base_dir(path);
+            if dir != current_dir {
+                state.templar = Arc::new(Templar::new(dir.clone()));
+                state.vars.lock().expect("vars lock").rebase(&dir)?;
+                current_dir = dir;
+            }
+            for play in &pb.plays {
+                if *stop_rx.borrow() {
+                    break 'plays;
+                }
+                let resolution = inventory.resolve(&play.hosts);
+                for warning in &resolution.warnings {
+                    if warned.insert(warning.clone()) {
+                        out.warning(warning);
+                    }
+                }
+                for pattern in &resolution.unmatched {
+                    out.warning(&format!(
+                        "Could not match supplied host pattern, ignoring: {pattern}"
+                    ));
+                }
+                let hosts: Vec<Host> = match &limit {
+                    Some(allowed) => resolution
+                        .hosts
+                        .into_iter()
+                        .filter(|h| allowed.contains(&h.name))
+                        .collect(),
+                    None => resolution.hosts,
+                };
+                if !local_agent_checked
+                    && hosts.iter().any(|h| {
+                        matches!(
+                            Transport::for_host(h, &options.defaults),
+                            Ok(Transport::Local)
+                        )
+                    })
+                {
+                    agents.local()?;
+                    local_agent_checked = true;
+                }
+                executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats)
+                    .await?;
+            }
+            // One recap per playbook argument, as the reference prints it, and the counters carry
+            // over: the second playbook's recap shows the whole run so far. An interrupted run
+            // skips this one and prints its own below, so a stop never doubles the last recap.
             if *stop_rx.borrow() {
                 break 'plays;
             }
-            let resolution = inventory.resolve(&play.hosts);
-            for warning in &resolution.warnings {
-                if warned.insert(warning.clone()) {
-                    out.warning(warning);
-                }
-            }
-            for pattern in &resolution.unmatched {
-                out.warning(&format!(
-                    "Could not match supplied host pattern, ignoring: {pattern}"
-                ));
-            }
-            let hosts: Vec<Host> = match &limit {
-                Some(allowed) => resolution
-                    .hosts
-                    .into_iter()
-                    .filter(|h| allowed.contains(&h.name))
-                    .collect(),
-                None => resolution.hosts,
-            };
-            if !local_agent_checked
-                && hosts.iter().any(|h| {
-                    matches!(
-                        Transport::for_host(h, &options.defaults),
-                        Ok(Transport::Local)
-                    )
-                })
-            {
-                agents.local()?;
-                local_agent_checked = true;
-            }
-            if let Err(err) =
-                executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats)
-                    .await
-            {
-                // Closing them here rather than letting the state drop keeps the wait for
-                // each agent off a blocking drop inside the runtime.
-                state.shutdown_links().await;
-                return Err(err);
-            }
+            out.recap(&stats);
         }
-        // One recap per playbook argument, as the reference prints it, and the counters carry
-        // over: the second playbook's recap shows the whole run so far. An interrupted run
-        // skips this one and prints its own below, so a stop never doubles the last recap.
-        if *stop_rx.borrow() {
-            break 'plays;
-        }
-        out.recap(&stats);
+        Ok(())
     }
+    .await;
+    // Closing them here rather than letting the state drop keeps the wait for each agent off a
+    // blocking drop inside the runtime.
     state.shutdown_links().await;
+    plays?;
     if *stop_rx.borrow() {
         eprintln!("[ERROR]: User interrupted execution");
         out.recap(&stats);

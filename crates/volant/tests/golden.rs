@@ -147,10 +147,12 @@ fn inventory_matches_the_reference() {
 
     for (host, want) in expected["hostvars"].as_object().unwrap() {
         let got = inv.host_with_vars(host).vars;
+        // Every variable the reference reports, `ansible_*` included. This used to skip all but
+        // `ansible_host` and `ansible_connection`, which left the connection variables this
+        // release reads - the port, the user, the key, the ssh arguments, `remote_tmp` and the
+        // `become` pair - ungated against `ansible-inventory`'s own reading of the same file.
+        // The fixture now sets them, so the comparison has something to fail on.
         for (k, v) in want.as_object().unwrap() {
-            if k.starts_with("ansible_") && k != "ansible_host" && k != "ansible_connection" {
-                continue;
-            }
             match got.get(k) {
                 Some(ours) if same(ours, v) => {}
                 other => failures.push(format!("{host}.{k}: reference {v}, ours {other:?}")),

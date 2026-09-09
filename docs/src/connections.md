@@ -2,7 +2,7 @@
 
 Volant reaches a managed host, puts a small static agent there, and talks to it over the same
 connection for the rest of the run. If you are trying to work out whether your playbook can run
-under Volant today, the last section on this page is the honest answer.
+under Volant today, the last section on this page lists what is still missing.
 
 ## Connection types
 
@@ -16,7 +16,7 @@ under Volant today, the last section on this page is the honest answer.
 Any other value is refused by name, and the host is reported unreachable while the rest of the
 run continues.
 
-Only key-based and agent-based authentication work. `ssh` runs with `BatchMode=yes`, so it never
+Only key files and keys held by an ssh-agent work. `ssh` runs with `BatchMode=yes`, so it never
 prompts: a host that would ask for a password or a passphrase is reported unreachable instead of
 stopping the run at a prompt. `-k` and `ansible_password` are not implemented, because OpenSSH
 cannot take a password on its standard input without `sshpass`.
@@ -108,13 +108,15 @@ once; a second failure reports the host unreachable.
 
 Escalation adds a link rather than replacing one: the controller holds one link per (host,
 target user) pair until the recap. Those links are not bounded by `forks`, which counts hosts,
-and each one is a separate `ssh` process. There is no `ControlMaster` yet.
+and each one is a separate `ssh` process. An escalated link also costs one extra `ssh`
+connection for the `sudo` probe, two when a password is wanted. There is no `ControlMaster`
+yet, so a wide inventory pays for every one of those connections separately.
 
 ## Privilege escalation
 
 `become` runs tasks as another user through `sudo`. The agent for that user is started as
-`sudo -H -u <user> -- volant-agent`, and tasks that do not escalate keep using the unprivileged
-agent. See
+`sudo -H <form> -u <user> -- volant-agent`, where `<form>` is `-n` or `-k -S -p ''` as the probe
+below decides, and tasks that do not escalate keep using the unprivileged agent. See
 [ADR 0004](https://github.com/lorica-labs/volant/blob/main/docs/adr/0004-become-runs-a-second-agent-under-sudo.md)
 for why it works this way.
 
@@ -127,7 +129,8 @@ the configuration defaults speak last.
 quietly escalating through a mechanism you did not ask for. `ansible_become_flags` and
 `become_exe` are not read.
 
-A password comes from `-K` (`--ask-become-pass`), typed with the echo off, or from
+A password comes from `-K` (`--ask-become-pass`), which turns the terminal echo off on unix and
+reads the line as it comes elsewhere, or from
 `ansible_become_password` / `ansible_become_pass`. It is written once to `sudo`'s standard input
 and appears in no command line, no log and no result: the types that carry it print `<redacted>`
 in a diagnostic, and `sudo`'s own error output is scrubbed before it reaches a message.
@@ -147,7 +150,7 @@ A pattern, in a play's `hosts` or in `--limit`, follows Ansible's grammar:
 - Shell wildcards on host and group names: `web*`, `db?`, `host[abc]`, `host[a-z]`.
 - `!term` removes hosts, `&term` keeps only hosts that also match.
 - `name[N]`, `name[N:M]` and `name[N-M]` index or slice the hosts a term produced. As in
-  Ansible, `M` is included.
+  Ansible, `M` is included, and `name[N:]` runs from `N` to the last host.
 
 Terms are not applied in the order you write them: plain terms first, then `&`, then `!`, which
 is what Ansible does. A pattern made only of `!` or `&` terms starts from `all`.

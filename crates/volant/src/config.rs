@@ -206,11 +206,11 @@ fn parse(text: &str, base: &Path) -> Config {
                     config.remote_tmp = tmp.to_string();
                 }
             }
-            "forks" => {
-                if let Ok(forks) = value.trim().parse::<usize>() {
-                    config.forks = forks;
-                }
-            }
+            // A zero and an unparsable value both reach the caller as zero, where the single
+            // startup check refuses them. The reference refuses `forks = abc` in the file too,
+            // before any play runs, so keeping the default of five here would run a playbook
+            // with a fork count the operator never wrote.
+            "forks" => config.forks = value.trim().parse().unwrap_or(0),
             _ => {}
         }
     }
@@ -282,13 +282,24 @@ mod tests {
 
     /// A zero reaches the caller untouched: refusing it is the startup check's job, and
     /// silently falling back to five would run a playbook the reference refuses outright.
+    ///
+    /// An unparsable value goes the same way. Measured on the development machine against
+    /// `ansible-core 2.19.12`: `forks = abc` in `ansible.cfg` refuses with
+    /// `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value` and exit 5, before
+    /// any play header. Keeping five here would have run the playbook it refuses.
     #[test]
-    fn forks_is_read_and_a_zero_is_passed_through() {
+    fn forks_is_read_and_a_zero_or_an_unparsable_value_is_passed_through() {
         assert_eq!(parse("[defaults]\nforks = 12\n", Path::new(".")).forks, 12);
         assert_eq!(parse("[defaults]\nforks = 0\n", Path::new(".")).forks, 0);
         assert_eq!(
             parse("[defaults]\nforks = many\n", Path::new(".")).forks,
-            DEFAULT_FORKS
+            0,
+            "an unparsable value must reach the startup refusal, not fall back to the default"
+        );
+        assert_eq!(
+            parse("[defaults]\nforks = -1\n", Path::new(".")).forks,
+            0,
+            "a negative value is no more usable than a word"
         );
     }
 

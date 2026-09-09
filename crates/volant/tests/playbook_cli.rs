@@ -431,6 +431,30 @@ fn zero_forks_is_refused() {
     );
 }
 
+/// A `forks` the file writes but nobody can read refuses the run, as it does from `-f` and
+/// from `ANSIBLE_FORKS`. Measured against the reference: `forks = abc` in `ansible.cfg` stops
+/// with `Config 'DEFAULT_FORKS' ... has an invalid value` and exit 5, before any play header.
+/// Volant keeps its own exit 2 for run-level refusals but must refuse rather than run at five,
+/// which is what the file arm used to do. The fixture names an inventory, so a lost refusal
+/// shows up as a successful run and not as an empty one.
+#[test]
+fn an_unparsable_forks_in_ansible_cfg_is_refused() {
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", &fixture("cfg/site.yml")])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_CONFIG", fixture("cfg/bad-forks.cfg"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(2), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("The number of processes (--forks) must be >= 1"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
+}
+
 /// The reference reports the run's own `forks` through `ansible_forks`, whatever the host
 /// count; a fixed five would have lied as soon as `-f` existed.
 #[test]

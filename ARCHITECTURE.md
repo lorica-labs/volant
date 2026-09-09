@@ -14,6 +14,13 @@ This document is the map for contributors. It describes the shape of the code, n
 3. The controller opens one connection per host (SSH by default), uploads the agent if it is not cached, and sends batches. Templating happens on the controller; execution happens in the agent.
 4. Results stream back task by task. The controller applies `register`, `set_fact`, `changed_when`, `failed_when`, queues handlers and renders output.
 
+## Reaching a host over SSH
+
+1. One `ssh` call asks the cached agent for its version, or reports the machine architecture and a bootstrap exit code saying what is missing.
+2. If that version is not the controller's own, a second call pipes the matching static agent in on stdin: free space checked, written under a temporary name, byte count verified, renamed into place, older versions removed.
+3. A third call opens the long-lived link: `ssh` runs the cached agent, and the protocol speaks over that process's stdin and stdout for the rest of the run.
+4. A link belongs to one (host, target user) pair. `become` opens a second one, where the remote command is the agent under `sudo`; unescalated tasks keep the first. A `sudo` probe settles which form of the invocation to use before the link opens.
+
 ## Where things live
 
 - `crates/volant-protocol`: frames and messages shared by both binaries. Changing a message means bumping `PROTOCOL_VERSION`.

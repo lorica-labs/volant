@@ -19,9 +19,9 @@ A fixed set of magic variables is added on top of every host's view and always w
 
 ## Task keywords
 
-Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`.
+Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`, `become`, `become_user`, `become_method`.
 
-Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`.
+Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`, `become`, `become_user`, `become_method`.
 
 `when`, `changed_when` and `failed_when` take one Jinja2 expression or a list of them, all of which must hold. `loop` and `with_items` cannot both be given on the same task; `with_items` flattens one level of nested lists, `loop` does not. Registering a looped task collects a `results` list, one entry per item, the way `ansible-playbook` does.
 
@@ -45,11 +45,11 @@ For the modules whose arguments these variables and templates feed, see the [nat
 
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
 - Roles, collections beyond native modules, handlers and `notify`.
-- `become`, `serial`, `run_once`, `delegate_to`.
+- `serial`, `run_once`, `delegate_to`.
 - `until`/`retries`, `block`/`rescue`.
 - `include_*` and `import_*`.
 - `gather_facts` is accepted but does nothing: Volant warns and continues without facts. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
-- SSH connections: only `ansible_connection=local` runs today.
-- A host pattern, in a play's `hosts` or in `--limit`, is a list separated by `,` or `:`, and each entry is `all`, `*`, a group name or a host name. Volant reads no wildcard inside a name, no negation and no intersection, so `--limit 'web*'` matches nothing and stops the run.
-- `hostvars` is copied into every host's variables on every task, so the cost of resolving variables grows with the square of the inventory size. The map is cached between facts, which is enough for a few hundred hosts.
+- `hostvars` is copied into every host's variables on every task, so the cost of resolving variables grows with the square of the inventory size. The map is cached between facts, which is enough for a few hundred hosts: on a debug build over twenty local tasks, 50 hosts take 0.25 s, 100 hosts 0.76 s and 200 hosts 2.66 s.
+
+For the connection settings, the agent cache, `become` and the host-pattern grammar, see [Connections and privilege escalation](connections.md).

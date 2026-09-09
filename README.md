@@ -8,7 +8,7 @@ Fast, drop-in engine for Ansible playbooks.
 
 Volant runs your existing playbooks, roles, collections and inventories unchanged, and runs them faster. It uploads a small static agent once per host, sends tasks in batches instead of one SSH round trip each, and runs Python modules from your collections in a warm interpreter. A `plan` command shows what would change before it touches anything.
 
-**Status: pre-alpha.** The engine is not usable yet. Follow the releases or watch the repository to know when the first demo build lands.
+**Status: pre-alpha.** Playbooks made of the [native modules](docs/src/modules.md) run over SSH today, with the agent uploaded and cached on each host, Ansible's variable precedence and templating, `become` through `sudo`, `forks`, and the full host-pattern grammar. Roles, Python modules from your collections, handlers and fact gathering are not there yet, so most real playbooks will still stop on an unsupported keyword. Follow the releases or watch the repository to know when the first demo build lands.
 
 ## Installation
 

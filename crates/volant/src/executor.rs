@@ -14,7 +14,7 @@ use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
-use crate::compile::{Compiled, StepKind, after, after_failure, after_pending, compile};
+use crate::compile::{Compiled, StepKind, after, after_failure, after_pending, compile, first};
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
@@ -286,9 +286,11 @@ pub async fn run_play(
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
     let mut done: HashSet<(String, usize)> = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
-    // Highest task index each host has reported. Reports arrive in task order over one channel,
-    // so for a host still in the play this is also the index it has finished every task through.
-    let mut last_done: HashMap<String, usize> = HashMap::new();
+    // The index each host has finished every task through. Not the highest index it has
+    // mentioned: a driver reports the steps it is about to step over as soon as it has decided
+    // to, which is before the batch in front of them has run, so its reports do arrive out of
+    // order. See `finished`.
+    let mut frontier: HashMap<String, usize> = HashMap::new();
     for (index, step) in plan.compiled.steps.iter().enumerate() {
         let task = &step.task;
         let mut header_shown = false;
@@ -333,7 +335,7 @@ pub async fn run_play(
                         // shrunken host list without racing the driver that is shutting down.
                         if lost {
                             state.failed_hosts.insert(key.0.clone());
-                            publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                            publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
                         }
                         pending.entry(key).or_default().push(event);
                     }
@@ -349,10 +351,8 @@ pub async fn run_play(
                             .push(event);
                     }
                     Some(Event::TaskDone { host, index }) => {
-                        let seen = last_done.entry(host.clone()).or_insert(index);
-                        *seen = (*seen).max(index);
-                        done.insert((host, index));
-                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                        finished(&mut done, &mut frontier, &host, index);
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
                     }
                     Some(Event::Finished {
                         host,
@@ -366,7 +366,7 @@ pub async fn run_play(
                         }
                         keep_links(&mut state.links, links, failed).await;
                         gone.insert(host);
-                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
                     }
                     Some(Event::Unreachable { host, msg }) => {
                         if !header_shown {
@@ -378,7 +378,7 @@ pub async fn run_play(
                         out.unreachable(&host, &msg);
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
-                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                        publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
                     }
                     None => break,
                 }
@@ -404,7 +404,7 @@ pub async fn run_play(
                 // twice in the recap for one failure.
                 gone.insert(host.clone());
                 state.failed_hosts.insert(host);
-                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
             }
             Event::Finished {
                 host,
@@ -415,12 +415,11 @@ pub async fn run_play(
                     state.failed_hosts.insert(host);
                 }
                 keep_links(&mut state.links, links, failed).await;
-                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
             }
             Event::TaskDone { host, index } => {
-                let seen = last_done.entry(host).or_insert(index);
-                *seen = (*seen).max(index);
-                publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
+                finished(&mut done, &mut frontier, &host, index);
+                publish(&progress_tx, &play_hosts, &state.failed_hosts, &frontier);
             }
             // A driver sends a result and the `TaskDone` behind it over the same channel, so a
             // result reaching here is one the task loop above never read - which happens when
@@ -519,15 +518,39 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     }
 }
 
+/// Files one finished step and moves that host's frontier: the index it has finished every step
+/// through, which is the only figure a barrier may open on.
+///
+/// The frontier is not the highest index a host has mentioned. A driver collecting a batch
+/// decides where it goes next before the batch has run, and tells the coordinator about the
+/// steps it stepped over there and then, so a report for step 9 can arrive while step 7 is
+/// still on the wire. Counting the highest would open another host's `hostvars` barrier on work
+/// this one has not started. A gap closes when the batch reports; a gap that never closes
+/// belongs to a host that failed or went unreachable, and such a host is out of the live set,
+/// so nothing waits on it.
+fn finished(
+    done: &mut HashSet<(String, usize)>,
+    frontier: &mut HashMap<String, usize>,
+    host: &str,
+    index: usize,
+) {
+    done.insert((host.to_string(), index));
+    let mut next = frontier.get(host).map_or(0, |reached| reached + 1);
+    while done.contains(&(host.to_string(), next)) {
+        frontier.insert(host.to_string(), next);
+        next += 1;
+    }
+}
+
 /// Republishes the play's progress. `live_hosts` is the play's starting list minus the hosts
 /// that have failed or gone unreachable, which is what `ansible_play_hosts` reports;
-/// `completed_through` is the lowest task index reached by any of them, so a driver waiting for
-/// it to reach `i - 1` is waiting only on hosts that are still expected to report.
+/// `completed_through` is the lowest frontier among them, so a driver waiting for it to reach
+/// `i - 1` is waiting only on hosts that are still expected to report.
 fn publish(
     tx: &watch::Sender<Progress>,
     play_hosts: &[String],
     lost: &HashSet<String>,
-    last_done: &HashMap<String, usize>,
+    frontier: &HashMap<String, usize>,
 ) {
     let live_hosts: Vec<String> = play_hosts
         .iter()
@@ -538,7 +561,7 @@ fn publish(
     // minimum at `None` and no barrier opens on it.
     let completed_through = live_hosts
         .iter()
-        .map(|h| last_done.get(h).copied())
+        .map(|h| frontier.get(h).copied())
         .min()
         .flatten();
     tx.send_replace(Progress {
@@ -1245,24 +1268,27 @@ async fn drive_host(
     // Set when the host leaves the run without finishing: the message the recap shows.
     let mut unreachable: Option<String> = None;
     let mut failed = false;
-    let mut pos = 0;
+    // Not always step 0: a block with an empty `block:` list lays its rescue out there, and
+    // nothing has failed. The steps in front of the first one are stepped over like any other.
+    let mut pos = first(&plan.compiled);
     let n = plan.compiled.steps.len();
+    skipped(&tx, &name, 0..pos).await;
     let mut batch_id: u64 = 0;
-    // The step a failure was just reported at, and whether this host is now working its way
-    // out through the `always` sections that enclosed it. Those two are the only state a
+    // The step a failure was just reported at, and the `always` section this host is draining
+    // on its way out - as the index that section ends at. Those two are the only state a
     // failure adds: the coordinator still knows one thing about a host, that it failed.
     let mut failed_at: Option<usize> = None;
-    let mut failing = false;
+    let mut cleanup: Option<usize> = None;
 
     'run: loop {
         if let Some(index) = failed_at.take() {
             // Measured on ansible-core 2.19.12: a task failing inside a nested block runs the
             // inner `always`, then the outer one, and only then leaves the play.
             match after_failure(&plan.compiled, index) {
-                Some(next) => {
-                    skip_to(&tx, &name, index, next).await;
+                Some((next, end)) => {
+                    skipped(&tx, &name, index + 1..next).await;
                     pos = next;
-                    failing = true;
+                    cleanup = Some(end);
                 }
                 None => break 'run,
             }
@@ -1348,7 +1374,7 @@ async fn drive_host(
                             registered_value(task, &results),
                         );
                     }
-                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
+                    pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
                 }
                 // A `meta` asks the engine for something rather than the host: it shows a
                 // banner, reports nothing and moves on. Every action that reaches here is one
@@ -1369,7 +1395,7 @@ async fn drive_host(
                             index: pos,
                         })
                         .await;
-                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
+                    pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
                 }
                 Ok(Prepared::Local(items)) => {
                     if !batch.is_empty() {
@@ -1412,7 +1438,7 @@ async fn drive_host(
                         failed_at = Some(pos);
                         break;
                     }
-                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
+                    pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
                 }
                 Ok(Prepared::Remote(items, escalation)) => {
                     // A different target user is a different agent on the host, so the batch
@@ -1431,7 +1457,7 @@ async fn drive_host(
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty();
                     batch.push((pos, items));
-                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
+                    pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
                     if boundary {
                         break;
                     }
@@ -1634,7 +1660,7 @@ async fn drive_host(
                 failed = true;
                 failed_at = Some(index);
             } else {
-                pos = advance(&tx, &name, &plan.compiled, index, failing).await;
+                pos = advance(&tx, &name, &plan.compiled, index, &mut cleanup).await;
             }
         }
     }
@@ -1721,7 +1747,8 @@ async fn reuse_or_connect<'a>(
 }
 
 /// The step this host moves to after finishing `pos`, past the sections it has no reason to
-/// enter. A host with a failure pending finishes the `always` sections around it instead.
+/// enter. A host draining an `always` section after a failure finishes that section instead,
+/// and `cleanup` - the index that section ends at - moves with it to the next one.
 ///
 /// Returns the length of the step list when the play is over for this host, which is what the
 /// driver's own bound reads as "done".
@@ -1730,24 +1757,26 @@ async fn advance(
     host: &str,
     compiled: &Compiled,
     pos: usize,
-    failing: bool,
+    cleanup: &mut Option<usize>,
 ) -> usize {
-    let next = if failing {
-        after_pending(compiled, pos)
-    } else {
-        Some(after(compiled, pos))
+    let next = match *cleanup {
+        Some(end) => after_pending(compiled, pos, end).map(|(next, end)| {
+            *cleanup = Some(end);
+            next
+        }),
+        None => Some(after(compiled, pos)),
     };
     match next {
         Some(next) => {
-            skip_to(tx, host, pos, next).await;
+            skipped(tx, host, pos + 1..next).await;
             next
         }
         None => compiled.steps.len(),
     }
 }
 
-/// Tells the coordinator about every step between `from` and `to` that this host stepped over,
-/// so the shared progress it publishes counts this host as having reached them.
+/// Tells the coordinator about every step in `range` that this host stepped over, so the shared
+/// progress it publishes counts this host as having reached them.
 ///
 /// It is what keeps a host that steps over a section from waiting on itself: the progress every
 /// barrier reads is the lowest step any live host has finished, so a host that jumped from 3 to
@@ -1755,12 +1784,12 @@ async fn advance(
 /// that has failed steps over anything today, and a failed host is out of the live set before
 /// it does, so the case is not reachable yet - it becomes reachable the moment a live host
 /// steps over a rescue.
-async fn skip_to(tx: &mpsc::Sender<Event>, host: &str, from: usize, to: usize) {
-    for skipped in from + 1..to {
+async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<usize>) {
+    for index in range {
         let _ = tx
             .send(Event::TaskDone {
                 host: host.to_string(),
-                index: skipped,
+                index,
             })
             .await;
     }
@@ -2261,6 +2290,49 @@ mod tests {
         publish(&tx, &hosts, &lost, &last_done);
         assert!(rx.borrow().live_hosts.is_empty());
         assert_eq!(rx.borrow().completed_through, None);
+    }
+
+    /// A host is never counted past what it has actually finished, whatever order its reports
+    /// arrive in: a driver publishes the steps it steps over before the batch in front of them
+    /// has run, so the barrier reads the step every one before it has been reported through.
+    ///
+    /// What would make this red: taking the highest index a host has mentioned. The barrier
+    /// would then open on work that host has not started, which is a `hostvars` read answered
+    /// from a fact the other host has not gathered yet.
+    #[test]
+    fn a_gap_in_a_hosts_reports_holds_the_barrier_where_it_is() {
+        let hosts: Vec<String> = vec!["alpha".into()];
+        let (tx, rx) = watch::channel(Progress::default());
+        let mut done = HashSet::new();
+        let mut frontier = HashMap::new();
+        let lost = HashSet::new();
+
+        for index in [0, 1] {
+            finished(&mut done, &mut frontier, "alpha", index);
+        }
+        // Steps 4 and 5 are stepped over: the driver says so while the batch holding 2 and 3 is
+        // still running.
+        for index in [4, 5] {
+            finished(&mut done, &mut frontier, "alpha", index);
+        }
+        publish(&tx, &hosts, &lost, &frontier);
+        assert_eq!(
+            rx.borrow().completed_through,
+            Some(1),
+            "the steps behind the gap are not finished yet"
+        );
+
+        finished(&mut done, &mut frontier, "alpha", 2);
+        publish(&tx, &hosts, &lost, &frontier);
+        assert_eq!(rx.borrow().completed_through, Some(2), "the gap is smaller");
+
+        finished(&mut done, &mut frontier, "alpha", 3);
+        publish(&tx, &hosts, &lost, &frontier);
+        assert_eq!(
+            rx.borrow().completed_through,
+            Some(5),
+            "the batch reported, so everything behind it counts"
+        );
     }
 
     #[test]

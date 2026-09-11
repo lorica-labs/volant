@@ -9,9 +9,9 @@
 //!
 //! The dangerous half of a flattening is the step nobody runs: an index skipped silently is a
 //! run that reports success having done less than the playbook asked for. Two things guard it.
-//! [`after`] never invents an index - it returns either the next step or the start of a section
-//! that exists - and the driver tells the coordinator about every index it steps over, so a step
-//! left out is a step the recap can still account for.
+//! Nothing here invents an index - every one returned names a step this compilation laid out -
+//! and the driver tells the coordinator about every index it steps over, so a step left out is
+//! a step the recap can still account for.
 
 use std::ops::Range;
 
@@ -195,72 +195,92 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     task
 }
 
-/// The index a host moves to after finishing `pos` without failing: the next step, or past a
-/// rescue section it has no reason to enter, or out of however many blocks end here.
-///
-/// Nothing in here can name a step that does not exist: every index returned is either `pos + 1`
-/// or the start of a section this compilation laid out.
-pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
-    let mut next = pos + 1;
-    let mut block = c.steps[pos].block;
-    let mut section = c.steps[pos].section;
-    while let Some(id) = block {
+/// The blocks around a step, innermost first, each with the section of that block the step sits
+/// in. One walk, so the three functions below decide different things about the same tree
+/// rather than each re-deriving it from the indices.
+fn ancestors(c: &Compiled, index: usize) -> impl Iterator<Item = (usize, Section)> + '_ {
+    let step = &c.steps[index];
+    let mut next = step.block.map(|id| (id, step.section));
+    std::iter::from_fn(move || {
+        let (id, section) = next?;
         let span = &c.blocks[id];
-        let end = match section {
-            Section::Body => span.body.end,
-            Section::Rescue => span.rescue.end,
-            Section::Always => span.always.end,
-        };
-        if next != end {
-            return next;
-        }
-        // The section ran to its end. `always` follows a body that succeeded - stepping over
-        // the rescue, which is for failures - and follows a rescue directly.
-        if section != Section::Always && !span.always.is_empty() {
-            return span.always.start;
-        }
-        // This block is finished. Its own last index is where its `always` ends, and the block
-        // that holds it may end at exactly that index too, so the walk goes on rather than
-        // returning: a block ending where its parent's body ends must still step over the
-        // parent's rescue.
-        next = span.always.end;
-        section = span.section;
-        block = span.parent;
-    }
-    next
+        next = span.parent.map(|parent| (parent, span.section));
+        Some((id, section))
+    })
+}
+
+/// The first index at or after `from` that a host has a reason to run, given the rescues it is
+/// already inside, or the length of the list when there is none.
+///
+/// A step is stepped over exactly when it sits in a `rescue` the host has not entered: rescue is
+/// the one section reached only by failing, and a host already working through one carries on
+/// to its end. Everything else - a body, an `always`, a block written inside either - is on the
+/// way. Nothing here can name a step that does not exist.
+fn seek(c: &Compiled, from: usize, entered: &[usize]) -> usize {
+    (from..c.steps.len())
+        .find(|&i| {
+            !ancestors(c, i)
+                .any(|(id, section)| section == Section::Rescue && !entered.contains(&id))
+        })
+        .unwrap_or(c.steps.len())
+}
+
+/// The step a host starts the play on. Not always the first one: `block: []` with a `rescue`
+/// lays that rescue out at index 0, and nothing has failed yet.
+pub(crate) fn first(c: &Compiled) -> usize {
+    seek(c, 0, &[])
+}
+
+/// The index a host moves to after finishing `pos` without failing: the next step it has a
+/// reason to run, past the rescue of every block it leaves and of every block it enters. A
+/// block whose `block:` list is empty is entered *on* its rescue, so entry needs the same care
+/// as exit.
+pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
+    let entered: Vec<usize> = ancestors(c, pos)
+        .filter(|&(_, section)| section == Section::Rescue)
+        .map(|(id, _)| id)
+        .collect();
+    seek(c, pos + 1, &entered)
 }
 
 /// Where a host goes when the task at `pos` has just failed: the `always` section of the
-/// innermost block that still has one to run, or `None` when the play is over for this host.
+/// innermost block that still has one to run, as the pair (its first step, the index it ends
+/// at), or `None` when the play is over for this host.
 ///
 /// Measured on ansible-core 2.19.12: a task failing inside a nested block runs the inner
 /// `always`, then the outer `always`, then leaves the play - the step after the outer block
 /// never runs and the recap counts the two `always` tasks as `ok`. A task failing **inside** an
-/// `always` does not finish that section: the rest of it is skipped and the host leaves.
-pub(crate) fn after_failure(c: &Compiled, pos: usize) -> Option<usize> {
-    let mut block = c.steps[pos].block;
-    let mut section = c.steps[pos].section;
-    while let Some(id) = block {
-        let span = &c.blocks[id];
-        if section != Section::Always && !span.always.is_empty() {
-            return Some(span.always.start);
-        }
-        section = span.section;
-        block = span.parent;
-    }
-    None
+/// `always` does not finish that section: the rest of it is skipped and the host leaves, and
+/// that holds for a task inside a block written inside the `always` too - measured, a cleanup
+/// of two tasks in a nested block whose first task fails runs neither the second nor the step
+/// behind the nested block, and the recap reads `failed=2`.
+pub(crate) fn after_failure(c: &Compiled, pos: usize) -> Option<(usize, usize)> {
+    ancestors(c, pos)
+        .filter(|&(_, section)| section != Section::Always)
+        .map(|(id, _)| {
+            let always = &c.blocks[id].always;
+            // Entered like any other step, so a cleanup that opens on a block with an empty
+            // `block:` list opens on that block's rescue and is not run there either. A
+            // section with nothing left to run is no section at all, and the walk goes on.
+            (seek(c, always.start, &[]), always.end)
+        })
+        .find(|&(start, end)| start < end)
 }
 
-/// The index a host with a failure already pending moves to after finishing `pos`: on through
-/// the `always` section it is working its way down, or out to the next one. The steps of an
-/// `always` run in order whatever the body did, which is the whole point of the section.
-pub(crate) fn after_pending(c: &Compiled, pos: usize) -> Option<usize> {
-    let step = &c.steps[pos];
-    if let Some(id) = step.block
-        && step.section == Section::Always
-        && pos + 1 < c.blocks[id].always.end
-    {
-        return Some(pos + 1);
+/// The same, for a host already draining the `always` section that ends at `cleanup`: on
+/// through that section, or out into the next one.
+///
+/// The whole section runs, blocks written inside it included. Which section that is cannot be
+/// read off the step: a cleanup task inside a nested block carries its own block's `Body`, and
+/// a cleanup that ends where a nested `always` ends is not the end of the section holding it.
+/// The host knows which section it entered, so it carries the end of it and this compares
+/// against that. Measured on ansible-core 2.19.12: a cleanup made of a nested block of two
+/// tasks runs both, and a nested block with an `always` of its own runs that too and then the
+/// step behind it, `ok=3 failed=1`.
+pub(crate) fn after_pending(c: &Compiled, pos: usize, cleanup: usize) -> Option<(usize, usize)> {
+    let next = after(c, pos);
+    if next < cleanup {
+        return Some((next, cleanup));
     }
     after_failure(c, pos)
 }
@@ -286,6 +306,17 @@ mod tests {
         while pos < c.steps.len() {
             seen.push(c.steps[pos].task.name.as_str());
             pos = after(c, pos);
+        }
+        seen
+    }
+
+    /// The order a host walks the cleanup after the step at `failed` has failed.
+    fn walk_failure(c: &Compiled, failed: usize) -> Vec<&str> {
+        let mut seen = Vec::new();
+        let mut at = after_failure(c, failed);
+        while let Some((pos, cleanup)) = at {
+            seen.push(c.steps[pos].task.name.as_str());
+            at = after_pending(c, pos, cleanup);
         }
         seen
     }
@@ -444,11 +475,7 @@ mod tests {
     fn a_failure_runs_every_enclosing_always_and_then_stops() {
         let c = compiled(NESTED);
         // "nested body" fails.
-        let mut pos = after_failure(&c, 2).expect("the nested always runs");
-        assert_eq!(c.steps[pos].task.name, "nested always");
-        pos = after_pending(&c, pos).expect("the outer always runs next");
-        assert_eq!(c.steps[pos].task.name, "outer always");
-        assert_eq!(after_pending(&c, pos), None, "and then the host is done");
+        assert_eq!(walk_failure(&c, 2), ["nested always", "outer always"]);
     }
 
     /// A failure inside an `always` section does not finish it: measured, the rest of the
@@ -469,18 +496,156 @@ mod tests {
           command: "true"
 "#,
         );
-        let first = c.blocks[0].always.start;
-        assert_eq!(c.steps[first].task.name, "first cleanup");
+        let cleanup = c.blocks[0].always.clone();
+        assert_eq!(c.steps[cleanup.start].task.name, "first cleanup");
         assert_eq!(
-            after_pending(&c, first).map(|p| c.steps[p].task.name.as_str()),
+            after_pending(&c, cleanup.start, cleanup.end)
+                .map(|(p, _)| c.steps[p].task.name.as_str()),
             Some("second cleanup"),
             "a pending failure still finishes the section"
         );
         assert_eq!(
-            after_failure(&c, first),
+            after_failure(&c, cleanup.start),
             None,
             "a failure raised here ends the section instead"
         );
+    }
+
+    /// A cleanup written as a block runs to the end of the section, and a failure inside that
+    /// block ends the cleanup where the reference ends it.
+    ///
+    /// Measured on ansible-core 2.19.12, on this shape: both cleanup tasks run and the recap
+    /// reads `ok=2 changed=2 failed=1`; with the first of them failing instead, neither the
+    /// second nor the step behind the nested block runs and the recap reads `failed=2`.
+    ///
+    /// What would make this red: reading the section a host is draining off the step it is on.
+    /// A cleanup task inside a nested block carries that block's `Body`, so the host would take
+    /// the first such step for the end of the cleanup and leave the play with the rest of it
+    /// never run and never reported - a run that exits having done less than the playbook says.
+    #[test]
+    fn a_cleanup_written_as_a_block_runs_to_the_end_of_the_section() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      always:
+        - block:
+            - name: cleanup one
+              command: "true"
+            - name: cleanup two
+              command: "true"
+        - name: cleanup last
+          command: "true"
+"#,
+        );
+        assert_eq!(
+            walk_failure(&c, 0),
+            ["cleanup one", "cleanup two", "cleanup last"]
+        );
+        assert_eq!(
+            after_failure(&c, 1),
+            None,
+            "a failure inside the nested cleanup ends the section, measured"
+        );
+    }
+
+    /// A nested cleanup that has an `always` of its own runs it, and the section holding it
+    /// still finishes.
+    ///
+    /// Measured on ansible-core 2.19.12 on this shape: `ok=3 changed=3 failed=1`.
+    #[test]
+    fn a_cleanup_block_runs_its_own_always_and_the_section_goes_on() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      always:
+        - block:
+            - name: cleanup one
+              command: "true"
+          always:
+            - name: cleanup inner cleanup
+              command: "true"
+        - name: cleanup last
+          command: "true"
+"#,
+        );
+        assert_eq!(
+            walk_failure(&c, 0),
+            ["cleanup one", "cleanup inner cleanup", "cleanup last"]
+        );
+    }
+
+    /// The same on the failure path: a cleanup that opens on a block with an empty `block:` list
+    /// opens on that block's rescue, and a host walking out through the `always` sections has
+    /// failed somewhere else entirely.
+    ///
+    /// What would make this red: entering an `always` at its first index rather than at its
+    /// first step, which runs a recovery section as cleanup.
+    #[test]
+    fn a_cleanup_does_not_start_in_a_rescue_either() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      always:
+        - block: []
+          rescue:
+            - name: cleanup recovery
+              command: "true"
+        - name: cleanup
+          command: "true"
+"#,
+        );
+        assert_eq!(names(&c), ["fails", "cleanup recovery", "cleanup"]);
+        assert_eq!(walk_failure(&c, 0), ["cleanup"]);
+    }
+
+    /// A block with an empty `block:` list is entered on its rescue, and nothing has failed:
+    /// the happy path steps over it, whether the block is the first thing in the play or comes
+    /// after another step.
+    ///
+    /// What would make this red: a walk that only handles leaving a block. Entering one whose
+    /// body is empty lands straight on the first step of its rescue, so the recovery path of a
+    /// playbook would run as ordinary work.
+    #[test]
+    fn an_empty_body_is_not_a_way_into_a_rescue() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block: []
+      rescue:
+        - name: first recovery
+          command: "true"
+    - name: one
+      command: "true"
+    - block: []
+      rescue:
+        - name: second recovery
+          command: "true"
+      always:
+        - name: cleanup
+          command: "true"
+    - name: two
+      command: "true"
+"#,
+        );
+        assert_eq!(
+            names(&c),
+            ["first recovery", "one", "second recovery", "cleanup", "two"]
+        );
+        assert_eq!(first(&c), 1, "the play does not start inside a rescue");
+        assert_eq!(walk(&c, first(&c)), ["one", "cleanup", "two"]);
     }
 
     /// Every keyword a block carries reaches the tasks under it, and a task that says something

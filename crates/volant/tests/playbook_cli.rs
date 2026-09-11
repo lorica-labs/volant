@@ -1467,22 +1467,56 @@ fn a_failure_runs_the_cleanups_around_it_and_stops_there() {
     );
 }
 
+/// A failure whose cleanup is written as a block runs the whole cleanup.
+///
+/// Measured on ansible-core 2.19.12 on this shape: both cleanup tasks run, in order, and the
+/// recap reads `ok=2 changed=2 failed=1` at exit 2.
+///
+/// What would make this red: a host reading the section it is draining off the step it is on.
+/// The first cleanup task carries the nested block's own `Body`, so the host would take it for
+/// the end of the cleanup, leave the play, and report a run that did less than the playbook
+/// asked for.
+#[test]
+fn a_cleanup_written_as_a_block_runs_all_of_it() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/nested-cleanup.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let one = text.find("TASK [Cleanup one]").expect("the first cleanup");
+    let two = text.find("TASK [Cleanup two]").expect("the second cleanup");
+    assert!(one < two, "the cleanup runs in order: {text}");
+    assert!(
+        !text.contains("Never reached"),
+        "nothing behind the failure runs: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=2    changed=2    unreachable=0    failed=1"
+        ),
+        "both cleanups are counted and the failure is the only one: {text}"
+    );
+}
+
 /// A `meta` shows one banner per live host and counts nothing.
 ///
 /// Measured on ansible-core 2.19.12 with three hosts, one of them already out of the play:
 /// two `TASK [meta]` banners in a row, nothing underneath either of them, and the recap
-/// counting only the task that followed.
+/// counting only the task that followed, `h0` reading `failed=1` and the other two `ok=1
+/// skipped=1`.
 ///
 /// What would make this red: a banner printed on the first report rather than on the first
-/// event that shows something, which gives one banner for two hosts; or a `meta` counted as a
-/// task, which reads `ok=2`.
+/// event that shows something, which gives one banner for two hosts; a `meta` counted as a
+/// task, which reads `ok=2`; or a host that has left the play still being shown one, which
+/// gives three.
 #[test]
 fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
     let out = volant_within(
         &[
             "playbook",
             "-i",
-            &fixture("blocks/two-hosts.ini"),
+            &fixture("blocks/three-hosts.ini"),
             &fixture("blocks/meta.yml"),
         ],
         std::time::Duration::from_secs(20),
@@ -1490,14 +1524,20 @@ fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
         out.status.code(),
-        Some(0),
+        Some(2),
         "{text}\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
         text.matches("TASK [meta]").count(),
         2,
-        "one banner per live host: {text}"
+        "one banner per live host, and none for the host that has left: {text}"
+    );
+    assert_eq!(
+        text.matches("h0                         : ok=0    changed=0    unreachable=0    failed=1")
+            .count(),
+        1,
+        "the host that failed is out of the play: {text}"
     );
     assert_eq!(
         text.matches("h1                         : ok=1").count(),

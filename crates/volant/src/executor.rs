@@ -1418,6 +1418,10 @@ fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) ->
 /// default would describe something nothing in this engine honours, and a rescue reading
 /// `ansible_failed_task.connection` is better told nothing than told `ssh` by an engine that
 /// never looked at the keyword.
+///
+/// `become_method` is not one of those: this release honours it. It reads `null` here anyway
+/// because its resolved value lives with the host's variables, not on `PlayTask`, and this
+/// function only takes the task - not because nothing looked at the keyword.
 fn failed_task_value(task: &PlayTask) -> Value {
     let mut out = Map::new();
     let strings = |list: &[String]| Value::Array(list.iter().map(|s| json!(s)).collect());
@@ -1860,6 +1864,14 @@ async fn drive_host(
             };
             // Report every task of the batch in order; tasks the agent never reached (after a
             // failure) are not reported at all, as in Ansible.
+            //
+            // `undecided`, when set, is always this loop's last entry - the step whose own
+            // batch-ending push is the one in the `Prepared::Remote` arm above. Whether it was
+            // actually reported is tracked rather than assumed: the agent can end the batch
+            // `Ok` without a result for it (a bug elsewhere, or a connection hiccup the batch
+            // outcome does not carry), and advancing past a step with no `TaskDone` behind it
+            // is the exact barrier stall this task exists to avoid.
+            let mut undecided_reported = false;
             for (bi, (index, items)) in batch.iter().enumerate() {
                 let task = &plan.compiled.steps[*index].task;
                 let mut results = Vec::new();
@@ -1897,6 +1909,9 @@ async fn drive_host(
                     failed_at = Some((*index, result));
                     break;
                 }
+                if undecided == Some(*index) {
+                    undecided_reported = true;
+                }
             }
             // The results are in and reported, so the next host may start while this one
             // renders its remaining local tasks.
@@ -1931,8 +1946,11 @@ async fn drive_host(
                 Ok(_) => {}
             }
             // The step held back above did not fail, so it steps over its block's rescue after
-            // all, and only now is that true enough to tell the coordinator.
+            // all, and only now is that true enough to tell the coordinator. Guarded by
+            // `undecided_reported`: a step this loop never actually reported has not told us
+            // that, whatever `ended` says about the rest of the batch.
             if failed_at.is_none()
+                && undecided_reported
                 && let Some(step) = undecided
             {
                 pos = advance(&tx, &name, &plan.compiled, step, &mut cleanup).await;

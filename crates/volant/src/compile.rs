@@ -848,6 +848,11 @@ pub(crate) fn rescue_target(c: &Compiled, pos: usize) -> Option<usize> {
     // them would be stepped over on the way in.
     let mut inside = entered(c, pos);
     inside.push(id);
+    // No `start < end` guard here, unlike `after_failure` below: measured and deliberate. A
+    // rescue whose only step sits inside a nested block's own un-entered rescue - `block: []`
+    // there, with a `rescue:` of its own - has nothing to run, and the reference still counts
+    // `rescued=1` and exits 0, walking straight into whatever comes after. Guarding this the
+    // way `after_failure` does would turn that into an unrescued failure instead.
     Some(seek(c, c.blocks[id].rescue.start, &inside))
 }
 
@@ -1380,6 +1385,45 @@ mod tests {
         assert_eq!(
             walk_failure(&c, at("in the rescue")),
             ["cleanup in the rescue", "outer cleanup"]
+        );
+    }
+
+    /// The fixture above cannot tell a sought target from a raw index: its rescue's first index
+    /// already is its first runnable step. Here it is not - a nested block with an empty
+    /// `block:` list opens the rescue on its own un-entered rescue, and `rescue_target` has to
+    /// seek past that to reach a step the failure can actually run.
+    ///
+    /// Measured on ansible-core 2.19.12: a rescue built this way still reads `rescued=1`, exit
+    /// 0, with nothing from the nested rescue running.
+    ///
+    /// What would make this red: `rescue_target` returning `c.blocks[id].rescue.start` unchanged
+    /// instead of seeking. That raw index is "rescue recovery" here, a step sitting in the
+    /// nested block's own rescue, which this failure never entered - so an unsought return
+    /// would name it instead of "rescue cleanup", the sibling behind it.
+    #[test]
+    fn rescue_target_seeks_past_a_nested_blocks_own_rescue() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      rescue:
+        - block: []
+          rescue:
+            - name: rescue recovery
+              command: "true"
+        - name: rescue cleanup
+          command: "true"
+      always:
+        - name: outer cleanup
+          command: "true"
+"#,
+        );
+        assert_eq!(
+            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
+            Some("rescue cleanup".to_string())
         );
     }
 

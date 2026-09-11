@@ -157,12 +157,51 @@ fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
     }
 }
 
-/// A scalar the way that refusal shows it: a string in quotes, a number bare.
+/// A scalar the way that refusal shows it: a string in quotes, a number bare, a sequence or
+/// mapping the way ansible-core's own Python repr prints it.
+///
+/// Measured on ansible-core 2.19.12 (`docs/superpowers/architecture.md`): a float is bare with
+/// its decimal kept (`1.0`, `3.5`, never a Rust `OrderedFloat` wrapper), a sequence reads
+/// `[1, 2]`, a mapping reads `{'a': 1}`, and `null` reads `None`. Ansible's own message for a
+/// `null` host entry is a different sentence entirely ("Hosts list cannot contain values of
+/// 'None'", not the generic invalid-value sentence this engine reuses for every shape); this
+/// engine keeps the one sentence and only fixes the value rendered into it, which is this
+/// function's whole job.
 fn shown(node: &Yaml) -> String {
     match node {
         Yaml::Value(Scalar::String(s)) => format!("'{s}'"),
         Yaml::Value(Scalar::Integer(i)) => i.to_string(),
+        Yaml::Value(Scalar::FloatingPoint(f)) => format!("{:?}", f.into_inner()),
+        Yaml::Value(Scalar::Boolean(b)) => if *b { "True" } else { "False" }.to_string(),
+        Yaml::Value(Scalar::Null) => "None".to_string(),
+        Yaml::Sequence(_) | Yaml::Mapping(_) => {
+            to_json(node).map_or_else(|_| format!("{node:?}"), |v| python_repr(&v))
+        }
         other => format!("{other:?}"),
+    }
+}
+
+/// A `serde_json::Value` printed the way Python's own `repr` renders it, since that is what
+/// ansible-core's error messages quote a structured value with: strings single-quoted, `null` as
+/// `None`, booleans capitalized, everything else bare. Used only by [`shown`], for the sequence
+/// and mapping shapes `to_json` already knows how to walk.
+fn python_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("'{s}'"),
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(python_repr).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(k, v)| format!("'{k}': {}", python_repr(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -576,6 +615,26 @@ mod tests {
             format!("{err:#}").contains("Hosts list contains an invalid host value: '3'"),
             "{err:#}"
         );
+        // Measured on ansible-core 2.19.12: a float prints bare with its decimal kept --
+        // `Hosts list contains an invalid host value: '3.5'` -- never the
+        // `Value(FloatingPoint(OrderedFloat(3.5)))` Rust Debug blob an operator used to see.
+        let err = parse("- hosts: [web, 3.5]\n  tasks: []\n", "x.yml").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Hosts list contains an invalid host value: '3.5'"),
+            "{err:#}"
+        );
+        // A sequence or a mapping prints the way ansible-core's own Python repr renders one,
+        // measured: `'[1, 2]'`, `'{'a': 1}'` -- not a Rust `Vec`/`LinkedHashMap` Debug dump.
+        let err = parse("- hosts: [web, [1, 2]]\n  tasks: []\n", "x.yml").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Hosts list contains an invalid host value: '[1, 2]'"),
+            "{err:#}"
+        );
+        let err = parse("- hosts: [web, {a: 1}]\n  tasks: []\n", "x.yml").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Hosts list contains an invalid host value: '{'a': 1}'"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -933,24 +992,47 @@ mod tests {
     /// told about.
     #[test]
     fn an_unreadable_boolean_is_refused_in_the_reference_s_words() {
-        for (text, kw) in [
+        for (text, kw, value) in [
             (
                 "- hosts: all\n  gather_facts: maybe\n  tasks:\n    - command: echo hi\n",
                 "gather_facts",
+                "'maybe'",
             ),
             (
                 "- hosts: all\n  tasks:\n    - command: echo hi\n      ignore_errors: maybe\n",
                 "ignore_errors",
+                "'maybe'",
             ),
             (
                 "- hosts: all\n  tasks:\n    - command: echo hi\n      become: maybe\n",
                 "become",
+                "'maybe'",
+            ),
+            // Measured on ansible-core 2.19.12 (`become: 1.5` on a task): a float prints bare
+            // with its decimal kept, never the `OrderedFloat` wrapper this engine used to leak
+            // into the message.
+            (
+                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: 1.5\n",
+                "become",
+                "1.5",
+            ),
+            // Measured: a sequence and a mapping print the way ansible-core's own Python repr
+            // renders one -- `[1, 2]`, `{'a': 1}` -- not a Rust `Vec`/`LinkedHashMap` Debug dump.
+            (
+                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: [1, 2]\n",
+                "become",
+                "[1, 2]",
+            ),
+            (
+                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: {a: 1}\n",
+                "become",
+                "{'a': 1}",
             ),
         ] {
             let err = parse(text, "x.yml").unwrap_err();
             assert!(
                 format!("{err:#}").contains(&format!(
-                    "Error processing keyword '{kw}': The value 'maybe' could not be converted to 'bool'."
+                    "Error processing keyword '{kw}': The value {value} could not be converted to 'bool'."
                 )),
                 "{err:#}"
             );

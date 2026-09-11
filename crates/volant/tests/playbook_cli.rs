@@ -24,10 +24,33 @@ fn volant(args: &[&str]) -> Output {
 /// hangs instead of returning, and a hung run only ends at the harness's own timeout, so the
 /// tests that prove a wait ends say so with a deadline rather than with elapsed time alone.
 fn volant_within(args: &[&str], deadline: std::time::Duration) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
+    volant_within_with_path(args, deadline, None)
+}
+
+/// `volant_within`, with an optional directory prepended to `PATH` -- the form `run_probe` needs
+/// for the escalation probes, which put a fake `sudo` ahead of the real one rather than resting
+/// on properties of the machine.
+fn volant_within_with_path(
+    args: &[&str],
+    deadline: std::time::Duration,
+    path: Option<&Path>,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
         .args(args)
         .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
+        .env_remove("COLUMNS");
+    if let Some(dir) = path {
+        command.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
+    }
+    let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -1383,14 +1406,20 @@ fn probe_dir(kind: &str) -> std::path::PathBuf {
     dir
 }
 
-fn run_probe(dir: &std::path::Path, kw: &str, body: &str, extra: &[&str]) -> (i32, String) {
-    let path = dir.join(format!("{kw}.yml"));
-    std::fs::write(&path, body).expect("the probe is written");
+fn run_probe(
+    dir: &std::path::Path,
+    kw: &str,
+    body: &str,
+    extra: &[&str],
+    path: Option<&Path>,
+) -> (i32, String) {
+    let file = dir.join(format!("{kw}.yml"));
+    std::fs::write(&file, body).expect("the probe is written");
     let mut args: Vec<&str> = vec!["playbook"];
     args.extend_from_slice(extra);
-    let shown = path.display().to_string();
+    let shown = file.display().to_string();
     args.push(&shown);
-    let out = volant_within(&args, PROBE_DEADLINE);
+    let out = volant_within_with_path(&args, PROBE_DEADLINE, path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -1428,7 +1457,7 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
         ),
     ];
     for (kw, body) in probes {
-        let (code, text) = run_probe(&dir, kw, body, &[]);
+        let (code, text) = run_probe(&dir, kw, body, &[], None);
         assert_eq!(code, 4, "{kw}: {text}");
         assert!(
             text.contains(&format!("keyword '{kw}' is not supported yet")),
@@ -1744,9 +1773,45 @@ fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
 /// changes what comes out: `when: false` stops skipping, `timeout: 1` stops killing `sleep`,
 /// `register` stops carrying the output to the next task, `strategy: free` stops being refused,
 /// `become_user` stops naming an account `sudo` cannot find.
+/// A fake `sudo` for the three escalation rows in `RUNS_PROBES` (`task.become`,
+/// `task.become_user`, `play.become_user`): it resolves `-u <user>` itself, the way a
+/// real `sudo` resolves the account before it ever consults policy, and refuses only the one
+/// name these probes write. Every other user -- in particular `root`, the default `become_user`
+/// -- succeeds without a password and simply runs the command it was handed.
+///
+/// This replaces two properties of the machine the probes used to rest on instead of on this
+/// engine's own code: that the local `sudo` resolves an unknown user before policy (so the
+/// message names the account) and that `sudo` to root needs no password (so the run reaches the
+/// task at all). Neither is guaranteed on every CI runner or contributor machine; what the fake
+/// proves instead is the one thing these rows are for, that `become_user` reaches `sudo`'s argv.
+const FAKE_SUDO_FOR_BECOME_USER: &str = "#!/bin/sh\n\
+ user=\n\
+ prev=\n\
+ for arg in \"$@\"; do\n\
+ [ \"$prev\" = -u ] && user=\"$arg\"\n\
+ prev=\"$arg\"\n\
+ done\n\
+ if [ \"$user\" = nosuchuser-volant-probe ]; then\n\
+ echo 'sudo: unknown user nosuchuser-volant-probe' >&2\n\
+ exit 1\n\
+ fi\n\
+ while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+ shift\n\
+ exec \"$@\"\n";
+
+/// Whether a `RunsProbe` row is one of the three escalation rows that route through
+/// [`FAKE_SUDO_FOR_BECOME_USER`] instead of the machine's real `sudo`.
+fn is_become_user_probe(probe: &RunsProbe) -> bool {
+    matches!(
+        (probe.table, probe.kw),
+        ("task", "become") | ("task", "become_user") | ("play", "become_user")
+    )
+}
+
 #[test]
 fn every_runs_keyword_changes_something_observable() {
     let dir = probe_dir("runs");
+    let sudo_dir = fake_sudo("runs-become-user", FAKE_SUDO_FOR_BECOME_USER);
     // Every probe runs before anything is asserted, so one failing run reports every row that
     // broke rather than only the first: a change that touches several keywords is read once.
     let mut failures = Vec::new();
@@ -1758,7 +1823,8 @@ fn every_runs_keyword_changes_something_observable() {
                 .expect("the probe's vars file is written");
         }
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
-        let (code, text) = run_probe(&dir, &name, &body, probe.args);
+        let path = is_become_user_probe(probe).then_some(sudo_dir.as_path());
+        let (code, text) = run_probe(&dir, &name, &body, probe.args, path);
         if code != probe.code || !text.contains(probe.expect) {
             failures.push(format!(
                 "{name}: wanted exit {} and {:?}, got exit {code}:\n{text}",
@@ -1773,4 +1839,5 @@ fn every_runs_keyword_changes_something_observable() {
         failures.join("\n")
     );
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+    std::fs::remove_dir_all(&sudo_dir).expect("the fake sudo directory is removed");
 }

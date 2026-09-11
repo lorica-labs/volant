@@ -76,8 +76,11 @@ impl Config {
             config.inventory = Some(PathBuf::from(inv));
         }
         if let Ok(t) = std::env::var("ANSIBLE_TIMEOUT") {
-            config.timeout =
-                Duration::from_secs(integer("DEFAULT_TIMEOUT", "env: ANSIBLE_TIMEOUT", &t)?);
+            let origin = "env: ANSIBLE_TIMEOUT";
+            config.timeout = Duration::from_secs(timeout_secs(
+                integer("DEFAULT_TIMEOUT", origin, &t)?,
+                origin,
+            )?);
         }
         if let Ok(user) = std::env::var("ANSIBLE_REMOTE_USER") {
             config.remote_user = Some(user);
@@ -102,7 +105,7 @@ impl Config {
         // (exit 2, measured). A value that is not an integer at all is a different refusal
         // with a different code, and `integer` raises it.
         if let Ok(n) = std::env::var("ANSIBLE_FORKS") {
-            config.forks = integer("DEFAULT_FORKS", "env: ANSIBLE_FORKS", &n)? as usize;
+            config.forks = forks(integer("DEFAULT_FORKS", "env: ANSIBLE_FORKS", &n)?);
         }
         if let Ok(flag) = std::env::var("ANSIBLE_BECOME")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
@@ -151,19 +154,43 @@ fn locate() -> Option<PathBuf> {
 /// what `timeout` used to do from both its sources - runs the playbook with a value the
 /// operator never wrote and the reference never accepted.
 ///
-/// A negative number parses here and is clamped to zero, where the startup check refuses it
-/// with the same words and the same exit 2 a literal zero gets.
-fn integer(name: &str, origin: &str, value: &str) -> anyhow::Result<u64> {
+/// The sign is kept, because the two settings that read integers do different things with it;
+/// see [`forks`] and [`timeout_secs`].
+fn integer(name: &str, origin: &str, value: &str) -> anyhow::Result<i64> {
     let value = value.trim();
-    match value.parse::<i64>() {
-        Ok(n) => Ok(n.max(0) as u64),
-        Err(_) => Err(crate::stats::Refusal::at(
+    value.parse::<i64>().map_err(|_| {
+        crate::stats::Refusal::at(
             5,
             format!(
                 "Config '{name}' from '{origin}' has an invalid value: Invalid value provided for 'integer': '{value}'"
             ),
-        )),
-    }
+        )
+    })
+}
+
+/// A negative `forks` is clamped to zero, where the single startup check refuses it with the
+/// reference's own words and the same exit 2 a literal zero gets: measured, `forks = -1` exits
+/// 2 with `The number of processes (--forks) must be >= 1`.
+fn forks(n: i64) -> usize {
+    n.max(0) as usize
+}
+
+/// A negative connection timeout is refused where it is read, rather than clamped.
+///
+/// Measured on ansible-core 2.19.12: `timeout = -1` is passed straight to `ssh`, which answers
+/// `command-line line 0: invalid time value`, and every host of the run comes back UNREACHABLE
+/// at exit 4. So the reference does not run with it either. Clamping it to zero here would
+/// instead mean `ConnectTimeout=0`, which is no limit at all - a connection that hangs for as
+/// long as the kernel allows, from a line the operator wrote to make it hang less. It is
+/// refused before the first connection instead, with the exit 2 the other unusable startup
+/// number gets.
+fn timeout_secs(n: i64, origin: &str) -> anyhow::Result<u64> {
+    u64::try_from(n).map_err(|_| {
+        crate::stats::Refusal::at(
+            2,
+            format!("The connection timeout from '{origin}' must be >= 0, got {n}"),
+        )
+    })
 }
 
 /// Reads `[defaults]` and `[privilege_escalation]`. Relative paths are relative to the
@@ -219,7 +246,10 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                 }
             }
             "timeout" => {
-                config.timeout = Duration::from_secs(integer("DEFAULT_TIMEOUT", origin, value)?);
+                config.timeout = Duration::from_secs(timeout_secs(
+                    integer("DEFAULT_TIMEOUT", origin, value)?,
+                    origin,
+                )?);
             }
             "remote_user" => {
                 let user = value.trim();
@@ -246,7 +276,7 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             }
             // A zero reaches the caller as zero, where the single startup check refuses it.
             // A value that is no number at all is the reference's own exit 5 instead.
-            "forks" => config.forks = integer("DEFAULT_FORKS", origin, value)? as usize,
+            "forks" => config.forks = forks(integer("DEFAULT_FORKS", origin, value)?),
             _ => {}
         }
     }
@@ -360,6 +390,33 @@ mod tests {
                 "{shown}"
             );
         }
+    }
+
+    /// A negative connection timeout is refused rather than clamped, from the file and from the
+    /// environment alike.
+    ///
+    /// Measured against `ansible-core 2.19.12`: `timeout = -1` reaches `ssh`, which answers
+    /// `command-line line 0: invalid time value`, and every host is UNREACHABLE at exit 4. The
+    /// reference does not run with it either; this release says so before it connects.
+    ///
+    /// What would make this red: `timeout = -1` clamped back to zero, which is `ssh`'s
+    /// `ConnectTimeout=0` - no limit at all, from a line written to shorten one.
+    #[test]
+    fn a_negative_timeout_is_refused_rather_than_clamped_to_no_limit() {
+        assert_eq!(
+            cfg("[defaults]\ntimeout = 7\n", ".").timeout,
+            Duration::from_secs(7)
+        );
+        let err = parse(
+            "[defaults]\ntimeout = -1\n",
+            Path::new("."),
+            "/etc/x/ansible.cfg",
+        )
+        .unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 2, "{err:#}");
+        let shown = format!("{err:#}");
+        assert!(shown.contains("must be >= 0, got -1"), "{shown}");
+        assert!(shown.contains("/etc/x/ansible.cfg"), "{shown}");
     }
 
     /// The same two settings from the environment, where the reference names the variable as

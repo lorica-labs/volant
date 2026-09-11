@@ -25,6 +25,9 @@ Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `reg
 
 `when`, `changed_when` and `failed_when` take one Jinja2 expression or a list of them, all of which must hold. `loop` and `with_items` cannot both be given on the same task; `with_items` flattens one level of nested lists, `loop` does not. Registering a looped task collects a `results` list, one entry per item, the way `ansible-playbook` does.
 
+Under `loop_control`, only `loop_var` and `label` are read. The rest are refused by name, and a
+sub-key `ansible-core` does not have refuses the playbook outright.
+
 Any other keyword is refused by name rather than ignored.
 
 ## Templating

@@ -153,6 +153,78 @@ mod tests {
         assert!(!text.contains("no module given"), "{text}");
     }
 
+    /// One probe playbook per `Preflight` row of the three tables, built from the row's own
+    /// name. The value is never read - a parked keyword is kept, not parsed - so one
+    /// placeholder serves every row, and a keyword that starts being read will say so by
+    /// failing to load.
+    fn preflight_probes() -> Vec<(&'static str, String)> {
+        use crate::keywords::{
+            BLOCK_SECTIONS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+        };
+        let task = |kw: &str| {
+            format!(
+                "- hosts: all\n  tasks:\n    - name: Probe task\n      command: echo hi\n      {kw}: probe\n"
+            )
+        };
+        let parked = |table: &'static [crate::keywords::Keyword]| {
+            table
+                .iter()
+                .filter(|k| k.support == Support::Preflight)
+                .map(|k| k.name)
+        };
+        let mut probes: Vec<(&'static str, String)> =
+            parked(TASK_KEYWORDS).map(|kw| (kw, task(kw))).collect();
+        // A block's sections are grammar the loader has to accept and the pre-flight has to
+        // refuse, even though nothing compiles them yet.
+        probes.extend(BLOCK_SECTIONS.iter().map(|s| (*s, task(s))));
+        probes.extend(parked(PLAY_KEYWORDS).map(|kw| {
+            (
+                kw,
+                format!(
+                    "- hosts: all\n  {kw}: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n"
+                ),
+            )
+        }));
+        probes.extend(parked(LOOP_CONTROL_KEYWORDS).map(|kw| {
+            (
+                kw,
+                format!(
+                    "- hosts: all\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        {kw}: probe\n"
+                ),
+            )
+        }));
+        probes
+    }
+
+    /// Every keyword the tables mark `Preflight` stops the run, before the first connection,
+    /// naming itself while doing it. Adding a `Preflight` row to any of the three tables adds a
+    /// case here on its own, so the gap cannot be opened silently.
+    ///
+    /// The count is pinned rather than bounded: it is the number this release's record carries,
+    /// and a floor let a wrong one stand once already. A table that grows moves it by hand, in
+    /// the same change.
+    ///
+    /// What would make this red: a keyword the loader accepts and the pre-flight forgets, which
+    /// would run the playbook without it and report success; or a refusal that stops naming the
+    /// keyword, leaving the operator to guess which line to fix. That nothing runs before the
+    /// refusal is the process fixture's half of the proof, in `playbook_cli.rs`.
+    #[test]
+    fn every_preflight_keyword_is_refused_by_its_own_name() {
+        let probes = preflight_probes();
+        assert_eq!(
+            probes.len(),
+            90,
+            "the tables carry the whole grammar; this count is the record"
+        );
+        for (kw, body) in &probes {
+            let text = refusal(body);
+            assert!(
+                text.contains(&format!("keyword '{kw}' is not supported yet")),
+                "{kw} must name itself: {text}"
+            );
+        }
+    }
+
     #[test]
     fn only_the_linear_strategy_runs() {
         let text = refusal("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n");

@@ -165,6 +165,24 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("vars_prompt", Preflight),
 ];
 
+/// `loop_control` sub-keys, as `LoopControl.fattributes` lists them on ansible-core 2.19.12.
+///
+/// A keyword whose value is a mapping needs a table of its own, or the split between loading
+/// and refusing reopens one level down: `loop_control` was read for `loop_var` and `label`
+/// alone, and `index_var`, `pause`, `break_when`, `extended` and `extended_allitems` were
+/// accepted, waved past the pre-flight and dropped, so the run reported success having ignored
+/// what the operator wrote. They are parked here instead, and the pre-flight refuses them by
+/// their own names.
+pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
+    kw("break_when", Preflight),
+    kw("extended", Preflight),
+    kw("extended_allitems", Preflight),
+    kw("index_var", Preflight),
+    kw("label", Runs),
+    kw("loop_var", Runs),
+    kw("pause", Preflight),
+];
+
 /// The three section keywords of a block. A block is not compiled until a later release, so a
 /// task carrying one of them is loaded and refused by the pre-flight like any other
 /// `Preflight` keyword; the reference's own Block attribute list arrives with the compiler
@@ -179,6 +197,10 @@ pub fn play_keyword(name: &str) -> Option<&'static Keyword> {
     PLAY_KEYWORDS.iter().find(|k| k.name == name)
 }
 
+pub fn loop_control_keyword(name: &str) -> Option<&'static Keyword> {
+    LOOP_CONTROL_KEYWORDS.iter().find(|k| k.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,7 +210,7 @@ mod tests {
     /// `sort_unstable` on `&str` does and what the tables are written in.
     #[test]
     fn the_tables_are_sorted_and_free_of_duplicates() {
-        for table in [TASK_KEYWORDS, PLAY_KEYWORDS] {
+        for table in [TASK_KEYWORDS, PLAY_KEYWORDS, LOOP_CONTROL_KEYWORDS] {
             let names: Vec<&str> = table.iter().map(|k| k.name).collect();
             let mut sorted = names.clone();
             sorted.sort_unstable();
@@ -334,6 +356,20 @@ mod tests {
         ];
         let ours: Vec<&str> = PLAY_KEYWORDS.iter().map(|k| k.name).collect();
         assert_eq!(ours, play_fattributes);
+
+        // `LoopControl.fattributes`, read the same way. The reference refuses any other
+        // sub-key outright, so this list is the whole grammar under `loop_control`.
+        let loop_control_fattributes = [
+            "break_when",
+            "extended",
+            "extended_allitems",
+            "index_var",
+            "label",
+            "loop_var",
+            "pause",
+        ];
+        let ours: Vec<&str> = LOOP_CONTROL_KEYWORDS.iter().map(|k| k.name).collect();
+        assert_eq!(ours, loop_control_fattributes);
     }
 
     /// A block section is never also a task keyword: the loader tells them apart by asking the

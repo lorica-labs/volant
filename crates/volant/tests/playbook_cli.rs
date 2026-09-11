@@ -1359,15 +1359,19 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// The keyword table, covered in both directions. Between them the two tests below say that
-// every row of `keywords::TASK_KEYWORDS` and `keywords::PLAY_KEYWORDS` does what its `Support`
-// claims: a `Preflight` row stops the run before any banner, a `Runs` row changes something an
-// operator can see. Both lists are walked from the table itself rather than written out here,
-// so a row added without its proof fails the suite instead of slipping through - which is how
-// a keyword would come to be accepted by the loader, waved past the pre-flight and then
-// ignored, the failure this whole split exists to prevent.
+// The keyword tables, covered in both directions. Every row of `keywords::TASK_KEYWORDS`,
+// `keywords::PLAY_KEYWORDS` and `keywords::LOOP_CONTROL_KEYWORDS` has to do what its `Support`
+// claims: a `Runs` row changes something an operator can see, a `Preflight` row stops the run
+// before anything is printed. The `Runs` list is walked from the tables themselves rather than
+// written out here, so a row added without its proof fails the suite instead of slipping
+// through - which is how a keyword would come to be accepted by the loader, waved past the
+// pre-flight and then ignored, the failure this whole split exists to prevent.
+//
+// The `Preflight` half walks the same tables in `preflight.rs`'s own unit tests, in one
+// process; only "nothing comes out before the refusal" needs a real run, and three fixtures
+// below carry it.
 
-use volant::keywords::{BLOCK_SECTIONS, PLAY_KEYWORDS, Support, TASK_KEYWORDS};
+use volant::keywords::{LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS};
 
 const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -1395,61 +1399,35 @@ fn run_probe(dir: &std::path::Path, kw: &str, body: &str, extra: &[&str]) -> (i3
     (out.status.code().unwrap_or(-1), text)
 }
 
-/// One probe playbook per `Preflight` row, built from the row's own name.
+/// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
 ///
-/// The value is never read - a `Preflight` keyword is parked, not parsed - so one placeholder
-/// serves every row, and a keyword that starts being read will say so by failing to load.
-fn preflight_probes() -> Vec<(String, String)> {
-    let mut probes = Vec::new();
-    let task = |kw: &str| {
-        format!(
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      {kw}: probe\n"
-        )
-    };
-    for kw in TASK_KEYWORDS
-        .iter()
-        .filter(|k| k.support == Support::Preflight)
-    {
-        probes.push((kw.name.to_string(), task(kw.name)));
-    }
-    // A block's sections are grammar the loader has to accept and the pre-flight has to refuse,
-    // even though nothing compiles them yet.
-    for section in BLOCK_SECTIONS {
-        probes.push((section.to_string(), task(section)));
-    }
-    for kw in PLAY_KEYWORDS
-        .iter()
-        .filter(|k| k.support == Support::Preflight)
-    {
-        probes.push((
-            kw.name.to_string(),
-            format!(
-                "- hosts: localhost\n  gather_facts: false\n  {}: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
-                kw.name
-            ),
-        ));
-    }
-    probes
-}
-
-/// Every keyword the table marks `Preflight` stops the run before the first connection, names
-/// itself while doing it, and lets no `PLAY [` banner out first.
+/// That a parked keyword is refused by its own name is a property of `parse` plus `check`, and
+/// the unit test `every_preflight_keyword_is_refused_by_its_own_name` walks all three tables
+/// for it in one process. Only "no output before the refusal" needs a real run, and it is the
+/// same property for every row, so three fixtures carry it: one parked task keyword, one block
+/// section, one parked play keyword. Walking the whole grammar here spawned ninety processes to
+/// re-prove in-process what one assertion already proves.
 ///
-/// What would make this red: a keyword the loader accepts and the pre-flight forgets, which
-/// would run the playbook without it and report success; a refusal that stops naming the
-/// keyword, leaving the operator to guess; or a refusal raised after the banner, by which time
-/// tasks may already have run. Adding a `Preflight` row to either table adds a case here on its
-/// own, so the gap cannot be opened silently.
+/// What would make this red: a refusal raised after the banner, by which time tasks may already
+/// have run and the operator has a half-applied playbook to undo.
 #[test]
-fn every_preflight_keyword_is_refused_before_any_banner() {
+fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
-    let probes = preflight_probes();
-    assert!(
-        probes.len() > 60,
-        "the tables carry the whole grammar, so this walk is long: {}",
-        probes.len()
-    );
-    for (kw, body) in &probes {
+    let probes = [
+        (
+            "no_log",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
+        ),
+        (
+            "block",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n",
+        ),
+        (
+            "serial",
+            "- hosts: localhost\n  gather_facts: false\n  serial: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        ),
+    ];
+    for (kw, body) in probes {
         let (code, text) = run_probe(&dir, kw, body, &[]);
         assert_eq!(code, 4, "{kw}: {text}");
         assert!(
@@ -1460,6 +1438,10 @@ fn every_preflight_keyword_is_refused_before_any_banner() {
             !text.contains("PLAY ["),
             "{kw}: nothing runs before a pre-flight refusal: {text}"
         );
+        assert!(
+            !text.contains("PLAY RECAP"),
+            "{kw}: a refusal before the first connection has nothing to recap: {text}"
+        );
     }
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
@@ -1469,9 +1451,7 @@ fn every_preflight_keyword_is_refused_before_any_banner() {
 struct RunsProbe {
     table: &'static str,
     kw: &'static str,
-    /// `None` when the proof needs a privileged host and lives in the `ssh_*` suite instead;
-    /// the string names the test that carries it.
-    body: Option<&'static str>,
+    body: &'static str,
     args: &'static [&'static str],
     code: i32,
     expect: &'static str,
@@ -1488,31 +1468,24 @@ const fn runs(
     RunsProbe {
         table,
         kw,
-        body: Some(body),
+        body,
         args,
         code,
         expect,
     }
 }
 
-const fn over_ssh(table: &'static str, kw: &'static str, test: &'static str) -> RunsProbe {
-    RunsProbe {
-        table,
-        kw,
-        body: None,
-        args: &[],
-        code: 0,
-        expect: test,
-    }
-}
-
-/// One proof per `Runs` row. Each body is written so that deleting the keyword's handling
-/// changes the run: the task stops failing, the loop stops looping, the refusal stops coming.
+/// One proof per `Runs` row, every one of them a real run of this binary. Each body is written
+/// so that deleting the keyword's handling changes the run: the task stops failing, the loop
+/// stops looping, the refusal stops coming.
 ///
-/// Escalation is the exception. `become_user`, and `become` on a task, only show themselves on
-/// a host this process can escalate on, so their proofs are the named `ssh_*` tests, which
-/// `just remote ssh-test` runs. They are listed rather than left out so the completeness check
-/// below still counts them.
+/// Nothing here is proved by naming a test somewhere else. Three escalation rows used to be,
+/// and the name was inert text: no compiler and no assertion checked that the named test still
+/// existed, those tests are `#[ignore]`d so an ordinary run proved none of the three, and the
+/// same hatch would have marked any future row `Runs` with no proof at all. Escalating to an
+/// account that does not exist needs no privileged host and no second suite: `sudo` refuses by
+/// naming the account, which is a `become_user` that reached it intact, and dropping either
+/// escalation keyword lets the task run as the invoking user and succeed.
 const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "task",
@@ -1522,7 +1495,14 @@ const RUNS_PROBES: &[RunsProbe] = &[
         2,
         "nonexistent-volant-probe",
     ),
-    over_ssh("task", "become", "ssh_become_over_ssh"),
+    runs(
+        "task",
+        "become",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become: true\n      become_user: nosuchuser-volant-probe\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
+    ),
     runs(
         "task",
         "become_method",
@@ -1531,10 +1511,13 @@ const RUNS_PROBES: &[RunsProbe] = &[
         2,
         "become_method 'su' is not supported yet",
     ),
-    over_ssh(
+    runs(
         "task",
         "become_user",
-        "ssh_become_to_an_unprivileged_user_reaches_the_agent",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become_user: nosuchuser-volant-probe\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
     ),
     runs(
         "task",
@@ -1640,10 +1623,13 @@ const RUNS_PROBES: &[RunsProbe] = &[
         2,
         "become_method 'su' is not supported yet",
     ),
-    over_ssh(
+    runs(
         "play",
         "become_user",
-        "ssh_become_to_an_unprivileged_user_reaches_the_agent",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_user: nosuchuser-volant-probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
     ),
     // `gather_facts: true` is answered rather than obeyed: this release gathers no facts and
     // says so before the first task, which is the difference between a keyword handled and a
@@ -1656,13 +1642,16 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "gather_facts is not available in this release",
     ),
+    // The recap, not the banner: `PLAY [localhost]` is `name` falling back to `hosts`, so it
+    // would still read the same if `hosts` never reached the inventory. A host only reaches the
+    // recap by having been selected and run.
     runs(
         "play",
         "hosts",
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: echo hi\n",
         &[],
         0,
-        "PLAY [localhost]",
+        "localhost                  : ok=1",
     ),
     runs(
         "play",
@@ -1704,6 +1693,25 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "\"msg\": \"file-value\"",
     ),
+    // `loop_control` is a mapping, so its sub-keys carry their own rows and their own proofs.
+    // Reading two of them and dropping the rest is how a keyword the table vouches for goes on
+    // ignoring most of what was written under it.
+    runs(
+        "loop_control",
+        "label",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        label: shown-instead\n",
+        &[],
+        0,
+        "(item=shown-instead)",
+    ),
+    runs(
+        "loop_control",
+        "loop_var",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ thing }}\"\n      loop: [alpha]\n      loop_control:\n        loop_var: thing\n",
+        &[],
+        0,
+        "\"msg\": \"alpha\"",
+    ),
 ];
 
 /// Every keyword the table marks `Runs` has a proof, and every proof belongs to a row.
@@ -1713,17 +1721,19 @@ const RUNS_PROBES: &[RunsProbe] = &[
 /// for a keyword that no longer claims to run.
 #[test]
 fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
-    let mut declared: Vec<(&str, &str)> = TASK_KEYWORDS
-        .iter()
-        .filter(|k| k.support == Support::Runs)
-        .map(|k| ("task", k.name))
-        .chain(
-            PLAY_KEYWORDS
-                .iter()
-                .filter(|k| k.support == Support::Runs)
-                .map(|k| ("play", k.name)),
-        )
-        .collect();
+    let mut declared: Vec<(&str, &str)> = [
+        ("task", TASK_KEYWORDS),
+        ("play", PLAY_KEYWORDS),
+        ("loop_control", LOOP_CONTROL_KEYWORDS),
+    ]
+    .into_iter()
+    .flat_map(|(table, keywords)| {
+        keywords
+            .iter()
+            .filter(|k| k.support == Support::Runs)
+            .map(move |k| (table, k.name))
+    })
+    .collect();
     let mut proved: Vec<(&str, &str)> = RUNS_PROBES.iter().map(|p| (p.table, p.kw)).collect();
     declared.sort_unstable();
     proved.sort_unstable();
@@ -1732,10 +1742,8 @@ fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
 
 /// Each `Runs` proof, run. The bodies are written so that deleting the keyword's handling
 /// changes what comes out: `when: false` stops skipping, `timeout: 1` stops killing `sleep`,
-/// `register` stops carrying the output to the next task, `strategy: free` stops being refused.
-///
-/// The escalation rows are skipped here and proved in the `ssh_*` suite, which needs a host to
-/// escalate on; the test above is what keeps them from being forgotten.
+/// `register` stops carrying the output to the next task, `strategy: free` stops being refused,
+/// `become_user` stops naming an account `sudo` cannot find.
 #[test]
 fn every_runs_keyword_changes_something_observable() {
     let dir = probe_dir("runs");
@@ -1743,9 +1751,7 @@ fn every_runs_keyword_changes_something_observable() {
     // broke rather than only the first: a change that touches several keywords is read once.
     let mut failures = Vec::new();
     for probe in RUNS_PROBES {
-        let Some(body) = probe.body else {
-            continue;
-        };
+        let body = probe.body;
         let name = format!("{}-{}", probe.table, probe.kw);
         if probe.kw == "vars_files" {
             std::fs::write(dir.join(format!("{name}.vars.yml")), "probe: file-value\n")

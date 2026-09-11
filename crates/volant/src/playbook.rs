@@ -8,7 +8,7 @@ use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 use volant_protocol::modules::{is_known, native};
 
-use crate::keywords::{BLOCK_SECTIONS, Support, play_keyword, task_keyword};
+use crate::keywords::{BLOCK_SECTIONS, Support, loop_control_keyword, play_keyword, task_keyword};
 use crate::yaml::{as_bool, field, to_json};
 
 #[derive(Debug, Default)]
@@ -116,13 +116,7 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
             Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
         }
     };
-    let flag = match field(yaml, "become") {
-        None | Some(Yaml::Value(Scalar::Null)) => None,
-        Some(node) => Some(
-            as_bool(node)
-                .ok_or_else(|| anyhow!("{context}'become' must be a boolean, found {node:?}"))?,
-        ),
-    };
+    let flag = boolean(yaml, "become")?;
     let user = text("become_user")?;
     if let Some(method) = text("become_method")?
         && method != BECOME_METHOD
@@ -135,6 +129,41 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
         ));
     }
     Ok((flag, user))
+}
+
+/// A keyword whose value has to be a boolean, refused in the reference's own words when it is
+/// not one, rather than quietly becoming the default.
+///
+/// Measured on ansible-core 2.19.12: `gather_facts: maybe` refuses the load at exit 4 with
+/// `Error processing keyword 'gather_facts': The value 'maybe' could not be converted to
+/// 'bool'.`, and `ignore_errors: maybe` carries that same sentence into the task it fails at
+/// run time. `become: maybe` does the same. A default silently put in their place runs the
+/// playbook under a value nobody wrote and nobody is told about, which is the family of bug the
+/// split between loading and refusing exists to close.
+///
+/// All three are refused here, at load. That is one step earlier than the reference refuses
+/// `ignore_errors` and `become`, and the divergence is deliberate: no task has run yet, so
+/// there is nothing half-applied to explain.
+fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
+    match field(yaml, key) {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+        Some(node) => match as_bool(node) {
+            Some(b) => Ok(Some(b)),
+            None => bail!(
+                "Error processing keyword '{key}': The value {} could not be converted to 'bool'.",
+                shown(node)
+            ),
+        },
+    }
+}
+
+/// A scalar the way that refusal shows it: a string in quotes, a number bare.
+fn shown(node: &Yaml) -> String {
+    match node {
+        Yaml::Value(Scalar::String(s)) => format!("'{s}'"),
+        Yaml::Value(Scalar::Integer(i)) => i.to_string(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
@@ -193,10 +222,18 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
     unsupported.sort_unstable();
     let hosts = match field(yaml, "hosts") {
         Some(Yaml::Value(Scalar::String(s))) => s.to_string(),
+        // Every entry, or none: `filter_map` here dropped a non-string entry and ran the play
+        // against the rest, which is a host list quietly shorter than the one written. The
+        // reference refuses it instead, measured: `Hosts list contains an invalid host value:
+        // '3'`, exit 4.
         Some(Yaml::Sequence(items)) => items
             .iter()
-            .filter_map(Yaml::as_str)
-            .collect::<Vec<_>>()
+            .map(|i| {
+                i.as_str().ok_or_else(|| {
+                    anyhow!("Hosts list contains an invalid host value: '{}'", shown(i))
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
             .join(","),
         None => bail!("a play needs 'hosts'"),
         Some(other) => bail!("'hosts' must be a string or a list, found {other:?}"),
@@ -205,9 +242,7 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         .and_then(Yaml::as_str)
         .unwrap_or(&hosts)
         .to_string();
-    let gather_facts = field(yaml, "gather_facts")
-        .and_then(as_bool)
-        .unwrap_or(true);
+    let gather_facts = boolean(yaml, "gather_facts")?.unwrap_or(true);
     let vars = match field(yaml, "vars") {
         None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
         Some(v) => match to_json(v).context("'vars'")? {
@@ -273,8 +308,8 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
             .ok_or_else(|| anyhow!("task '{label}': keys must be strings"))?;
         // A block's three sections are grammar too, even though the compiler that runs them
         // arrives later: taken for a module name they would be refused as a typo.
-        if BLOCK_SECTIONS.contains(&key) {
-            unsupported.extend(BLOCK_SECTIONS.iter().copied().filter(|s| *s == key));
+        if let Some(section) = BLOCK_SECTIONS.iter().copied().find(|s| *s == key) {
+            unsupported.push(section);
             continue;
         }
         match task_keyword(key) {
@@ -288,6 +323,41 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
                     bail!("task '{label}': conflicting action statements: {first}, {key}");
                 }
                 module = Some((key.to_string(), value));
+            }
+        }
+    }
+    // `loop_control` is a mapping, so it has a grammar of its own, and reading two of its
+    // sub-keys while dropping the rest reopens the silent skip one level below the keyword:
+    // `index_var` or `pause` would be accepted, waved past the pre-flight and ignored while the
+    // table still said the keyword runs. The reference refuses a sub-key it does not know at
+    // load - measured, exit 4, `'nosuch' is not a valid attribute for a LoopControl` - and the
+    // ones it knows and this release cannot honour are parked for the pre-flight like any other
+    // keyword.
+    let mut loop_var = "item".to_string();
+    let mut loop_label = None;
+    if let Some(control) = field(yaml, "loop_control") {
+        let control = control
+            .as_mapping()
+            .ok_or_else(|| anyhow!("task '{label}': 'loop_control' must be a mapping"))?;
+        for (key, value) in control {
+            let key = key
+                .as_str()
+                .ok_or_else(|| anyhow!("task '{label}': 'loop_control' keys must be strings"))?;
+            match loop_control_keyword(key) {
+                None => bail!("'{key}' is not a valid attribute for a LoopControl"),
+                Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+                // The two this release honours, both plain text: the name a loop item is bound
+                // to, and the template a looping task shows instead of the item itself.
+                Some(k) => {
+                    let text = value.as_str().map(str::to_string).ok_or_else(|| {
+                        anyhow!("task '{label}': 'loop_control.{}' must be a name", k.name)
+                    })?;
+                    if k.name == "loop_var" {
+                        loop_var = text;
+                    } else {
+                        loop_label = Some(text);
+                    }
+                }
             }
         }
     }
@@ -325,9 +395,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
             args.insert(k.to_string(), to_json(v)?);
         }
     }
-    let ignore_errors = field(yaml, "ignore_errors")
-        .and_then(as_bool)
-        .unwrap_or(false);
+    let ignore_errors = boolean(yaml, "ignore_errors")?.unwrap_or(false);
     let timeout = match field(yaml, "timeout") {
         None | Some(Yaml::Value(Scalar::Null)) => None,
         Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Some(*i as u64),
@@ -361,18 +429,6 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
             true,
         ),
         (None, None) => (None, false),
-    };
-    let (loop_var, loop_label) = match field(yaml, "loop_control") {
-        None => ("item".to_string(), None),
-        Some(control) => (
-            field(control, "loop_var")
-                .and_then(|v| v.as_str())
-                .unwrap_or("item")
-                .to_string(),
-            field(control, "label")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-        ),
     };
     let (r#become, become_user) = escalation(yaml, &format!("task '{label}': "))?;
     Ok(PlayTask {
@@ -511,6 +567,15 @@ mod tests {
         assert_eq!(pb.plays[0].hosts, "web,db");
         assert_eq!(pb.plays[0].name, "web,db", "unnamed plays take the pattern");
         assert!(pb.plays[0].gather_facts);
+        // Every entry counts. Measured on ansible-core 2.19.12: a list holding a non-string
+        // refuses the load at exit 4 with `Hosts list contains an invalid host value: '3'`.
+        // What would make this red: an entry quietly dropped, which runs the play against a
+        // shorter host list than the one written and reports success for it.
+        let err = parse("- hosts: [web, 3]\n  tasks: []\n", "x.yml").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Hosts list contains an invalid host value: '3'"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -809,6 +874,102 @@ mod tests {
             .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
             assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
         }
+    }
+
+    /// `loop_control` is a mapping, so the same rule applies one level down: a sub-key the
+    /// reference does not have refuses the load in its own words, and one it has that this
+    /// release cannot honour is parked for the pre-flight instead of being dropped.
+    ///
+    /// Measured on ansible-core 2.19.12: `loop_control: {nosuch: 1}` exits 4 with
+    /// `'nosuch' is not a valid attribute for a LoopControl`, and `LoopControl.fattributes`
+    /// holds `break_when`, `extended`, `extended_allitems`, `index_var`, `label`, `loop_var`
+    /// and `pause`.
+    ///
+    /// What would make this red: a sub-key read for `loop_var` and `label` alone, with the rest
+    /// accepted and silently ignored - a run reporting success having skipped the `index_var`
+    /// or the `pause` the operator wrote.
+    #[test]
+    fn a_loop_control_sub_key_is_honoured_parked_or_refused() {
+        let task = |sub: &str| {
+            format!(
+                "- hosts: all\n  tasks:\n    - debug:\n        msg: x\n      loop: [a]\n      loop_control:\n        {sub}\n"
+            )
+        };
+        let err = parse(&task("nosuch: 1"), "x.yml").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("'nosuch' is not a valid attribute for a LoopControl"),
+            "{err:#}"
+        );
+        for kw in [
+            "break_when",
+            "extended",
+            "extended_allitems",
+            "index_var",
+            "pause",
+        ] {
+            let pb = parse(&task(&format!("{kw}: probe")), "x.yml")
+                .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
+            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
+        }
+        let pb = parse(&task("loop_var: thing\n        label: shown"), "x.yml").unwrap();
+        let t = &pb.plays[0].tasks[0];
+        assert_eq!(
+            (t.loop_var.as_str(), t.loop_label.as_deref()),
+            ("thing", Some("shown"))
+        );
+        assert!(t.unsupported.is_empty());
+    }
+
+    /// A keyword whose value has to be a boolean refuses the load when it is not one, rather
+    /// than quietly becoming the default.
+    ///
+    /// Measured on ansible-core 2.19.12: `gather_facts: maybe` exits 4 with
+    /// `Error processing keyword 'gather_facts': The value 'maybe' could not be converted to
+    /// 'bool'.`; `ignore_errors: maybe` and `become: maybe` fail the task at run time with the
+    /// same sentence. `1` and `0` are booleans there and `2` is not.
+    ///
+    /// What would make this red: `unwrap_or(false)` back on `ignore_errors` or `unwrap_or(true)`
+    /// back on `gather_facts`, which runs the playbook under a value nobody wrote and nobody is
+    /// told about.
+    #[test]
+    fn an_unreadable_boolean_is_refused_in_the_reference_s_words() {
+        for (text, kw) in [
+            (
+                "- hosts: all\n  gather_facts: maybe\n  tasks:\n    - command: echo hi\n",
+                "gather_facts",
+            ),
+            (
+                "- hosts: all\n  tasks:\n    - command: echo hi\n      ignore_errors: maybe\n",
+                "ignore_errors",
+            ),
+            (
+                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: maybe\n",
+                "become",
+            ),
+        ] {
+            let err = parse(text, "x.yml").unwrap_err();
+            assert!(
+                format!("{err:#}").contains(&format!(
+                    "Error processing keyword '{kw}': The value 'maybe' could not be converted to 'bool'."
+                )),
+                "{err:#}"
+            );
+        }
+        let pb = parse(
+            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: echo hi\n      ignore_errors: 0\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert!(pb.plays[0].gather_facts && !pb.plays[0].tasks[0].ignore_errors);
+        let err = parse(
+            "- hosts: all\n  gather_facts: 2\n  tasks:\n    - command: echo hi\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("The value 2 could not be converted to 'bool'."),
+            "{err:#}"
+        );
     }
 
     /// A block has no module of its own, and blaming it for one it never named would send the

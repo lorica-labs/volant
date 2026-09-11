@@ -1,0 +1,6 @@
+argument_specs:
+  main:
+    options:
+      needed:
+        type: str
+        required: true

@@ -11,7 +11,7 @@
 //! that runs it.
 
 use anyhow::bail;
-use volant_protocol::modules::{is_builtin, is_known};
+use volant_protocol::modules::{import_module, is_builtin, is_known};
 
 use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
@@ -45,7 +45,29 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
     {
         bail!("strategy '{strategy}' is not supported yet");
     }
-    check_items(&play.tasks)
+    for entry in &play.roles {
+        if let Some(kw) = entry.keywords.unsupported.first() {
+            bail!("role '{}': keyword '{kw}' is not supported yet", entry.name);
+        }
+    }
+    check_items(&play.pre_tasks)?;
+    check_items(&play.tasks)?;
+    check_items(&play.post_tasks)
+}
+
+/// The compiled steps of one play, for everything the play's own lists do not hold: a role's
+/// tasks, and the tasks of every file an `import_tasks` spliced in.
+///
+/// Roles turn the pre-flight into two passes rather than one. The first walks what the playbook
+/// says, the second what the compilation made of it, and the second is the one that sees a
+/// keyword written in a file the playbook only names. A module a role uses and this release
+/// cannot run is refused here, before the first connection, exactly as one written in the play
+/// is.
+pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
+    for step in &compiled.steps {
+        check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
+    }
+    Ok(())
 }
 
 /// A task list, blocks and all. Every section of a block is walked, `rescue` included: a
@@ -80,6 +102,13 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     }
     if is_meta(task) {
         return check_meta(task);
+    }
+    // The three import statements never reach a host: the compiler reads what they name and
+    // splices it in, so what has to be checked is the tasks that came out of them, which the
+    // second pass over the compiled steps sees. `import_playbook` written as a task is refused
+    // there too, with the code the reference measures for it.
+    if import_module(&task.module).is_some() {
+        return Ok(());
     }
     if !is_known(&task.module) {
         // Two different messages for two different situations. A module ansible-core ships and
@@ -171,7 +200,7 @@ mod tests {
             );
             assert!(text.contains("play 1") && text.contains("'T'"), "{text}");
         }
-        for kw in ["serial", "roles", "handlers", "order"] {
+        for kw in ["serial", "vars_prompt", "handlers", "order"] {
             let text = refusal(&format!(
                 "- hosts: all\n  {kw}: 1\n  tasks:\n    - command: echo hi\n"
             ));
@@ -324,7 +353,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            108,
+            105,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

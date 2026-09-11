@@ -1,0 +1,4 @@
+- name: extra task
+  debug:
+    msg: extra
+- import_tasks: sub/deeper.yml

@@ -20,3 +20,4 @@ The controller runs these itself, so they need no connection to the host.
 |---|---|---|
 | `debug` | no | Print a message or the value of a variable. |
 | `set_fact` | no | Set facts for a host, for the rest of the run. |
+| `validate_argument_spec` | no | Check a role's arguments against the specification in `meta/argument_specs.yml`. |

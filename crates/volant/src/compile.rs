@@ -14,8 +14,15 @@
 //! a step the recap can still account for.
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+use anyhow::bail;
+use serde_json::{Map, Value};
+use volant_protocol::modules::short_name;
 
 use crate::playbook::{Block, Play, PlayTask, TaskOrBlock};
+use crate::roles::{RoleEntry, RoleSearch, RoleVars};
+use crate::stats::Refusal;
 
 /// What one step is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +51,10 @@ pub(crate) struct Step {
     /// The innermost block this step belongs to, if any.
     pub block: Option<usize>,
     pub section: Section,
+    /// The role instance this step came from, if any: an index into [`Compiled::roles`]. It
+    /// decides two things, both measured - the `role : task` prefix the banner carries, and
+    /// which variable layers the driver puts under the play's.
+    pub role: Option<usize>,
 }
 
 /// Where one block's three sections landed in the flat list.
@@ -63,6 +74,17 @@ pub(crate) struct BlockSpan {
 pub(crate) struct Compiled {
     pub steps: Vec<Step>,
     pub blocks: Vec<BlockSpan>,
+    /// One entry per role instance the play runs, in the order they run. A step naming one
+    /// reads its variables from here; a step naming none reads [`Compiled::exported`].
+    pub roles: Vec<RoleVars>,
+    /// What every role in the play lends to everything else in it.
+    ///
+    /// Measured on ansible-core 2.19.12: a role's `defaults` and `vars` are visible in the
+    /// play's `pre_tasks`, which run **before** the role, in its `tasks` and `post_tasks`, and
+    /// inside the other roles - a role early in the list sees a variable only a later one sets.
+    /// So this is one map per layer for the whole play, not something that accumulates as the
+    /// list is walked, and a role's own values are laid over it for that role's own steps.
+    pub exported: RoleVars,
 }
 
 /// Every `meta` action ansible-core 2.19.12 accepts, and whether this release honours it.
@@ -90,41 +112,243 @@ pub(crate) fn meta_action(task: &PlayTask) -> &str {
         .unwrap_or_default()
 }
 
-struct Builder {
-    steps: Vec<Step>,
-    blocks: Vec<BlockSpan>,
+/// How deep a chain of `meta/main.yml` dependencies may go, and how deep `import_tasks` may
+/// nest, before the run is refused: the same ceiling a cycle through an inventory's `:children`
+/// is given, for the same reason - a cycle here reads files until the process dies.
+const DEPTH: usize = 32;
+
+/// The role instances a play has already run.
+///
+/// The identity of a role instance is **not** its name: measured on ansible-core 2.19.12,
+/// `- base` written twice runs once, while `- base` and `- { role: base, p: v }` run twice, and
+/// so do `- base` and `- { role: base, vars: { p: v } }`. So everything the entry says about what
+/// the role will do goes into the identity - its parameters, its `vars:`, its `when:` and which
+/// files of the role it asked for. Comparing names alone drops the second entry, and a run that
+/// skipped a role the playbook asked for reports success having done less than it says.
+type Seen = Vec<(String, Value)>;
+
+fn identity(entry: &RoleEntry) -> (String, Value) {
+    (
+        entry.name.clone(),
+        serde_json::json!({
+            "params": sorted(&entry.params),
+            "vars": sorted(&entry.keywords.vars),
+            "when": entry.keywords.when,
+            "from": [
+                &entry.from.tasks,
+                &entry.from.vars,
+                &entry.from.defaults,
+                &entry.from.handlers,
+            ],
+        }),
+    )
 }
 
-impl Builder {
+/// A mapping as a value that compares by content rather than by the order the YAML happened to
+/// list the keys in: two entries writing the same parameters in a different order are the same
+/// entry.
+fn sorted(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
+    let mut pairs: Vec<(&String, &Value)> = map.iter().collect();
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+    pairs
+}
+
+struct Builder<'a> {
+    steps: Vec<Step>,
+    blocks: Vec<BlockSpan>,
+    roles: Vec<RoleVars>,
+    search: &'a RoleSearch,
+    /// The directory relative paths are read against: the playbook's, then a role's `tasks/`
+    /// while its tasks are being compiled, then the directory of an imported file while its own
+    /// imports are being read. Measured: `import_tasks: sub/extra.yml` inside a role's
+    /// `tasks/main.yml` reads `<role>/tasks/sub/extra.yml`, and an `import_tasks` inside **that**
+    /// file reads it beside itself.
+    file_dir: PathBuf,
+}
+
+impl Builder<'_> {
     fn items(
         &mut self,
         items: &[TaskOrBlock],
         inherited: &PlayTask,
         block: Option<usize>,
         section: Section,
-    ) {
+        role: Option<usize>,
+    ) -> anyhow::Result<()> {
         for item in items {
             match item {
-                TaskOrBlock::Task(task) => {
-                    let task = merge(inherited, task);
-                    let kind = if crate::playbook::is_meta(&task) {
-                        StepKind::Meta
-                    } else {
-                        StepKind::Task
-                    };
-                    self.steps.push(Step {
-                        kind,
-                        task,
-                        block,
-                        section,
-                    });
+                TaskOrBlock::Task(task) => self.task(task, inherited, block, section, role)?,
+                TaskOrBlock::Block(inner) => {
+                    self.block(inner, inherited, block, section, role)?;
                 }
-                TaskOrBlock::Block(inner) => self.block(inner, inherited, block, section),
             }
         }
+        Ok(())
     }
 
-    fn block(&mut self, b: &Block, inherited: &PlayTask, parent: Option<usize>, section: Section) {
+    /// One task, unless it is one of the three import statements - those name work rather than
+    /// being it, and what they name is spliced here, where the task would have gone.
+    fn task(
+        &mut self,
+        task: &PlayTask,
+        inherited: &PlayTask,
+        block: Option<usize>,
+        section: Section,
+        role: Option<usize>,
+    ) -> anyhow::Result<()> {
+        match short_name(&task.module) {
+            "import_tasks" => return self.import_tasks(task, inherited, block, section, role),
+            "import_role" => {
+                let entry = import_role_entry(task)?;
+                // A fresh `seen` list: measured, `import_role` runs its role even when the
+                // play's `roles:` list has already run it with the same parameters. Its
+                // dependencies still deduplicate against each other.
+                return self.role(
+                    &entry,
+                    &merge(inherited, task),
+                    &mut Vec::new(),
+                    0,
+                    block,
+                    section,
+                );
+            }
+            // Measured: written as a task rather than in the list of plays, the reference fails
+            // the task with `Action 'ansible.builtin.import_playbook' does not support raw
+            // params.`, exit 2. This refuses before the play instead of during it, so nothing
+            // has run when the operator reads it, but the code is the one their scripts read.
+            "import_playbook" => {
+                return Err(Refusal::at(
+                    2,
+                    "Task failed: Action 'ansible.builtin.import_playbook' does not support raw params.",
+                ));
+            }
+            _ => {}
+        }
+        let task = merge(inherited, task);
+        let kind = if crate::playbook::is_meta(&task) {
+            StepKind::Meta
+        } else {
+            StepKind::Task
+        };
+        self.steps.push(Step {
+            kind,
+            task,
+            block,
+            section,
+            role,
+        });
+        Ok(())
+    }
+
+    /// `import_tasks`: the file's own task list, compiled where the statement stands, with the
+    /// statement's keywords folded into every task of it.
+    fn import_tasks(
+        &mut self,
+        task: &PlayTask,
+        inherited: &PlayTask,
+        block: Option<usize>,
+        section: Section,
+        role: Option<usize>,
+    ) -> anyhow::Result<()> {
+        // Measured, exit 4: the reference refuses this before anything runs rather than looping
+        // over a statement that was resolved once at compile time.
+        if task.loop_items.is_some() {
+            bail!(
+                "You cannot use loops on 'import_tasks' statements. You should use 'include_tasks' instead."
+            );
+        }
+        let name = task
+            .args
+            .get("file")
+            .or_else(|| task.args.get("_raw_params"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
+        let path = self.file_dir.join(name);
+        if !path.is_file() {
+            // Exit 1, measured, with the reference's own two sentences. The reference adds a
+            // third naming Python's own errno, which this engine has nothing to say about.
+            return Err(Refusal::at(
+                1,
+                format!(
+                    "Unable to retrieve file contents.\nCould not find or access '{}' on the Ansible Controller.",
+                    path.display()
+                ),
+            ));
+        }
+        let imported = crate::playbook::parse_tasks_file(&path)?;
+        let merged = merge(inherited, task);
+        // The imported file's own directory, for the imports it carries itself, put back
+        // afterwards so the rest of the importing file still reads against its own.
+        let previous = std::mem::replace(
+            &mut self.file_dir,
+            path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+        );
+        let result = self.items(&imported, &merged, block, section, role);
+        self.file_dir = previous;
+        result
+    }
+
+    /// One role entry: its dependencies first, then its argument-spec check, then its tasks.
+    ///
+    /// Measured on ansible-core 2.19.12: a `meta/main.yml` dependency runs before the role that
+    /// depends on it, with its own parameters, and a dependency two roles share runs once.
+    fn role(
+        &mut self,
+        entry: &RoleEntry,
+        inherited: &PlayTask,
+        seen: &mut Seen,
+        depth: usize,
+        block: Option<usize>,
+        section: Section,
+    ) -> anyhow::Result<()> {
+        if depth > DEPTH {
+            bail!(
+                "role dependencies nest deeper than {DEPTH} levels at '{}'",
+                entry.name
+            );
+        }
+        let path = self.search.locate(&entry.name)?;
+        let role = crate::roles::load(&path, &entry.from)?;
+        let key = identity(entry);
+        if !role.allow_duplicates && seen.contains(&key) {
+            return Ok(());
+        }
+        seen.push(key);
+        let kw = merge(inherited, &entry.keywords);
+        for dependency in &role.dependencies {
+            self.role(dependency, &kw, seen, depth + 1, block, section)?;
+        }
+        let index = self.roles.len();
+        self.roles.push(RoleVars {
+            name: entry.name.clone(),
+            defaults: role.defaults,
+            vars: role.vars,
+            params: entry.params.clone(),
+        });
+        if let Some(spec) = role.argument_spec {
+            let task = merge(&kw, &validation(entry, &path, spec));
+            self.steps.push(Step {
+                kind: StepKind::Task,
+                task,
+                block,
+                section,
+                role: Some(index),
+            });
+        }
+        let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
+        let result = self.items(&role.tasks, &kw, block, section, Some(index));
+        self.file_dir = previous;
+        result
+    }
+
+    fn block(
+        &mut self,
+        b: &Block,
+        inherited: &PlayTask,
+        parent: Option<usize>,
+        section: Section,
+        role: Option<usize>,
+    ) -> anyhow::Result<()> {
         let merged = merge(inherited, &b.keywords);
         // Reserved before the sections are walked, so a block nested inside this one gets an
         // identifier of its own and can name this one as its parent.
@@ -137,34 +361,134 @@ impl Builder {
             section,
         });
         let start = self.steps.len();
-        self.items(&b.body, &merged, Some(id), Section::Body);
+        self.items(&b.body, &merged, Some(id), Section::Body, role)?;
         let rescue = self.steps.len();
-        self.items(&b.rescue, &merged, Some(id), Section::Rescue);
+        self.items(&b.rescue, &merged, Some(id), Section::Rescue, role)?;
         let always = self.steps.len();
-        self.items(&b.always, &merged, Some(id), Section::Always);
+        self.items(&b.always, &merged, Some(id), Section::Always, role)?;
         let end = self.steps.len();
         self.blocks[id].body = start..rescue;
         self.blocks[id].rescue = rescue..always;
         self.blocks[id].always = always..end;
+        Ok(())
     }
 }
 
-/// A play's task list, flattened.
+/// The check the reference inserts in front of a role that ships `meta/argument_specs.yml`.
+///
+/// Measured: the banner reads `TASK [<role> : Validating arguments against arg spec '<entry>']`,
+/// the task runs on the controller, and a failure carries `argument_errors`,
+/// `argument_spec_data` and a `validate_args_context` naming the role and its absolute path.
+fn validation(entry: &RoleEntry, path: &Path, spec: Map<String, Value>) -> PlayTask {
+    let mut args = Map::new();
+    args.insert("argument_spec".to_string(), Value::Object(spec));
+    args.insert(
+        "provided_arguments".to_string(),
+        Value::Object(entry.params.clone()),
+    );
+    args.insert(
+        "validate_args_context".to_string(),
+        serde_json::json!({
+            "argument_spec_name": entry.from.tasks,
+            "name": entry.name,
+            "path": path.display().to_string(),
+            "type": "role",
+        }),
+    );
+    PlayTask {
+        name: format!(
+            "Validating arguments against arg spec '{}'",
+            entry.from.tasks
+        ),
+        module: "validate_argument_spec".to_string(),
+        args,
+        ..PlayTask::empty()
+    }
+}
+
+/// The role one `import_role` task names, read out of its arguments.
+fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
+    let text = |key: &str| task.args.get(key).and_then(Value::as_str);
+    let name = text("name")
+        .or_else(|| text("role"))
+        .ok_or_else(|| anyhow::anyhow!("'import_role' takes a role name"))?;
+    let from = |key: &str, fallback: &str| text(key).unwrap_or(fallback).to_string();
+    Ok(RoleEntry {
+        name: name.to_string(),
+        from: crate::roles::RoleFrom {
+            tasks: from("tasks_from", "main"),
+            vars: from("vars_from", "main"),
+            defaults: from("defaults_from", "main"),
+            handlers: from("handlers_from", "main"),
+        },
+        // An `import_role` takes no free keys: everything it says is an argument of the
+        // statement, and what it hands the role travels in the task's own `vars:`, which the
+        // merge already carries down to every task of the role.
+        params: Map::new(),
+        keywords: PlayTask::empty(),
+    })
+}
+
+/// A play's sections, flattened into one numbered list.
+///
+/// The order is the reference's own, measured: `pre_tasks`, then the roles with each one's
+/// dependencies in front of it, then `tasks`, then `post_tasks`.
 ///
 /// The play's own `become` and `become_user` are deliberately left out of the merge: their
 /// precedence against a host variable was measured in an earlier release and lives in the
 /// executor, which reads them from the play. A block is a task keyword, so its `become` does
 /// come down here.
-pub(crate) fn compile(play: &Play) -> Compiled {
+pub(crate) fn compile(play: &Play, search: &RoleSearch) -> anyhow::Result<Compiled> {
     let mut builder = Builder {
         steps: Vec::new(),
         blocks: Vec::new(),
+        roles: Vec::new(),
+        search,
+        file_dir: play.dir.clone(),
     };
-    builder.items(&play.tasks, &PlayTask::empty(), None, Section::Body);
-    Compiled {
+    let empty = PlayTask::empty();
+    builder.items(&play.pre_tasks, &empty, None, Section::Body, None)?;
+    let mut seen: Seen = Vec::new();
+    for entry in &play.roles {
+        builder.role(entry, &empty, &mut seen, 0, None, Section::Body)?;
+    }
+    builder.items(&play.tasks, &empty, None, Section::Body, None)?;
+    builder.items(&play.post_tasks, &empty, None, Section::Body, None)?;
+
+    // Every role lends its `defaults` and its `vars` to the whole play, so the two layers are
+    // folded once here rather than accumulated as the list is walked, and each role's own values
+    // are laid back over them for its own steps. Measured both ways: a role sees a variable only
+    // a later role sets, and a role whose own `vars` name it keeps its own value.
+    let mut exported = RoleVars::default();
+    for role in &builder.roles {
+        extend(&mut exported.defaults, &role.defaults);
+    }
+    for role in &builder.roles {
+        extend(&mut exported.vars, &role.vars);
+    }
+    let mut roles = builder.roles;
+    for role in &mut roles {
+        role.defaults = layered(&exported.defaults, &role.defaults);
+        role.vars = layered(&exported.vars, &role.vars);
+    }
+    Ok(Compiled {
         steps: builder.steps,
         blocks: builder.blocks,
+        roles,
+        exported,
+    })
+}
+
+fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+    for (key, value) in source {
+        target.insert(key.clone(), value.clone());
     }
+}
+
+fn layered(under: &Map<String, Value>, over: &Map<String, Value>) -> Map<String, Value> {
+    let mut out = under.clone();
+    extend(&mut out, over);
+    out
 }
 
 /// One task with the keywords of everything above it folded in. The inner value wins wherever it
@@ -192,6 +516,16 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     let mut vars = outer.vars.clone();
     vars.extend(inner.vars.clone());
     task.vars = vars;
+    // A keyword this release cannot execute has to be refused wherever it was written, and once
+    // a role's tasks come from another file the only place the pre-flight still sees them is
+    // here. Carrying the outer keyword down means a `tags:` on a role entry, or a `notify:` on a
+    // block inside a role, is refused by its own name rather than inherited and ignored.
+    for kw in &outer.unsupported {
+        if !task.unsupported.contains(kw) {
+            task.unsupported.push(kw);
+        }
+    }
+    task.unsupported.sort_unstable();
     task
 }
 
@@ -292,7 +626,7 @@ mod tests {
 
     fn compiled(text: &str) -> Compiled {
         let pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
-        compile(&pb.plays[0])
+        compile(&pb.plays[0], &RoleSearch::default()).unwrap_or_else(|e| panic!("{e:#}"))
     }
 
     fn names(c: &Compiled) -> Vec<&str> {

@@ -11,6 +11,7 @@ pub mod keywords;
 pub mod playbook;
 pub mod preflight;
 pub(crate) mod render;
+pub(crate) mod roles;
 pub(crate) mod stats;
 pub mod template;
 pub mod transport;

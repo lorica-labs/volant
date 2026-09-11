@@ -14,7 +14,7 @@ use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
-use crate::compile::{Compiled, StepKind, after, after_failure, after_pending, compile, first};
+use crate::compile::{Compiled, Step, StepKind, after, after_failure, after_pending, first};
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
@@ -174,8 +174,10 @@ struct PlayPlan {
     become_user: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_play(
     play: &Play,
+    compiled: &Compiled,
     hosts: Vec<Host>,
     agents: &AgentSource,
     options: &RunOptions,
@@ -203,14 +205,13 @@ pub async fn run_play(
         .playbook_dir()
         .to_path_buf();
     let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state, out)?;
-    let compiled = compile(play);
     let plan = Arc::new(PlayPlan {
         barriers: compiled
             .steps
             .iter()
             .map(|step| reads_across_hosts(&step.task))
             .collect(),
-        compiled,
+        compiled: compiled.clone(),
         play_vars: play.vars.clone(),
         vars_files,
         play_hosts: play_hosts.clone(),
@@ -292,7 +293,6 @@ pub async fn run_play(
     // order. See `finished`.
     let mut frontier: HashMap<String, usize> = HashMap::new();
     for (index, step) in plan.compiled.steps.iter().enumerate() {
-        let task = &step.task;
         let mut header_shown = false;
         for host in &play_hosts {
             loop {
@@ -306,7 +306,7 @@ pub async fn run_play(
                         let banner = matches!(event, Event::Banner { .. });
                         if banner || (!header_shown && shows_a_line(&event)) {
                             let live = progress_tx.borrow().live_hosts.clone();
-                            out.task(&task_name(task, host, &plan, &live, state));
+                            out.task(&task_name(step, host, &plan, &live, state));
                             header_shown = true;
                         }
                         report_result(event, stats, out);
@@ -371,7 +371,7 @@ pub async fn run_play(
                     Some(Event::Unreachable { host, msg }) => {
                         if !header_shown {
                             let live = progress_tx.borrow().live_hosts.clone();
-                            out.task(&task_name(task, &host, &plan, &live, state));
+                            out.task(&task_name(step, &host, &plan, &live, state));
                             header_shown = true;
                         }
                         stats.unreachable(&host);
@@ -487,7 +487,7 @@ fn header_for(
         return;
     };
     let live = progress_tx.borrow().live_hosts.clone();
-    out.task(&task_name(&step.task, host, plan, &live, state));
+    out.task(&task_name(step, host, plan, &live, state));
 }
 
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
@@ -777,10 +777,9 @@ fn load_play_vars_files(
     for host in hosts {
         let scope = Scope {
             play_vars: play.vars.clone(),
-            vars_files: Vec::new(),
-            task_vars: Map::new(),
             play_hosts: play_hosts.to_vec(),
             all_play_hosts: play_hosts.to_vec(),
+            ..Scope::default()
         };
         let vars = state.templar.resolve_vars(
             &state
@@ -860,46 +859,70 @@ fn python_type(value: &Value) -> &'static str {
     }
 }
 
+/// The banner of one step: the task's name, prefixed by the role it came from.
+///
+/// Measured on ansible-core 2.19.12: a task of a role shows as `TASK [base : base task]`, and an
+/// unnamed one shows the module name behind the same prefix (`TASK [inner : debug]`).
 fn task_name(
-    task: &PlayTask,
+    step: &Step,
     host: &str,
     plan: &PlayPlan,
     live: &[String],
     state: &RunState,
 ) -> String {
-    if !Templar::is_template(&task.name) {
-        return task.name.clone();
+    let task = &step.task;
+    let name = if Templar::is_template(&task.name) {
+        let vars = host_vars(
+            host,
+            plan,
+            &task.vars,
+            step.role,
+            live,
+            state.templar.as_ref(),
+            &state.vars,
+        );
+        state
+            .templar
+            .render(&task.name, &vars)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| task.name.clone())
+    } else {
+        task.name.clone()
+    };
+    match step.role.and_then(|i| plan.compiled.roles.get(i)) {
+        Some(role) => format!("{} : {name}", role.name),
+        None => name,
     }
-    let vars = host_vars(
-        host,
-        plan,
-        &task.vars,
-        live,
-        state.templar.as_ref(),
-        &state.vars,
-    );
-    state
-        .templar
-        .render(&task.name, &vars)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| task.name.clone())
 }
 
 /// The merged, self-resolved variables of a host for one task. `live` is the play's host list as
 /// the coordinator last published it, which is what `ansible_play_hosts` reports.
+///
+/// `role` decides which of the two role layers the step sits on: its own role's, which carry the
+/// whole play's exported values with that role's own laid over them, or the play-wide export for
+/// a step that belongs to no role. Role parameters are the one layer that does not leave the
+/// role - measured, a parameter beats a `set_fact` inside the role and is not defined at all in
+/// the play's own tasks afterwards.
 fn host_vars(
     host: &str,
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
+    role: Option<usize>,
     live: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
 ) -> Map<String, Value> {
+    let role = role
+        .and_then(|i| plan.compiled.roles.get(i))
+        .unwrap_or(&plan.compiled.exported);
     let scope = Scope {
         play_vars: plan.play_vars.clone(),
         vars_files: plan.vars_files.get(host).cloned().unwrap_or_default(),
         task_vars: task_vars.clone(),
+        role_defaults: role.defaults.clone(),
+        role_vars: role.vars.clone(),
+        role_params: role.params.clone(),
         play_hosts: live.to_vec(),
         all_play_hosts: plan.play_hosts.clone(),
     };
@@ -932,7 +955,7 @@ struct Item {
 }
 
 fn prepare(
-    task: &PlayTask,
+    step: &Step,
     host: &str,
     plan: &PlayPlan,
     live: &[String],
@@ -940,7 +963,8 @@ fn prepare(
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
 ) -> Result<Prepared, TemplateError> {
-    let base = host_vars(host, plan, &task.vars, live, templar, store);
+    let task = &step.task;
+    let base = host_vars(host, plan, &task.vars, step.role, live, templar, store);
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) => {
@@ -1105,11 +1129,167 @@ fn run_local(
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
         }
+        "validate_argument_spec" => return validate_argument_spec(item),
         other => {
             return TaskResult::failed_with(format!("{other} is not a controller-side module"));
         }
     }
     TaskResult(r)
+}
+
+/// The argument check a role with a `meta/argument_specs.yml` gets in front of it.
+///
+/// Where the arguments come from is measured, not assumed: a value the role entry never named
+/// is still found when the host has a variable of that name (a `-e` on the command line passes
+/// the check), while a name that is **not** in the spec is refused only when the entry wrote it,
+/// because every host carries hundreds of variables the spec has never heard of.
+///
+/// The four checks run in the order the reference runs them, measured by asking for all four
+/// failures at once: missing required arguments first, then types, then choices, then the
+/// arguments the spec does not have. Each sentence is the reference's own.
+///
+/// What is **not** checked here, and is written down in the record rather than left to be
+/// discovered: `aliases`, `default`, sub-options (`options` inside an option), `mutually_
+/// exclusive` and the rest of the spec's vocabulary. A converted value is not written back
+/// either, which is what the reference does too - measured, a role reading `count: "3"` against
+/// a `type: int` sees the string it was given.
+fn validate_argument_spec(item: &Item) -> TaskResult {
+    let spec = match item.args.get("argument_spec") {
+        Some(Value::Object(spec)) => spec.clone(),
+        _ => Map::new(),
+    };
+    let provided = match item.args.get("provided_arguments") {
+        Some(Value::Object(provided)) => provided.clone(),
+        _ => Map::new(),
+    };
+    let mut errors: Vec<String> = Vec::new();
+    // Every option, with the value in force for it: the entry's own first, then whatever the
+    // host can see under that name.
+    let value_of =
+        |name: &str| -> Option<&Value> { provided.get(name).or_else(|| item.vars.get(name)) };
+    let mut missing: Vec<&String> = spec
+        .iter()
+        .filter(|(name, option)| {
+            option
+                .get("required")
+                .and_then(as_bool_value)
+                .unwrap_or(false)
+                && !matches!(value_of(name), Some(v) if !v.is_null())
+        })
+        .map(|(name, _)| name)
+        .collect();
+    missing.sort();
+    if !missing.is_empty() {
+        errors.push(format!(
+            "missing required arguments: {}",
+            missing
+                .iter()
+                .map(|n| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    for (name, option) in &spec {
+        let Some(value) = value_of(name) else {
+            continue;
+        };
+        if let Some(wanted) = option.get("type").and_then(Value::as_str)
+            && let Err(err) = converts(value, wanted)
+        {
+            errors.push(format!(
+                "argument '{name}' is of type {} and we were unable to convert to {wanted}: {err}",
+                python_type(value)
+            ));
+        }
+    }
+    for (name, option) in &spec {
+        let (Some(Value::Array(choices)), Some(value)) = (option.get("choices"), value_of(name))
+        else {
+            continue;
+        };
+        if !choices.iter().any(|c| c == value) {
+            errors.push(format!(
+                "value of {name} must be one of: {}, got: {}",
+                choices.iter().map(display).collect::<Vec<_>>().join(", "),
+                display(value)
+            ));
+        }
+    }
+    let mut supported: Vec<&str> = spec.keys().map(String::as_str).collect();
+    supported.sort_unstable();
+    for name in provided.keys() {
+        if !spec.contains_key(name) {
+            errors.push(format!(
+                "{name}. Supported parameters include: {}.",
+                supported.join(", ")
+            ));
+        }
+    }
+    let context = item
+        .args
+        .get("validate_args_context")
+        .cloned()
+        .unwrap_or(Value::Object(Map::new()));
+    let mut r = Map::new();
+    r.insert("changed".into(), json!(false));
+    if errors.is_empty() {
+        r.insert("msg".into(), json!("The arg spec validation passed"));
+        r.insert("validate_args_context".into(), context);
+        return TaskResult(r);
+    }
+    r.insert(
+        "msg".into(),
+        json!(format!(
+            "Validation of arguments failed:\n{}",
+            errors.join("\n")
+        )),
+    );
+    r.insert("argument_errors".into(), json!(errors));
+    r.insert("argument_spec_data".into(), Value::Object(spec));
+    r.insert("validate_args_context".into(), context);
+    r.insert("failed".into(), json!(true));
+    TaskResult(r)
+}
+
+/// Whether a value can be read as the type the spec asked for, with the reference's own
+/// complaint when it cannot.
+///
+/// Ansible converts permissively and this follows it where the conversion was measured: a string
+/// `"3"` is an `int`, `"yes"` is a `bool`. Only the two numeric types and `bool` can fail; `str`,
+/// `path`, `raw`, `list` and `dict` take what they are given, which is what the reference does
+/// with them for every shape a playbook can write.
+fn converts(value: &Value, wanted: &str) -> Result<(), String> {
+    let quoted = || {
+        format!(
+            "\"'{}'\" cannot be converted to an {wanted}",
+            display(value)
+        )
+    };
+    match wanted {
+        "int" => match value {
+            Value::Number(n) if n.is_i64() || n.is_u64() => Ok(()),
+            Value::String(s) if s.trim().parse::<i64>().is_ok() => Ok(()),
+            _ => Err(quoted()),
+        },
+        "float" => match value {
+            Value::Number(_) => Ok(()),
+            Value::String(s) if s.trim().parse::<f64>().is_ok() => Ok(()),
+            _ => Err(format!(
+                "\"'{}'\" cannot be converted to a {wanted}",
+                display(value)
+            )),
+        },
+        "bool" => match value {
+            Value::Bool(_) => Ok(()),
+            Value::String(s) if crate::yaml::bool_from_str(s.trim()).is_some() => Ok(()),
+            Value::Number(n) if n.as_i64() == Some(0) || n.as_i64() == Some(1) => Ok(()),
+            _ => Err(format!(
+                "\"'{}'\" cannot be converted to a {wanted}",
+                display(value)
+            )),
+        },
+        _ => Ok(()),
+    }
 }
 
 /// One module result, ready to report: `changed_when` and `failed_when` decide its outcome
@@ -1344,7 +1524,7 @@ async fn drive_host(
             }
             let live = progress.borrow().live_hosts.clone();
             match prepare(
-                task,
+                step,
                 &name,
                 &plan,
                 &live,
@@ -1960,6 +2140,95 @@ mod tests {
 
     fn vars(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap_or_default()
+    }
+
+    /// Each complaint the argument check can make, in the reference's own words and in the order
+    /// it makes them.
+    ///
+    /// Measured on ansible-core 2.19.12 by asking for all four at once: missing required
+    /// arguments (sorted by name, whatever order the spec lists them in), then a type that
+    /// cannot be converted, then a value outside `choices`, then an argument the spec does not
+    /// have. A value the entry never named is still found when the host has a variable of that
+    /// name, which is what lets `-e needed=given` pass a check the role entry said nothing
+    /// about; a name the spec does not have is only refused when the entry wrote it, since a
+    /// host carries hundreds of variables the spec has never heard of.
+    ///
+    /// What would make this red: a check that passes a permissive conversion the reference
+    /// refuses, or refuses one it accepts - either way a role runs, or fails to run, on
+    /// arguments the reference judges differently.
+    #[test]
+    fn the_argument_check_speaks_the_reference_s_sentences() {
+        let check = |provided: Value, host: Value| {
+            let item = Item {
+                element: None,
+                label: None,
+                args: vars(json!({
+                    "argument_spec": {
+                        "zeta": {"type": "str", "required": true},
+                        "alpha_req": {"type": "str", "required": true},
+                        "count": {"type": "int"},
+                        "flag": {"type": "bool"},
+                        "pick": {"type": "str", "choices": ["alpha", "beta"]},
+                    },
+                    "provided_arguments": provided,
+                    "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
+                })),
+                vars: vars(host),
+                skipped: None,
+            };
+            validate_argument_spec(&item)
+        };
+
+        let all_wrong = check(
+            json!({"count": "notanint", "pick": "gamma", "unknown_arg": "whatever"}),
+            json!({}),
+        );
+        assert!(all_wrong.failed());
+        assert_eq!(
+            all_wrong.0["argument_errors"],
+            json!([
+                "missing required arguments: alpha_req, zeta",
+                "argument 'count' is of type str and we were unable to convert to int: \"'notanint'\" cannot be converted to an int",
+                "value of pick must be one of: alpha, beta, got: gamma",
+                "unknown_arg. Supported parameters include: alpha_req, count, flag, pick, zeta.",
+            ])
+        );
+        assert_eq!(
+            all_wrong.0["msg"],
+            json!(
+                "Validation of arguments failed:\nmissing required arguments: alpha_req, zeta\nargument 'count' is of type str and we were unable to convert to int: \"'notanint'\" cannot be converted to an int\nvalue of pick must be one of: alpha, beta, got: gamma\nunknown_arg. Supported parameters include: alpha_req, count, flag, pick, zeta."
+            )
+        );
+        assert_eq!(
+            all_wrong.0["argument_spec_data"]["zeta"]["required"],
+            json!(true)
+        );
+
+        // Measured: `"3"` is an `int` and `"yes"` is a `bool`, and nothing is written back - the
+        // role's own tasks read `count=3 flag=yes`, the strings they were handed.
+        let permissive = check(
+            json!({"count": "3", "flag": "yes", "pick": "alpha", "zeta": "z", "alpha_req": "a"}),
+            json!({}),
+        );
+        assert!(!permissive.failed(), "{:?}", permissive.0);
+        assert_eq!(permissive.0["msg"], json!("The arg spec validation passed"));
+        assert_eq!(
+            permissive.0["validate_args_context"]["name"],
+            json!("types")
+        );
+
+        // Nothing on the entry, everything on the host: the shape `-e zeta=z ...` makes.
+        let from_host = check(
+            json!({}),
+            json!({"zeta": "z", "alpha_req": "a", "count": 2, "flag": false, "pick": "beta"}),
+        );
+        assert!(!from_host.failed(), "{:?}", from_host.0);
+        // A host variable the spec never heard of is not an unknown argument.
+        let noise = check(
+            json!({}),
+            json!({"zeta": "z", "alpha_req": "a", "ansible_forks": 5}),
+        );
+        assert!(!noise.failed(), "{:?}", noise.0);
     }
 
     /// The order measured against `ansible-core 2.19.12`: `ansible_become` wins over both

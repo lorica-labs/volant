@@ -1,0 +1,8 @@
+- import_playbook: sub.yml
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: main task
+      debug:
+        msg: main
+- import_playbook: "{{ 'sub' }}.yml"

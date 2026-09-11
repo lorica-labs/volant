@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Out of the play
+      command: nosuchbinary-volant-probe
+      when: inventory_hostname == 'h0'
+    - meta: noop
+    - name: After the meta
+      command: "true"

@@ -1,0 +1,19 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Outer
+      block:
+        - name: Inner
+          block:
+            - name: Fails here
+              command: nosuchbinary-volant-probe
+            - name: Never reached
+              command: "true"
+          always:
+            - name: Inner cleanup
+              command: "true"
+      always:
+        - name: Outer cleanup
+          command: "true"
+    - name: Never reached either
+      command: "true"

@@ -1,2 +1,6 @@
 - name: dird task
   debug: msg=dird
+# The file this pulls in sits one directory down and imports `shared.yml` by bare name. The file
+# it means is the role's own `tasks/shared.yml`, not one beside itself: inside a role the
+# reference tries `<role>/tasks/<target>` first and the importing file's own directory second.
+- import_tasks: sub/deep.yml

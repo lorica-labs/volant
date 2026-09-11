@@ -75,13 +75,13 @@ impl TagSelection {
         let names = |list: &[String]| list.iter().any(|t| carries(t));
         let listed = |list: &[String], name: &str| list.iter().any(|t| t == name);
 
-        let mut run = true;
-        if !self.run.is_empty() {
-            run = carries("always")
-                || (listed(&self.run, "all") && !carries("never"))
-                || names(&self.run)
-                || (listed(&self.run, "tagged") && !untagged && !carries("never"));
-        }
+        // No emptiness test on the run list: `new` put `all` in an empty one, so the selecting
+        // half always applies. Guarding it would be a branch that cannot be taken and would read
+        // as if the dangerous value were still reachable.
+        let mut run = carries("always")
+            || (listed(&self.run, "all") && !carries("never"))
+            || names(&self.run)
+            || (listed(&self.run, "tagged") && !untagged && !carries("never"));
         if run && !self.skip.is_empty() {
             if listed(&self.skip, "all") {
                 // `--skip-tags all` is the one place `always` survives a skip, and it stops
@@ -366,16 +366,17 @@ impl Builder<'_> {
             .or_else(|| task.args.get("_raw_params"))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
-        // Inside a role the reference looks in the role's own `tasks/` **first** and only then
-        // beside the file that wrote the statement: measured on ansible-core 2.19.12 against the
-        // UBUNTU22-CIS role, where `tasks/section_1/cis_1.1.1.x.yml` writes
-        // `import_tasks: file: warning_facts.yml` and the file it means is `tasks/`'s, not its
-        // own directory's. Trying only the importer's directory - which is the second candidate
-        // there, and the one an import nested under a sub-directory needs - refuses a role the
-        // reference compiles.
+        // Inside a role a bare name has two homes and the reference takes the first that exists:
+        // the directory of the file that wrote the statement, then the role's own `tasks/`.
+        // Measured on ansible-core 2.19.12 with a role whose `tasks/sub/deep.yml` imports
+        // `shared.yml`, in all three states - only `tasks/shared.yml`, only `tasks/sub/
+        // shared.yml`, both - and the one beside the importer wins whenever it is there. The
+        // fallback is what a role like UBUNTU22-CIS needs: `tasks/section_1/cis_1.1.1.x.yml`
+        // writes `import_tasks: file: warning_facts.yml` and means `tasks/warning_facts.yml`,
+        // so trying the importer's directory alone refuses a role the reference compiles.
         let beside = self.file_dir.join(name);
         let path = match &self.role_tasks {
-            Some(tasks) if tasks.join(name).is_file() => tasks.join(name),
+            Some(tasks) if !beside.is_file() && tasks.join(name).is_file() => tasks.join(name),
             _ => beside,
         };
         if !path.is_file() {

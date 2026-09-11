@@ -1,0 +1,6 @@
+# The decoy. `sub/deep.yml` says `import_tasks: shared.yml` and this file sits beside it, but
+# the reference builds `<role>/tasks/shared.yml` as its first candidate and only falls back to
+# the importing file's own directory. Nothing here should ever reach a listing; if `shared task`
+# in the recording becomes `decoy task`, the candidate order is the wrong way round.
+- name: decoy task
+  debug: msg=decoy

@@ -43,6 +43,17 @@ impl Listing {
     /// skips the pre-flight: a playbook whose keywords or modules this release cannot execute
     /// still lists, which is the whole point of being able to read one before the release that
     /// runs it.
+    ///
+    /// It skips the pre-flight and nothing else. The loader still refuses a file that is not a
+    /// list of plays, and the compilation still refuses a role nobody can find or an
+    /// `import_tasks` whose file is missing; both are in the golden for their exit codes.
+    ///
+    /// One refusal reaches a listing that the reference lets through: `ignore_errors` and
+    /// `become` written as something that is not a boolean. The reference carries those to the
+    /// task that would have used them, so it lists such a playbook at exit 0 and this engine
+    /// exits 4. That is a malformed value rather than an unimplemented feature - it is wrong in
+    /// every release, not only this one - and reading it later would mean letting a task hold a
+    /// value that is not a boolean, which is the state the loader exists to make unreachable.
     pub fn wanted(&self) -> bool {
         self.tasks || self.tags || self.hosts || self.syntax
     }

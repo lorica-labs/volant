@@ -1,0 +1,8 @@
+# A role name nothing on the roles path answers to. Compiling the play is what finds it, and a
+# listing compiles, so --syntax-check refuses at the reference's own exit 1 rather than printing
+# a play header for a play it could not build.
+- name: a role nobody has
+  hosts: h1
+  gather_facts: false
+  roles:
+    - nosuchrole

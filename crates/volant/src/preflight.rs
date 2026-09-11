@@ -9,6 +9,15 @@
 //!
 //! Listing and syntax-checking never call this, so a playbook can be read ahead of the release
 //! that runs it.
+//!
+//! **The pre-flight refuses what the playbook says, not what the tags leave.** `check` reads the
+//! play's own lists as written, so a task `--tags` will drop is refused all the same;
+//! `check_steps` reads the compilation, where the selection has already removed a role's dropped
+//! task, so that one is not. The asymmetry is deliberate and it errs in the safe direction -
+//! more refusals, never fewer, and nothing that runs escapes one. Evening it out downward, by
+//! dropping the first pass, would let a keyword this release cannot execute reach a run; evening
+//! it out upward would mean compiling every play twice. Neither is worth it, and a later change
+//! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
 use anyhow::bail;
 use volant_protocol::modules::{import_module, is_builtin, is_known};

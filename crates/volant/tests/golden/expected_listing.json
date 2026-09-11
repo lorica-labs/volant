@@ -3,9 +3,9 @@
     "code": 0,
     "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n"
   },
-  "--list-hosts --limit h1 roles.yml": {
+  "--list-hosts --limit h2 limit.yml": {
     "code": 0,
-    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n"
+    "stdout": "\nplaybook: limit.yml\n\n  play #1 (all): every host\tTAGS: []\n    pattern: ['all']\n    hosts (1):\n      h2\n"
   },
   "--list-hosts --limit nosuchhost hosts.yml": {
     "code": 1,
@@ -143,9 +143,13 @@
     "code": 0,
     "stdout": "\nplaybook: meta.yml\n\n  play #1 (h1): meta play\tTAGS: []\n    tasks:\n      first\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: [m]\n      last\tTAGS: []\n"
   },
+  "--list-tasks notaplay.yml": {
+    "code": 4,
+    "stdout": ""
+  },
   "--list-tasks roles.yml": {
     "code": 0,
-    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      dird : deep task\tTAGS: []\n      dird : decoy task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
   },
   "--list-tasks tags.yml": {
     "code": 0,
@@ -153,7 +157,7 @@
   },
   "--list-tasks tags.yml roles.yml": {
     "code": 0,
-    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      dird : deep task\tTAGS: []\n      dird : decoy task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
   },
   "--syntax-check --list-tasks tags.yml": {
     "code": 0,
@@ -162,6 +166,10 @@
   "--syntax-check later-modules.yml": {
     "code": 0,
     "stdout": "\nplaybook: later-modules.yml\n"
+  },
+  "--syntax-check missing-role.yml": {
+    "code": 1,
+    "stdout": ""
   },
   "--syntax-check roles.yml": {
     "code": 0,

@@ -1,0 +1,23 @@
+# The tag algebra, one task per rule: a plain tag, a tag written as a string, the two special
+# tags, a tag on a block, and a task carrying none at all.
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a
+      debug: msg=a
+      tags: [x]
+    - name: b
+      debug: msg=b
+      tags: y
+    - name: c-always
+      debug: msg=c
+      tags: always
+    - name: d-never
+      debug: msg=d
+      tags: never
+    - block:
+        - name: e-in-block
+          debug: msg=e
+      tags: [blk]
+    - name: f-untagged
+      debug: msg=f

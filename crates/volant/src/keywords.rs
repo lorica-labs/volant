@@ -78,7 +78,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("remote_user", Preflight),
     kw("retries", Preflight),
     kw("run_once", Preflight),
-    kw("tags", Preflight),
+    kw("tags", Runs),
     kw("throttle", Preflight),
     kw("timeout", Runs),
     kw("until", Preflight),
@@ -126,6 +126,11 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 /// its tasks, its dependencies and its argument-spec check into the step list, in the section
 /// order the reference runs them in. `handlers` stays parked - a role's handlers are read by
 /// nothing yet, and `notify` is parked too, so no handler can be reached from anywhere.
+///
+/// `tags` runs everywhere it can be written - on a play, on a block, on a role entry and on a
+/// task. The compiler folds the outer tags into every task under them and drops the tasks
+/// `--tags` and `--skip-tags` leave out, so a tag decides what runs and what the four listing
+/// commands show.
 pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("any_errors_fatal", Preflight),
     kw("become", Runs),
@@ -161,7 +166,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("run_once", Preflight),
     kw("serial", Preflight),
     kw("strategy", Runs),
-    kw("tags", Preflight),
+    kw("tags", Runs),
     kw("tasks", Runs),
     kw("throttle", Preflight),
     kw("timeout", Preflight),
@@ -228,7 +233,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("remote_user", Preflight),
     kw("rescue", Preflight),
     kw("run_once", Preflight),
-    kw("tags", Preflight),
+    kw("tags", Runs),
     kw("throttle", Preflight),
     kw("timeout", Runs),
     kw("vars", Runs),

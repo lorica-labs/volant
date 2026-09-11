@@ -1,0 +1,9 @@
+# The whole inventory in one play, so --limit has three hosts to narrow down to one. Used only
+# with a --limit that leaves a single host: the reference prints a play's hosts out of a Python
+# set, and two of them come out in an order that changes from one process to the next.
+- name: every host
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: t
+      debug: msg=t

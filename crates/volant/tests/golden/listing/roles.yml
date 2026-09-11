@@ -1,0 +1,17 @@
+# A play built out of roles: a dependency in front of the role that asks for it, a role whose
+# defaults are a directory, an argument-spec check, a named task and an unnamed one, an
+# include_role nobody expands, and a notify this release cannot honour yet.
+- name: roles play
+  hosts: h1
+  gather_facts: false
+  pre_tasks:
+    - name: before the roles
+      debug: msg=before
+  roles:
+    - dird
+    - role: spec
+      p: given
+      tags: [rt]
+  post_tasks:
+    - name: after the roles
+      debug: msg=after

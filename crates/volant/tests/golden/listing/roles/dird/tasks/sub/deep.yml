@@ -1,0 +1,5 @@
+- name: deep task
+  debug: msg=deep
+# Nothing named shared.yml exists in this directory. Resolving it against the importing file's
+# directory alone refuses the whole role at exit 1.
+- import_tasks: shared.yml

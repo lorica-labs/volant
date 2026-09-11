@@ -84,9 +84,14 @@ impl Renderer {
         );
     }
 
+    /// A warning goes to stderr, which is where ansible-playbook puts every one of its own -
+    /// measured on ansible-core 2.19.12, and measured here as a difference: the listing golden
+    /// compares stdout alone, and a `[WARNING]` about an unmatched host pattern was landing in
+    /// the middle of it. A warning mixed into stdout also reaches anything piping a listing or
+    /// a JSON stream into another program, which is the reason the reference separates them.
     pub fn warning(&mut self, text: &str) {
         let _ = writeln!(
-            self.out,
+            anstream::stderr(),
             "{}",
             self.paint(WARNING, &format!("[WARNING]: {text}"))
         );

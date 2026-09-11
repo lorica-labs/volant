@@ -1,0 +1,14 @@
+# meta asks the engine for something rather than a host, and every explicit one is listed under
+# the name of its own module. Two of these are actions this release refuses to run.
+- name: meta play
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: first
+      debug: msg=first
+    - meta: flush_handlers
+    - meta: end_play
+    - meta: noop
+      tags: [m]
+    - name: last
+      debug: msg=last

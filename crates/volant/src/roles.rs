@@ -71,6 +71,10 @@ pub struct LoadedRole {
     /// The `options` mapping of the `argument_specs` entry named after the tasks file, when the
     /// role has one. It is what the validation task checks the role's arguments against.
     pub argument_spec: Option<Map<String, Value>>,
+    /// The `short_description` of that same entry, which the check's own name carries behind a
+    /// dash. Measured on ansible-core 2.19.12 through `--list-tasks`:
+    /// `Validating arguments against arg spec 'main' - The spec role`.
+    pub argument_spec_description: Option<String>,
 }
 
 /// One compiled role instance: the variables its own steps sit on, and the ones it lends to the
@@ -166,7 +170,7 @@ pub fn load(path: &Path, from: &RoleFrom) -> anyhow::Result<LoadedRole> {
         }
     };
     let (dependencies, allow_duplicates) = meta(path)?;
-    let argument_spec = argument_spec(path, &from.tasks)?;
+    let (argument_spec, argument_spec_description) = argument_spec(path, &from.tasks)?;
     Ok(LoadedRole {
         defaults,
         vars,
@@ -174,6 +178,7 @@ pub fn load(path: &Path, from: &RoleFrom) -> anyhow::Result<LoadedRole> {
         dependencies,
         allow_duplicates,
         argument_spec,
+        argument_spec_description,
     })
 }
 
@@ -270,9 +275,11 @@ fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool)> {
 /// tasks file being run. Measured: a role read with `tasks_from: extra` is checked against the
 /// `extra` entry, and the banner names the entry (`Validating arguments against arg spec
 /// 'main'`).
-fn argument_spec(role: &Path, entry: &str) -> anyhow::Result<Option<Map<String, Value>>> {
+type ArgumentSpec = (Option<Map<String, Value>>, Option<String>);
+
+fn argument_spec(role: &Path, entry: &str) -> anyhow::Result<ArgumentSpec> {
     let Some(files) = files(role, "meta", "argument_specs", false)? else {
-        return Ok(None);
+        return Ok((None, None));
     };
     for file in files {
         let document = crate::vars::load_vars_file(&file)?;
@@ -282,12 +289,17 @@ fn argument_spec(role: &Path, entry: &str) -> anyhow::Result<Option<Map<String, 
         let Some(Value::Object(spec)) = specs.get(entry) else {
             continue;
         };
-        return Ok(Some(match spec.get("options") {
+        let options = match spec.get("options") {
             Some(Value::Object(options)) => options.clone(),
             _ => Map::new(),
-        }));
+        };
+        let description = spec
+            .get("short_description")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        return Ok((Some(options), description));
     }
-    Ok(None)
+    Ok((None, None))
 }
 
 #[cfg(test)]

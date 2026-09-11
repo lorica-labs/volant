@@ -34,6 +34,14 @@ pub struct Config {
     pub roles_path: Vec<PathBuf>,
     /// Where a collection is looked for, for the three-part role names.
     pub collections_path: Vec<PathBuf>,
+    /// `[tags] run` and `[tags] skip`, or `ANSIBLE_RUN_TAGS` and `ANSIBLE_SKIP_TAGS`.
+    ///
+    /// Measured on ansible-core 2.19.12: these are the **default** of `--tags` and
+    /// `--skip-tags`, and both options append to their default rather than replacing it, so
+    /// `[tags] run = x` with `--tags y` on the command line runs the union `x, y` and not `y`
+    /// alone. The command line never narrows what the file asked for; it only adds to it.
+    pub tags_run: Vec<String>,
+    pub tags_skip: Vec<String>,
 }
 
 impl Default for Config {
@@ -51,8 +59,21 @@ impl Default for Config {
             become_method: DEFAULT_BECOME_METHOD.to_string(),
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
+            tags_run: Vec::new(),
+            tags_skip: Vec::new(),
         }
     }
+}
+
+/// A comma-separated list of tags, as the reference reads one from a file, from the environment
+/// or from the command line: split on commas, each piece trimmed, empty pieces dropped.
+pub fn tag_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// A home-relative directory first, then the two system ones: the reference's own default for
@@ -192,6 +213,14 @@ impl Config {
         {
             config.become_method = method.trim().to_string();
         }
+        // The environment replaces the file's list rather than adding to it, the way every
+        // other list setting here does; the command line is what adds to whichever won.
+        if let Ok(list) = std::env::var("ANSIBLE_RUN_TAGS") {
+            config.tags_run = tag_list(&list);
+        }
+        if let Ok(list) = std::env::var("ANSIBLE_SKIP_TAGS") {
+            config.tags_skip = tag_list(&list);
+        }
         Ok(config)
     }
 }
@@ -297,6 +326,14 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                         config.become_method = method.to_string();
                     }
                 }
+                _ => {}
+            }
+            continue;
+        }
+        if section == "tags" {
+            match key.trim() {
+                "run" => config.tags_run = tag_list(value),
+                "skip" => config.tags_skip = tag_list(value),
                 _ => {}
             }
             continue;

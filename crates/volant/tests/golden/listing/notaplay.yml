@@ -1,0 +1,8 @@
+# A mapping where a playbook has to be a sequence of plays. A listing skips the pre-flight, not
+# the loader, and this file is the case that says so: the reference refuses it at exit 4 under
+# --list-tasks, and so must this engine.
+hosts: h1
+gather_facts: false
+tasks:
+  - name: t
+    debug: msg=t

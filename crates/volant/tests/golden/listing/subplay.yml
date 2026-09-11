@@ -1,0 +1,7 @@
+- name: the imported play
+  hosts: web
+  gather_facts: false
+  tags: [sub]
+  tasks:
+    - name: a task of the imported play
+      debug: msg=sub

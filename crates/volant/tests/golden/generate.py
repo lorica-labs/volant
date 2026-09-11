@@ -5,6 +5,8 @@ The interpreter comes from the ansible-core tool environment, so PyYAML is avail
 """
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -64,7 +66,7 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
-    return inventory()
+    return inventory() or listings()
 
 
 HOMONYM_WARNING = "Found both group and host with same name"
@@ -101,6 +103,78 @@ def inventory():
         f.write("\n")
     print(f"inventory golden: {len(hostvars)} hosts, {len(patterns)} patterns")
     return 0
+
+
+def listings():
+    """What `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check` print, byte for
+    byte, for every invocation in listing/args.txt.
+
+    The fixtures in listing/ are written so this recording can be compared with anything: no
+    play carries more than one tag and no play used with --list-hosts matches more than one
+    host, because the reference prints both out of a Python set and a set of two short strings
+    iterates in an order that changes from one process to the next (measured: four distinct
+    orders in eight runs of the same command). A second tag or a second host would make this
+    golden flap rather than fail, so `unreproducible` below refuses to write the recording at
+    all when one appears, here on the machine that has the reference.
+
+    Only stdout and the exit code are recorded. stderr carries warnings whose wording is a
+    separate question from the layout this gate exists to pin.
+    """
+    here = os.path.join(HERE, "listing")
+    # Every ANSIBLE_* variable goes, not a chosen few: an ansible.cfg above this directory, a
+    # roles path, a tag, an inventory, any of them would change the answers. The recording has
+    # to depend on the fixtures alone, and golden.rs clears the same prefix on its side.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
+    env["ANSIBLE_NOCOLOR"] = "1"
+    expected = {}
+    with open(os.path.join(here, "args.txt"), encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            run = subprocess.run(
+                ["ansible-playbook", "-i", "inv.ini", *shlex.split(line)],
+                cwd=here, env=env, capture_output=True, text=True,
+            )
+            bad = unreproducible(run.stdout)
+            if bad:
+                print(f"{line}: {bad}", file=sys.stderr)
+                print(
+                    "Refusing to write expected_listing.json: the reference prints a play's tags "
+                    "and its hosts out of a Python set, so more than one of either is recorded in "
+                    "an order that changes between processes. Reshape the fixture so the play "
+                    "carries one tag and matches one host, or list it under a --limit that leaves "
+                    "one.",
+                    file=sys.stderr,
+                )
+                return 1
+            expected[line] = {"stdout": run.stdout, "code": run.returncode}
+    with open(os.path.join(HERE, "expected_listing.json"), "w", encoding="utf-8") as f:
+        json.dump(expected, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+    print(f"listing golden: {len(expected)} invocations recorded")
+    return 0
+
+
+PLAY_TAGS = re.compile(r"^  play #\d+ .*\tTAGS: \[(.*)\]$")
+HOST_COUNT = re.compile(r"^    hosts \((\d+)\):$")
+
+
+def unreproducible(stdout):
+    """What in this output the reference would print in a different order next time, or None.
+
+    Two things and only two: the play line's tags (`','.join(set(play.tags))`) and the host list
+    under `--list-hosts` (`set(inventory.get_hosts(play.hosts))`). A task's own TAGS line is a
+    sorted list on both sides and is left alone.
+    """
+    for line in stdout.splitlines():
+        tags = PLAY_TAGS.match(line)
+        if tags and "," in tags.group(1):
+            return f"a play line carries more than one tag: {line.strip()}"
+        hosts = HOST_COUNT.match(line)
+        if hosts and int(hosts.group(1)) >= 2:
+            return f"a play matches more than one host: {line.strip()}"
+    return None
 
 
 def homonym_warning():

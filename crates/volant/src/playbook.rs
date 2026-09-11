@@ -23,6 +23,13 @@ pub struct Playbook {
 pub struct Play {
     pub name: String,
     pub hosts: String,
+    /// The `hosts` value entry by entry, as it was written: one element for the string form,
+    /// one per item for the list form. `--list-hosts` prints it as the Python list the
+    /// reference prints, and `hosts: a,b` there is one pattern while `hosts: [a, b]` is two.
+    pub host_patterns: Vec<String>,
+    /// The play's own tags. Every task under it inherits them for the selection; the listing
+    /// prints them on the play's own line.
+    pub tags: Vec<String>,
     pub gather_facts: bool,
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
@@ -72,8 +79,16 @@ pub struct Block {
 #[derive(Debug, Clone)]
 pub struct PlayTask {
     pub name: String,
+    /// Whether `name` was written on the task rather than filled in from the module. The two
+    /// listings that name a task tell them apart: measured on ansible-core 2.19.12, a named
+    /// task of a role lists as `role : name` while an unnamed one lists as its module alone,
+    /// with no role prefix - and the banner prefixes both.
+    pub named: bool,
     pub module: String,
     pub args: Map<String, Value>,
+    /// The tags written here and on everything above it, sorted and free of duplicates. An
+    /// empty list is what the reference calls `untagged`.
+    pub tags: Vec<String>,
     /// Unset when neither the task nor the block above it said anything. It has to be a
     /// three-state value: measured on ansible-core 2.19.12, a block with `ignore_errors: true`
     /// and a task with `ignore_errors: false` inside it fails the run, so the task's own `false`
@@ -119,8 +134,10 @@ impl PlayTask {
     pub(crate) fn empty() -> Self {
         PlayTask {
             name: String::new(),
+            named: false,
             module: String::new(),
             args: Map::new(),
+            tags: Vec::new(),
             ignore_errors: None,
             timeout: None,
             vars: Map::new(),
@@ -403,8 +420,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         }
     }
     unsupported.sort_unstable();
-    let hosts = match field(yaml, "hosts") {
-        Some(Yaml::Value(Scalar::String(s))) => s.to_string(),
+    let host_patterns = match field(yaml, "hosts") {
+        Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
         // Every entry, or none: `filter_map` here dropped a non-string entry and ran the play
         // against the rest, which is a host list quietly shorter than the one written. The
         // reference refuses it instead, measured: `Hosts list contains an invalid host value:
@@ -412,15 +429,15 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         Some(Yaml::Sequence(items)) => items
             .iter()
             .map(|i| {
-                i.as_str().ok_or_else(|| {
+                i.as_str().map(str::to_string).ok_or_else(|| {
                     anyhow!("Hosts list contains an invalid host value: '{}'", shown(i))
                 })
             })
-            .collect::<anyhow::Result<Vec<_>>>()?
-            .join(","),
+            .collect::<anyhow::Result<Vec<_>>>()?,
         None => bail!("a play needs 'hosts'"),
         Some(other) => bail!("'hosts' must be a string or a list, found {other:?}"),
     };
+    let hosts = host_patterns.join(",");
     let name = field(yaml, "name")
         .and_then(Yaml::as_str)
         .unwrap_or(&hosts)
@@ -462,6 +479,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     Ok(Play {
         name,
         hosts,
+        host_patterns,
+        tags: tags(yaml, "")?,
         gather_facts,
         vars,
         vars_files,
@@ -557,6 +576,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         params,
         keywords: PlayTask {
             name: String::new(),
+            tags: tags(yaml, &context)?,
             ignore_errors: boolean(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
@@ -661,6 +681,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
         always: task_list(field(yaml, "always"), "always")?,
         keywords: PlayTask {
             name,
+            tags: tags(yaml, &context)?,
             ignore_errors: boolean(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
@@ -744,8 +765,10 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         Some(found) => found,
         None if !unsupported.is_empty() => {
             return Ok(PlayTask {
-                name: label,
+                name: label.clone(),
+                named: name.is_some(),
                 module: String::new(),
+                tags: tags(yaml, &format!("task '{label}': "))?,
                 unsupported,
                 ..PlayTask::empty()
             });
@@ -808,9 +831,11 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
     Ok(PlayTask {
+        named: name.is_some(),
         name: name.unwrap_or_else(|| module.clone()),
         module,
         args,
+        tags: tags(yaml, &context)?,
         ignore_errors,
         timeout,
         vars,
@@ -826,6 +851,53 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         become_user,
         unsupported,
     })
+}
+
+/// `tags`, wherever they are written: on a play, on a block, on a role entry or on a task.
+///
+/// Read the way the reference reads them, measured on ansible-core 2.19.12: a string is split
+/// on commas and each piece trimmed, so `tags: a, b` is two tags; a list is taken entry by
+/// entry, and a nested list is flattened. Anything else is refused in the reference's own
+/// words. The result is sorted and deduplicated, because every use of it is a set: the two
+/// listings sort what they print, and the selection asks whether a name is in the list.
+fn tags(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    collect_tags(field(yaml, "tags"), context, &mut out)?;
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+fn collect_tags(node: Option<&Yaml>, context: &str, out: &mut Vec<String>) -> anyhow::Result<()> {
+    match node {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(()),
+        Some(Yaml::Value(Scalar::String(s))) => {
+            out.extend(
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string),
+            );
+            Ok(())
+        }
+        // A bare number or boolean is a tag too: the reference templates the value and keeps
+        // whatever comes back, so `tags: 1` names the tag `1` rather than refusing the load.
+        Some(Yaml::Value(Scalar::Integer(i))) => {
+            out.push(i.to_string());
+            Ok(())
+        }
+        Some(Yaml::Value(Scalar::Boolean(b))) => {
+            out.push(if *b { "True" } else { "False" }.to_string());
+            Ok(())
+        }
+        Some(Yaml::Sequence(items)) => {
+            for item in items {
+                collect_tags(Some(item), context, out)?;
+            }
+            Ok(())
+        }
+        Some(_) => bail!("{context}tags must be specified as a list"),
+    }
 }
 
 /// `timeout`, on a task or on a block.
@@ -1433,7 +1505,10 @@ mod tests {
         .unwrap();
         let t = first(&pb);
         assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["local_action", "tags"]);
+        assert_eq!(t.unsupported, ["local_action"]);
+        // A construct with no module still reads the keywords this release honours: a `tags:`
+        // dropped here would hand the selection a task that carries none.
+        assert_eq!(t.tags, ["t"]);
     }
 
     /// A block takes its three sections and the keywords its tasks inherit, and nests.

@@ -9,6 +9,15 @@
 //!
 //! Listing and syntax-checking never call this, so a playbook can be read ahead of the release
 //! that runs it.
+//!
+//! **The pre-flight refuses what the playbook says, not what the tags leave.** `check` reads the
+//! play's own lists as written, so a task `--tags` will drop is refused all the same;
+//! `check_steps` reads the compilation, where the selection has already removed a role's dropped
+//! task, so that one is not. The asymmetry is deliberate and it errs in the safe direction -
+//! more refusals, never fewer, and nothing that runs escapes one. Evening it out downward, by
+//! dropping the first pass, would let a keyword this release cannot execute reach a run; evening
+//! it out upward would mean compiling every play twice. Neither is worth it, and a later change
+//! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
 use anyhow::bail;
 use volant_protocol::modules::{import_module, is_builtin, is_known};
@@ -190,7 +199,7 @@ mod tests {
     /// dropped here, which is exactly the silent skip this module exists to stop.
     #[test]
     fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["until", "notify", "no_log", "tags", "environment"] {
+        for kw in ["until", "notify", "no_log", "run_once", "environment"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
             ));
@@ -353,7 +362,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            105,
+            102,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

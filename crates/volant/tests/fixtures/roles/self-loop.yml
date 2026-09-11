@@ -1,0 +1,3 @@
+- debug:
+    msg: once
+- import_tasks: self-loop.yml

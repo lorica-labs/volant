@@ -17,6 +17,15 @@ pub struct Scope {
     pub play_vars: Map<String, Value>,
     pub vars_files: Vec<Map<String, Value>>,
     pub task_vars: Map<String, Value>,
+    /// A role's `defaults/main.yml`, the lowest layer of all: measured, it loses even to an
+    /// inventory variable of the same name.
+    pub role_defaults: Map<String, Value>,
+    /// A role's `vars/main.yml`: measured, it beats the play's own `vars:` and loses to a task's
+    /// `vars:`, to `set_fact` and to `-e`.
+    pub role_vars: Map<String, Value>,
+    /// The free keys written on a role entry: measured, they beat a `set_fact` and lose to `-e`,
+    /// and they are gone again once the role is over.
+    pub role_params: Map<String, Value>,
     /// Hosts still in the current play, in inventory order.
     pub play_hosts: Vec<String>,
     /// Every host the play started with, whether it is still in it or not.
@@ -143,20 +152,29 @@ impl VarStore {
         self.hostvars = None;
     }
 
-    /// The merged view for one host, lowest precedence first: inventory `all`, `group_vars/all`
-    /// (inventory then playbook), inventory groups by depth and name, `group_vars/<group>`
-    /// (inventory then playbook), inventory host vars, `host_vars/<host>` (inventory then
-    /// playbook), play vars, vars_files, task vars, facts, extra vars, then the magic variables.
+    /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
+    /// `all`, `group_vars/all` (inventory then playbook), inventory groups by depth and name,
+    /// `group_vars/<group>` (inventory then playbook), inventory host vars, `host_vars/<host>`
+    /// (inventory then playbook), play vars, vars_files, a role's `vars`, task vars, facts, a
+    /// role's parameters, extra vars, then the magic variables.
+    ///
+    /// The three role layers sit where ansible-core 2.19.12 puts them, each measured against the
+    /// layer on either side of it rather than derived from the documented numbering: `defaults`
+    /// under an inventory variable, `vars` above the play's `vars:` and under a task's, and a
+    /// role parameter above a `set_fact` and under `-e`.
     pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
-        let mut vars = self.host_base(host);
+        let mut vars = scope.role_defaults.clone();
+        extend(&mut vars, &self.host_base(host));
         extend(&mut vars, &scope.play_vars);
         for file in &scope.vars_files {
             extend(&mut vars, file);
         }
+        extend(&mut vars, &scope.role_vars);
         extend(&mut vars, &scope.task_vars);
         if let Some(facts) = self.facts.get(host) {
             extend(&mut vars, facts);
         }
+        extend(&mut vars, &scope.role_params);
         extend(&mut vars, &self.extra);
         self.add_magic(&mut vars, host, scope);
         vars
@@ -481,11 +499,9 @@ mod tests {
 
     fn scope(hosts: &[&str]) -> Scope {
         Scope {
-            play_vars: Map::new(),
-            vars_files: Vec::new(),
-            task_vars: Map::new(),
             play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
             all_play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            ..Scope::default()
         }
     }
 
@@ -544,6 +560,77 @@ mod tests {
         assert_eq!(v["t"], json!(2), "set_fact beats task vars");
         assert_eq!(v["fact"], json!("set"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Where a role's three layers sit, one assertion per measured relation.
+    ///
+    /// Every value quoted here was read off ansible-core 2.19.12 on the development machine:
+    /// `defaults/main.yml` loses to an inventory host variable (`d=inv-host`), `vars/main.yml`
+    /// beats the play's `vars:` and loses to a task's `vars:` (`shared=task-var` with the role
+    /// still reading `v=role-var`), a role parameter beats a `set_fact` (`p=param` against a
+    /// fact of `fact`) and loses to `-e` (`p=extra`).
+    ///
+    /// What would make this red: any one layer applied at the wrong rank. Each assertion pins
+    /// one boundary, so a layer that slides past its neighbour names itself rather than leaving
+    /// a single "the role's value appears" to pass on a merge that is wrong everywhere else.
+    #[test]
+    fn the_role_layers_sit_where_the_reference_puts_them() {
+        let inv = Inventory::parse_ini("h1 d=inv-host\n").unwrap();
+        let role = |extra: Map<String, Value>| Scope {
+            role_defaults: json!({"d": "role-default", "shared": "role-default"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            role_vars: json!({"v": "role-var", "shared": "role-var"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            role_params: json!({"p": "param"}).as_object().unwrap().clone(),
+            play_vars: json!({"shared": "play-var"}).as_object().unwrap().clone(),
+            task_vars: extra,
+            ..Scope::default()
+        };
+
+        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        store.set_fact("h1", "p", json!("fact"));
+        let v = store.for_host("h1", &role(Map::new()));
+        assert_eq!(
+            v["d"],
+            json!("inv-host"),
+            "a role default loses to an inventory variable"
+        );
+        assert_eq!(
+            v["shared"],
+            json!("role-var"),
+            "a role's vars beat the play's own vars:"
+        );
+        assert_eq!(
+            v["p"],
+            json!("param"),
+            "a role parameter beats a fact of the same name"
+        );
+
+        let task = json!({"shared": "task-var"}).as_object().unwrap().clone();
+        let v = store.for_host("h1", &role(task));
+        assert_eq!(
+            v["shared"],
+            json!("task-var"),
+            "a task's vars: beat a role's vars"
+        );
+        assert_eq!(
+            v["v"],
+            json!("role-var"),
+            "and leave the rest of them alone"
+        );
+
+        let extra: Map<String, Value> = json!({"p": "extra"}).as_object().unwrap().clone();
+        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), extra).unwrap();
+        let v = store.for_host("h1", &role(Map::new()));
+        assert_eq!(
+            v["p"],
+            json!("extra"),
+            "an extra var beats a role parameter"
+        );
     }
 
     #[test]

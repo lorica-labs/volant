@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Playbook loading: plays and tasks, with the keywords this release supports.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
-use volant_protocol::modules::{is_known, native, short_name};
+use volant_protocol::modules::{import_module, is_known, native, short_name};
 
 use crate::keywords::{
     BLOCK_SECTIONS, Support, block_keyword, loop_control_keyword, play_keyword, task_keyword,
 };
+use crate::roles::{RoleEntry, RoleFrom};
 use crate::yaml::{as_bool, field, to_json};
 
 #[derive(Debug, Default)]
@@ -26,6 +27,14 @@ pub struct Play {
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
     pub tasks: Vec<TaskOrBlock>,
+    pub pre_tasks: Vec<TaskOrBlock>,
+    pub post_tasks: Vec<TaskOrBlock>,
+    pub roles: Vec<RoleEntry>,
+    /// The directory of the file this play was written in, which is not always the directory of
+    /// the playbook the operator named: `import_playbook` splices another file's plays in place,
+    /// and everything a play reads from disk - its `vars_files`, its `group_vars/`, its roles -
+    /// is looked for beside the file it came from.
+    pub dir: PathBuf,
     /// `become`, unset when the play says nothing: a task and the host variables both get to
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
@@ -251,7 +260,7 @@ pub fn is_meta(task: &PlayTask) -> bool {
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 fn is_free_form(module: &str) -> bool {
-    native(module).is_some_and(|m| m.free_form)
+    native(module).is_some_and(|m| m.free_form) || import_module(module) == Some(true)
 }
 
 /// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
@@ -267,26 +276,117 @@ fn is_free_form(module: &str) -> bool {
 /// lists exactly as it does in the reference, while the run still stops before it can apply
 /// half of itself.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading playbook {}", path.display()))?;
-    parse(&text, &path.display().to_string()).map_err(|err| crate::stats::Refusal::or(4, err))
+    read(path, 0).map_err(|err| crate::stats::Refusal::or(4, err))
+}
+
+/// How deep `import_playbook` may nest before the run is refused. A file importing itself would
+/// otherwise read on until the process ran out of stack, and a refusal naming the depth says
+/// which file to look at.
+const IMPORT_DEPTH: usize = 32;
+
+fn read(path: &Path, depth: usize) -> anyhow::Result<Playbook> {
+    // Exit 1 for a file that is not there, measured, and not the 4 a file that is there and
+    // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
+    // cannot take it.
+    let text = std::fs::read_to_string(path).map_err(|err| {
+        crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
+    })?;
+    parse_at(&text, &path.display().to_string(), &base_dir(path), depth)
+}
+
+/// A playbook's own directory, absolute where the filesystem allows it: `group_vars/`,
+/// `host_vars/`, relative `vars_files` entries, the `roles/` directory, lookups and the
+/// `playbook_dir` variable all resolve against it. An empty parent means the file was named with
+/// no directory at all, so it is the working directory.
+pub(crate) fn base_dir(path: &Path) -> PathBuf {
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    dir.canonicalize().unwrap_or(dir)
 }
 
 pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
+    parse_at(text, source, &base_dir(Path::new(source)), 0)
+}
+
+/// One playbook, with every `import_playbook` entry replaced in place by the plays of the file
+/// it names.
+///
+/// In place, not appended: measured on ansible-core 2.19.12, a file importing `sub.yml`, then
+/// declaring a play of its own, then importing `sub.yml` again runs the three plays in the order
+/// they are written. Each imported play keeps the directory of the file it came from, so its
+/// roles and its `vars_files` are looked for beside that file and not beside the playbook the
+/// operator typed.
+fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Result<Playbook> {
     let docs = crate::yaml::load(text, source)?;
-    let plays = match docs.first() {
+    let entries = match docs.first() {
         Some(Yaml::Sequence(items)) => items,
         _ => bail!("{source}: a playbook must be a list of plays"),
     };
-    let plays = plays
-        .iter()
-        .enumerate()
-        .map(|(i, y)| parse_play(y).with_context(|| format!("{source}: play {}", i + 1)))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut plays = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        match imported_playbook(entry)? {
+            Some(name) => {
+                if depth >= IMPORT_DEPTH {
+                    bail!("{source}: 'import_playbook' nests deeper than {IMPORT_DEPTH} levels");
+                }
+                let path = Path::new(&name);
+                let path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    dir.join(path)
+                };
+                plays.extend(
+                    read(&path, depth + 1)
+                        .with_context(|| format!("{source}: import_playbook {name}"))?
+                        .plays,
+                );
+            }
+            None => plays
+                .push(parse_play(entry, dir).with_context(|| format!("{source}: play {}", i + 1))?),
+        }
+    }
     Ok(Playbook { plays })
 }
 
-fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
+/// The file an `import_playbook` entry names, rendered.
+///
+/// The reference renders the value with no variables at all - measured, `{{ 'sub' }}.yml` works
+/// and `{{ nosuchvar }}.yml` refuses the load with `Error processing keyword 'import_playbook':
+/// 'nosuchvar' is undefined`, exit 4. Nothing has an inventory yet at this point, so a name that
+/// depends on a host could not be answered anyway.
+fn imported_playbook(entry: &Yaml) -> anyhow::Result<Option<String>> {
+    let Some(map) = entry.as_mapping() else {
+        return Ok(None);
+    };
+    let value = map.iter().find_map(|(key, value)| {
+        matches!(
+            key.as_str(),
+            Some("import_playbook" | "ansible.builtin.import_playbook")
+        )
+        .then_some(value)
+    });
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let raw = value
+        .as_str()
+        .ok_or_else(|| anyhow!("'import_playbook' takes a file name"))?;
+    if !crate::template::Templar::is_template(raw) {
+        return Ok(Some(raw.to_string()));
+    }
+    let templar = crate::template::Templar::new(PathBuf::from("."));
+    let rendered = templar
+        .render(raw, &Map::new())
+        .map_err(|err| anyhow!("Error processing keyword 'import_playbook': {}", err.0))?;
+    match rendered {
+        Value::String(name) => Ok(Some(name)),
+        other => bail!("Error processing keyword 'import_playbook': {other} is not a file name"),
+    }
+}
+
+fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
         .as_mapping()
         .ok_or_else(|| anyhow!("a play must be a mapping"))?;
@@ -347,6 +447,12 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         _ => bail!("'vars_files' must be a list of paths"),
     };
     let tasks = task_list(field(yaml, "tasks"), "tasks")?;
+    let pre_tasks = task_list(field(yaml, "pre_tasks"), "pre_tasks")?;
+    let post_tasks = task_list(field(yaml, "post_tasks"), "post_tasks")?;
+    let roles = match field(yaml, "roles") {
+        None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
+        Some(node) => parse_role_entries(node).context("'roles'")?,
+    };
     let strategy = match field(yaml, "strategy") {
         None | Some(Yaml::Value(Scalar::Null)) => None,
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
@@ -360,11 +466,127 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         vars,
         vars_files,
         tasks,
+        pre_tasks,
+        post_tasks,
+        roles,
+        dir: dir.to_path_buf(),
         r#become,
         become_user,
         strategy,
         unsupported,
     })
+}
+
+/// A play's `roles:` list, or the `dependencies:` of a `meta/main.yml`. The two are the same
+/// grammar, read by the same code so they cannot drift: measured, a dependency carries its own
+/// parameters and runs before the role that depends on it.
+pub(crate) fn parse_role_entries(node: &Yaml) -> anyhow::Result<Vec<RoleEntry>> {
+    let Yaml::Sequence(items) = node else {
+        bail!("'roles' must be a list of roles");
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| parse_role_entry(item).with_context(|| format!("role {}", i + 1)))
+        .collect()
+}
+
+/// One role entry: a bare name, or a mapping naming the role and carrying keywords, the four
+/// `*_from` selectors, and parameters.
+///
+/// The split between a keyword and a parameter is measured, not guessed: a free key on the entry
+/// is a role parameter and beats a `set_fact` on the same name, while `vars:` on the entry does
+/// not - so `vars:` is read as the block keyword it is and only the leftovers are parameters.
+fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
+    if let Some(name) = yaml.as_str() {
+        return Ok(RoleEntry {
+            name: name.to_string(),
+            from: RoleFrom::default(),
+            params: Map::new(),
+            keywords: PlayTask::empty(),
+        });
+    }
+    let map = yaml
+        .as_mapping()
+        .ok_or_else(|| anyhow!("a role must be a name or a mapping"))?;
+    let name = match field(yaml, "role").or_else(|| field(yaml, "name")) {
+        Some(Yaml::Value(Scalar::String(s))) => s.to_string(),
+        Some(other) => bail!("'role' must be a name, found {other:?}"),
+        None => bail!("a role entry needs 'role'"),
+    };
+    let mut from = RoleFrom::default();
+    let mut params = Map::new();
+    let mut unsupported = Vec::new();
+    for (key, value) in map {
+        let key = key
+            .as_str()
+            .ok_or_else(|| anyhow!("role '{name}': keys must be strings"))?;
+        let selector = match key {
+            "tasks_from" => Some(&mut from.tasks),
+            "vars_from" => Some(&mut from.vars),
+            "defaults_from" => Some(&mut from.defaults),
+            "handlers_from" => Some(&mut from.handlers),
+            _ => None,
+        };
+        if let Some(slot) = selector {
+            *slot = value
+                .as_str()
+                .ok_or_else(|| anyhow!("role '{name}': '{key}' must be a file name"))?
+                .to_string();
+            continue;
+        }
+        if key == "role" || key == "name" {
+            continue;
+        }
+        // A role entry takes the keywords a block takes, which is the list the reference checks
+        // one against; anything else is a parameter for the role itself.
+        match block_keyword(key) {
+            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+            Some(_) => {}
+            None => {
+                params.insert(key.to_string(), to_json(value)?);
+            }
+        }
+    }
+    unsupported.sort_unstable();
+    let context = format!("role '{name}': ");
+    let (r#become, become_user) = escalation(yaml, &context)?;
+    Ok(RoleEntry {
+        name,
+        from,
+        params,
+        keywords: PlayTask {
+            name: String::new(),
+            ignore_errors: boolean(yaml, "ignore_errors")?,
+            timeout: timeout(yaml, &context)?,
+            vars: mapping(yaml, "vars", &context)?,
+            when: conditions(yaml, "when", &context)?,
+            r#become,
+            become_user,
+            unsupported,
+            ..PlayTask::empty()
+        },
+    })
+}
+
+/// The task list of one file, for a role's `tasks/main.yml` and for `import_tasks`.
+///
+/// Measured on ansible-core 2.19.12: a file whose document is a mapping rather than a list is
+/// refused with `included task files must contain a list of tasks`, exit 4, and one that is not
+/// there at all is a different refusal with a different code, raised by the caller that knows
+/// which path it asked for.
+pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let source = path.display().to_string();
+    let docs = crate::yaml::load(&text, &source)?;
+    match docs.first() {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        Some(node @ Yaml::Sequence(_)) => {
+            task_list(Some(node), "tasks").with_context(|| source.clone())
+        }
+        Some(_) => bail!("{source}: included task files must contain a list of tasks"),
+    }
 }
 
 /// One list of tasks and blocks: a play's `tasks`, or one of a block's three sections. An
@@ -545,7 +767,9 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         let mut args = Map::new();
         args.insert("_raw_params".into(), Value::String(action.to_string()));
         args
-    } else if is_known(&module) {
+    } else if is_known(&module) || import_module(&module).is_some() {
+        // The three import statements are read here for the same reason `meta` is: the compiler
+        // needs what they name, and nothing else ever will, because no step is left for a host.
         module_args(&module, value).with_context(|| format!("task '{label}'"))?
     } else {
         Map::new()

@@ -1,0 +1,31 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    shared: play-var
+  pre_tasks:
+    - set_fact:
+        p: fact
+    - name: pre task
+      debug:
+        msg: "pre d={{ d | default('unset') }} shared={{ shared }}"
+  roles:
+    - base
+    - role: base
+      vars: { p: role-param }
+    - role: base
+      p: role-param
+    - child
+    - { role: spec, needed: given }
+  tasks:
+    - name: play task after roles
+      debug:
+        msg: "shared={{ shared }} d={{ d | default('unset') }} p={{ p | default('unset') }}"
+    - import_role:
+        name: base
+        tasks_from: extra
+    - import_role:
+        name: base
+  post_tasks:
+    - name: post task
+      debug:
+        msg: "post v={{ v | default('unset') }}"

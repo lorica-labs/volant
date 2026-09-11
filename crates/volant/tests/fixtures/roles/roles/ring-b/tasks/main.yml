@@ -1,0 +1,4 @@
+- debug:
+    msg: ring-b
+- import_role:
+    name: ring-a

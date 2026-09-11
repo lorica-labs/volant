@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - base
+    - base
+    - role: base
+      vars: { p: twice }
+    - spec

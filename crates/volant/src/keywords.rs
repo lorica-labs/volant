@@ -121,6 +121,11 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 /// warns that facts are not gathered, which is a line the operator reads before the first task,
 /// not a silent skip. `strategy` counts as `Runs` for the same reason: `linear` is what the
 /// engine does, and any other strategy is refused by its own name.
+///
+/// `roles`, `pre_tasks` and `post_tasks` run: the compiler reads each role from disk and splices
+/// its tasks, its dependencies and its argument-spec check into the step list, in the section
+/// order the reference runs them in. `handlers` stays parked - a role's handlers are read by
+/// nothing yet, and `notify` is parked too, so no handler can be reached from anywhere.
 pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("any_errors_fatal", Preflight),
     kw("become", Runs),
@@ -149,10 +154,10 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("no_log", Preflight),
     kw("order", Preflight),
     kw("port", Preflight),
-    kw("post_tasks", Preflight),
-    kw("pre_tasks", Preflight),
+    kw("post_tasks", Runs),
+    kw("pre_tasks", Runs),
     kw("remote_user", Preflight),
-    kw("roles", Preflight),
+    kw("roles", Runs),
     kw("run_once", Preflight),
     kw("serial", Preflight),
     kw("strategy", Runs),

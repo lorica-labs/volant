@@ -1,0 +1,3 @@
+- name: base task
+  debug:
+    msg: "d={{ d }} v={{ v }} shared={{ shared }} p={{ p | default('none') }}"

@@ -1,0 +1,54 @@
+---
+source: crates/volant/tests/playbook_cli.rs
+expression: "String::from_utf8(out.stdout).unwrap()"
+---
+
+PLAY [localhost] ***************************************************************
+
+TASK [set_fact] ****************************************************************
+ok: [localhost]
+
+TASK [pre task] ****************************************************************
+ok: [localhost] => {"msg": "pre d=role-default shared=role-var"}
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=role-param"}
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+
+TASK [child : child task] ******************************************************
+ok: [localhost] => {"msg": "child"}
+
+TASK [spec : Validating arguments against arg spec 'main'] *********************
+ok: [localhost]
+
+TASK [spec : debug] ************************************************************
+ok: [localhost] => {"msg": "needed=given"}
+
+TASK [play task after roles] ***************************************************
+ok: [localhost] => {"msg": "shared=role-var d=role-default p=fact"}
+
+TASK [base : extra task] *******************************************************
+ok: [localhost] => {"msg": "extra"}
+
+TASK [base : deeper task] ******************************************************
+ok: [localhost] => {"msg": "deeper"}
+
+TASK [base : sibling task] *****************************************************
+ok: [localhost] => {"msg": "sibling"}
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+
+TASK [post task] ***************************************************************
+ok: [localhost] => {"msg": "post v=role-var"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=15   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

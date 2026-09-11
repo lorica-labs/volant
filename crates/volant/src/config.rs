@@ -27,6 +27,13 @@ pub struct Config {
     pub r#become: bool,
     pub become_user: String,
     pub become_method: String,
+    /// Where a role is looked for once the directory beside the playbook has been tried.
+    /// Measured on ansible-core 2.19.12: a `roles_path` **replaces** the three default
+    /// directories rather than adding to them, and it never displaces `<playbook_dir>/roles`,
+    /// which is searched first whatever it says.
+    pub roles_path: Vec<PathBuf>,
+    /// Where a collection is looked for, for the three-part role names.
+    pub collections_path: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -42,8 +49,53 @@ impl Default for Config {
             r#become: false,
             become_user: DEFAULT_BECOME_USER.to_string(),
             become_method: DEFAULT_BECOME_METHOD.to_string(),
+            roles_path: default_roles_path(),
+            collections_path: default_collections_path(),
         }
     }
+}
+
+/// A home-relative directory first, then the two system ones: the reference's own default for
+/// `roles_path`, read off the list a missing role prints.
+fn default_roles_path() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = home() {
+        paths.push(home.join(".ansible/roles"));
+    }
+    paths.push(PathBuf::from("/usr/share/ansible/roles"));
+    paths.push(PathBuf::from("/etc/ansible/roles"));
+    paths
+}
+
+fn default_collections_path() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = home() {
+        paths.push(home.join(".ansible/collections"));
+    }
+    paths.push(PathBuf::from("/usr/share/ansible/collections"));
+    paths
+}
+
+/// The user's home directory. `HOME` everywhere the engine runs a playbook, `USERPROFILE` on the
+/// Windows controller, where reading `HOME` alone drops the `~/.ansible` entry from the search
+/// path and a role installed there stops being found.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// A colon-separated list of directories, as every Ansible path setting is written. Relative
+/// entries are anchored against `base`, which is the configuration file's directory for a value
+/// read from one and the working directory for one read from the environment.
+fn path_list(value: &str, base: &Path) -> Vec<PathBuf> {
+    value
+        .split(':')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| base.join(p))
+        .collect()
 }
 
 impl Config {
@@ -111,6 +163,20 @@ impl Config {
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {
             config.r#become = on;
+        }
+        // Measured: the environment replaces the file's `roles_path` rather than being appended
+        // to it, and a relative entry is read against the working directory.
+        let from_env = |name: &str| -> Option<Vec<PathBuf>> {
+            let list = path_list(&std::env::var(name).ok()?, Path::new(""));
+            (!list.is_empty()).then_some(list)
+        };
+        if let Some(list) = from_env("ANSIBLE_ROLES_PATH") {
+            config.roles_path = list;
+        }
+        if let Some(list) =
+            from_env("ANSIBLE_COLLECTIONS_PATHS").or_else(|| from_env("ANSIBLE_COLLECTIONS_PATH"))
+        {
+            config.collections_path = list;
         }
         if let Ok(user) = std::env::var("ANSIBLE_BECOME_USER")
             && !user.trim().is_empty()
@@ -277,6 +343,18 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             // A zero reaches the caller as zero, where the single startup check refuses it.
             // A value that is no number at all is the reference's own exit 5 instead.
             "forks" => config.forks = forks(integer("DEFAULT_FORKS", origin, value)?),
+            "roles_path" => {
+                let list = path_list(value, base);
+                if !list.is_empty() {
+                    config.roles_path = list;
+                }
+            }
+            "collections_path" | "collections_paths" => {
+                let list = path_list(value, base);
+                if !list.is_empty() {
+                    config.collections_path = list;
+                }
+            }
             _ => {}
         }
     }

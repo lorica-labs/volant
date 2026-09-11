@@ -45,8 +45,36 @@ pub const SET_FACT: ModuleSpec = ModuleSpec {
     summary: "Set facts for a host, for the rest of the run.",
 };
 
+pub const VALIDATE_ARGUMENT_SPEC: ModuleSpec = ModuleSpec {
+    name: "validate_argument_spec",
+    free_form: false,
+    summary: "Check a role's arguments against the specification in `meta/argument_specs.yml`.",
+};
+
 /// Modules the controller runs itself and never sends to a host, sorted by name.
-pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, SET_FACT];
+pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, SET_FACT, VALIDATE_ARGUMENT_SPEC];
+
+/// The three statements that read a file while the play is being compiled instead of naming
+/// work for a host, with whether their string form is one raw argument.
+///
+/// They are written as modules and the loader reads them as modules, but nothing sends them
+/// anywhere: the compiler splices what they name into the step list and no step is left behind.
+/// `import_role` is the odd one out on the free-form column - measured, `import_playbook: x.yml`
+/// takes the file as a raw parameter while `import_role` refuses one and wants `name=`.
+pub const IMPORT_MODULES: &[(&str, bool)] = &[
+    ("import_playbook", true),
+    ("import_role", false),
+    ("import_tasks", true),
+];
+
+/// Whether the module is one of the three import statements, and whether its string form is raw.
+pub fn import_module(module: &str) -> Option<bool> {
+    let short = short_name(module);
+    IMPORT_MODULES
+        .iter()
+        .find(|(name, _)| *name == short)
+        .map(|(_, free_form)| *free_form)
+}
 
 /// `ansible.builtin.` and `ansible.legacy.` name the same modules as the bare name does.
 /// Other collections are returned whole: `community.general.command` is not our `command`.
@@ -282,6 +310,18 @@ mod tests {
                 BUILTIN_MODULES.contains(&m.name),
                 "{} is not a name ansible.builtin has",
                 m.name
+            );
+        }
+        let imports: Vec<&str> = IMPORT_MODULES.iter().map(|(n, _)| *n).collect();
+        let mut sorted = imports.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(imports, sorted);
+        for name in imports {
+            assert!(BUILTIN_MODULES.contains(&name), "{name}");
+            assert!(
+                !is_known(name),
+                "{name} is spliced by the compiler and never run"
             );
         }
     }

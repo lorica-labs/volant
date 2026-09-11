@@ -2,17 +2,19 @@
 //! The `playbook` command: the same arguments as `ansible-playbook`, for the subset that exists.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anstream::ColorChoice;
 use clap::Parser;
 use tokio::sync::watch;
 
+use crate::compile::{self, Compiled};
 use crate::config::Config;
 use crate::executor::{self, RunOptions, RunState};
 use crate::inventory::{Host, Inventory};
 use crate::render::Renderer;
+use crate::roles::RoleSearch;
 use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
@@ -102,7 +104,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         eprintln!("ERROR! The number of processes (--forks) must be >= 1");
         return Ok(2);
     }
-    let inventory_path = args.inventory.clone().or(config.inventory);
+    let inventory_path = args.inventory.clone().or_else(|| config.inventory.clone());
     let inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
@@ -117,6 +119,26 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // below this line may assume a keyword was handled that the pre-flight did not let past.
     for pb in &playbooks {
         preflight::check(pb)?;
+    }
+    // Roles are read and spliced here, before the first `PLAY` banner: a role nobody can find
+    // stops the run with nothing printed, which is where the reference stops it too. The whole
+    // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
+    // and the refusals that measured a code of their own carry it through untouched.
+    let mut compiled: Vec<Vec<Compiled>> = Vec::new();
+    for pb in &playbooks {
+        let mut plays = Vec::new();
+        for play in &pb.plays {
+            let search = RoleSearch::new(&play.dir, &config);
+            plays.push(compile::compile(play, &search).map_err(|e| Refusal::or(4, e))?);
+        }
+        compiled.push(plays);
+    }
+    // The second half of the pre-flight: what a role or an imported file brought in is refused
+    // by its own name too, and before the first connection like everything else.
+    for plays in &compiled {
+        for play in plays {
+            preflight::check_steps(play)?;
+        }
     }
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
@@ -203,7 +225,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         stop: stop_rx.clone(),
     };
 
-    let playbook_dir = base_dir(&args.playbooks[0]);
+    let playbook_dir = playbook::base_dir(&args.playbooks[0]);
     let cwd = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
     let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
@@ -258,16 +280,18 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
     // so a `?` returning past the shutdown would pay that for every live link in series.
     let plays: anyhow::Result<()> = async {
-        'plays: for (path, pb) in args.playbooks.iter().zip(&playbooks) {
-            let dir = base_dir(path);
-            if dir != current_dir {
-                state.templar = Arc::new(Templar::new(dir.clone()));
-                state.vars.lock().expect("vars lock").rebase(&dir)?;
-                current_dir = dir;
-            }
-            for play in &pb.plays {
+        'plays: for (pb, steps) in playbooks.iter().zip(&compiled) {
+            for (play, compiled) in pb.plays.iter().zip(steps) {
                 if *stop_rx.borrow() {
                     break 'plays;
+                }
+                // Per play rather than per playbook argument: `import_playbook` splices another
+                // file's plays in place, and each of them reads its `group_vars/`, its
+                // `vars_files` and its lookups beside the file it was written in.
+                if play.dir != current_dir {
+                    state.templar = Arc::new(Templar::new(play.dir.clone()));
+                    state.vars.lock().expect("vars lock").rebase(&play.dir)?;
+                    current_dir = play.dir.clone();
                 }
                 let resolution = inventory.resolve(&play.hosts);
                 for warning in &resolution.warnings {
@@ -299,8 +323,10 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     agents.local()?;
                     local_agent_checked = true;
                 }
-                executor::run_play(play, hosts, &agents, &options, &mut state, out, &mut stats)
-                    .await?;
+                executor::run_play(
+                    play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
+                )
+                .await?;
             }
             // One recap per playbook argument, as the reference prints it, and the counters carry
             // over: the second playbook's recap shows the whole run so far. An interrupted run
@@ -372,17 +398,6 @@ fn ask_become_password() -> anyhow::Result<String> {
         anyhow::bail!("no become password was given");
     }
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
-}
-
-/// A playbook's own directory, absolute where the filesystem allows it: `group_vars/`,
-/// `host_vars/`, relative `vars_files` entries, lookups and the `playbook_dir` variable all
-/// resolve against it, so it follows the playbook being run rather than the first one.
-fn base_dir(playbook: &Path) -> PathBuf {
-    let dir = match playbook.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    dir.canonicalize().unwrap_or(dir)
 }
 
 /// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is

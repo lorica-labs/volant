@@ -224,14 +224,15 @@ mod tests {
     /// refused wherever it was written; one sitting inside a block would otherwise only stop
     /// the run once the block was reached, with half the playbook applied.
     ///
-    /// `rescue` is not among the sections walked for a task here because the section itself is
-    /// parked: nothing enters a rescue yet, so a block carrying one is refused for the section
-    /// rather than run without the recovery it describes.
     #[test]
     fn a_keyword_parked_inside_any_section_of_a_block_is_refused() {
         let parked = "- name: Deep\n          command: echo hi\n          no_log: probe";
         for (section, body) in [
             ("block", format!("- block:\n        {parked}\n")),
+            (
+                "rescue",
+                format!("- block:\n        - command: echo hi\n      rescue:\n        {parked}\n"),
+            ),
             (
                 "always",
                 format!("- block:\n        - command: echo hi\n      always:\n        {parked}\n"),
@@ -243,13 +244,6 @@ mod tests {
                 "{section}: {text}"
             );
         }
-        let text = refusal(
-            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      rescue:\n        - command: echo sorry\n",
-        );
-        assert!(
-            text.contains("keyword 'rescue' is not supported yet"),
-            "{text}"
-        );
     }
 
     /// `meta` asks the engine for something rather than naming a module, so it is refused by the
@@ -362,7 +356,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            102,
+            101,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

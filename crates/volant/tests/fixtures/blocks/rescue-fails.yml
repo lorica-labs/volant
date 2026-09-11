@@ -1,0 +1,17 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Fails in the block
+          command: nosuchbinary-volant-probe
+          when: inventory_hostname == 'h1'
+      rescue:
+        - name: Rescue fails too
+          command: nosuchbinary-volant-probe
+      always:
+        - name: Always after failed rescue
+          debug:
+            msg: "hosts={{ ansible_play_hosts | length }}"
+    - name: Not reached on h1
+      debug:
+        msg: after

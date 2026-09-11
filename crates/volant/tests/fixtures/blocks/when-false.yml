@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Outer task
+          command: "true"
+        - name: Inner block
+          block:
+            - name: Nested task
+              command: "true"
+      when: false

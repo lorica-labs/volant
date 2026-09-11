@@ -10,6 +10,11 @@ pub enum Outcome {
     Changed,
     Skipped,
     Failed,
+    /// Failed, and a `rescue` around it takes the failure. It shows exactly like `Failed` -
+    /// measured on ansible-core 2.19.12, the rescued task still prints `fatal: [h]: FAILED!` -
+    /// and counts in the recap's own `rescued` column instead of `failed`. It is not the host
+    /// leaving the play: the rescue runs, and the play goes on for it.
+    Rescued,
     /// Failed, but the task had `ignore_errors`.
     Ignored,
 }
@@ -39,6 +44,10 @@ impl Stats {
         match outcome {
             Outcome::Skipped => h.skipped += 1,
             Outcome::Failed => h.failed += 1,
+            // Counted in its own column and nowhere else. Measured on ansible-core 2.19.12: a
+            // failure a rescue takes reads `failed=0 rescued=1`, and it does not count as `ok`
+            // either, however the play ends for that host.
+            Outcome::Rescued => h.rescued += 1,
             Outcome::Ok | Outcome::Changed | Outcome::Ignored => {
                 h.ok += 1;
                 if changed {
@@ -150,6 +159,24 @@ mod tests {
             ),
             (3, 1, 1, 1, 1, 1)
         );
+    }
+
+    /// A rescued failure counts once, in its own column, and moves nothing else.
+    ///
+    /// Measured on ansible-core 2.19.12: a task failing in a block with a rescue recaps
+    /// `ok=1 changed=0 failed=0 rescued=1` - the `ok` being the rescue's own task - and the
+    /// run exits 0. What would make this red: counting it as `failed`, which exits 2 on a
+    /// playbook the reference exits 0 on; or as `ok`, which hides the failure entirely.
+    #[test]
+    fn a_rescued_failure_counts_only_as_rescued() {
+        let mut s = Stats::default();
+        s.record("h", Outcome::Rescued, true);
+        let h = s.host("h");
+        assert_eq!(
+            (h.rescued, h.failed, h.ok, h.changed, h.ignored),
+            (1, 0, 0, 0, 0)
+        );
+        assert_eq!(exit_code(&s), 0, "a rescued host is not a failed host");
     }
 
     #[test]

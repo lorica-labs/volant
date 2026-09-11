@@ -130,14 +130,18 @@ impl Renderer {
             Outcome::Ok => self.paint(OK, &format!("ok: [{host}]{item}{tail}")),
             Outcome::Changed => self.paint(CHANGED, &format!("changed: [{host}]{item}{tail}")),
             Outcome::Skipped => self.paint(SKIPPED, &format!("skipping: [{host}]{item}")),
-            Outcome::Failed | Outcome::Ignored if label.is_some() => self.paint(
+            // A rescued failure shows exactly like one nothing catches: measured on
+            // ansible-core 2.19.12, the line is the same `fatal: ... FAILED!` and the only
+            // difference is in the recap. Showing it any other way would hide from the
+            // operator that the task failed at all.
+            Outcome::Failed | Outcome::Rescued | Outcome::Ignored if label.is_some() => self.paint(
                 FAILED,
                 &format!(
                     "failed: [{host}] (item={}) => {json}",
                     label.unwrap_or_default()
                 ),
             ),
-            Outcome::Failed | Outcome::Ignored => {
+            Outcome::Failed | Outcome::Rescued | Outcome::Ignored => {
                 self.paint(FAILED, &format!("fatal: [{host}]: FAILED! => {json}"))
             }
         };

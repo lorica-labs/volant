@@ -13,7 +13,8 @@
 use anyhow::bail;
 use volant_protocol::modules::{is_builtin, is_known};
 
-use crate::playbook::{Play, PlayTask, Playbook};
+use crate::compile::{META_ACTIONS, meta_action};
+use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
 use crate::stats::Refusal;
 
 /// The strategy this engine implements. A play asking for another one is refused by its name
@@ -44,17 +45,41 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
     {
         bail!("strategy '{strategy}' is not supported yet");
     }
-    for task in &play.tasks {
-        check_task(task)?;
+    check_items(&play.tasks)
+}
+
+/// A task list, blocks and all. Every section of a block is walked, `rescue` included: a
+/// keyword this release cannot execute has to be refused wherever it was written, and a
+/// playbook whose recovery path carries one would otherwise fail on it only once something had
+/// already gone wrong.
+fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
+    for item in items {
+        match item {
+            TaskOrBlock::Task(task) => check_task(task)?,
+            TaskOrBlock::Block(block) => {
+                if let Some(kw) = block.keywords.unsupported.first() {
+                    bail!(
+                        "block '{}': keyword '{kw}' is not supported yet",
+                        block.keywords.name
+                    );
+                }
+                check_items(&block.body)?;
+                check_items(&block.rescue)?;
+                check_items(&block.always)?;
+            }
+        }
     }
     Ok(())
 }
 
-/// One task, checked on its own so the compiler can call it per step once blocks and roles put
-/// tasks somewhere other than a play's own list.
+/// One task, checked on its own so the compiler can call it per step once roles put tasks
+/// somewhere other than a play's own list.
 pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     if let Some(kw) = task.unsupported.first() {
         bail!("task '{}': keyword '{kw}' is not supported yet", task.name);
+    }
+    if is_meta(task) {
+        return check_meta(task);
     }
     if !is_known(&task.module) {
         // Two different messages for two different situations. A module ansible-core ships and
@@ -74,6 +99,24 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// A `meta` task: the action has to be one the reference has, and one this release honours.
+///
+/// Exit 1 for an action nobody has, which is the reference's own code for it - measured, and
+/// notably not the 4 a playbook it cannot load gets. Where the two differ is the moment: the
+/// reference shows the `TASK [meta]` banner and fails there, this refuses before the first
+/// connection, so nothing has run when the operator reads the message.
+fn check_meta(task: &PlayTask) -> anyhow::Result<()> {
+    let action = meta_action(task);
+    match META_ACTIONS.iter().find(|(name, _)| *name == action) {
+        Some((_, true)) => Ok(()),
+        Some((name, false)) => bail!("task '{}': meta '{name}' is not supported yet", task.name),
+        None => Err(Refusal::at(
+            1,
+            format!("invalid meta action requested: {action}"),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -139,18 +182,71 @@ mod tests {
         }
     }
 
-    /// A construct with no module of its own - a block - is refused for what it is rather than
-    /// for the module it never named.
+    /// Every section of a block is walked. A keyword this release cannot execute has to be
+    /// refused wherever it was written; one sitting inside a block would otherwise only stop
+    /// the run once the block was reached, with half the playbook applied.
+    ///
+    /// `rescue` is not among the sections walked for a task here because the section itself is
+    /// parked: nothing enters a rescue yet, so a block carrying one is refused for the section
+    /// rather than run without the recovery it describes.
     #[test]
-    fn a_block_is_refused_as_a_block_and_not_as_a_missing_module() {
+    fn a_keyword_parked_inside_any_section_of_a_block_is_refused() {
+        let parked = "- name: Deep\n          command: echo hi\n          no_log: probe";
+        for (section, body) in [
+            ("block", format!("- block:\n        {parked}\n")),
+            (
+                "always",
+                format!("- block:\n        - command: echo hi\n      always:\n        {parked}\n"),
+            ),
+        ] {
+            let text = refusal(&format!("- hosts: all\n  tasks:\n    {body}"));
+            assert!(
+                text.contains("task 'Deep': keyword 'no_log' is not supported yet"),
+                "{section}: {text}"
+            );
+        }
         let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      block:\n        - command: echo hi\n",
+            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      rescue:\n        - command: echo sorry\n",
         );
         assert!(
-            text.contains("keyword 'block' is not supported yet"),
+            text.contains("keyword 'rescue' is not supported yet"),
             "{text}"
         );
-        assert!(!text.contains("no module given"), "{text}");
+    }
+
+    /// `meta` asks the engine for something rather than naming a module, so it is refused by the
+    /// action it asked for and never for a module nobody wrote.
+    ///
+    /// What would make this red: `meta` falling through to the module check, which would tell
+    /// the operator that a module they never named is missing; or an action this release cannot
+    /// honour running as a no-op, which is the silent skip the pre-flight exists to stop.
+    #[test]
+    fn a_meta_action_is_honoured_or_refused_by_its_own_name() {
+        let play =
+            |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
+        for (action, supported) in crate::compile::META_ACTIONS {
+            let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
+            let checked = check(&pb);
+            if *supported {
+                assert!(checked.is_ok(), "{action} runs");
+            } else {
+                let err = checked.unwrap_err();
+                assert_eq!(error_code(&err), 4, "{err:#}");
+                assert!(
+                    format!("{err:#}").contains(&format!("meta '{action}' is not supported yet")),
+                    "{err:#}"
+                );
+            }
+        }
+        // Measured on ansible-core 2.19.12: `invalid meta action requested: nosuchaction`,
+        // exit 1 - not the 4 an unloadable playbook gets.
+        let pb = parse(&play("nosuchaction"), "x.yml").unwrap();
+        let err = check(&pb).unwrap_err();
+        assert_eq!(error_code(&err), 1, "{err:#}");
+        assert!(
+            format!("{err:#}").contains("invalid meta action requested: nosuchaction"),
+            "{err:#}"
+        );
     }
 
     /// One probe playbook per `Preflight` row of the three tables, built from the row's own
@@ -159,7 +255,7 @@ mod tests {
     /// failing to load.
     fn preflight_probes() -> Vec<(&'static str, String)> {
         use crate::keywords::{
-            BLOCK_SECTIONS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+            BLOCK_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
         };
         let task = |kw: &str| {
             format!(
@@ -174,9 +270,24 @@ mod tests {
         };
         let mut probes: Vec<(&'static str, String)> =
             parked(TASK_KEYWORDS).map(|kw| (kw, task(kw))).collect();
-        // A block's sections are grammar the loader has to accept and the pre-flight has to
-        // refuse, even though nothing compiles them yet.
-        probes.extend(BLOCK_SECTIONS.iter().map(|s| (*s, task(s))));
+        // A block has a grammar of its own, so it has a table of its own and the same rule one
+        // level in: a keyword the reference lets a block carry and this release cannot honour
+        // is refused by its name rather than inherited by every task underneath and ignored.
+        probes.extend(parked(BLOCK_KEYWORDS).map(|kw| {
+            // A parked section keyword takes a task list; every other value is kept and never
+            // parsed, so the one placeholder serves the rest.
+            let value = if crate::keywords::BLOCK_SECTIONS.contains(&kw) {
+                ":\n        - name: Deep\n          command: echo hi"
+            } else {
+                ": probe"
+            };
+            (
+                kw,
+                format!(
+                    "- hosts: all\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      {kw}{value}\n"
+                ),
+            )
+        }));
         probes.extend(parked(PLAY_KEYWORDS).map(|kw| {
             (
                 kw,
@@ -213,7 +324,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            90,
+            108,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

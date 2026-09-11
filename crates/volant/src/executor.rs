@@ -14,6 +14,7 @@ use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
+use crate::compile::{Compiled, StepKind, after, after_failure, after_pending, compile};
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
@@ -136,6 +137,14 @@ enum Event {
         host: String,
         index: usize,
     },
+    /// This host reached step `index` and has no result to show for it. It is the one event
+    /// that prints a header of its own every time: measured on ansible-core 2.19.12, a `meta`
+    /// shows one `TASK [meta]` banner per live host with nothing underneath, two banners in a
+    /// row for two hosts, and none at all for a host that has already left the play.
+    Banner {
+        host: String,
+        index: usize,
+    },
     /// A host is done with this play and hands back the connections it wants kept open.
     Finished {
         host: String,
@@ -150,9 +159,12 @@ enum Event {
 
 /// Everything a host driver needs about the play, shared read-only.
 struct PlayPlan {
-    tasks: Vec<PlayTask>,
-    /// Parallel to `tasks`: whether the task is a `linear` boundary because it reads across
-    /// hosts. Decided here rather than per host, since it depends only on the task's text.
+    /// The play flattened into numbered steps, with the block spans that say where each one
+    /// sits. Every host walks the same list, which is what lets the coordinator name a step to
+    /// all of them at once.
+    compiled: Compiled,
+    /// Parallel to `compiled.steps`: whether the step is a `linear` boundary because it reads
+    /// across hosts. Decided here rather than per host, since it depends only on its text.
     barriers: Vec<bool>,
     play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
@@ -191,9 +203,14 @@ pub async fn run_play(
         .playbook_dir()
         .to_path_buf();
     let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state, out)?;
+    let compiled = compile(play);
     let plan = Arc::new(PlayPlan {
-        tasks: play.tasks.clone(),
-        barriers: play.tasks.iter().map(reads_across_hosts).collect(),
+        barriers: compiled
+            .steps
+            .iter()
+            .map(|step| reads_across_hosts(&step.task))
+            .collect(),
+        compiled,
         play_vars: play.vars.clone(),
         vars_files,
         play_hosts: play_hosts.clone(),
@@ -272,18 +289,24 @@ pub async fn run_play(
     // Highest task index each host has reported. Reports arrive in task order over one channel,
     // so for a host still in the play this is also the index it has finished every task through.
     let mut last_done: HashMap<String, usize> = HashMap::new();
-    for (index, task) in plan.tasks.iter().enumerate() {
+    for (index, step) in plan.compiled.steps.iter().enumerate() {
+        let task = &step.task;
         let mut header_shown = false;
         for host in &play_hosts {
             loop {
                 let key = (host.clone(), index);
                 if done.contains(&key) {
-                    if !header_shown {
-                        let live = progress_tx.borrow().live_hosts.clone();
-                        out.task(&task_name(task, host, &plan, &live, state));
-                        header_shown = true;
-                    }
+                    // The header goes in front of the first event that shows something, not in
+                    // front of the first host that finished: a step every host stepped over
+                    // has no header at all, and a `meta`, which shows no result line, prints
+                    // one of its own per live host.
                     for event in pending.remove(&key).unwrap_or_default() {
+                        let banner = matches!(event, Event::Banner { .. });
+                        if banner || (!header_shown && shows_a_line(&event)) {
+                            let live = progress_tx.borrow().live_hosts.clone();
+                            out.task(&task_name(task, host, &plan, &live, state));
+                            header_shown = true;
+                        }
                         report_result(event, stats, out);
                     }
                     break;
@@ -313,6 +336,17 @@ pub async fn run_play(
                             publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
                         }
                         pending.entry(key).or_default().push(event);
+                    }
+                    // Queued behind the same key as a result, rather than printed on arrival,
+                    // so a host racing ahead cannot put its banner above the step before it.
+                    Some(event @ Event::Banner { .. }) => {
+                        let Event::Banner { host, index } = &event else {
+                            unreachable!()
+                        };
+                        pending
+                            .entry((host.clone(), *index))
+                            .or_default()
+                            .push(event);
                     }
                     Some(Event::TaskDone { host, index }) => {
                         let seen = last_done.entry(host.clone()).or_insert(index);
@@ -364,6 +398,11 @@ pub async fn run_play(
             Event::Unreachable { host, msg } => {
                 stats.unreachable(&host);
                 out.unreachable(&host, &msg);
+                // Into `gone` here as well as in the loop above, because the last thing this
+                // function does is count an `unreachable` for every worker that failed and is
+                // not in that set. A host reported here and left out of it would be counted
+                // twice in the recap for one failure.
+                gone.insert(host.clone());
                 state.failed_hosts.insert(host);
                 publish(&progress_tx, &play_hosts, &state.failed_hosts, &last_done);
             }
@@ -387,6 +426,9 @@ pub async fn run_play(
             // result reaching here is one the task loop above never read - which happens when
             // its host entered `gone` before that task's `TaskDone`. Report it rather than drop
             // it: a task missing from the recap is the one failure this file cannot afford.
+            Event::Banner { index, .. } => {
+                header_for(index, &plan, &play_hosts, &progress_tx, state, out);
+            }
             event @ Event::Result { .. } => report_result(event, stats, out),
         }
     }
@@ -398,6 +440,10 @@ pub async fn run_play(
     leftover.sort_by_key(|((host, index), _)| (*index, play_hosts.iter().position(|h| h == host)));
     for (_, events) in leftover {
         for event in events {
+            if let Event::Banner { index, .. } = &event {
+                header_for(*index, &plan, &play_hosts, &progress_tx, state, out);
+                continue;
+            }
             report_result(event, stats, out);
         }
     }
@@ -411,6 +457,38 @@ pub async fn run_play(
         }
     }
     Ok(())
+}
+
+/// Whether an event puts a line on the terminal, which is what a step's header goes in front
+/// of. A result nobody shows still speaks when `ignore_errors` swallowed a failure: the
+/// `...ignoring` line is the whole display of that step for that host.
+fn shows_a_line(event: &Event) -> bool {
+    match event {
+        Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
+        Event::Banner { .. } => true,
+        _ => false,
+    }
+}
+
+/// The header of step `index`, for the drain paths that reach a banner after the step loop has
+/// moved on. The step's name is rendered against the first host of the play, which is the same
+/// choice the step loop makes for a header a later host would have printed.
+fn header_for(
+    index: usize,
+    plan: &PlayPlan,
+    play_hosts: &[String],
+    progress_tx: &watch::Sender<Progress>,
+    state: &RunState,
+    out: &mut Renderer,
+) {
+    let Some(step) = plan.compiled.steps.get(index) else {
+        return;
+    };
+    let Some(host) = play_hosts.first() else {
+        return;
+    };
+    let live = progress_tx.borrow().live_hosts.clone();
+    out.task(&task_name(&step.task, host, plan, &live, state));
 }
 
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
@@ -1168,10 +1246,30 @@ async fn drive_host(
     let mut unreachable: Option<String> = None;
     let mut failed = false;
     let mut pos = 0;
-    let n = plan.tasks.len();
+    let n = plan.compiled.steps.len();
     let mut batch_id: u64 = 0;
+    // The step a failure was just reported at, and whether this host is now working its way
+    // out through the `always` sections that enclosed it. Those two are the only state a
+    // failure adds: the coordinator still knows one thing about a host, that it failed.
+    let mut failed_at: Option<usize> = None;
+    let mut failing = false;
 
-    'run: while pos < n && !failed && !*stop.borrow() {
+    'run: loop {
+        if let Some(index) = failed_at.take() {
+            // Measured on ansible-core 2.19.12: a task failing inside a nested block runs the
+            // inner `always`, then the outer one, and only then leaves the play.
+            match after_failure(&plan.compiled, index) {
+                Some(next) => {
+                    skip_to(&tx, &name, index, next).await;
+                    pos = next;
+                    failing = true;
+                }
+                None => break 'run,
+            }
+        }
+        if pos >= n || *stop.borrow() {
+            break 'run;
+        }
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
@@ -1180,7 +1278,8 @@ async fn drive_host(
         let mut batch_escalation: Option<Escalation> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         while pos < n {
-            let task = &plan.tasks[pos];
+            let step = &plan.compiled.steps[pos];
+            let task = &step.task;
             // A task that reads across hosts is a boundary before itself: the batch in hand
             // goes out first, and then this host waits for the others to reach the previous
             // task, the way `linear` does.
@@ -1249,7 +1348,28 @@ async fn drive_host(
                             registered_value(task, &results),
                         );
                     }
-                    pos += 1;
+                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
+                }
+                // A `meta` asks the engine for something rather than the host: it shows a
+                // banner, reports nothing and moves on. Every action that reaches here is one
+                // this release honours by doing nothing; the pre-flight refused the rest.
+                Ok(_) if step.kind == StepKind::Meta => {
+                    if !batch.is_empty() {
+                        break;
+                    }
+                    let _ = tx
+                        .send(Event::Banner {
+                            host: name.clone(),
+                            index: pos,
+                        })
+                        .await;
+                    let _ = tx
+                        .send(Event::TaskDone {
+                            host: name.clone(),
+                            index: pos,
+                        })
+                        .await;
+                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
                 }
                 Ok(Prepared::Local(items)) => {
                     if !batch.is_empty() {
@@ -1277,7 +1397,7 @@ async fn drive_host(
                             registered_value(task, &results),
                         );
                     }
-                    failed = report_task(
+                    if report_task(
                         &tx,
                         &name,
                         pos,
@@ -1286,11 +1406,13 @@ async fn drive_host(
                         &labels,
                         short_name(&task.module) == "debug",
                     )
-                    .await;
-                    pos += 1;
-                    if failed {
-                        break 'run;
+                    .await
+                    {
+                        failed = true;
+                        failed_at = Some(pos);
+                        break;
                     }
+                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
                 }
                 Ok(Prepared::Remote(items, escalation)) => {
                     // A different target user is a different agent on the host, so the batch
@@ -1309,7 +1431,7 @@ async fn drive_host(
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty();
                     batch.push((pos, items));
-                    pos += 1;
+                    pos = advance(&tx, &name, &plan.compiled, pos, failing).await;
                     if boundary {
                         break;
                     }
@@ -1351,12 +1473,13 @@ async fn drive_host(
                 // skipped every escalated task is the worst outcome available here.
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
-                    let mut task = plan.tasks[index].clone();
-                    task.ignore_errors = false;
+                    let mut task = plan.compiled.steps[index].task.clone();
+                    task.ignore_errors = Some(false);
                     let results = vec![(None, TaskResult::failed_with(msg))];
                     report_task(&tx, &name, index, &task, &results, &[None], false).await;
                     failed = true;
-                    break 'run;
+                    failed_at = Some(index);
+                    continue 'run;
                 }
                 Err(err) => {
                     unreachable = Some(err.to_string());
@@ -1368,7 +1491,7 @@ async fn drive_host(
             let mut tasks = Vec::new();
             let mut origin = Vec::new();
             for (bi, (index, items)) in batch.iter().enumerate() {
-                let task = &plan.tasks[*index];
+                let task = &plan.compiled.steps[*index].task;
                 for (ii, item) in items.iter().enumerate() {
                     if item.skipped.is_some() {
                         continue;
@@ -1379,7 +1502,7 @@ async fn drive_host(
                         // An item is not the task: a failing item never stops the ones behind
                         // it, exactly as in Ansible. The task's own failure is decided later,
                         // by `report_task`, from every item's result.
-                        ignore_errors: task.ignore_errors || task.loop_items.is_some(),
+                        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
                         timeout: task.timeout,
                     });
                     origin.push((bi, ii));
@@ -1427,7 +1550,7 @@ async fn drive_host(
             // Report every task of the batch in order; tasks the agent never reached (after a
             // failure) are not reported at all, as in Ansible.
             for (bi, (index, items)) in batch.iter().enumerate() {
-                let task = &plan.tasks[*index];
+                let task = &plan.compiled.steps[*index].task;
                 let mut results = Vec::new();
                 let mut labels = Vec::new();
                 let mut reached = true;
@@ -1455,6 +1578,7 @@ async fn drive_host(
                 }
                 if report_task(&tx, &name, *index, task, &results, &labels, false).await {
                     failed = true;
+                    failed_at = Some(*index);
                     break;
                 }
             }
@@ -1492,8 +1616,10 @@ async fn drive_host(
             }
         }
 
-        if !failed && let Some((index, err)) = deferred_error {
-            let task = &plan.tasks[index];
+        if failed_at.is_none()
+            && let Some((index, err)) = deferred_error
+        {
+            let task = &plan.compiled.steps[index].task;
             // The reference's own prefix on the `msg` of a task that dies before it runs -
             // a `when` it cannot evaluate, arguments it cannot render. Measured: a failing
             // `when` reports `Task failed: Error while evaluating conditional: ...`, and a
@@ -1504,10 +1630,11 @@ async fn drive_host(
                 None,
                 TaskResult::failed_with(format!("Task failed: {}", err.0)),
             )];
-            failed = report_task(&tx, &name, index, task, &results, &[None], false).await;
-            pos = index + 1;
-            if failed {
-                break 'run;
+            if report_task(&tx, &name, index, task, &results, &[None], false).await {
+                failed = true;
+                failed_at = Some(index);
+            } else {
+                pos = advance(&tx, &name, &plan.compiled, index, failing).await;
             }
         }
     }
@@ -1593,6 +1720,52 @@ async fn reuse_or_connect<'a>(
     Ok(links.get_mut(key).expect("connected just above"))
 }
 
+/// The step this host moves to after finishing `pos`, past the sections it has no reason to
+/// enter. A host with a failure pending finishes the `always` sections around it instead.
+///
+/// Returns the length of the step list when the play is over for this host, which is what the
+/// driver's own bound reads as "done".
+async fn advance(
+    tx: &mpsc::Sender<Event>,
+    host: &str,
+    compiled: &Compiled,
+    pos: usize,
+    failing: bool,
+) -> usize {
+    let next = if failing {
+        after_pending(compiled, pos)
+    } else {
+        Some(after(compiled, pos))
+    };
+    match next {
+        Some(next) => {
+            skip_to(tx, host, pos, next).await;
+            next
+        }
+        None => compiled.steps.len(),
+    }
+}
+
+/// Tells the coordinator about every step between `from` and `to` that this host stepped over,
+/// so the shared progress it publishes counts this host as having reached them.
+///
+/// It is what keeps a host that steps over a section from waiting on itself: the progress every
+/// barrier reads is the lowest step any live host has finished, so a host that jumped from 3 to
+/// 9 without saying so would hold that figure at 3 while waiting for it to reach 8. Only a host
+/// that has failed steps over anything today, and a failed host is out of the live set before
+/// it does, so the case is not reachable yet - it becomes reachable the moment a live host
+/// steps over a rescue.
+async fn skip_to(tx: &mpsc::Sender<Event>, host: &str, from: usize, to: usize) {
+    for skipped in from + 1..to {
+        let _ = tx
+            .send(Event::TaskDone {
+                host: host.to_string(),
+                index: skipped,
+            })
+            .await;
+    }
+}
+
 /// Sends the result lines of one task and its `TaskDone`. Returns whether the host failed.
 /// `labels` is parallel to `results`: each item's display label, honouring a custom
 /// `loop_control.label` template where the playbook gave one.
@@ -1608,7 +1781,7 @@ async fn report_task(
     let is_loop = task.loop_items.is_some();
     let mut any_failed = false;
     for (i, (_element, r)) in results.iter().enumerate() {
-        let outcome = classify(r, task.ignore_errors);
+        let outcome = classify(r, task.ignores_errors());
         any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
         let _ = tx
@@ -1641,7 +1814,7 @@ async fn report_task(
             // item's own line carries the message, and `...ignoring` follows the items alone.
             (aggregate, false)
         };
-        let outcome = classify(&aggregate, task.ignore_errors);
+        let outcome = classify(&aggregate, task.ignores_errors());
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),
@@ -1661,7 +1834,7 @@ async fn report_task(
             index,
         })
         .await;
-    any_failed && !task.ignore_errors
+    any_failed && !task.ignores_errors()
 }
 
 /// Opens one link, escalated when `escalation` is given. Every way this can fail is a host the
@@ -1726,27 +1899,13 @@ mod tests {
         PlayTask {
             name: "t".into(),
             module: module.into(),
-            args: Map::new(),
-            ignore_errors: false,
-            timeout: None,
-            vars: Map::new(),
-            when: Vec::new(),
-            loop_items: None,
-            with_items: false,
-            loop_var: "item".into(),
-            loop_label: None,
-            register: None,
-            changed_when: Vec::new(),
-            failed_when: Vec::new(),
-            r#become: None,
-            become_user: None,
-            unsupported: Vec::new(),
+            ..PlayTask::empty()
         }
     }
 
     fn plan() -> PlayPlan {
         PlayPlan {
-            tasks: Vec::new(),
+            compiled: Compiled::default(),
             barriers: Vec::new(),
             play_vars: Map::new(),
             vars_files: HashMap::new(),

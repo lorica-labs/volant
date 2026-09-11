@@ -6,9 +6,11 @@ use std::path::Path;
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
-use volant_protocol::modules::{is_known, native};
+use volant_protocol::modules::{is_known, native, short_name};
 
-use crate::keywords::{BLOCK_SECTIONS, Support, loop_control_keyword, play_keyword, task_keyword};
+use crate::keywords::{
+    BLOCK_SECTIONS, Support, block_keyword, loop_control_keyword, play_keyword, task_keyword,
+};
 use crate::yaml::{as_bool, field, to_json};
 
 #[derive(Debug, Default)]
@@ -23,7 +25,7 @@ pub struct Play {
     pub gather_facts: bool,
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
-    pub tasks: Vec<PlayTask>,
+    pub tasks: Vec<TaskOrBlock>,
     /// `become`, unset when the play says nothing: a task and the host variables both get to
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
@@ -38,12 +40,36 @@ pub struct Play {
     pub unsupported: Vec<&'static str>,
 }
 
+/// One entry of a task list: a task, or a block grouping more of them.
+#[derive(Debug, Clone)]
+pub enum TaskOrBlock {
+    Task(PlayTask),
+    Block(Block),
+}
+
+/// A block: three task lists and the keywords its tasks inherit.
+///
+/// `keywords` is a [`PlayTask`] with an empty `module`, because a block carries a subset of the
+/// task keywords and reading them twice is how the two would drift apart. Nothing runs it; the
+/// compiler merges it into every task underneath.
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub body: Vec<TaskOrBlock>,
+    pub rescue: Vec<TaskOrBlock>,
+    pub always: Vec<TaskOrBlock>,
+    pub keywords: PlayTask,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlayTask {
     pub name: String,
     pub module: String,
     pub args: Map<String, Value>,
-    pub ignore_errors: bool,
+    /// Unset when neither the task nor the block above it said anything. It has to be a
+    /// three-state value: measured on ansible-core 2.19.12, a block with `ignore_errors: true`
+    /// and a task with `ignore_errors: false` inside it fails the run, so the task's own `false`
+    /// has to be told apart from its silence.
+    pub ignore_errors: Option<bool>,
     pub timeout: Option<u64>,
     pub vars: Map<String, Value>,
     /// Conditions that must all hold, as Jinja2 expressions.
@@ -71,14 +97,22 @@ pub struct PlayTask {
 }
 
 impl PlayTask {
-    /// A task with nothing in it, for the one shape the loader builds without reading a
-    /// module: a construct the pre-flight is about to refuse. It never reaches an executor.
-    fn empty() -> Self {
+    /// Whether a failure here leaves the host in the play. Silence means no: the keyword is
+    /// three-state only so a block and the task under it can disagree, and by the time the
+    /// executor reads a task the compiler has already resolved that.
+    pub fn ignores_errors(&self) -> bool {
+        self.ignore_errors.unwrap_or(false)
+    }
+
+    /// A task with nothing in it, for the two shapes the loader builds without reading a
+    /// module: a construct the pre-flight is about to refuse, and a block's inherited
+    /// keywords. Neither ever reaches an executor as it stands.
+    pub(crate) fn empty() -> Self {
         PlayTask {
             name: String::new(),
             module: String::new(),
             args: Map::new(),
-            ignore_errors: false,
+            ignore_errors: None,
             timeout: None,
             vars: Map::new(),
             when: Vec::new(),
@@ -101,6 +135,11 @@ impl PlayTask {
 /// operation, and quietly using `sudo` where the playbook asked for `su` would run the task
 /// under rules the operator never wrote.
 pub const BECOME_METHOD: &str = "sudo";
+
+/// The one name in the module column that is not a module: `meta` asks the engine itself for
+/// something, so it is read here and compiled into a step of its own instead of travelling to
+/// an agent.
+pub const META: &str = "meta";
 
 /// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
 /// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
@@ -205,6 +244,11 @@ fn python_repr(value: &Value) -> String {
     }
 }
 
+/// Whether this task asks the engine for something instead of naming a module to run.
+pub fn is_meta(task: &PlayTask) -> bool {
+    short_name(&task.module) == META
+}
+
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 fn is_free_form(module: &str) -> bool {
     native(module).is_some_and(|m| m.free_form)
@@ -302,15 +346,7 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
         _ => bail!("'vars_files' must be a list of paths"),
     };
-    let tasks = match field(yaml, "tasks") {
-        Some(Yaml::Sequence(items)) => items
-            .iter()
-            .enumerate()
-            .map(|(i, y)| parse_task(y).with_context(|| format!("task {}", i + 1)))
-            .collect::<anyhow::Result<Vec<_>>>()?,
-        None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
-        _ => bail!("'tasks' must be a list"),
-    };
+    let tasks = task_list(field(yaml, "tasks"), "tasks")?;
     let strategy = match field(yaml, "strategy") {
         None | Some(Yaml::Value(Scalar::Null)) => None,
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
@@ -331,6 +367,90 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
     })
 }
 
+/// One list of tasks and blocks: a play's `tasks`, or one of a block's three sections. An
+/// absent or null list is empty, which is what the reference does with `block: []` - measured,
+/// it runs the playbook and shows nothing for the block.
+fn task_list(node: Option<&Yaml>, label: &str) -> anyhow::Result<Vec<TaskOrBlock>> {
+    match node {
+        Some(Yaml::Sequence(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, y)| parse_item(y).with_context(|| format!("{label} item {}", i + 1)))
+            .collect(),
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        _ => bail!("'{label}' must be a list"),
+    }
+}
+
+/// A task, or a block. A mapping carrying `block`, `rescue` or `always` is a block: the
+/// reference decides it the same way, which is why `rescue` on its own is an error about a
+/// missing `block` rather than an unknown module.
+fn parse_item(yaml: &Yaml) -> anyhow::Result<TaskOrBlock> {
+    let map = yaml
+        .as_mapping()
+        .ok_or_else(|| anyhow!("a task must be a mapping"))?;
+    let has = |name: &str| map.keys().any(|k| k.as_str() == Some(name));
+    if has("block") {
+        return Ok(TaskOrBlock::Block(parse_block(yaml)?));
+    }
+    // Measured on ansible-core 2.19.12, exit 4, one sentence per section:
+    // `'rescue' keyword cannot be used without 'block'`.
+    for section in BLOCK_SECTIONS.iter().filter(|s| **s != "block") {
+        if has(section) {
+            bail!("'{section}' keyword cannot be used without 'block'");
+        }
+    }
+    Ok(TaskOrBlock::Task(parse_task(yaml)?))
+}
+
+/// A block, with its three sections parsed recursively and its inherited keywords read into a
+/// module-less [`PlayTask`].
+///
+/// Every key is checked against the reference's own Block attribute list, so a key that belongs
+/// on a task and not on a block - `loop`, `register`, `until` - is refused in the reference's
+/// words instead of being taken for a module or quietly ignored.
+fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
+    let map = yaml
+        .as_mapping()
+        .ok_or_else(|| anyhow!("a block must be a mapping"))?;
+    let name = field(yaml, "name")
+        .and_then(Yaml::as_str)
+        .unwrap_or("block")
+        .to_string();
+    let mut unsupported = Vec::new();
+    for (key, _) in map {
+        let key = key
+            .as_str()
+            .ok_or_else(|| anyhow!("block '{name}': keys must be strings"))?;
+        match block_keyword(key) {
+            // The reference's own words, measured: a module key next to `block:` reads as an
+            // attribute the block does not have, `'debug' is not a valid attribute for a Block`.
+            None => bail!("'{key}' is not a valid attribute for a Block"),
+            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+            Some(_) => {}
+        }
+    }
+    unsupported.sort_unstable();
+    let context = format!("block '{name}': ");
+    let (r#become, become_user) = escalation(yaml, &context)?;
+    Ok(Block {
+        body: task_list(field(yaml, "block"), "block")?,
+        rescue: task_list(field(yaml, "rescue"), "rescue")?,
+        always: task_list(field(yaml, "always"), "always")?,
+        keywords: PlayTask {
+            name,
+            ignore_errors: boolean(yaml, "ignore_errors")?,
+            timeout: timeout(yaml, &context)?,
+            vars: mapping(yaml, "vars", &context)?,
+            when: conditions(yaml, "when", &context)?,
+            r#become,
+            become_user,
+            unsupported,
+            ..PlayTask::empty()
+        },
+    })
+}
+
 fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     let map = yaml
         .as_mapping()
@@ -345,12 +465,6 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("task '{label}': keys must be strings"))?;
-        // A block's three sections are grammar too, even though the compiler that runs them
-        // arrives later: taken for a module name they would be refused as a typo.
-        if let Some(section) = BLOCK_SECTIONS.iter().copied().find(|s| *s == key) {
-            unsupported.push(section);
-            continue;
-        }
         match task_keyword(key) {
             Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
             Some(_) => {}
@@ -421,7 +535,17 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     // for its name and never for the shape of arguments nobody promised to read; the pre-flight
     // raises that refusal a moment later. Reading them anyway made `nosuchmodule: echo a`
     // complain about `key=value`, which sends the operator to the wrong line.
-    let mut args = if is_known(&module) {
+    let mut args = if short_name(&module) == META {
+        // `meta` is not a module the agent runs, so its argument is read here and nowhere else:
+        // the compiler turns the task into a step of its own and the pre-flight decides whether
+        // this release honours the action.
+        let action = value
+            .as_str()
+            .ok_or_else(|| anyhow!("task '{label}': 'meta' takes an action name"))?;
+        let mut args = Map::new();
+        args.insert("_raw_params".into(), Value::String(action.to_string()));
+        args
+    } else if is_known(&module) {
         module_args(&module, value).with_context(|| format!("task '{label}'"))?
     } else {
         Map::new()
@@ -434,24 +558,13 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
             args.insert(k.to_string(), to_json(v)?);
         }
     }
-    let ignore_errors = boolean(yaml, "ignore_errors")?.unwrap_or(false);
-    let timeout = match field(yaml, "timeout") {
-        None | Some(Yaml::Value(Scalar::Null)) => None,
-        Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Some(*i as u64),
-        Some(other) => {
-            bail!("task '{label}': 'timeout' must be a non-negative integer, found {other:?}")
-        }
-    };
-    let vars = match field(yaml, "vars") {
-        None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
-        Some(v) => match to_json(v).with_context(|| format!("task '{label}': 'vars'"))? {
-            Value::Object(map) => map,
-            _ => bail!("task '{label}': 'vars' must be a mapping"),
-        },
-    };
-    let when = conditions(yaml, "when", &label)?;
-    let changed_when = conditions(yaml, "changed_when", &label)?;
-    let failed_when = conditions(yaml, "failed_when", &label)?;
+    let context = format!("task '{label}': ");
+    let ignore_errors = boolean(yaml, "ignore_errors")?;
+    let timeout = timeout(yaml, &context)?;
+    let vars = mapping(yaml, "vars", &context)?;
+    let when = conditions(yaml, "when", &context)?;
+    let changed_when = conditions(yaml, "changed_when", &context)?;
+    let failed_when = conditions(yaml, "failed_when", &context)?;
     let register = match field(yaml, "register") {
         None => None,
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
@@ -469,7 +582,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         ),
         (None, None) => (None, false),
     };
-    let (r#become, become_user) = escalation(yaml, &format!("task '{label}': "))?;
+    let (r#become, become_user) = escalation(yaml, &context)?;
     Ok(PlayTask {
         name: name.unwrap_or_else(|| module.clone()),
         module,
@@ -491,15 +604,37 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
     })
 }
 
+/// `timeout`, on a task or on a block.
+fn timeout(yaml: &Yaml, context: &str) -> anyhow::Result<Option<u64>> {
+    match field(yaml, "timeout") {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+        Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Ok(Some(*i as u64)),
+        Some(other) => {
+            bail!("{context}'timeout' must be a non-negative integer, found {other:?}")
+        }
+    }
+}
+
+/// A keyword whose value has to be a mapping, kept raw: `vars`, on a task or on a block.
+fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Map<String, Value>> {
+    match field(yaml, key) {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Map::new()),
+        Some(v) => match to_json(v).with_context(|| format!("{context}'{key}'"))? {
+            Value::Object(map) => Ok(map),
+            _ => bail!("{context}'{key}' must be a mapping"),
+        },
+    }
+}
+
 /// `when`, `changed_when`, `failed_when`: one expression or a list of them. A YAML boolean is
 /// spelled back as Python would (`True`/`False`) so the expression evaluator reads it.
-fn conditions(yaml: &Yaml, key: &str, label: &str) -> anyhow::Result<Vec<String>> {
+fn conditions(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<String>> {
     let one = |node: &Yaml| -> anyhow::Result<String> {
         match node {
             Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
             Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
             other => bail!(
-                "task '{label}': '{key}' must be an expression or a list of expressions, found {other:?}"
+                "{context}'{key}' must be an expression or a list of expressions, found {other:?}"
             ),
         }
     };
@@ -546,6 +681,23 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
 mod tests {
     use super::*;
 
+    /// The tasks of a play, for the tests that wrote none of their own blocks. A block here is
+    /// the test's mistake, not the loader's, so it says so rather than being skipped.
+    fn tasks(play: &Play) -> Vec<&PlayTask> {
+        play.tasks
+            .iter()
+            .map(|item| match item {
+                TaskOrBlock::Task(task) => task,
+                TaskOrBlock::Block(_) => panic!("this playbook has no blocks"),
+            })
+            .collect()
+    }
+
+    /// The first task of the first play.
+    fn first(pb: &Playbook) -> &PlayTask {
+        tasks(&pb.plays[0])[0]
+    }
+
     const SAMPLE: &str = r#"
 - name: Smoke test
   hosts: web,db
@@ -576,26 +728,27 @@ mod tests {
         assert_eq!(play.name, "Smoke test");
         assert_eq!(play.hosts, "web,db");
         assert!(!play.gather_facts);
-        assert_eq!(play.tasks.len(), 5);
+        let all = tasks(play);
+        assert_eq!(all.len(), 5);
 
-        let t = &play.tasks[0];
+        let t = all[0];
         assert_eq!(
             (t.name.as_str(), t.module.as_str()),
             ("Say hello", "command")
         );
         assert_eq!(t.args["_raw_params"], "echo hello");
-        assert!(!t.ignore_errors);
+        assert!(!t.ignores_errors());
 
-        let t = &play.tasks[1];
+        let t = all[1];
         assert_eq!(t.name, "shell", "unnamed tasks take the module name");
-        assert!(t.ignore_errors);
+        assert!(t.ignores_errors());
 
-        let t = &play.tasks[2];
+        let t = all[2];
         assert_eq!(t.module, "ansible.builtin.command");
         assert_eq!(t.args["cmd"], "ls -l");
         assert_eq!(t.args["chdir"], "/tmp");
 
-        let t = &play.tasks[4];
+        let t = all[4];
         assert_eq!(t.args["argv"], serde_json::json!([true]));
         assert_eq!(t.args["chdir"], "/");
     }
@@ -644,7 +797,7 @@ mod tests {
             "x.yml",
         )
         .unwrap();
-        let t = &pb.plays[0].tasks[0];
+        let t = first(&pb);
         assert_eq!(t.args["owner"], "root");
         assert_eq!(t.args["state"], "here");
     }
@@ -673,7 +826,7 @@ mod tests {
         )
         .expect("the reference has both, so the loader takes both");
         assert_eq!(pb.plays[0].strategy.as_deref(), Some("free"));
-        assert_eq!(pb.plays[0].tasks[0].unsupported, ["until"]);
+        assert_eq!(first(&pb).unsupported, ["until"]);
     }
 
     #[test]
@@ -686,15 +839,12 @@ mod tests {
         let play = &pb.plays[0];
         assert_eq!(play.r#become, Some(true), "'yes' is a boolean to Ansible");
         assert_eq!(play.become_user.as_deref(), Some("deploy"));
-        let t = &play.tasks[0];
+        let t = tasks(play)[0];
         assert_eq!(t.r#become, Some(false), "a quoted spelling still reads");
         assert_eq!(t.become_user.as_deref(), Some("postgres"));
         let bare = parse("- hosts: all\n  tasks:\n    - command: id\n", "x.yml").unwrap();
         assert_eq!(
-            (
-                bare.plays[0].r#become,
-                bare.plays[0].tasks[0].r#become.is_none()
-            ),
+            (bare.plays[0].r#become, first(&bare).r#become.is_none()),
             (None, true),
             "silence at both levels leaves the decision to the variables and the defaults"
         );
@@ -733,7 +883,7 @@ mod tests {
                 "x.yml",
             )
             .unwrap();
-            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
+            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
         }
     }
 
@@ -757,7 +907,7 @@ mod tests {
     #[test]
     fn an_unquoted_boolean_command_is_taken_as_its_literal_text() {
         let pb = parse("- hosts: all\n  tasks:\n    - command: false\n", "x.yml").unwrap();
-        assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "false");
+        assert_eq!(first(&pb).args["_raw_params"], "false");
     }
 
     #[test]
@@ -773,7 +923,7 @@ mod tests {
             "x.yml",
         )
         .unwrap();
-        assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "echo a=b");
+        assert_eq!(first(&pb).args["_raw_params"], "echo a=b");
     }
 
     /// A module name is no longer resolved here: the loader takes whatever the reference takes
@@ -788,7 +938,7 @@ mod tests {
                 "x.yml",
             )
             .unwrap_or_else(|e| panic!("{module}: {e:#}"));
-            assert_eq!(pb.plays[0].tasks[0].module, module);
+            assert_eq!(first(&pb).module, module);
         }
     }
 
@@ -856,7 +1006,7 @@ mod tests {
     #[test]
     fn task_keywords_are_read() {
         let pb = parse(KEYWORDS, "k.yml").unwrap();
-        let t = &pb.plays[0].tasks;
+        let t = tasks(&pb.plays[0]);
         assert_eq!(t[0].when, ["port > 1"]);
         assert_eq!(t[0].register.as_deref(), Some("out"));
         assert_eq!(t[0].vars["local"], serde_json::json!(1));
@@ -893,7 +1043,7 @@ mod tests {
             "x.yml",
         )
         .unwrap();
-        assert_eq!(pb.plays[0].tasks[0].when, ["False"]);
+        assert_eq!(first(&pb).when, ["False"]);
         let err = parse(
             "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
             "x.yml",
@@ -918,20 +1068,13 @@ mod tests {
     /// executor that ignores it.
     #[test]
     fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
-        for kw in [
-            "until",
-            "notify",
-            "block",
-            "delegate_to",
-            "become_flags",
-            "no_log",
-        ] {
+        for kw in ["until", "notify", "delegate_to", "become_flags", "no_log"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
                 "x.yml",
             )
             .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
+            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
         }
     }
 
@@ -968,10 +1111,10 @@ mod tests {
         ] {
             let pb = parse(&task(&format!("{kw}: probe")), "x.yml")
                 .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
+            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
         }
         let pb = parse(&task("loop_var: thing\n        label: shown"), "x.yml").unwrap();
-        let t = &pb.plays[0].tasks[0];
+        let t = first(&pb);
         assert_eq!(
             (t.loop_var.as_str(), t.loop_label.as_deref()),
             ("thing", Some("shown"))
@@ -1042,7 +1185,7 @@ mod tests {
             "x.yml",
         )
         .unwrap();
-        assert!(pb.plays[0].gather_facts && !pb.plays[0].tasks[0].ignore_errors);
+        assert!(pb.plays[0].gather_facts && !first(&pb).ignores_errors());
         let err = parse(
             "- hosts: all\n  gather_facts: 2\n  tasks:\n    - command: echo hi\n",
             "x.yml",
@@ -1054,18 +1197,119 @@ mod tests {
         );
     }
 
-    /// A block has no module of its own, and blaming it for one it never named would send the
-    /// operator looking for a typo. Sorted, so a construct carrying two parked keywords names
-    /// the same one whichever order the mapping yielded.
+    /// A construct with no module of its own is loaded empty and refused whole by the
+    /// pre-flight, rather than blamed for a module it never named. `local_action` is the shape
+    /// that is left now that a block is compiled.
     #[test]
     fn a_construct_with_no_module_of_its_own_loads_empty_and_sorted() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      block:\n        - command: echo hi\n",
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      local_action: command echo hi\n",
             "x.yml",
         )
         .unwrap();
-        let t = &pb.plays[0].tasks[0];
+        let t = first(&pb);
         assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["block", "tags"]);
+        assert_eq!(t.unsupported, ["local_action", "tags"]);
+    }
+
+    /// A block takes its three sections and the keywords its tasks inherit, and nests.
+    ///
+    /// What would make this red: a section read as a module, which is how `rescue:` came to be
+    /// refused as an unknown keyword; or a nested block flattened into its parent, which loses
+    /// the grouping the operator wrote and with it the recovery attached to it.
+    #[test]
+    fn a_block_takes_its_sections_and_its_inherited_keywords() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      block:\n        - command: echo hi\n        - block:\n            - command: echo deeper\n      rescue:\n        - command: echo sorry\n      always:\n        - command: echo done\n      when: ready\n      become: true\n      ignore_errors: true\n      vars: {a: 1}\n",
+            "x.yml",
+        )
+        .unwrap();
+        let TaskOrBlock::Block(b) = &pb.plays[0].tasks[0] else {
+            panic!("a block");
+        };
+        assert_eq!(b.body.len(), 2);
+        assert!(matches!(b.body[1], TaskOrBlock::Block(_)), "blocks nest");
+        assert_eq!(b.rescue.len(), 1);
+        assert_eq!(b.always.len(), 1);
+        assert_eq!(b.keywords.name, "Grouped");
+        assert_eq!(b.keywords.when, ["ready"]);
+        assert_eq!(b.keywords.r#become, Some(true));
+        assert_eq!(b.keywords.ignore_errors, Some(true));
+        assert_eq!(b.keywords.vars["a"], serde_json::json!(1));
+        assert!(
+            b.keywords.module.is_empty(),
+            "a block names no module of its own"
+        );
+    }
+
+    /// A key the reference's Block attribute list does not have is refused in its own words,
+    /// and so is a section written without the block it belongs to.
+    ///
+    /// Measured on ansible-core 2.19.12, all three at exit 4: `'loop' is not a valid attribute
+    /// for a Block`, `'debug' is not a valid attribute for a Block` for a module key sitting
+    /// next to `block:`, and `'rescue' keyword cannot be used without 'block'`.
+    ///
+    /// What would make this red: a block accepting `register` or `loop`, which the reference
+    /// refuses - a loop written on a block would then silently run its tasks once.
+    #[test]
+    fn a_key_a_block_cannot_carry_is_refused_in_the_reference_s_words() {
+        for kw in ["loop", "register", "until", "changed_when", "args"] {
+            let err = parse(
+                &format!(
+                    "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      {kw}: x\n"
+                ),
+                "x.yml",
+            )
+            .unwrap_err();
+            assert!(
+                format!("{err:#}")
+                    .contains(&format!("'{kw}' is not a valid attribute for a Block")),
+                "{kw}: {err:#}"
+            );
+        }
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      debug: msg=x\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("'debug' is not a valid attribute for a Block"),
+            "{err:#}"
+        );
+        for section in ["rescue", "always"] {
+            let err = parse(
+                &format!("- hosts: all\n  tasks:\n    - {section}:\n        - command: echo hi\n"),
+                "x.yml",
+            )
+            .unwrap_err();
+            assert!(
+                format!("{err:#}").contains(&format!(
+                    "'{section}' keyword cannot be used without 'block'"
+                )),
+                "{err:#}"
+            );
+        }
+        // Measured: an empty block is accepted and the playbook runs.
+        let pb = parse("- hosts: all\n  tasks:\n    - block: []\n", "x.yml").unwrap();
+        let TaskOrBlock::Block(b) = &pb.plays[0].tasks[0] else {
+            panic!("a block");
+        };
+        assert!(b.body.is_empty());
+    }
+
+    /// `meta` is read for the action it asks for, whatever that action is: what this release
+    /// does about it is the pre-flight's decision, one step later.
+    #[test]
+    fn a_meta_task_keeps_the_action_it_asked_for() {
+        for action in ["noop", "end_play", "nosuchaction"] {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - meta: {action}\n"),
+                "x.yml",
+            )
+            .unwrap_or_else(|e| panic!("{action}: {e:#}"));
+            let t = first(&pb);
+            assert_eq!(t.module, "meta");
+            assert_eq!(t.args["_raw_params"], serde_json::json!(action));
+        }
     }
 }

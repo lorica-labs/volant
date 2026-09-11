@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod cli;
+pub(crate) mod compile;
 pub mod config;
 pub(crate) mod executor;
 pub mod inventory;

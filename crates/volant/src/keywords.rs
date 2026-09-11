@@ -183,10 +183,55 @@ pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
     kw("pause", Preflight),
 ];
 
-/// The three section keywords of a block. A block is not compiled until a later release, so a
-/// task carrying one of them is loaded and refused by the pre-flight like any other
-/// `Preflight` keyword; the reference's own Block attribute list arrives with the compiler
-/// that needs it.
+/// Block keywords, alphabetical, as `Block.fattributes` lists them on ansible-core 2.19.12.
+///
+/// Measured rather than derived: the list is **not** the inherited subset of the task
+/// keywords. It carries `delegate_to`, `delegate_facts`, `notify` and `collections`, and it has
+/// no `args`, `register`, `loop`, `loop_control`, `until`, `retries`, `delay`, `changed_when`,
+/// `failed_when`, `async` or `poll` - which is why `loop` on a block is refused by the
+/// reference and by this loader.
+///
+/// `name` runs because this release honours it the way the reference does: measured, a block's
+/// name is shown nowhere, neither as a banner nor in `--list-tasks`, and its tasks keep their
+/// own names. `rescue` is parked because nothing enters a rescue section yet: the compiler
+/// lays the section out and the driver deliberately steps over it, so a playbook that expects
+/// a failure to be recovered is refused rather than run without the recovery it wrote.
+pub const BLOCK_KEYWORDS: &[Keyword] = &[
+    kw("always", Runs),
+    kw("any_errors_fatal", Preflight),
+    kw("become", Runs),
+    kw("become_exe", Preflight),
+    kw("become_flags", Preflight),
+    kw("become_method", Runs),
+    kw("become_user", Runs),
+    kw("block", Runs),
+    kw("check_mode", Preflight),
+    kw("collections", Preflight),
+    kw("connection", Preflight),
+    kw("debugger", Preflight),
+    kw("delegate_facts", Preflight),
+    kw("delegate_to", Preflight),
+    kw("diff", Preflight),
+    kw("environment", Preflight),
+    kw("ignore_errors", Runs),
+    kw("ignore_unreachable", Preflight),
+    kw("module_defaults", Preflight),
+    kw("name", Runs),
+    kw("no_log", Preflight),
+    kw("notify", Preflight),
+    kw("port", Preflight),
+    kw("remote_user", Preflight),
+    kw("rescue", Preflight),
+    kw("run_once", Preflight),
+    kw("tags", Preflight),
+    kw("throttle", Preflight),
+    kw("timeout", Runs),
+    kw("vars", Runs),
+    kw("when", Runs),
+];
+
+/// The three section keywords of a block, in the order [`BLOCK_KEYWORDS`] lists them. A mapping
+/// carrying any of them is a block rather than a task.
 pub const BLOCK_SECTIONS: &[&str] = &["always", "block", "rescue"];
 
 pub fn task_keyword(name: &str) -> Option<&'static Keyword> {
@@ -201,6 +246,10 @@ pub fn loop_control_keyword(name: &str) -> Option<&'static Keyword> {
     LOOP_CONTROL_KEYWORDS.iter().find(|k| k.name == name)
 }
 
+pub fn block_keyword(name: &str) -> Option<&'static Keyword> {
+    BLOCK_KEYWORDS.iter().find(|k| k.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,7 +259,12 @@ mod tests {
     /// `sort_unstable` on `&str` does and what the tables are written in.
     #[test]
     fn the_tables_are_sorted_and_free_of_duplicates() {
-        for table in [TASK_KEYWORDS, PLAY_KEYWORDS, LOOP_CONTROL_KEYWORDS] {
+        for table in [
+            TASK_KEYWORDS,
+            PLAY_KEYWORDS,
+            LOOP_CONTROL_KEYWORDS,
+            BLOCK_KEYWORDS,
+        ] {
             let names: Vec<&str> = table.iter().map(|k| k.name).collect();
             let mut sorted = names.clone();
             sorted.sort_unstable();
@@ -370,14 +424,57 @@ mod tests {
         ];
         let ours: Vec<&str> = LOOP_CONTROL_KEYWORDS.iter().map(|k| k.name).collect();
         assert_eq!(ours, loop_control_fattributes);
+
+        // `Block.fattributes`, read the same way on the same release: 31 names, `name` among
+        // them. Written out rather than derived from the task list, because it is not that
+        // list minus the loop keywords: it also has `delegate_to`, `delegate_facts`, `notify`
+        // and `collections`, and the derivation that guessed otherwise would have refused
+        // `name:` on a block, which the reference runs.
+        let block_fattributes = [
+            "always",
+            "any_errors_fatal",
+            "become",
+            "become_exe",
+            "become_flags",
+            "become_method",
+            "become_user",
+            "block",
+            "check_mode",
+            "collections",
+            "connection",
+            "debugger",
+            "delegate_facts",
+            "delegate_to",
+            "diff",
+            "environment",
+            "ignore_errors",
+            "ignore_unreachable",
+            "module_defaults",
+            "name",
+            "no_log",
+            "notify",
+            "port",
+            "remote_user",
+            "rescue",
+            "run_once",
+            "tags",
+            "throttle",
+            "timeout",
+            "vars",
+            "when",
+        ];
+        let ours: Vec<&str> = BLOCK_KEYWORDS.iter().map(|k| k.name).collect();
+        assert_eq!(ours, block_fattributes);
     }
 
-    /// A block section is never also a task keyword: the loader tells them apart by asking the
-    /// task table first, so a name in both would make one of the two unreachable.
+    /// A block section is never also a task keyword: the loader tells a block from a task by
+    /// looking for one of these keys, so a name in both would make one of the two unreachable.
+    /// Every section is a block keyword, which is what makes the block table total.
     #[test]
-    fn the_block_sections_are_not_task_keywords() {
+    fn the_block_sections_are_block_keywords_and_not_task_keywords() {
         for section in BLOCK_SECTIONS {
             assert!(task_keyword(section).is_none(), "{section}");
+            assert!(block_keyword(section).is_some(), "{section}");
         }
     }
 }

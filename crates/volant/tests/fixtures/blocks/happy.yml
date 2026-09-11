@@ -1,0 +1,21 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Around everything
+      block:
+        - name: In the block
+          command: echo "{{ depth }}"
+        - name: Nested block
+          block:
+            - name: Nested
+              command: echo "{{ depth }}"
+          always:
+            - name: Nested cleanup
+              command: "true"
+      always:
+        - name: Outer cleanup
+          command: "true"
+      vars:
+        depth: outer
+    - name: After the block
+      command: "true"

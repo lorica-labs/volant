@@ -1382,6 +1382,135 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A play written as a tree runs as one sequence, in playbook order, with every block's
+/// keywords reaching the tasks under it and every `always` running on the way out.
+///
+/// `volant_within` rather than `volant`: a host that steps over a step without telling the
+/// coordinator leaves its per-step loop waiting for a report that will never come, and a run
+/// that never returns cannot be caught by an assertion on what it printed.
+///
+/// What would make this red: a step run out of order, a nested `always` left out of the walk,
+/// or a block's `vars` not reaching the task inside it.
+#[test]
+fn a_play_of_nested_blocks_runs_as_one_sequence() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/happy.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let order: Vec<usize> = [
+        "In the block",
+        "Nested",
+        "Nested cleanup",
+        "Outer cleanup",
+        "After the block",
+    ]
+    .iter()
+    .map(|name| {
+        text.find(&format!("TASK [{name}]"))
+            .unwrap_or_else(|| panic!("{name} is missing from {text}"))
+    })
+    .collect();
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "the steps run in playbook order: {text}"
+    );
+    assert!(
+        !text.contains("TASK [Around everything]"),
+        "a block's own name is shown nowhere, measured on the reference: {text}"
+    );
+    assert!(
+        text.contains("localhost                  : ok=5"),
+        "five steps ran and every one of them is counted: {text}"
+    );
+}
+
+/// A failure inside a nested block runs the `always` of every block around it, innermost
+/// first, and then the host leaves the play.
+///
+/// Measured on ansible-core 2.19.12 on the same shape: the step after the failure is skipped,
+/// both cleanups run, the step after the outer block never runs, and the recap reads
+/// `ok=2 failed=1`.
+///
+/// What would make this red: a failure that leaves the play straight away, which skips the
+/// cleanup the playbook wrote; or one that carries on through the body it was in.
+#[test]
+fn a_failure_runs_the_cleanups_around_it_and_stops_there() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/always.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let inner = text
+        .find("TASK [Inner cleanup]")
+        .expect("the inner cleanup");
+    let outer = text
+        .find("TASK [Outer cleanup]")
+        .expect("the outer cleanup");
+    assert!(inner < outer, "innermost first: {text}");
+    assert!(
+        !text.contains("Never reached"),
+        "nothing behind the failure runs, inside the block or after it: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=2    changed=2    unreachable=0    failed=1"
+        ),
+        "the two cleanups are counted and the failure is the only one: {text}"
+    );
+}
+
+/// A `meta` shows one banner per live host and counts nothing.
+///
+/// Measured on ansible-core 2.19.12 with three hosts, one of them already out of the play:
+/// two `TASK [meta]` banners in a row, nothing underneath either of them, and the recap
+/// counting only the task that followed.
+///
+/// What would make this red: a banner printed on the first report rather than on the first
+/// event that shows something, which gives one banner for two hosts; or a `meta` counted as a
+/// task, which reads `ok=2`.
+#[test]
+fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("blocks/two-hosts.ini"),
+            &fixture("blocks/meta.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        text.matches("TASK [meta]").count(),
+        2,
+        "one banner per live host: {text}"
+    );
+    assert_eq!(
+        text.matches("h1                         : ok=1").count(),
+        1,
+        "the meta counts nothing, so only the task behind it does: {text}"
+    );
+    assert_eq!(
+        text.matches("h2                         : ok=1").count(),
+        1,
+        "{text}"
+    );
+}
+
 // The keyword tables, covered in both directions. Every row of `keywords::TASK_KEYWORDS`,
 // `keywords::PLAY_KEYWORDS` and `keywords::LOOP_CONTROL_KEYWORDS` has to do what its `Support`
 // claims: a `Runs` row changes something an operator can see, a `Preflight` row stops the run
@@ -1394,7 +1523,9 @@ fn seventy_hosts_finish_with_a_full_recap() {
 // process; only "nothing comes out before the refusal" needs a real run, and three fixtures
 // below carry it.
 
-use volant::keywords::{LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS};
+use volant::keywords::{
+    BLOCK_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+};
 
 const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -1431,11 +1562,11 @@ fn run_probe(
 /// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
 ///
 /// That a parked keyword is refused by its own name is a property of `parse` plus `check`, and
-/// the unit test `every_preflight_keyword_is_refused_by_its_own_name` walks all three tables
+/// the unit test `every_preflight_keyword_is_refused_by_its_own_name` walks all four tables
 /// for it in one process. Only "no output before the refusal" needs a real run, and it is the
-/// same property for every row, so three fixtures carry it: one parked task keyword, one block
-/// section, one parked play keyword. Walking the whole grammar here spawned ninety processes to
-/// re-prove in-process what one assertion already proves.
+/// same property for every row, so three fixtures carry it: one parked task keyword, one parked
+/// block keyword, one parked play keyword. Walking the whole grammar here spawned a hundred
+/// processes to re-prove in-process what one assertion already proves.
 ///
 /// What would make this red: a refusal raised after the banner, by which time tasks may already
 /// have run and the operator has a half-applied playbook to undo.
@@ -1448,8 +1579,8 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
             "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
         ),
         (
-            "block",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n",
+            "rescue",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      rescue:\n        - command: echo sorry\n",
         ),
         (
             "serial",
@@ -1722,6 +1853,93 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "\"msg\": \"file-value\"",
     ),
+    // A block has a grammar of its own, so it carries its own rows. Every one of these bodies
+    // is written so that dropping the block's handling changes the run: the inherited keyword
+    // stops reaching the task under it, or the section stops running at all.
+    runs(
+        "block",
+        "block",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Inside the block\n          command: echo hi\n",
+        &[],
+        0,
+        "TASK [Inside the block]",
+    ),
+    // Measured on ansible-core 2.19.12: a task failing in the body runs the `always` section
+    // and only then leaves the play.
+    runs(
+        "block",
+        "always",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: nosuchbinary-volant-probe\n      always:\n        - name: Always probe\n          command: echo hi\n",
+        &[],
+        2,
+        "TASK [Always probe]",
+    ),
+    // A block's own name is shown nowhere - measured, neither as a banner nor in a listing -
+    // so what proves the keyword is read is that the block still runs with one written on it.
+    runs(
+        "block",
+        "name",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: A named block\n      block:\n        - name: Inside a named block\n          command: echo hi\n",
+        &[],
+        0,
+        "TASK [Inside a named block]",
+    ),
+    runs(
+        "block",
+        "become",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      become: true\n",
+        &["--become-method", "su"],
+        2,
+        "become_method 'su' is not supported yet",
+    ),
+    runs(
+        "block",
+        "become_method",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n      become_method: su\n",
+        &[],
+        2,
+        "become_method 'su' is not supported yet",
+    ),
+    runs(
+        "block",
+        "become_user",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n          become: true\n      become_user: nosuchuser-volant-probe\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
+    ),
+    runs(
+        "block",
+        "ignore_errors",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: nosuchbinary-volant-probe\n      ignore_errors: true\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    runs(
+        "block",
+        "timeout",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: sleep 5\n      timeout: 1\n",
+        &[],
+        2,
+        "Timed out after 1 second(s).",
+    ),
+    runs(
+        "block",
+        "vars",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          debug:\n            msg: \"{{ probe }}\"\n      vars:\n        probe: block-value\n",
+        &[],
+        0,
+        "\"msg\": \"block-value\"",
+    ),
+    runs(
+        "block",
+        "when",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          debug:\n            msg: probe\n      when: false\n",
+        &[],
+        0,
+        "skipping: [localhost]",
+    ),
     // `loop_control` is a mapping, so its sub-keys carry their own rows and their own proofs.
     // Reading two of them and dropping the rest is how a keyword the table vouches for goes on
     // ignoring most of what was written under it.
@@ -1754,6 +1972,7 @@ fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
         ("task", TASK_KEYWORDS),
         ("play", PLAY_KEYWORDS),
         ("loop_control", LOOP_CONTROL_KEYWORDS),
+        ("block", BLOCK_KEYWORDS),
     ]
     .into_iter()
     .flat_map(|(table, keywords)| {
@@ -1804,7 +2023,10 @@ const FAKE_SUDO_FOR_BECOME_USER: &str = "#!/bin/sh\n\
 fn is_become_user_probe(probe: &RunsProbe) -> bool {
     matches!(
         (probe.table, probe.kw),
-        ("task", "become") | ("task", "become_user") | ("play", "become_user")
+        ("task", "become")
+            | ("task", "become_user")
+            | ("play", "become_user")
+            | ("block", "become_user")
     )
 }
 

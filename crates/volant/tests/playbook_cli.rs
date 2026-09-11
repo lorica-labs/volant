@@ -16,6 +16,10 @@ fn volant(args: &[&str]) -> Output {
         .args(args)
         .env("NO_COLOR", "1")
         .env_remove("COLUMNS")
+        // The role search path is part of what several of these tests assert, and it is read
+        // from the environment: a machine with `ANSIBLE_ROLES_PATH` exported would redden them
+        // for a reason that has nothing to do with the engine.
+        .env_remove("ANSIBLE_ROLES_PATH")
         .output()
         .expect("volant runs")
 }
@@ -39,7 +43,8 @@ fn volant_within_with_path(
     command
         .args(args)
         .env("NO_COLOR", "1")
-        .env_remove("COLUMNS");
+        .env_remove("COLUMNS")
+        .env_remove("ANSIBLE_ROLES_PATH");
     if let Some(dir) = path {
         command.env(
             "PATH",
@@ -2241,14 +2246,15 @@ fn identical_role_entries_run_once_and_different_parameters_run_twice() {
 /// not.
 ///
 /// Measured on ansible-core 2.19.12 on this fixture: the play's own task after the roles reads
-/// `shared=role-var d=role-default p=unset`, and the `pre_tasks` task that runs **before** any
+/// `shared=role-var d=role-default p=fact`, and the `pre_tasks` task that runs **before** any
 /// role reads `pre d=role-default shared=role-var`. So the export belongs to the play rather
 /// than accumulating as the list is walked, `vars/main.yml` beats the play's `vars:`, and a role
-/// parameter is gone once its role is over.
+/// parameter is gone once its role is over - `p` is back to the fact the `pre_tasks` set, not
+/// the `role-param` two entries handed the role.
 ///
 /// What would make this red: dropping the export, which leaves both tasks reading `unset`; or
-/// exporting the parameters too, which would leave `p` defined in a task that never asked for a
-/// role.
+/// exporting the parameters too, which would leave the task after the roles reading
+/// `p=role-param` - a role parameter outliving the role that was given it.
 #[test]
 fn role_variables_stay_visible_after_the_role() {
     let out = volant(&[
@@ -2260,7 +2266,7 @@ fn role_variables_stay_visible_after_the_role() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("\"msg\": \"shared=role-var d=role-default p=unset\""),
+        text.contains("\"msg\": \"shared=role-var d=role-default p=fact\""),
         "{text}"
     );
     assert!(
@@ -2271,6 +2277,130 @@ fn role_variables_stay_visible_after_the_role() {
         text.contains("\"msg\": \"post v=role-var\""),
         "post_tasks see them too: {text}"
     );
+}
+
+/// `vars:` on a role entry is a task variable; a free key beside `role:` is a role parameter.
+/// The two sit on opposite sides of a fact, which is what tells them apart.
+///
+/// Measured on ansible-core 2.19.12 on this fixture, whose `pre_tasks` set `p` to `fact`: the
+/// entry written `vars: { p: role-param }` runs the role reading `p=fact`, and the entry written
+/// with `p: role-param` as a free key runs it reading `p=role-param`. Three of the four entries
+/// read the fact - the bare one, the `vars:` one, and `child`'s dependency, which also hands its
+/// parameter through `vars:` - and only the free-key one reads its own value.
+///
+/// What would make this red: folding a role entry's `vars:` into its parameters, which lifts it
+/// above the fact and leaves two entries reading `role-param`; or the reverse, reading a free
+/// key as a task variable, which leaves all four reading `fact`.
+#[test]
+fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("inventory.ini"),
+        &fixture("roles/roles.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches("\"msg\": \"d=role-default v=role-var shared=role-var p=fact\"")
+            .count(),
+        4,
+        "a task variable loses to a fact: {text}"
+    );
+    assert_eq!(
+        text.matches("\"msg\": \"d=role-default v=role-var shared=role-var p=role-param\"")
+            .count(),
+        1,
+        "a role parameter beats a fact: {text}"
+    );
+}
+
+/// `import_role` runs a role the play's `roles:` list has already run with the same parameters.
+///
+/// Measured on ansible-core 2.19.12 on this fixture: `base` runs five times - four entries in
+/// `roles:` counting `child`'s dependency, then once more for the bare `import_role: { name:
+/// base }` in `tasks:`, whose entry is identical to the bare one the list already ran.
+///
+/// What would make this red: letting `import_role` consult the play's own list of what it has
+/// run, which drops the import and leaves four - a run reporting success having done less than
+/// the playbook asked for.
+#[test]
+fn an_import_role_runs_again_what_the_roles_list_already_ran() {
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &fixture("inventory.ini"),
+        &fixture("roles/roles.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches("TASK [base : base task]").count(),
+        5,
+        "four entries and the import that repeats one of them: {text}"
+    );
+}
+
+/// A ring of roles importing each other, and a file importing itself, are refused before the
+/// recursion runs out of stack.
+///
+/// Measured on ansible-core 2.19.12: two roles importing each other are refused with `A
+/// recursion loop was detected with the roles specified.`, exit 1, while a file importing itself
+/// with `import_tasks` is not caught at all - the interpreter dies and `ansible-playbook` exits
+/// 250 printing its own traceback. This engine refuses both, at exit 1, and the second in its
+/// own words: the divergence is recorded rather than reproducing a crash.
+///
+/// What would make this red: an unbounded recursion, which kills the process with no message and
+/// no exit code of its own; or a depth counter that only one of the two recursions increments,
+/// which leaves the other unbounded.
+#[test]
+fn a_ring_of_imports_is_refused_instead_of_exhausting_the_stack() {
+    let deadline = std::time::Duration::from_secs(20);
+    let roles = volant_within(&["playbook", &fixture("roles/role-cycle.yml")], deadline);
+    let err = String::from_utf8(roles.stderr).unwrap();
+    assert_eq!(roles.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("A recursion loop was detected with the roles specified."),
+        "{err}"
+    );
+
+    let imports = volant_within(&["playbook", &fixture("roles/self-import.yml")], deadline);
+    let err = String::from_utf8(imports.stderr).unwrap();
+    assert_eq!(imports.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("imports nest deeper than 32 levels at "),
+        "{err}"
+    );
+    assert!(err.contains("self-loop.yml"), "{err}");
+}
+
+/// An argument an import statement does not take is refused by its own name, rather than read
+/// past and dropped.
+///
+/// Measured on ansible-core 2.19.12: `Invalid options for import_role: typo` and `Invalid
+/// options for import_tasks: apply`, exit 4 for both. The nine arguments `import_role` does take
+/// were measured the same way, `apply` being the one `import_tasks` refuses that its sibling
+/// `include_tasks` accepts.
+///
+/// What would make this red: reading the arguments the statement knows and ignoring the rest,
+/// which accepts a typo silently and runs the role without what the operator meant to hand it.
+#[test]
+fn an_import_statement_refuses_an_argument_it_does_not_take() {
+    for (file, message) in [
+        (
+            "roles/bad-role-option.yml",
+            "Invalid options for import_role: typo",
+        ),
+        (
+            "roles/bad-import-option.yml",
+            "Invalid options for import_tasks: apply",
+        ),
+    ] {
+        let out = volant(&["playbook", &fixture(file)]);
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(4), "{err}");
+        assert!(err.contains(message), "{err}");
+    }
 }
 
 /// `import_playbook` puts the imported file's plays where the statement stands, not at the end.

@@ -3,6 +3,8 @@
   vars:
     shared: play-var
   pre_tasks:
+    - set_fact:
+        p: fact
     - name: pre task
       debug:
         msg: "pre d={{ d | default('unset') }} shared={{ shared }}"
@@ -10,6 +12,8 @@
     - base
     - role: base
       vars: { p: role-param }
+    - role: base
+      p: role-param
     - child
     - { role: spec, needed: given }
   tasks:
@@ -19,6 +23,8 @@
     - import_role:
         name: base
         tasks_from: extra
+    - import_role:
+        name: base
   post_tasks:
     - name: post task
       debug:

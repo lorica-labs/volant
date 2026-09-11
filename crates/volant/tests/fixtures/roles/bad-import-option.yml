@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - import_tasks:
+        file: self-loop.yml
+        apply:
+          tags: never

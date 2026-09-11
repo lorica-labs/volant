@@ -112,10 +112,24 @@ pub(crate) fn meta_action(task: &PlayTask) -> &str {
         .unwrap_or_default()
 }
 
-/// How deep a chain of `meta/main.yml` dependencies may go, and how deep `import_tasks` may
-/// nest, before the run is refused: the same ceiling a cycle through an inventory's `:children`
-/// is given, for the same reason - a cycle here reads files until the process dies.
+/// How deep roles and imported files may nest before the run is refused: the same ceiling a
+/// cycle through an inventory's `:children` is given, for the same reason - a cycle here reads
+/// files and recurses on what it finds until the stack is gone.
+///
+/// One counter for all three recursions - a `meta/main.yml` dependency, an `import_role` inside
+/// a role's tasks, an `import_tasks` inside an imported file - because a cycle can run through
+/// any mixture of them, and a counter that only one of them increments bounds nothing.
 const DEPTH: usize = 32;
+
+/// What the reference says when two roles import each other, measured on ansible-core 2.19.12,
+/// exit 1.
+///
+/// A file importing itself with `import_tasks` is not caught there at all: the interpreter runs
+/// out of stack and `ansible-playbook` exits **250** printing a Python traceback under
+/// `Unexpected Exception, this is probably a bug`. This engine refuses that shape too, at exit 1
+/// and in its own words - the divergence is deliberate, since 250 is the reference reporting its
+/// own crash and there is no traceback here to go with it.
+const RECURSION: &str = "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded";
 
 /// The role instances a play has already run.
 ///
@@ -164,6 +178,8 @@ struct Builder<'a> {
     /// `tasks/main.yml` reads `<role>/tasks/sub/extra.yml`, and an `import_tasks` inside **that**
     /// file reads it beside itself.
     file_dir: PathBuf,
+    /// How many roles and imported files are open above whatever is being compiled now.
+    depth: usize,
 }
 
 impl Builder<'_> {
@@ -207,7 +223,6 @@ impl Builder<'_> {
                     &entry,
                     &merge(inherited, task),
                     &mut Vec::new(),
-                    0,
                     block,
                     section,
                 );
@@ -257,6 +272,7 @@ impl Builder<'_> {
                 "You cannot use loops on 'import_tasks' statements. You should use 'include_tasks' instead."
             );
         }
+        unknown_options("import_tasks", &task.args, &["file", "_raw_params"], &[])?;
         let name = task
             .args
             .get("file")
@@ -275,6 +291,19 @@ impl Builder<'_> {
                 ),
             ));
         }
+        // A file that imports itself, directly or around a ring of files, otherwise reads and
+        // recurses until the stack is gone: no recap, no exit code, nothing to read. Refused
+        // here instead, at the depth every other recursion in this compilation shares.
+        self.depth += 1;
+        if self.depth > DEPTH {
+            return Err(Refusal::at(
+                1,
+                format!(
+                    "imports nest deeper than {DEPTH} levels at '{}': a file that imports itself",
+                    path.display()
+                ),
+            ));
+        }
         let imported = crate::playbook::parse_tasks_file(&path)?;
         let merged = merge(inherited, task);
         // The imported file's own directory, for the imports it carries itself, put back
@@ -285,6 +314,7 @@ impl Builder<'_> {
         );
         let result = self.items(&imported, &merged, block, section, role);
         self.file_dir = previous;
+        self.depth -= 1;
         result
     }
 
@@ -297,16 +327,9 @@ impl Builder<'_> {
         entry: &RoleEntry,
         inherited: &PlayTask,
         seen: &mut Seen,
-        depth: usize,
         block: Option<usize>,
         section: Section,
     ) -> anyhow::Result<()> {
-        if depth > DEPTH {
-            bail!(
-                "role dependencies nest deeper than {DEPTH} levels at '{}'",
-                entry.name
-            );
-        }
         let path = self.search.locate(&entry.name)?;
         let role = crate::roles::load(&path, &entry.from)?;
         let key = identity(entry);
@@ -314,9 +337,16 @@ impl Builder<'_> {
             return Ok(());
         }
         seen.push(key);
+        // Two roles that import each other never repeat an identity - `import_role` starts a
+        // `seen` list of its own, as measured - so the dedup above stops nothing and only the
+        // depth does. The reference's own sentence, at the exit 1 measured with it.
+        self.depth += 1;
+        if self.depth > DEPTH {
+            return Err(Refusal::at(1, RECURSION));
+        }
         let kw = merge(inherited, &entry.keywords);
         for dependency in &role.dependencies {
-            self.role(dependency, &kw, seen, depth + 1, block, section)?;
+            self.role(dependency, &kw, seen, block, section)?;
         }
         let index = self.roles.len();
         self.roles.push(RoleVars {
@@ -338,6 +368,7 @@ impl Builder<'_> {
         let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
         let result = self.items(&role.tasks, &kw, block, section, Some(index));
         self.file_dir = previous;
+        self.depth -= 1;
         result
     }
 
@@ -406,8 +437,58 @@ fn validation(entry: &RoleEntry, path: &Path, spec: Map<String, Value>) -> PlayT
     }
 }
 
+/// Refuses an argument the statement does not take, and one it takes but this release cannot
+/// honour.
+///
+/// Measured on ansible-core 2.19.12: `import_role: { name: x, typo: v }` is refused with
+/// `Invalid options for import_role: typo`, exit 4, and `import_tasks` with `apply:` the same
+/// way. An argument read and dropped is the failure family this engine is written against - the
+/// run would report success having done something other than what was asked - so the ones the
+/// reference accepts and this release has nothing to do with are refused by their own names
+/// rather than ignored.
+fn unknown_options(
+    statement: &str,
+    args: &Map<String, Value>,
+    known: &[&str],
+    unsupported: &[&str],
+) -> anyhow::Result<()> {
+    let mut invalid: Vec<&str> = args
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !known.contains(key))
+        .collect();
+    invalid.sort_unstable();
+    if !invalid.is_empty() {
+        bail!("Invalid options for {statement}: {}", invalid.join(", "));
+    }
+    if let Some(key) = unsupported.iter().find(|key| args.contains_key(**key)) {
+        bail!("'{statement}' option '{key}' is not supported yet");
+    }
+    Ok(())
+}
+
 /// The role one `import_role` task names, read out of its arguments.
 fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
+    // Measured: the reference takes these nine and refuses anything else. The last three name
+    // work this release does not do - `public` exports nothing of its own, nothing dedups an
+    // `import_role`, and the argument-spec check has no off switch - so they are refused rather
+    // than accepted and forgotten.
+    unknown_options(
+        "import_role",
+        &task.args,
+        &[
+            "name",
+            "role",
+            "tasks_from",
+            "vars_from",
+            "defaults_from",
+            "handlers_from",
+            "public",
+            "allow_duplicates",
+            "rolespec_validate",
+        ],
+        &["public", "allow_duplicates", "rolespec_validate"],
+    )?;
     let text = |key: &str| task.args.get(key).and_then(Value::as_str);
     let name = text("name")
         .or_else(|| text("role"))
@@ -445,12 +526,13 @@ pub(crate) fn compile(play: &Play, search: &RoleSearch) -> anyhow::Result<Compil
         roles: Vec::new(),
         search,
         file_dir: play.dir.clone(),
+        depth: 0,
     };
     let empty = PlayTask::empty();
     builder.items(&play.pre_tasks, &empty, None, Section::Body, None)?;
     let mut seen: Seen = Vec::new();
     for entry in &play.roles {
-        builder.role(entry, &empty, &mut seen, 0, None, Section::Body)?;
+        builder.role(entry, &empty, &mut seen, None, Section::Body)?;
     }
     builder.items(&play.tasks, &empty, None, Section::Body, None)?;
     builder.items(&play.post_tasks, &empty, None, Section::Body, None)?;

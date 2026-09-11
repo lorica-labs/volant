@@ -59,8 +59,8 @@ impl Default for Config {
 /// `roles_path`, read off the list a missing role prints.
 fn default_roles_path() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        paths.push(PathBuf::from(home).join(".ansible/roles"));
+    if let Some(home) = home() {
+        paths.push(home.join(".ansible/roles"));
     }
     paths.push(PathBuf::from("/usr/share/ansible/roles"));
     paths.push(PathBuf::from("/etc/ansible/roles"));
@@ -69,11 +69,21 @@ fn default_roles_path() -> Vec<PathBuf> {
 
 fn default_collections_path() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        paths.push(PathBuf::from(home).join(".ansible/collections"));
+    if let Some(home) = home() {
+        paths.push(home.join(".ansible/collections"));
     }
     paths.push(PathBuf::from("/usr/share/ansible/collections"));
     paths
+}
+
+/// The user's home directory. `HOME` everywhere the engine runs a playbook, `USERPROFILE` on the
+/// Windows controller, where reading `HOME` alone drops the `~/.ansible` entry from the search
+/// path and a role installed there stops being found.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// A colon-separated list of directories, as every Ansible path setting is written. Relative

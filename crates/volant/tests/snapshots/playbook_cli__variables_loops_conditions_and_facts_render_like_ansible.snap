@@ -45,9 +45,9 @@ fatal: [beta]: FAILED! => {"changed": true, "cmd": ["echo", "2"], "delta": "[tim
 ...ignoring
 
 TASK [Undefined variable] ******************************************************
-fatal: [alpha]: FAILED! => {"failed": true, "msg": "The task includes an option with an undefined variable. The error was: [engine message]"}
+fatal: [alpha]: FAILED! => {"failed": true, "msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
-fatal: [beta]: FAILED! => {"failed": true, "msg": "The task includes an option with an undefined variable. The error was: [engine message]"}
+fatal: [beta]: FAILED! => {"failed": true, "msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
 
 PLAY RECAP *********************************************************************

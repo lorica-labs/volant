@@ -8,6 +8,7 @@ use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 use volant_protocol::modules::{is_known, native};
 
+use crate::keywords::{BLOCK_SECTIONS, Support, play_keyword, task_keyword};
 use crate::yaml::{as_bool, field, to_json};
 
 #[derive(Debug, Default)]
@@ -27,6 +28,14 @@ pub struct Play {
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
+    /// The execution strategy the play asked for, as written. Only `linear` exists here; the
+    /// pre-flight refuses the others by name.
+    pub strategy: Option<String>,
+    /// Keywords the reference accepts and this release does not execute yet, sorted. The
+    /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
+    /// way it does in the reference; the pre-flight then refuses the run before the first
+    /// connection. Nothing may quietly drop a keyword between the two.
+    pub unsupported: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,37 +61,40 @@ pub struct PlayTask {
     pub failed_when: Vec<String>,
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
+    /// Keywords the reference accepts and this release does not execute yet, sorted. A task
+    /// carrying one is loaded whole and refused by the pre-flight, never run without it.
+    ///
+    /// Sorted rather than left in mapping order so the refusal names the same keyword whatever
+    /// order the YAML happened to yield: a task carrying two of them would otherwise blame
+    /// whichever came first in the file.
+    pub unsupported: Vec<&'static str>,
 }
 
-/// Play keywords accepted in this release. Anything else is refused loudly rather than ignored.
-const PLAY_KEYWORDS: &[&str] = &[
-    "name",
-    "hosts",
-    "gather_facts",
-    "tasks",
-    "vars",
-    "vars_files",
-    "become",
-    "become_user",
-    "become_method",
-];
-const TASK_KEYWORDS: &[&str] = &[
-    "name",
-    "ignore_errors",
-    "args",
-    "timeout",
-    "vars",
-    "when",
-    "loop",
-    "with_items",
-    "loop_control",
-    "register",
-    "changed_when",
-    "failed_when",
-    "become",
-    "become_user",
-    "become_method",
-];
+impl PlayTask {
+    /// A task with nothing in it, for the one shape the loader builds without reading a
+    /// module: a construct the pre-flight is about to refuse. It never reaches an executor.
+    fn empty() -> Self {
+        PlayTask {
+            name: String::new(),
+            module: String::new(),
+            args: Map::new(),
+            ignore_errors: false,
+            timeout: None,
+            vars: Map::new(),
+            when: Vec::new(),
+            loop_items: None,
+            with_items: false,
+            loop_var: "item".to_string(),
+            loop_label: None,
+            register: None,
+            changed_when: Vec::new(),
+            failed_when: Vec::new(),
+            r#become: None,
+            become_user: None,
+            unsupported: Vec::new(),
+        }
+    }
+}
 
 /// The only escalation method this release implements. `su`, `doas`, `pbrun` and the rest are
 /// refused by name at load time: escalating through a different program is not the same
@@ -136,11 +148,12 @@ fn is_free_form(module: &str) -> bool {
 /// while a YAML error, a play that is not a mapping, an unknown keyword, a module that cannot be
 /// resolved and `a playbook must be a list of plays` all exit 4, with no `PLAY RECAP`.
 ///
-/// A module counts as resolvable here when `volant_protocol::modules::is_known` has it. The
-/// reference resolves an action while it loads the play, so a name it cannot find refuses the
-/// whole run before the first task; the set it can find is every collection installed, and the
-/// set this engine can find is its two module tables. Refusing at load is what keeps a playbook
-/// naming a module Volant has not written yet from applying half of itself.
+/// Module names are not resolved here. The reference resolves an action while it loads the
+/// play, and this engine still refuses an unresolvable one before the first task, but one step
+/// later: [`crate::preflight`] does it, together with the keywords the reference accepts and
+/// this release cannot execute. Loading and refusing are separated so a playbook parses and
+/// lists exactly as it does in the reference, while the run still stops before it can apply
+/// half of itself.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading playbook {}", path.display()))?;
@@ -165,12 +178,19 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
     let map = yaml
         .as_mapping()
         .ok_or_else(|| anyhow!("a play must be a mapping"))?;
+    let mut unsupported = Vec::new();
     for (key, _) in map {
         let key = key.as_str().unwrap_or_default();
-        if !PLAY_KEYWORDS.contains(&key) {
-            bail!("play keyword '{key}' is not supported yet");
+        // The reference's own words, measured: an attribute it does not have refuses the load
+        // with exit 4, and one it has but this release cannot execute is kept for the
+        // pre-flight instead of being refused here.
+        match play_keyword(key) {
+            None => bail!("'{key}' is not a valid attribute for a Play"),
+            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+            Some(_) => {}
         }
     }
+    unsupported.sort_unstable();
     let hosts = match field(yaml, "hosts") {
         Some(Yaml::Value(Scalar::String(s))) => s.to_string(),
         Some(Yaml::Sequence(items)) => items
@@ -217,6 +237,11 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
         _ => bail!("'tasks' must be a list"),
     };
+    let strategy = match field(yaml, "strategy") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(other) => bail!("'strategy' must be a name, found {other:?}"),
+    };
     let (r#become, become_user) = escalation(yaml, "")?;
     Ok(Play {
         name,
@@ -227,6 +252,8 @@ fn parse_play(yaml: &Yaml) -> anyhow::Result<Play> {
         tasks,
         r#become,
         become_user,
+        strategy,
+        unsupported,
     })
 }
 
@@ -239,27 +266,57 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         .map(str::to_string);
     let label = name.clone().unwrap_or_else(|| "unnamed".to_string());
     let mut module: Option<(String, &Yaml)> = None;
+    let mut unsupported = Vec::new();
     for (key, value) in map {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("task '{label}': keys must be strings"))?;
-        if TASK_KEYWORDS.contains(&key) {
+        // A block's three sections are grammar too, even though the compiler that runs them
+        // arrives later: taken for a module name they would be refused as a typo.
+        if BLOCK_SECTIONS.contains(&key) {
+            unsupported.extend(BLOCK_SECTIONS.iter().copied().filter(|s| *s == key));
             continue;
         }
-        if key.contains('.') || !is_reserved_task_keyword(key) {
-            if let Some((first, _)) = &module {
-                bail!("task '{label}': two modules given, '{first}' and '{key}'");
+        match task_keyword(key) {
+            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+            Some(_) => {}
+            // Whatever is left is the module, which is how the reference reads a task too: a
+            // key it does not know is an action, and a second one is the conflict below rather
+            // than an unknown-keyword error.
+            None => {
+                if let Some((first, _)) = &module {
+                    bail!("task '{label}': conflicting action statements: {first}, {key}");
+                }
+                module = Some((key.to_string(), value));
             }
-            module = Some((key.to_string(), value));
-        } else {
-            bail!("task '{label}': keyword '{key}' is not supported yet");
         }
     }
-    let (module, value) = module.ok_or_else(|| anyhow!("task '{label}': no module given"))?;
-    if !is_known(&module) {
-        bail!("task '{label}': couldn't resolve module/action '{module}'");
-    }
-    let mut args = module_args(&module, value).with_context(|| format!("task '{label}'"))?;
+    unsupported.sort_unstable();
+    // A task whose only content this release cannot execute has no module to find - `block:`
+    // and `local_action:` are the two spellings - so it is loaded empty and refused whole by
+    // the pre-flight, instead of being blamed for a module it was never asked to name.
+    let (module, value) = match module {
+        Some(found) => found,
+        None if !unsupported.is_empty() => {
+            return Ok(PlayTask {
+                name: label,
+                module: String::new(),
+                unsupported,
+                ..PlayTask::empty()
+            });
+        }
+        None => bail!("task '{label}': no module given"),
+    };
+    // Arguments are read only for a module this release can run. The reference resolves the
+    // action before it looks at what was handed to it, so a name it cannot resolve is refused
+    // for its name and never for the shape of arguments nobody promised to read; the pre-flight
+    // raises that refusal a moment later. Reading them anyway made `nosuchmodule: echo a`
+    // complain about `key=value`, which sends the operator to the wrong line.
+    let mut args = if is_known(&module) {
+        module_args(&module, value).with_context(|| format!("task '{label}'"))?
+    } else {
+        Map::new()
+    };
     if let Some(Yaml::Mapping(extra)) = field(yaml, "args") {
         for (k, v) in extra {
             let k = k
@@ -335,6 +392,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         failed_when,
         r#become,
         become_user,
+        unsupported,
     })
 }
 
@@ -355,45 +413,6 @@ fn conditions(yaml: &Yaml, key: &str, label: &str) -> anyhow::Result<Vec<String>
         Some(Yaml::Sequence(items)) => items.iter().map(one).collect(),
         Some(node) => Ok(vec![one(node)?]),
     }
-}
-
-/// Ansible task keywords that exist but are not handled yet. Refusing them keeps a playbook
-/// from silently running without its conditions.
-fn is_reserved_task_keyword(key: &str) -> bool {
-    matches!(
-        key,
-        // `become`, `become_user` and `become_method` are handled; the two keywords that tune
-        // how `sudo` itself is called are not, and a task that hands `sudo` extra flags or a
-        // different binary must not run as though it had.
-        "become_flags"
-            | "become_exe"
-            | "until"
-            | "retries"
-            | "delay"
-            | "notify"
-            | "tags"
-            | "environment"
-            | "delegate_to"
-            | "run_once"
-            | "no_log"
-            | "block"
-            | "rescue"
-            | "always"
-            | "include_tasks"
-            | "import_tasks"
-            | "include_role"
-            | "import_role"
-            | "check_mode"
-            | "diff"
-            | "throttle"
-            | "any_errors_fatal"
-            | "async"
-            | "poll"
-            | "connection"
-            | "remote_user"
-            | "collections"
-            | "debugger"
-    )
 }
 
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
@@ -506,18 +525,31 @@ mod tests {
         assert_eq!(t.args["state"], "here");
     }
 
+    /// An attribute the reference does not have is refused here, in the reference's own words.
+    /// One it has but this release cannot execute is a different event and belongs to the
+    /// pre-flight, which is why `until` and `strategy` load without complaint below.
+    ///
+    /// What would make this red: the loader accepting an invented play attribute, which would
+    /// leave a typo in a playbook silently doing nothing.
     #[test]
-    fn unsupported_keywords_are_refused_with_context() {
+    fn an_attribute_the_reference_does_not_have_is_refused_at_load() {
         let err = parse(
-            "- hosts: all\n  tasks:\n    - name: Later\n      command: true\n      until: x\n",
+            "- hosts: all\n  nosuchplaykeyword: 1\n  tasks: []\n",
             "x.yml",
         )
         .unwrap_err();
         let text = format!("{err:#}");
-        assert!(text.contains("until"), "{text}");
-        assert!(text.contains("Later"), "{text}");
-        let err = parse("- hosts: all\n  strategy: free\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(format!("{err:#}").contains("strategy"));
+        assert!(
+            text.contains("'nosuchplaykeyword' is not a valid attribute for a Play"),
+            "{text}"
+        );
+        let pb = parse(
+            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      until: x\n",
+            "x.yml",
+        )
+        .expect("the reference has both, so the loader takes both");
+        assert_eq!(pb.plays[0].strategy.as_deref(), Some("free"));
+        assert_eq!(pb.plays[0].tasks[0].unsupported, ["until"]);
     }
 
     #[test]
@@ -568,13 +600,16 @@ mod tests {
             let text = format!("{err:#}");
             assert!(text.contains(method) && text.contains('T'), "{text}");
         }
+        // The two keywords that change how `sudo` itself is invoked are the reference's own,
+        // so they load; the pre-flight is what refuses them, and `preflight`'s own tests say
+        // so. Handing `sudo` extra flags or a different binary must never just happen.
         for kw in ["become_flags", "become_exe"] {
-            let err = parse(
+            let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: id\n      {kw}: x\n"),
                 "x.yml",
             )
-            .unwrap_err();
-            assert!(format!("{err:#}").contains(kw), "{kw}");
+            .unwrap();
+            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
         }
     }
 
@@ -582,12 +617,17 @@ mod tests {
     fn a_task_needs_exactly_one_module() {
         let err = parse("- hosts: all\n  tasks:\n    - name: Nothing\n", "x.yml").unwrap_err();
         assert!(format!("{err:#}").contains("no module"));
+        // The reference's own words, measured: a second key it does not know is a second
+        // action, not an unknown keyword.
         let err = parse(
             "- hosts: all\n  tasks:\n    - command: a\n      shell: b\n",
             "x.yml",
         )
         .unwrap_err();
-        assert!(format!("{err:#}").contains("two modules"));
+        assert!(
+            format!("{err:#}").contains("conflicting action statements: command, shell"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -612,37 +652,20 @@ mod tests {
         assert_eq!(pb.plays[0].tasks[0].args["_raw_params"], "echo a=b");
     }
 
-    /// The reference resolves a task's action while it loads the play and refuses the whole run
-    /// with exit 4 on a name it cannot find, printing no `PLAY RECAP`. Measured against
-    /// ansible-core 2.19.12. The set this engine can resolve is its two module tables, so a
-    /// module it has not written yet is refused the same way rather than failing on the agent
-    /// halfway through the play.
+    /// A module name is no longer resolved here: the loader takes whatever the reference takes
+    /// and `preflight` decides, one step later, whether this release can run it. What would
+    /// make this red: the loader refusing a name again, which would stop `--list-tasks` from
+    /// reading a playbook written for a release that has the module.
     #[test]
-    fn a_module_that_cannot_be_resolved_refuses_the_load_with_four() {
+    fn a_module_name_is_kept_whatever_it_names() {
         for module in ["nosuchmodule", "file", "community.general.command"] {
-            let err = load_from(&format!(
-                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: echo a\n"
-            ));
-            assert_eq!(crate::stats::error_code(&err), 4, "{module}");
-            let text = format!("{err:#}");
-            assert!(
-                text.contains("couldn't resolve module/action") && text.contains(module),
-                "{text}"
-            );
-            assert!(text.contains("Later"), "the task is named: {text}");
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Later\n      {module}: echo a\n"),
+                "x.yml",
+            )
+            .unwrap_or_else(|e| panic!("{module}: {e:#}"));
+            assert_eq!(pb.plays[0].tasks[0].module, module);
         }
-    }
-
-    /// `parse` on its own returns a plain error; `load` is what carries the exit code, so a test
-    /// about the code has to go through a file.
-    fn load_from(text: &str) -> anyhow::Error {
-        let dir = std::env::temp_dir().join(format!("volant-load-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("x.yml");
-        std::fs::write(&path, text).unwrap();
-        let err = load(&path).unwrap_err();
-        let _ = std::fs::remove_file(&path);
-        err
     }
 
     #[test]
@@ -765,15 +788,41 @@ mod tests {
         assert!(format!("{err:#}").contains("loop"));
     }
 
+    /// A keyword this release cannot execute is parked on the task rather than refused, so the
+    /// pre-flight can refuse the run with the construct's name in hand. What would make this
+    /// red: a keyword dropped on the floor here, which is the one way it could reach an
+    /// executor that ignores it.
     #[test]
-    fn still_unsupported_keywords_are_refused() {
-        for kw in ["until", "notify", "block", "delegate_to", "become_flags"] {
-            let err = parse(
-                &format!("- hosts: all\n  tasks:\n    - command: true\n      {kw}: x\n"),
+    fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
+        for kw in [
+            "until",
+            "notify",
+            "block",
+            "delegate_to",
+            "become_flags",
+            "no_log",
+        ] {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
                 "x.yml",
             )
-            .unwrap_err();
-            assert!(format!("{err:#}").contains(kw), "{kw}");
+            .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
+            assert_eq!(pb.plays[0].tasks[0].unsupported, [kw], "{kw}");
         }
+    }
+
+    /// A block has no module of its own, and blaming it for one it never named would send the
+    /// operator looking for a typo. Sorted, so a construct carrying two parked keywords names
+    /// the same one whichever order the mapping yielded.
+    #[test]
+    fn a_construct_with_no_module_of_its_own_loads_empty_and_sorted() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      block:\n        - command: echo hi\n",
+            "x.yml",
+        )
+        .unwrap();
+        let t = &pb.plays[0].tasks[0];
+        assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
+        assert_eq!(t.unsupported, ["block", "tags"]);
     }
 }

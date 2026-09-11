@@ -49,30 +49,35 @@ impl Default for Config {
 impl Config {
     /// Reads the configuration file, if there is one, and lets the environment override it.
     ///
-    /// A file that is there and cannot be read stops the run. It used to fall back to the
-    /// defaults, which quietly threw away `inventory`, `forks` and the whole
-    /// `[privilege_escalation]` section: the run then targeted the implicit localhost, did
-    /// nothing and exited 0. The reference does exactly that - measured, an `ansible.cfg` at
-    /// mode 000 leaves it warning only that no inventory was parsed, and it exits 0 - and this
-    /// is a deliberate divergence from it: half a configuration is not a configuration, and
-    /// this release already refuses a `forks` value it cannot parse for the same reason.
+    /// A file that is there and cannot be read is ignored, and the run goes on with the
+    /// defaults and the environment - which is what the reference does, measured: an
+    /// `ansible.cfg` at mode 000 changes nothing there and the playbook exits 0. The one
+    /// divergence kept is the warning: a configuration file the operator wrote and the process
+    /// cannot open is worth a line, and a warning changes no exit code.
     pub fn load() -> anyhow::Result<Config> {
         let mut config = match locate() {
-            Some(path) => {
-                let text = std::fs::read_to_string(&path).map_err(|err| {
-                    crate::stats::Refusal::at(2, format!("reading {}: {err}", path.display()))
-                })?;
-                parse(&text, path.parent().unwrap_or(Path::new(".")))
-            }
+            Some(path) => match std::fs::read_to_string(&path) {
+                Ok(text) => parse(
+                    &text,
+                    path.parent().unwrap_or(Path::new(".")),
+                    &path.display().to_string(),
+                )?,
+                Err(err) => {
+                    eprintln!(
+                        "[WARNING]: {} could not be read and was ignored: {err}",
+                        path.display()
+                    );
+                    Config::default()
+                }
+            },
             None => Config::default(),
         };
         if let Ok(inv) = std::env::var("ANSIBLE_INVENTORY") {
             config.inventory = Some(PathBuf::from(inv));
         }
-        if let Ok(t) = std::env::var("ANSIBLE_TIMEOUT")
-            && let Ok(secs) = t.parse::<u64>()
-        {
-            config.timeout = Duration::from_secs(secs);
+        if let Ok(t) = std::env::var("ANSIBLE_TIMEOUT") {
+            config.timeout =
+                Duration::from_secs(integer("DEFAULT_TIMEOUT", "env: ANSIBLE_TIMEOUT", &t)?);
         }
         if let Ok(user) = std::env::var("ANSIBLE_REMOTE_USER") {
             config.remote_user = Some(user);
@@ -92,14 +97,12 @@ impl Config {
         {
             config.remote_tmp = tmp.trim().to_string();
         }
-        // A zero is kept rather than dropped: the reference refuses it from every source, and
-        // the single check at startup is what says so. An unparsable value is refused the same
-        // way: measured on the development machine, `ANSIBLE_FORKS=-1` refuses with that exact
-        // message (exit 2) and `ANSIBLE_FORKS=abc` refuses too, through its own config-loading
-        // error (exit 5) -- neither is tolerated, so silently keeping whatever `forks` already
-        // held would run a playbook the reference never would.
+        // A zero, and a negative value with it, are kept rather than dropped: the reference
+        // refuses them from every source and the single check at startup is what says so
+        // (exit 2, measured). A value that is not an integer at all is a different refusal
+        // with a different code, and `integer` raises it.
         if let Ok(n) = std::env::var("ANSIBLE_FORKS") {
-            config.forks = n.trim().parse::<usize>().unwrap_or(0);
+            config.forks = integer("DEFAULT_FORKS", "env: ANSIBLE_FORKS", &n)? as usize;
         }
         if let Ok(flag) = std::env::var("ANSIBLE_BECOME")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
@@ -138,9 +141,34 @@ fn locate() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// An integer setting, or the reference's own refusal for one that is not an integer.
+///
+/// Measured against ansible-core 2.19.12 on the development machine: `forks = many` in
+/// `ansible.cfg` prints `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value:
+/// Invalid value provided for 'integer': 'many'` and exits **5**, before any play header;
+/// `timeout = abc` prints the same with `DEFAULT_TIMEOUT`, and `ANSIBLE_TIMEOUT=abc` prints it
+/// with `env: ANSIBLE_TIMEOUT` as the origin. Silently keeping the default instead - which is
+/// what `timeout` used to do from both its sources - runs the playbook with a value the
+/// operator never wrote and the reference never accepted.
+///
+/// A negative number parses here and is clamped to zero, where the startup check refuses it
+/// with the same words and the same exit 2 a literal zero gets.
+fn integer(name: &str, origin: &str, value: &str) -> anyhow::Result<u64> {
+    let value = value.trim();
+    match value.parse::<i64>() {
+        Ok(n) => Ok(n.max(0) as u64),
+        Err(_) => Err(crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config '{name}' from '{origin}' has an invalid value: Invalid value provided for 'integer': '{value}'"
+            ),
+        )),
+    }
+}
+
 /// Reads `[defaults]` and `[privilege_escalation]`. Relative paths are relative to the
-/// configuration file.
-fn parse(text: &str, base: &Path) -> Config {
+/// configuration file; `origin` names the file in a refusal, as the reference names it.
+fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
     let mut config = Config::default();
     let mut section = String::new();
     for raw in text.lines() {
@@ -191,9 +219,7 @@ fn parse(text: &str, base: &Path) -> Config {
                 }
             }
             "timeout" => {
-                if let Ok(secs) = value.trim().parse::<u64>() {
-                    config.timeout = Duration::from_secs(secs);
-                }
+                config.timeout = Duration::from_secs(integer("DEFAULT_TIMEOUT", origin, value)?);
             }
             "remote_user" => {
                 let user = value.trim();
@@ -218,26 +244,30 @@ fn parse(text: &str, base: &Path) -> Config {
                     config.remote_tmp = tmp.to_string();
                 }
             }
-            // A zero and an unparsable value both reach the caller as zero, where the single
-            // startup check refuses them. The reference refuses `forks = abc` in the file too,
-            // before any play runs, so keeping the default of five here would run a playbook
-            // with a fork count the operator never wrote.
-            "forks" => config.forks = value.trim().parse().unwrap_or(0),
+            // A zero reaches the caller as zero, where the single startup check refuses it.
+            // A value that is no number at all is the reference's own exit 5 instead.
+            "forks" => config.forks = integer("DEFAULT_FORKS", origin, value)? as usize,
             _ => {}
         }
     }
-    config
+    Ok(config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Every sample here is expected to parse; `forks` and `timeout` are the only keys that
+    /// can refuse, and the tests that exercise those call `parse` directly.
+    fn cfg(text: &str, base: &str) -> Config {
+        parse(text, Path::new(base), "ansible.cfg").expect("the sample parses")
+    }
+
     #[test]
     fn defaults_section_is_read_and_paths_are_anchored() {
-        let c = parse(
+        let c = cfg(
             "[defaults]\ninventory = hosts.ini, other\ntimeout = 3\n[ssh_connection]\ntimeout = 99\n",
-            Path::new("/etc/x"),
+            "/etc/x",
         );
         assert_eq!(c.inventory, Some(PathBuf::from("/etc/x/hosts.ini")));
         assert_eq!(c.timeout, Duration::from_secs(3));
@@ -245,20 +275,20 @@ mod tests {
 
     #[test]
     fn the_connection_keys_are_read_with_ansibles_boolean_spellings() {
-        let c = parse(
+        let c = cfg(
             "[defaults]\nremote_user = ops\nprivate_key_file = keys/id\nhost_key_checking = no\nremote_tmp = /var/tmp/v\n",
-            Path::new("/etc/x"),
+            "/etc/x",
         );
         assert_eq!(c.remote_user.as_deref(), Some("ops"));
         assert_eq!(c.private_key_file, Some(PathBuf::from("/etc/x/keys/id")));
         assert!(!c.host_key_checking);
         assert_eq!(c.remote_tmp, "/var/tmp/v");
         assert!(
-            parse("[defaults]\nhost_key_checking = True\n", Path::new(".")).host_key_checking,
+            cfg("[defaults]\nhost_key_checking = True\n", ".").host_key_checking,
             "checking is on by default and True keeps it on"
         );
         assert!(
-            parse("[defaults]\nhost_key_checking = maybe\n", Path::new(".")).host_key_checking,
+            cfg("[defaults]\nhost_key_checking = maybe\n", ".").host_key_checking,
             "an unreadable value leaves the safe default alone"
         );
     }
@@ -268,7 +298,7 @@ mod tests {
     #[test]
     fn a_blank_remote_tmp_is_refused_wherever_it_comes_from() {
         assert_eq!(
-            parse("[defaults]\nremote_tmp =   \n", Path::new(".")).remote_tmp,
+            cfg("[defaults]\nremote_tmp =   \n", ".").remote_tmp,
             DEFAULT_REMOTE_TMP
         );
         let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
@@ -292,46 +322,82 @@ mod tests {
         }
     }
 
-    /// A zero reaches the caller untouched: refusing it is the startup check's job, and
-    /// silently falling back to five would run a playbook the reference refuses outright.
+    /// A zero, and a negative value with it, reach the caller as zero: refusing them is the
+    /// startup check's job, and silently falling back to five would run a playbook the
+    /// reference refuses outright.
     ///
-    /// An unparsable value goes the same way. Measured on the development machine against
-    /// `ansible-core 2.19.12`: `forks = abc` in `ansible.cfg` refuses with
-    /// `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value` and exit 5, before
-    /// any play header. Keeping five here would have run the playbook it refuses.
+    /// A value that is no number at all is a different refusal with a different code.
+    /// Measured on the development machine against `ansible-core 2.19.12`: `forks = many` in
+    /// `ansible.cfg` prints `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value:
+    /// Invalid value provided for 'integer': 'many'` and exits 5, before any play header.
+    ///
+    /// What would make this red: an unparsable `forks` or `timeout` quietly keeping a default,
+    /// or carrying a code other than the 5 the reference gives it.
     #[test]
-    fn forks_is_read_and_a_zero_or_an_unparsable_value_is_passed_through() {
-        assert_eq!(parse("[defaults]\nforks = 12\n", Path::new(".")).forks, 12);
-        assert_eq!(parse("[defaults]\nforks = 0\n", Path::new(".")).forks, 0);
+    fn an_integer_setting_is_read_or_refused_with_the_reference_s_code() {
+        assert_eq!(cfg("[defaults]\nforks = 12\n", ".").forks, 12);
+        assert_eq!(cfg("[defaults]\nforks = 0\n", ".").forks, 0);
         assert_eq!(
-            parse("[defaults]\nforks = many\n", Path::new(".")).forks,
+            cfg("[defaults]\nforks = -1\n", ".").forks,
             0,
-            "an unparsable value must reach the startup refusal, not fall back to the default"
+            "a negative value reaches the startup refusal like a literal zero"
         );
-        assert_eq!(
-            parse("[defaults]\nforks = -1\n", Path::new(".")).forks,
-            0,
-            "a negative value is no more usable than a word"
-        );
+        for (text, name) in [
+            ("[defaults]\nforks = many\n", "DEFAULT_FORKS"),
+            ("[defaults]\ntimeout = abc\n", "DEFAULT_TIMEOUT"),
+        ] {
+            let err = parse(text, Path::new("."), "/etc/x/ansible.cfg").unwrap_err();
+            assert_eq!(crate::stats::error_code(&err), 5, "{text}");
+            let shown = format!("{err:#}");
+            assert!(
+                shown.contains(&format!(
+                    "Config '{name}' from '/etc/x/ansible.cfg' has an invalid value"
+                )),
+                "{shown}"
+            );
+            assert!(
+                shown.contains("Invalid value provided for 'integer'"),
+                "{shown}"
+            );
+        }
     }
 
-    /// Measured on the development machine against `ansible-core 2.19.12`: neither
-    /// `ANSIBLE_FORKS=-1` nor `ANSIBLE_FORKS=abc` is tolerated (see architecture.md for the
-    /// exact output), so an unparsable value here refuses at the same startup check as a
-    /// literal zero instead of silently keeping the default of five.
+    /// The same two settings from the environment, where the reference names the variable as
+    /// the origin instead of a file: `ANSIBLE_TIMEOUT=abc` exits 5 with
+    /// `Config 'DEFAULT_TIMEOUT' from 'env: ANSIBLE_TIMEOUT' ...`, measured.
     #[test]
-    fn an_unparsable_ansible_forks_is_passed_through_like_a_zero() {
+    fn the_environment_arm_refuses_a_non_integer_the_same_way() {
         let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
         let saved_forks = std::env::var("ANSIBLE_FORKS").ok();
+        let saved_timeout = std::env::var("ANSIBLE_TIMEOUT").ok();
         unsafe {
             std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
-            std::env::set_var("ANSIBLE_FORKS", "abc");
+            std::env::set_var("ANSIBLE_FORKS", "-1");
         }
-        assert_eq!(Config::load().unwrap().forks, 0);
-        unsafe { std::env::set_var("ANSIBLE_FORKS", "-1") };
         assert_eq!(Config::load().unwrap().forks, 0);
         unsafe { std::env::set_var("ANSIBLE_FORKS", "3") };
         assert_eq!(Config::load().unwrap().forks, 3);
+        unsafe { std::env::set_var("ANSIBLE_FORKS", "abc") };
+        let err = Config::load().unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 5);
+        assert!(
+            format!("{err:#}").contains("from 'env: ANSIBLE_FORKS'"),
+            "{err:#}"
+        );
+        unsafe {
+            std::env::set_var("ANSIBLE_FORKS", "3");
+            std::env::set_var("ANSIBLE_TIMEOUT", "abc");
+        }
+        let err = Config::load().unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 5);
+        assert!(
+            format!("{err:#}").contains("Config 'DEFAULT_TIMEOUT' from 'env: ANSIBLE_TIMEOUT'"),
+            "{err:#}"
+        );
+        unsafe {
+            std::env::set_var("ANSIBLE_TIMEOUT", "9");
+        }
+        assert_eq!(Config::load().unwrap().timeout, Duration::from_secs(9));
         unsafe {
             match saved_config {
                 Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
@@ -341,32 +407,33 @@ mod tests {
                 Some(v) => std::env::set_var("ANSIBLE_FORKS", v),
                 None => std::env::remove_var("ANSIBLE_FORKS"),
             }
+            match saved_timeout {
+                Some(v) => std::env::set_var("ANSIBLE_TIMEOUT", v),
+                None => std::env::remove_var("ANSIBLE_TIMEOUT"),
+            }
         }
     }
 
     #[test]
     fn the_privilege_escalation_section_is_read_and_stays_out_of_defaults() {
-        let c = parse(
+        let c = cfg(
             "[defaults]\nbecome_user = ignored\n[privilege_escalation]\nbecome = yes\nbecome_user = deploy\nbecome_method = sudo\n",
-            Path::new("."),
+            ".",
         );
         assert!(c.r#become);
         assert_eq!(c.become_user, "deploy");
         assert_eq!(c.become_method, "sudo");
-        let c = parse(
-            "[privilege_escalation]\nbecome_method = su\n",
-            Path::new("."),
-        );
+        let c = cfg("[privilege_escalation]\nbecome_method = su\n", ".");
         assert_eq!(
             c.become_method, "su",
             "kept as written so the escalation check can refuse it by name"
         );
-        let c = parse("[privilege_escalation]\nbecome_method =\n", Path::new("."));
+        let c = cfg("[privilege_escalation]\nbecome_method =\n", ".");
         assert_eq!(
             c.become_method, DEFAULT_BECOME_METHOD,
             "a blank line asks for nothing and must not refuse every escalated run"
         );
-        let c = parse("[defaults]\nforks = 7\n", Path::new("."));
+        let c = cfg("[defaults]\nforks = 7\n", ".");
         assert_eq!(
             (c.forks, c.r#become, c.become_user.as_str()),
             (7, false, DEFAULT_BECOME_USER),
@@ -376,7 +443,7 @@ mod tests {
 
     #[test]
     fn missing_values_keep_defaults() {
-        assert_eq!(parse("[defaults]\n", Path::new(".")), Config::default());
-        assert_eq!(parse("", Path::new(".")), Config::default());
+        assert_eq!(cfg("[defaults]\n", "."), Config::default());
+        assert_eq!(cfg("", "."), Config::default());
     }
 }

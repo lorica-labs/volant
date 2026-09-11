@@ -1,0 +1,347 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Every play and task keyword ansible-core 2.19 knows, with what this release does about it.
+//!
+//! The loader accepts everything listed here and refuses anything else, the way the reference
+//! does; the pre-flight then refuses, before the first connection, everything marked
+//! [`Support::Preflight`]. Splitting the one old rule ("a keyword we do not implement is
+//! refused by name") in two only stays safe while both halves are true, so a keyword is
+//! `Runs` here **only when something in this release honours it today**. A keyword marked
+//! `Runs` before its executor exists would be accepted by the loader, waved through by the
+//! pre-flight and then ignored, which is the failure this split exists to prevent. Whoever
+//! implements a keyword flips its row in the same change, and the table's own tests then prove
+//! the new behaviour in both directions.
+//!
+//! The two lists are the reference's own, read out of `Task.fattributes` and
+//! `Play.fattributes` on ansible-core 2.19.12, plus the spellings the reference resolves
+//! before it builds those dictionaries: `action` and `local_action`, and one `with_*` name per
+//! lookup plugin `ansible.builtin` ships. The internal `async_val` and `loop_with` entries are
+//! not spellings a playbook can use and are left out.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Support {
+    /// Something in this release honours it: it runs, or it is refused by its own name with
+    /// the reference's code when the value asks for what we cannot do.
+    Runs,
+    /// Loaded and kept, so a playbook parses as it does in the reference, then refused by the
+    /// pre-flight before the first connection rather than ignored during the run.
+    Preflight,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Keyword {
+    pub name: &'static str,
+    pub support: Support,
+}
+
+const fn kw(name: &'static str, support: Support) -> Keyword {
+    Keyword { name, support }
+}
+
+use Support::{Preflight, Runs};
+
+/// Task keywords, alphabetical. The module key is whatever is left over once these are taken.
+///
+/// `gather_facts` has no row here because it belongs to the play; see [`PLAY_KEYWORDS`].
+pub const TASK_KEYWORDS: &[Keyword] = &[
+    kw("action", Preflight),
+    kw("any_errors_fatal", Preflight),
+    kw("args", Runs),
+    kw("async", Preflight),
+    kw("become", Runs),
+    kw("become_exe", Preflight),
+    kw("become_flags", Preflight),
+    kw("become_method", Runs),
+    kw("become_user", Runs),
+    kw("changed_when", Runs),
+    kw("check_mode", Preflight),
+    kw("collections", Preflight),
+    kw("connection", Preflight),
+    kw("debugger", Preflight),
+    kw("delay", Preflight),
+    kw("delegate_facts", Preflight),
+    kw("delegate_to", Preflight),
+    kw("diff", Preflight),
+    kw("environment", Preflight),
+    kw("failed_when", Runs),
+    kw("ignore_errors", Runs),
+    kw("ignore_unreachable", Preflight),
+    kw("local_action", Preflight),
+    kw("loop", Runs),
+    kw("loop_control", Runs),
+    kw("module_defaults", Preflight),
+    kw("name", Runs),
+    kw("no_log", Preflight),
+    kw("notify", Preflight),
+    kw("poll", Preflight),
+    kw("port", Preflight),
+    kw("register", Runs),
+    kw("remote_user", Preflight),
+    kw("retries", Preflight),
+    kw("run_once", Preflight),
+    kw("tags", Preflight),
+    kw("throttle", Preflight),
+    kw("timeout", Runs),
+    kw("until", Preflight),
+    kw("vars", Runs),
+    kw("when", Runs),
+    // One row per lookup plugin `ansible.builtin` ships, because the reference accepts
+    // `with_<lookup>` for every one of them and refuses any other `with_*` name outright. They
+    // exist there, so they are refused here by the pre-flight rather than mistaken for a
+    // module name; only `with_items` has a loop to run.
+    kw("with_config", Preflight),
+    kw("with_csvfile", Preflight),
+    kw("with_dict", Preflight),
+    kw("with_env", Preflight),
+    kw("with_file", Preflight),
+    kw("with_fileglob", Preflight),
+    kw("with_first_found", Preflight),
+    kw("with_indexed_items", Preflight),
+    kw("with_ini", Preflight),
+    kw("with_inventory_hostnames", Preflight),
+    kw("with_items", Runs),
+    kw("with_lines", Preflight),
+    kw("with_list", Preflight),
+    kw("with_nested", Preflight),
+    kw("with_password", Preflight),
+    kw("with_pipe", Preflight),
+    kw("with_random_choice", Preflight),
+    kw("with_sequence", Preflight),
+    kw("with_subelements", Preflight),
+    kw("with_template", Preflight),
+    kw("with_together", Preflight),
+    kw("with_unvault", Preflight),
+    kw("with_url", Preflight),
+    kw("with_varnames", Preflight),
+    kw("with_vars", Preflight),
+];
+
+/// Play keywords, alphabetical, as `Play.fattributes` lists them.
+///
+/// `gather_facts` counts as `Runs` because this release answers it rather than ignoring it: it
+/// warns that facts are not gathered, which is a line the operator reads before the first task,
+/// not a silent skip. `strategy` counts as `Runs` for the same reason: `linear` is what the
+/// engine does, and any other strategy is refused by its own name.
+pub const PLAY_KEYWORDS: &[Keyword] = &[
+    kw("any_errors_fatal", Preflight),
+    kw("become", Runs),
+    kw("become_exe", Preflight),
+    kw("become_flags", Preflight),
+    kw("become_method", Runs),
+    kw("become_user", Runs),
+    kw("check_mode", Preflight),
+    kw("collections", Preflight),
+    kw("connection", Preflight),
+    kw("debugger", Preflight),
+    kw("diff", Preflight),
+    kw("environment", Preflight),
+    kw("fact_path", Preflight),
+    kw("force_handlers", Preflight),
+    kw("gather_facts", Runs),
+    kw("gather_subset", Preflight),
+    kw("gather_timeout", Preflight),
+    kw("handlers", Preflight),
+    kw("hosts", Runs),
+    kw("ignore_errors", Preflight),
+    kw("ignore_unreachable", Preflight),
+    kw("max_fail_percentage", Preflight),
+    kw("module_defaults", Preflight),
+    kw("name", Runs),
+    kw("no_log", Preflight),
+    kw("order", Preflight),
+    kw("port", Preflight),
+    kw("post_tasks", Preflight),
+    kw("pre_tasks", Preflight),
+    kw("remote_user", Preflight),
+    kw("roles", Preflight),
+    kw("run_once", Preflight),
+    kw("serial", Preflight),
+    kw("strategy", Runs),
+    kw("tags", Preflight),
+    kw("tasks", Runs),
+    kw("throttle", Preflight),
+    kw("timeout", Preflight),
+    kw("vars", Runs),
+    kw("vars_files", Runs),
+    kw("vars_prompt", Preflight),
+];
+
+/// The three section keywords of a block. A block is not compiled until a later release, so a
+/// task carrying one of them is loaded and refused by the pre-flight like any other
+/// `Preflight` keyword; the reference's own Block attribute list arrives with the compiler
+/// that needs it.
+pub const BLOCK_SECTIONS: &[&str] = &["always", "block", "rescue"];
+
+pub fn task_keyword(name: &str) -> Option<&'static Keyword> {
+    TASK_KEYWORDS.iter().find(|k| k.name == name)
+}
+
+pub fn play_keyword(name: &str) -> Option<&'static Keyword> {
+    PLAY_KEYWORDS.iter().find(|k| k.name == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sorted and free of duplicates, so a missing keyword is easy to spot and the lookups
+    /// above cannot be shadowed by a second row. Sorting is by bytes, which is what
+    /// `sort_unstable` on `&str` does and what the tables are written in.
+    #[test]
+    fn the_tables_are_sorted_and_free_of_duplicates() {
+        for table in [TASK_KEYWORDS, PLAY_KEYWORDS] {
+            let names: Vec<&str> = table.iter().map(|k| k.name).collect();
+            let mut sorted = names.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(names, sorted);
+        }
+        let mut sections = BLOCK_SECTIONS.to_vec();
+        sections.sort_unstable();
+        sections.dedup();
+        assert_eq!(BLOCK_SECTIONS, sections.as_slice());
+    }
+
+    /// `Task.fattributes` and `Play.fattributes` as ansible-core 2.19.12 reports them on the
+    /// development machine, minus the two internal spellings a playbook cannot write
+    /// (`async_val`, which is what `async` is stored as, and `loop_with`, which is what a
+    /// `with_*` key becomes), plus the keys the reference resolves before it builds those
+    /// dictionaries: `action`, `local_action` and one name per `ansible.builtin` lookup
+    /// plugin.
+    ///
+    /// What would make this red: a keyword added to a table that the reference does not have,
+    /// or one of the reference's dropped. Both are ways of diverging from the grammar the
+    /// loader is supposed to accept exactly.
+    #[test]
+    fn the_tables_are_the_reference_s_own_attribute_lists() {
+        let task_fattributes = [
+            "action",
+            "any_errors_fatal",
+            "args",
+            "async",
+            "become",
+            "become_exe",
+            "become_flags",
+            "become_method",
+            "become_user",
+            "changed_when",
+            "check_mode",
+            "collections",
+            "connection",
+            "debugger",
+            "delay",
+            "delegate_facts",
+            "delegate_to",
+            "diff",
+            "environment",
+            "failed_when",
+            "ignore_errors",
+            "ignore_unreachable",
+            "loop",
+            "loop_control",
+            "module_defaults",
+            "name",
+            "no_log",
+            "notify",
+            "poll",
+            "port",
+            "register",
+            "remote_user",
+            "retries",
+            "run_once",
+            "tags",
+            "throttle",
+            "timeout",
+            "until",
+            "vars",
+            "when",
+        ];
+        let lookups = [
+            "config",
+            "csvfile",
+            "dict",
+            "env",
+            "file",
+            "fileglob",
+            "first_found",
+            "indexed_items",
+            "ini",
+            "inventory_hostnames",
+            "items",
+            "lines",
+            "list",
+            "nested",
+            "password",
+            "pipe",
+            "random_choice",
+            "sequence",
+            "subelements",
+            "template",
+            "together",
+            "unvault",
+            "url",
+            "varnames",
+            "vars",
+        ];
+        let mut expected: Vec<String> = task_fattributes.iter().map(|s| s.to_string()).collect();
+        expected.push("local_action".to_string());
+        expected.extend(lookups.iter().map(|l| format!("with_{l}")));
+        expected.sort_unstable();
+        let ours: Vec<String> = TASK_KEYWORDS.iter().map(|k| k.name.to_string()).collect();
+        assert_eq!(ours, expected);
+
+        let play_fattributes = [
+            "any_errors_fatal",
+            "become",
+            "become_exe",
+            "become_flags",
+            "become_method",
+            "become_user",
+            "check_mode",
+            "collections",
+            "connection",
+            "debugger",
+            "diff",
+            "environment",
+            "fact_path",
+            "force_handlers",
+            "gather_facts",
+            "gather_subset",
+            "gather_timeout",
+            "handlers",
+            "hosts",
+            "ignore_errors",
+            "ignore_unreachable",
+            "max_fail_percentage",
+            "module_defaults",
+            "name",
+            "no_log",
+            "order",
+            "port",
+            "post_tasks",
+            "pre_tasks",
+            "remote_user",
+            "roles",
+            "run_once",
+            "serial",
+            "strategy",
+            "tags",
+            "tasks",
+            "throttle",
+            "timeout",
+            "vars",
+            "vars_files",
+            "vars_prompt",
+        ];
+        let ours: Vec<&str> = PLAY_KEYWORDS.iter().map(|k| k.name).collect();
+        assert_eq!(ours, play_fattributes);
+    }
+
+    /// A block section is never also a task keyword: the loader tells them apart by asking the
+    /// task table first, so a name in both would make one of the two unreachable.
+    #[test]
+    fn the_block_sections_are_not_task_keywords() {
+        for section in BLOCK_SECTIONS {
+            assert!(task_keyword(section).is_none(), "{section}");
+        }
+    }
+}

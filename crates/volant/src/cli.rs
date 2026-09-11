@@ -17,7 +17,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, playbook};
+use crate::{agent, playbook, preflight};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -112,6 +112,12 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .iter()
         .map(|p| playbook::load(p))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // Every playbook is loaded first, then every one of them is checked, so an operator gets
+    // the refusal for the second playbook before the first one has touched a host. Nothing
+    // below this line may assume a keyword was handled that the pre-flight did not let past.
+    for pb in &playbooks {
+        preflight::check(pb)?;
+    }
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
     // Escalating with `sudo` because `su` is not implemented would run the task under rules the

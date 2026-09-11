@@ -67,6 +67,96 @@ pub fn local(module: &str) -> Option<&'static ModuleSpec> {
     LOCAL_MODULES.iter().find(|m| m.name == short)
 }
 
+/// Every module `ansible.builtin` ships in ansible-core 2.19.12, as `ansible-doc -l -t module
+/// ansible.builtin` lists them, sorted and short-named. A playbook naming one of these and
+/// none of `NATIVE_MODULES` or `LOCAL_MODULES` is a playbook this release cannot run yet,
+/// which the operator needs to hear differently from a name that resolves to no module at all:
+/// the first waits on us, the second is a typo.
+pub const BUILTIN_MODULES: &[&str] = &[
+    "add_host",
+    "apt",
+    "apt_key",
+    "apt_repository",
+    "assemble",
+    "assert",
+    "async_status",
+    "blockinfile",
+    "command",
+    "copy",
+    "cron",
+    "deb822_repository",
+    "debconf",
+    "debug",
+    "dnf",
+    "dnf5",
+    "dpkg_selections",
+    "expect",
+    "fail",
+    "fetch",
+    "file",
+    "find",
+    "gather_facts",
+    "get_url",
+    "getent",
+    "git",
+    "group",
+    "group_by",
+    "hostname",
+    "import_playbook",
+    "import_role",
+    "import_tasks",
+    "include_role",
+    "include_tasks",
+    "include_vars",
+    "iptables",
+    "known_hosts",
+    "lineinfile",
+    "meta",
+    "mount_facts",
+    "package",
+    "package_facts",
+    "pause",
+    "ping",
+    "pip",
+    "raw",
+    "reboot",
+    "replace",
+    "rpm_key",
+    "script",
+    "service",
+    "service_facts",
+    "set_fact",
+    "set_stats",
+    "setup",
+    "shell",
+    "slurp",
+    "stat",
+    "subversion",
+    "systemd",
+    "systemd_service",
+    "sysvinit",
+    "tempfile",
+    "template",
+    "unarchive",
+    "uri",
+    "user",
+    "validate_argument_spec",
+    "wait_for",
+    "wait_for_connection",
+    "yum_repository",
+];
+
+/// Whether `module` names a builtin, bare or under the two prefixes that mean the same thing.
+/// Another collection's module is never one, however familiar the short name looks: if
+/// `community.general.command` were taken for a builtin, a playbook naming it would be told to
+/// wait for a release that will never contain it.
+pub fn is_builtin(module: &str) -> bool {
+    let ours = !module.contains('.')
+        || module.starts_with("ansible.builtin.")
+        || module.starts_with("ansible.legacy.");
+    ours && BUILTIN_MODULES.contains(&short_name(module))
+}
+
 /// Whether this engine can run the module at all, natively on the agent or on the controller.
 /// The two tables are all there is, so a playbook naming anything else can be refused while it
 /// is being loaded, which is where the reference refuses a module it cannot resolve.
@@ -146,6 +236,54 @@ mod tests {
         assert!(!is_known("nosuchmodule"));
         assert!(!is_known("file"), "not implemented yet, so not known");
         assert!(!is_known("community.general.debug"));
+    }
+
+    /// The three states a module name can be in have to stay three. Collapsing them - which an
+    /// `&&`/`||` precedence slip does in one character - would tell an operator with a typo to
+    /// wait for a release, or an operator waiting for `lineinfile` that they misspelled it.
+    ///
+    /// What would make this red: `is_builtin` answering true for a name no collection has, or
+    /// false for one `ansible.builtin` ships.
+    #[test]
+    fn a_builtin_is_told_apart_from_a_name_that_resolves_to_nothing() {
+        for yes in [
+            "lineinfile",
+            "ansible.builtin.lineinfile",
+            "ansible.legacy.file",
+            "command",
+        ] {
+            assert!(is_builtin(yes), "{yes}");
+        }
+        for no in [
+            "nosuchmodule",
+            "ansible.builtin.nosuchmodule",
+            "community.general.ufw",
+            "community.general.command",
+        ] {
+            assert!(!is_builtin(no), "{no}");
+        }
+        assert!(
+            !is_known("lineinfile") && is_builtin("lineinfile"),
+            "a builtin we have not written is neither runnable nor a typo"
+        );
+    }
+
+    /// What would make this red: a native or controller-side module added under a name
+    /// `ansible.builtin` does not have, which would make it unreachable for anyone writing the
+    /// reference's spelling.
+    #[test]
+    fn the_builtin_table_is_sorted_and_covers_both_registries() {
+        let mut sorted = BUILTIN_MODULES.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(BUILTIN_MODULES, sorted.as_slice());
+        for m in NATIVE_MODULES.iter().chain(LOCAL_MODULES) {
+            assert!(
+                BUILTIN_MODULES.contains(&m.name),
+                "{} is not a name ansible.builtin has",
+                m.name
+            );
+        }
     }
 
     #[test]

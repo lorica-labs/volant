@@ -1494,7 +1494,16 @@ async fn drive_host(
 
         if !failed && let Some((index, err)) = deferred_error {
             let task = &plan.tasks[index];
-            let results = vec![(None, TaskResult::failed_with(err.0))];
+            // The reference's own prefix on the `msg` of a task that dies before it runs -
+            // a `when` it cannot evaluate, arguments it cannot render. Measured: a failing
+            // `when` reports `Task failed: Error while evaluating conditional: ...`, and a
+            // playbook of the operator's testing `'Task failed' in result.msg` must still see
+            // it here. `failed_when` is the one that does not get it: there the reference
+            // leaves `msg` empty and puts the error in `failed_when_result`.
+            let results = vec![(
+                None,
+                TaskResult::failed_with(format!("Task failed: {}", err.0)),
+            )];
             failed = report_task(&tx, &name, index, task, &results, &[None], false).await;
             pos = index + 1;
             if failed {
@@ -1731,6 +1740,7 @@ mod tests {
             failed_when: Vec::new(),
             r#become: None,
             become_user: None,
+            unsupported: Vec::new(),
         }
     }
 

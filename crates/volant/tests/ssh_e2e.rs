@@ -154,6 +154,14 @@ fn ssh_refused_connection_is_unreachable_with_a_recap() {
     let out = volant(&["playbook", "-i", &inv, &fixture("ssh/e2e.yml")]);
     let text = both(&out);
     assert!(text.contains("fatal: [dead]: UNREACHABLE!"), "{text}");
+    // The reference opens the `msg` of an UNREACHABLE with `Task failed: `, measured against
+    // ansible-core 2.19.12, and a playbook of the operator's testing
+    // `'Task failed' in result.msg` has to keep working here. What would make this red: the
+    // prefix being dropped again, which is what two separate local decisions did before.
+    assert!(
+        text.contains("\"msg\": \"Task failed: Failed to connect to the host via ssh:"),
+        "the unreachable message keeps the reference's prefix: {text}"
+    );
     assert!(
         text.contains("ok: [box]"),
         "the other host still runs: {text}"

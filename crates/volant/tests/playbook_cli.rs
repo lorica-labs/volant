@@ -24,10 +24,33 @@ fn volant(args: &[&str]) -> Output {
 /// hangs instead of returning, and a hung run only ends at the harness's own timeout, so the
 /// tests that prove a wait ends say so with a deadline rather than with elapsed time alone.
 fn volant_within(args: &[&str], deadline: std::time::Duration) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
+    volant_within_with_path(args, deadline, None)
+}
+
+/// `volant_within`, with an optional directory prepended to `PATH` -- the form `run_probe` needs
+/// for the escalation probes, which put a fake `sudo` ahead of the real one rather than resting
+/// on properties of the machine.
+fn volant_within_with_path(
+    args: &[&str],
+    deadline: std::time::Duration,
+    path: Option<&Path>,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
         .args(args)
         .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
+        .env_remove("COLUMNS");
+    if let Some(dir) = path {
+        command.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
+    }
+    let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -400,17 +423,22 @@ fn a_playbook_that_does_not_parse_exits_4() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A configuration file that is there and cannot be read stops the run instead of falling back
-/// to the defaults. It used to fall back, which threw away `inventory`, `forks` and the whole
-/// `[privilege_escalation]` section: the run then targeted the implicit localhost, did nothing
-/// and exited 0. A deliberate divergence from the reference, which does exactly that - measured,
-/// an `ansible.cfg` at mode 000 leaves it warning only about the inventory it did not get, and
-/// it exits 0.
+/// A configuration file that is there and cannot be read is ignored, and the run goes on.
+/// That is the reference's own behaviour, measured against ansible-core 2.19.12: an
+/// `ansible.cfg` at mode 000 changes nothing there and the playbook exits **0**, silently.
+/// This used to exit 2, which refused playbooks the reference runs.
+///
+/// One divergence is kept on purpose: a `[WARNING]` naming the file. A configuration the
+/// operator wrote and the process cannot open is worth a line, and a warning changes no exit
+/// code, so nothing that reads the code sees a difference.
+///
+/// What would make this red: the refusal coming back (exit 2 and no play), or the warning
+/// disappearing so an unreadable file becomes indistinguishable from no file at all.
 ///
 /// The unreadable file here is one that is not text, because that fails for `root` too and this
 /// suite has to give the same answer whoever runs it; a file at mode 000 takes the same path.
 #[test]
-fn an_unreadable_ansible_cfg_refuses_the_run() {
+fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     let dir = std::env::temp_dir().join(format!("volant-badcfg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -426,15 +454,13 @@ fn an_unreadable_ansible_cfg_refuses_the_run() {
     let err = String::from_utf8_lossy(&out.stderr).to_string();
     assert_eq!(
         out.status.code(),
-        Some(2),
-        "a configuration it cannot read must not be read as no configuration, and a refused \
-         setting is exit 2 here as it is for a refused `forks`: {text}\n{err}"
+        Some(0),
+        "the reference runs the playbook and exits 0: {text}\n{err}"
     );
     assert!(
-        err.contains("ansible.cfg"),
-        "the file is named: {text}\n{err}"
+        err.contains("[WARNING]") && err.contains("ansible.cfg"),
+        "the file it could not read is named: {text}\n{err}"
     );
-    assert!(!text.contains("PLAY RECAP"), "nothing runs: {text}\n{err}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -535,14 +561,17 @@ fn zero_forks_is_refused() {
     );
 }
 
-/// A `forks` the file writes but nobody can read refuses the run, as it does from `-f` and
-/// from `ANSIBLE_FORKS`. Measured against the reference: `forks = abc` in `ansible.cfg` stops
-/// with `Config 'DEFAULT_FORKS' ... has an invalid value` and exit 5, before any play header.
-/// Volant keeps its own exit 2 for run-level refusals but must refuse rather than run at five,
-/// which is what the file arm used to do. The fixture names an inventory, so a lost refusal
-/// shows up as a successful run and not as an empty one.
+/// A `forks` the file writes but nobody can read refuses the run, with the reference's own
+/// code. Measured against ansible-core 2.19.12: `forks = many` in `ansible.cfg` stops with
+/// `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value: Invalid value provided
+/// for 'integer': 'many'` and exit **5**, before any play header. This used to exit 2, which
+/// is the code a refused `-f 0` gets - a different event that deserves a different code.
+///
+/// What would make this red: the file arm falling back to a default and running, or the
+/// refusal carrying any code but 5. The fixture names an inventory, so a lost refusal shows up
+/// as a successful run and not as an empty one.
 #[test]
-fn an_unparsable_forks_in_ansible_cfg_is_refused() {
+fn an_unparsable_forks_in_ansible_cfg_is_refused_with_the_reference_s_code() {
     let out = Command::new(env!("CARGO_BIN_EXE_volant"))
         .args(["playbook", &fixture("cfg/site.yml")])
         .env("NO_COLOR", "1")
@@ -551,9 +580,10 @@ fn an_unparsable_forks_in_ansible_cfg_is_refused() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{stdout}\n{stderr}");
+    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
     assert!(
-        stderr.contains("The number of processes (--forks) must be >= 1"),
+        stderr.contains("Config 'DEFAULT_FORKS'")
+            && stderr.contains("Invalid value provided for 'integer'"),
         "{stderr}"
     );
     assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
@@ -1350,4 +1380,464 @@ fn seventy_hosts_finish_with_a_full_recap() {
         "every host must reach the recap: {text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// The keyword tables, covered in both directions. Every row of `keywords::TASK_KEYWORDS`,
+// `keywords::PLAY_KEYWORDS` and `keywords::LOOP_CONTROL_KEYWORDS` has to do what its `Support`
+// claims: a `Runs` row changes something an operator can see, a `Preflight` row stops the run
+// before anything is printed. The `Runs` list is walked from the tables themselves rather than
+// written out here, so a row added without its proof fails the suite instead of slipping
+// through - which is how a keyword would come to be accepted by the loader, waved past the
+// pre-flight and then ignored, the failure this whole split exists to prevent.
+//
+// The `Preflight` half walks the same tables in `preflight.rs`'s own unit tests, in one
+// process; only "nothing comes out before the refusal" needs a real run, and three fixtures
+// below carry it.
+
+use volant::keywords::{LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS};
+
+const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A directory for generated probes, emptied first so a previous run cannot answer for this one.
+fn probe_dir(kind: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("volant-probe-{kind}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a probe directory");
+    dir
+}
+
+fn run_probe(
+    dir: &std::path::Path,
+    kw: &str,
+    body: &str,
+    extra: &[&str],
+    path: Option<&Path>,
+) -> (i32, String) {
+    let file = dir.join(format!("{kw}.yml"));
+    std::fs::write(&file, body).expect("the probe is written");
+    let mut args: Vec<&str> = vec!["playbook"];
+    args.extend_from_slice(extra);
+    let shown = file.display().to_string();
+    args.push(&shown);
+    let out = volant_within_with_path(&args, PROBE_DEADLINE, path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
+///
+/// That a parked keyword is refused by its own name is a property of `parse` plus `check`, and
+/// the unit test `every_preflight_keyword_is_refused_by_its_own_name` walks all three tables
+/// for it in one process. Only "no output before the refusal" needs a real run, and it is the
+/// same property for every row, so three fixtures carry it: one parked task keyword, one block
+/// section, one parked play keyword. Walking the whole grammar here spawned ninety processes to
+/// re-prove in-process what one assertion already proves.
+///
+/// What would make this red: a refusal raised after the banner, by which time tasks may already
+/// have run and the operator has a half-applied playbook to undo.
+#[test]
+fn a_preflight_refusal_lets_nothing_out_before_it() {
+    let dir = probe_dir("preflight");
+    let probes = [
+        (
+            "no_log",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
+        ),
+        (
+            "block",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n",
+        ),
+        (
+            "serial",
+            "- hosts: localhost\n  gather_facts: false\n  serial: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        ),
+    ];
+    for (kw, body) in probes {
+        let (code, text) = run_probe(&dir, kw, body, &[], None);
+        assert_eq!(code, 4, "{kw}: {text}");
+        assert!(
+            text.contains(&format!("keyword '{kw}' is not supported yet")),
+            "{kw} must name itself: {text}"
+        );
+        assert!(
+            !text.contains("PLAY ["),
+            "{kw}: nothing runs before a pre-flight refusal: {text}"
+        );
+        assert!(
+            !text.contains("PLAY RECAP"),
+            "{kw}: a refusal before the first connection has nothing to recap: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A `Runs` row and what proves it: the playbook to run, the arguments to run it with, the exit
+/// code to expect and a string the run has to print.
+struct RunsProbe {
+    table: &'static str,
+    kw: &'static str,
+    body: &'static str,
+    args: &'static [&'static str],
+    code: i32,
+    expect: &'static str,
+}
+
+const fn runs(
+    table: &'static str,
+    kw: &'static str,
+    body: &'static str,
+    args: &'static [&'static str],
+    code: i32,
+    expect: &'static str,
+) -> RunsProbe {
+    RunsProbe {
+        table,
+        kw,
+        body,
+        args,
+        code,
+        expect,
+    }
+}
+
+/// One proof per `Runs` row, every one of them a real run of this binary. Each body is written
+/// so that deleting the keyword's handling changes the run: the task stops failing, the loop
+/// stops looping, the refusal stops coming.
+///
+/// Nothing here is proved by naming a test somewhere else. Three escalation rows used to be,
+/// and the name was inert text: no compiler and no assertion checked that the named test still
+/// existed, those tests are `#[ignore]`d so an ordinary run proved none of the three, and the
+/// same hatch would have marked any future row `Runs` with no proof at all. Escalating to an
+/// account that does not exist needs no privileged host and no second suite: `sudo` refuses by
+/// naming the account, which is a `become_user` that reached it intact, and dropping either
+/// escalation keyword lets the task run as the invoking user and succeed.
+const RUNS_PROBES: &[RunsProbe] = &[
+    runs(
+        "task",
+        "args",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      args:\n        chdir: /nonexistent-volant-probe\n",
+        &[],
+        2,
+        "nonexistent-volant-probe",
+    ),
+    runs(
+        "task",
+        "become",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become: true\n      become_user: nosuchuser-volant-probe\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
+    ),
+    runs(
+        "task",
+        "become_method",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become_method: su\n",
+        &[],
+        2,
+        "become_method 'su' is not supported yet",
+    ),
+    runs(
+        "task",
+        "become_user",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become_user: nosuchuser-volant-probe\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
+    ),
+    runs(
+        "task",
+        "changed_when",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      changed_when: true\n",
+        &[],
+        0,
+        "changed: [localhost]",
+    ),
+    runs(
+        "task",
+        "failed_when",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      failed_when: true\n",
+        &[],
+        2,
+        "fatal: [localhost]: FAILED!",
+    ),
+    runs(
+        "task",
+        "ignore_errors",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: nosuchbinary-volant-probe\n      ignore_errors: true\n",
+        &[],
+        0,
+        "ignoring",
+    ),
+    runs(
+        "task",
+        "loop",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item }}\"\n      loop: [alpha]\n",
+        &[],
+        0,
+        "(item=alpha)",
+    ),
+    runs(
+        "task",
+        "loop_control",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ thing }}\"\n      loop: [alpha]\n      loop_control:\n        loop_var: thing\n",
+        &[],
+        0,
+        "\"msg\": \"alpha\"",
+    ),
+    runs(
+        "task",
+        "name",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: A named probe\n      debug:\n        msg: probe\n",
+        &[],
+        0,
+        "TASK [A named probe]",
+    ),
+    runs(
+        "task",
+        "register",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: echo probe-registered\n      register: out\n    - debug:\n        msg: \"{{ out.stdout }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"probe-registered\"",
+    ),
+    runs(
+        "task",
+        "timeout",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: sleep 5\n      timeout: 1\n",
+        &[],
+        2,
+        "Timed out after 1 second(s).",
+    ),
+    runs(
+        "task",
+        "vars",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ probe }}\"\n      vars:\n        probe: task-value\n",
+        &[],
+        0,
+        "\"msg\": \"task-value\"",
+    ),
+    runs(
+        "task",
+        "when",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      when: false\n",
+        &[],
+        0,
+        "skipping: [localhost]",
+    ),
+    runs(
+        "task",
+        "with_items",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item }}\"\n      with_items:\n        - [alpha]\n",
+        &[],
+        0,
+        "(item=alpha)",
+    ),
+    runs(
+        "play",
+        "become",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  tasks:\n    - command: echo hi\n",
+        &["--become-method", "su"],
+        2,
+        "become_method 'su' is not supported yet",
+    ),
+    runs(
+        "play",
+        "become_method",
+        "- hosts: localhost\n  gather_facts: false\n  become_method: su\n  tasks:\n    - command: echo hi\n",
+        &[],
+        2,
+        "become_method 'su' is not supported yet",
+    ),
+    runs(
+        "play",
+        "become_user",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_user: nosuchuser-volant-probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        &[],
+        2,
+        "nosuchuser-volant-probe",
+    ),
+    // `gather_facts: true` is answered rather than obeyed: this release gathers no facts and
+    // says so before the first task, which is the difference between a keyword handled and a
+    // keyword ignored.
+    runs(
+        "play",
+        "gather_facts",
+        "- hosts: localhost\n  gather_facts: true\n  tasks:\n    - command: echo hi\n",
+        &[],
+        0,
+        "gather_facts is not available in this release",
+    ),
+    // The recap, not the banner: `PLAY [localhost]` is `name` falling back to `hosts`, so it
+    // would still read the same if `hosts` never reached the inventory. A host only reaches the
+    // recap by having been selected and run.
+    runs(
+        "play",
+        "hosts",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: echo hi\n",
+        &[],
+        0,
+        "localhost                  : ok=1",
+    ),
+    runs(
+        "play",
+        "name",
+        "- name: A named probe\n  hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: echo hi\n",
+        &[],
+        0,
+        "PLAY [A named probe]",
+    ),
+    runs(
+        "play",
+        "strategy",
+        "- hosts: localhost\n  gather_facts: false\n  strategy: free\n  tasks:\n    - command: echo hi\n",
+        &[],
+        4,
+        "strategy 'free' is not supported yet",
+    ),
+    runs(
+        "play",
+        "tasks",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: A named probe\n      command: echo hi\n",
+        &[],
+        0,
+        "TASK [A named probe]",
+    ),
+    runs(
+        "play",
+        "vars",
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    probe: play-value\n  tasks:\n    - debug:\n        msg: \"{{ probe }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"play-value\"",
+    ),
+    runs(
+        "play",
+        "vars_files",
+        "- hosts: localhost\n  gather_facts: false\n  vars_files:\n    - vars_files.vars.yml\n  tasks:\n    - debug:\n        msg: \"{{ probe }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"file-value\"",
+    ),
+    // `loop_control` is a mapping, so its sub-keys carry their own rows and their own proofs.
+    // Reading two of them and dropping the rest is how a keyword the table vouches for goes on
+    // ignoring most of what was written under it.
+    runs(
+        "loop_control",
+        "label",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        label: shown-instead\n",
+        &[],
+        0,
+        "(item=shown-instead)",
+    ),
+    runs(
+        "loop_control",
+        "loop_var",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ thing }}\"\n      loop: [alpha]\n      loop_control:\n        loop_var: thing\n",
+        &[],
+        0,
+        "\"msg\": \"alpha\"",
+    ),
+];
+
+/// Every keyword the table marks `Runs` has a proof, and every proof belongs to a row.
+///
+/// What would make this red: a row flipped to `Runs` ahead of the code that honours it, which
+/// is the way a keyword comes to be accepted, waved through and ignored; or a proof left behind
+/// for a keyword that no longer claims to run.
+#[test]
+fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
+    let mut declared: Vec<(&str, &str)> = [
+        ("task", TASK_KEYWORDS),
+        ("play", PLAY_KEYWORDS),
+        ("loop_control", LOOP_CONTROL_KEYWORDS),
+    ]
+    .into_iter()
+    .flat_map(|(table, keywords)| {
+        keywords
+            .iter()
+            .filter(|k| k.support == Support::Runs)
+            .map(move |k| (table, k.name))
+    })
+    .collect();
+    let mut proved: Vec<(&str, &str)> = RUNS_PROBES.iter().map(|p| (p.table, p.kw)).collect();
+    declared.sort_unstable();
+    proved.sort_unstable();
+    assert_eq!(declared, proved);
+}
+
+/// Each `Runs` proof, run. The bodies are written so that deleting the keyword's handling
+/// changes what comes out: `when: false` stops skipping, `timeout: 1` stops killing `sleep`,
+/// `register` stops carrying the output to the next task, `strategy: free` stops being refused,
+/// `become_user` stops naming an account `sudo` cannot find.
+/// A fake `sudo` for the three escalation rows in `RUNS_PROBES` (`task.become`,
+/// `task.become_user`, `play.become_user`): it resolves `-u <user>` itself, the way a
+/// real `sudo` resolves the account before it ever consults policy, and refuses only the one
+/// name these probes write. Every other user -- in particular `root`, the default `become_user`
+/// -- succeeds without a password and simply runs the command it was handed.
+///
+/// This replaces two properties of the machine the probes used to rest on instead of on this
+/// engine's own code: that the local `sudo` resolves an unknown user before policy (so the
+/// message names the account) and that `sudo` to root needs no password (so the run reaches the
+/// task at all). Neither is guaranteed on every CI runner or contributor machine; what the fake
+/// proves instead is the one thing these rows are for, that `become_user` reaches `sudo`'s argv.
+const FAKE_SUDO_FOR_BECOME_USER: &str = "#!/bin/sh\n\
+ user=\n\
+ prev=\n\
+ for arg in \"$@\"; do\n\
+ [ \"$prev\" = -u ] && user=\"$arg\"\n\
+ prev=\"$arg\"\n\
+ done\n\
+ if [ \"$user\" = nosuchuser-volant-probe ]; then\n\
+ echo 'sudo: unknown user nosuchuser-volant-probe' >&2\n\
+ exit 1\n\
+ fi\n\
+ while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\
+ shift\n\
+ exec \"$@\"\n";
+
+/// Whether a `RunsProbe` row is one of the three escalation rows that route through
+/// [`FAKE_SUDO_FOR_BECOME_USER`] instead of the machine's real `sudo`.
+fn is_become_user_probe(probe: &RunsProbe) -> bool {
+    matches!(
+        (probe.table, probe.kw),
+        ("task", "become") | ("task", "become_user") | ("play", "become_user")
+    )
+}
+
+#[test]
+fn every_runs_keyword_changes_something_observable() {
+    let dir = probe_dir("runs");
+    let sudo_dir = fake_sudo("runs-become-user", FAKE_SUDO_FOR_BECOME_USER);
+    // Every probe runs before anything is asserted, so one failing run reports every row that
+    // broke rather than only the first: a change that touches several keywords is read once.
+    let mut failures = Vec::new();
+    for probe in RUNS_PROBES {
+        let body = probe.body;
+        let name = format!("{}-{}", probe.table, probe.kw);
+        if probe.kw == "vars_files" {
+            std::fs::write(dir.join(format!("{name}.vars.yml")), "probe: file-value\n")
+                .expect("the probe's vars file is written");
+        }
+        let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
+        let path = is_become_user_probe(probe).then_some(sudo_dir.as_path());
+        let (code, text) = run_probe(&dir, &name, &body, probe.args, path);
+        if code != probe.code || !text.contains(probe.expect) {
+            failures.push(format!(
+                "{name}: wanted exit {} and {:?}, got exit {code}:\n{text}",
+                probe.code, probe.expect
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} keyword(s) stopped doing what the table says:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+    std::fs::remove_dir_all(&sudo_dir).expect("the fake sudo directory is removed");
 }

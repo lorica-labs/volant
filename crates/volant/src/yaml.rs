@@ -180,10 +180,16 @@ pub fn field<'a>(node: &'a Yaml<'a>, key: &str) -> Option<&'a Yaml<'a>> {
 /// PyYAML's own reading of a variable's value), so the string arm below only ever fires for a
 /// *quoted* spelling: a keyword field like `gather_facts: "yes"` is still a boolean to Ansible,
 /// even though the same quoting keeps a generic data value a string in `to_json`.
+///
+/// `0` and `1` count too. Measured on ansible-core 2.19.12: `gather_facts: 1` gathers facts and
+/// `gather_facts: 0` does not, while `gather_facts: 2` refuses the load with `The value 2 could
+/// not be converted to 'bool'.` Any other integer is not a boolean here either.
 pub fn as_bool(node: &Yaml) -> Option<bool> {
     match node {
         Yaml::Value(Scalar::Boolean(b)) => Some(*b),
         Yaml::Value(Scalar::String(s)) => bool_from_str(s.as_ref()),
+        Yaml::Value(Scalar::Integer(0)) => Some(false),
+        Yaml::Value(Scalar::Integer(1)) => Some(true),
         _ => None,
     }
 }

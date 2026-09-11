@@ -478,8 +478,11 @@ fn redacted_stderr(stderr: &str, offered: Option<&str>) -> String {
 /// they are how an operator tells a dead host from a refused key from a closed port - so this
 /// scrubs the password out rather than dropping `stderr` outright.
 fn unreachable_message(stderr: &str, offered: Option<&str>) -> String {
+    // The `Task failed: ` prefix is the reference's own, measured: it opens the `msg` of an
+    // UNREACHABLE and of a task that dies on a conditional, so a playbook testing
+    // `'Task failed' in result.msg` has to find it here too.
     format!(
-        "Failed to connect to the host via ssh: {}",
+        "Task failed: Failed to connect to the host via ssh: {}",
         first_words(
             &redacted_stderr(stderr, offered),
             "ssh failed without a message"

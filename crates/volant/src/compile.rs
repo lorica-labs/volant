@@ -24,6 +24,77 @@ use crate::playbook::{Block, Play, PlayTask, TaskOrBlock};
 use crate::roles::{RoleEntry, RoleSearch, RoleVars};
 use crate::stats::Refusal;
 
+/// Which tasks `--tags` and `--skip-tags` leave in.
+///
+/// This is ansible-core's own tag algebra, read off `Taggable.evaluate_tags` on 2.19.12 and
+/// measured case by case against it. Three things in it are easy to get wrong and each one was
+/// measured: a task carrying `always` survives every `--tags`, and survives `--skip-tags all`
+/// unless `always` is itself skipped; a task carrying `never` is left out of `--tags all` and of
+/// `--tags tagged`, and comes back only when something names it; and a task carrying no tag at
+/// all is not an empty set there but the one-element set `{untagged}`, which is why
+/// `--tags untagged` selects it and `--skip-tags untagged` drops it.
+///
+/// One selection serves the run and the four listings, so `--tags x` cannot show one list and
+/// run another.
+#[derive(Debug, Clone)]
+pub(crate) struct TagSelection {
+    run: Vec<String>,
+    skip: Vec<String>,
+}
+
+/// What the reference calls a task with no tags of its own.
+const UNTAGGED: &str = "untagged";
+
+impl TagSelection {
+    /// An empty `--tags` is the pseudo-tag `all`, which the reference substitutes before a play
+    /// ever sees the list. Doing it in the constructor rather than at each call site is what
+    /// keeps `never` out of a run nobody narrowed: with an empty list the first half of
+    /// [`TagSelection::selects`] does not run at all, and a `never` task would stay in.
+    pub fn new(run: Vec<String>, skip: Vec<String>) -> Self {
+        TagSelection {
+            run: if run.is_empty() {
+                vec!["all".to_string()]
+            } else {
+                run
+            },
+            skip,
+        }
+    }
+
+    pub fn selects(&self, tags: &[String]) -> bool {
+        let own: &[String] = tags;
+        let untagged = own.is_empty() || (own.len() == 1 && own[0] == UNTAGGED);
+        // An empty tag list reads as `{untagged}`, exactly as it does in the reference.
+        let carries = |name: &str| {
+            if own.is_empty() {
+                name == UNTAGGED
+            } else {
+                own.iter().any(|t| t == name)
+            }
+        };
+        let names = |list: &[String]| list.iter().any(|t| carries(t));
+        let listed = |list: &[String], name: &str| list.iter().any(|t| t == name);
+
+        let mut run = true;
+        if !self.run.is_empty() {
+            run = carries("always")
+                || (listed(&self.run, "all") && !carries("never"))
+                || names(&self.run)
+                || (listed(&self.run, "tagged") && !untagged && !carries("never"));
+        }
+        if run && !self.skip.is_empty() {
+            if listed(&self.skip, "all") {
+                // `--skip-tags all` is the one place `always` survives a skip, and it stops
+                // surviving the moment `always` is named alongside it.
+                run = carries("always") && !listed(&self.skip, "always");
+            } else if names(&self.skip) || (listed(&self.skip, "tagged") && !untagged) {
+                run = false;
+            }
+        }
+        run
+    }
+}
+
 /// What one step is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StepKind {
@@ -178,11 +249,27 @@ struct Builder<'a> {
     /// `tasks/main.yml` reads `<role>/tasks/sub/extra.yml`, and an `import_tasks` inside **that**
     /// file reads it beside itself.
     file_dir: PathBuf,
+    /// The `tasks/` directory of the role being compiled, if any: the first place an
+    /// `import_tasks` written inside a role looks.
+    role_tasks: Option<PathBuf>,
     /// How many roles and imported files are open above whatever is being compiled now.
     depth: usize,
+    /// Which tasks `--tags` and `--skip-tags` leave in. A task the selection drops is never
+    /// pushed, rather than pushed and filtered out afterwards: a `retain` over the finished
+    /// list would leave every `BlockSpan` pointing at the indices the list used to have, and a
+    /// span one step wide of the wrong step is how a host walks into a section it never entered.
+    selection: &'a TagSelection,
 }
 
 impl Builder<'_> {
+    /// The one place a step is added, so the tag selection cannot be honoured on one path and
+    /// forgotten on another.
+    fn push(&mut self, step: Step) {
+        if self.selection.selects(&step.task.tags) {
+            self.steps.push(step);
+        }
+    }
+
     fn items(
         &mut self,
         items: &[TaskOrBlock],
@@ -245,7 +332,7 @@ impl Builder<'_> {
         } else {
             StepKind::Task
         };
-        self.steps.push(Step {
+        self.push(Step {
             kind,
             task,
             block,
@@ -279,7 +366,18 @@ impl Builder<'_> {
             .or_else(|| task.args.get("_raw_params"))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
-        let path = self.file_dir.join(name);
+        // Inside a role the reference looks in the role's own `tasks/` **first** and only then
+        // beside the file that wrote the statement: measured on ansible-core 2.19.12 against the
+        // UBUNTU22-CIS role, where `tasks/section_1/cis_1.1.1.x.yml` writes
+        // `import_tasks: file: warning_facts.yml` and the file it means is `tasks/`'s, not its
+        // own directory's. Trying only the importer's directory - which is the second candidate
+        // there, and the one an import nested under a sub-directory needs - refuses a role the
+        // reference compiles.
+        let beside = self.file_dir.join(name);
+        let path = match &self.role_tasks {
+            Some(tasks) if tasks.join(name).is_file() => tasks.join(name),
+            _ => beside,
+        };
         if !path.is_file() {
             // Exit 1, measured, with the reference's own two sentences. The reference adds a
             // third naming Python's own errno, which this engine has nothing to say about.
@@ -356,8 +454,11 @@ impl Builder<'_> {
             params: entry.params.clone(),
         });
         if let Some(spec) = role.argument_spec {
-            let task = merge(&kw, &validation(entry, &path, spec));
-            self.steps.push(Step {
+            let task = merge(
+                &kw,
+                &validation(entry, &path, spec, role.argument_spec_description),
+            );
+            self.push(Step {
                 kind: StepKind::Task,
                 task,
                 block,
@@ -366,8 +467,10 @@ impl Builder<'_> {
             });
         }
         let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
+        let outer_role = self.role_tasks.replace(path.join("tasks"));
         let result = self.items(&role.tasks, &kw, block, section, Some(index));
         self.file_dir = previous;
+        self.role_tasks = outer_role;
         self.depth -= 1;
         result
     }
@@ -410,7 +513,24 @@ impl Builder<'_> {
 /// Measured: the banner reads `TASK [<role> : Validating arguments against arg spec '<entry>']`,
 /// the task runs on the controller, and a failure carries `argument_errors`,
 /// `argument_spec_data` and a `validate_args_context` naming the role and its absolute path.
-fn validation(entry: &RoleEntry, path: &Path, spec: Map<String, Value>) -> PlayTask {
+/// A spec carrying a `short_description` puts it after the entry name behind a dash, measured
+/// through `--list-tasks`: `Validating arguments against arg spec 'main' - The spec role`.
+fn validation(
+    entry: &RoleEntry,
+    path: &Path,
+    spec: Map<String, Value>,
+    description: Option<String>,
+) -> PlayTask {
+    let name = match description {
+        Some(text) => format!(
+            "Validating arguments against arg spec '{}' - {text}",
+            entry.from.tasks
+        ),
+        None => format!(
+            "Validating arguments against arg spec '{}'",
+            entry.from.tasks
+        ),
+    };
     let mut args = Map::new();
     args.insert("argument_spec".to_string(), Value::Object(spec));
     args.insert(
@@ -427,12 +547,14 @@ fn validation(entry: &RoleEntry, path: &Path, spec: Map<String, Value>) -> PlayT
         }),
     );
     PlayTask {
-        name: format!(
-            "Validating arguments against arg spec '{}'",
-            entry.from.tasks
-        ),
+        name,
+        named: true,
         module: "validate_argument_spec".to_string(),
         args,
+        // Measured on ansible-core 2.19.12: the check lists as
+        // `TAGS: [always, <the role entry's tags>]`, so it carries `always` and runs whatever
+        // `--tags` asks for - a role's arguments are validated before its tasks or not at all.
+        tags: vec!["always".to_string()],
         ..PlayTask::empty()
     }
 }
@@ -519,16 +641,28 @@ fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
 /// precedence against a host variable was measured in an earlier release and lives in the
 /// executor, which reads them from the play. A block is a task keyword, so its `become` does
 /// come down here.
-pub(crate) fn compile(play: &Play, search: &RoleSearch) -> anyhow::Result<Compiled> {
+pub(crate) fn compile(
+    play: &Play,
+    search: &RoleSearch,
+    selection: &TagSelection,
+) -> anyhow::Result<Compiled> {
     let mut builder = Builder {
         steps: Vec::new(),
         blocks: Vec::new(),
         roles: Vec::new(),
         search,
         file_dir: play.dir.clone(),
+        role_tasks: None,
         depth: 0,
+        selection,
     };
-    let empty = PlayTask::empty();
+    // The play's own tags are the outermost layer of the merge, so every task under it - in a
+    // role, in an imported file, at any block depth - carries them for the selection and for
+    // the listing. Measured: `--skip-tags <play tag>` leaves a play with nothing to do.
+    let empty = PlayTask {
+        tags: play.tags.clone(),
+        ..PlayTask::empty()
+    };
     builder.items(&play.pre_tasks, &empty, None, Section::Body, None)?;
     let mut seen: Seen = Vec::new();
     for entry in &play.roles {
@@ -594,6 +728,19 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .become_user
         .clone()
         .or_else(|| outer.become_user.clone());
+    // Tags are a set, and they only ever grow downwards: measured on ansible-core 2.19.12, a
+    // task inside a block tagged `outer` is selected by `--skip-tags outer` as surely as the
+    // block is, and it lists as `TAGS: [inner, outer]` with its own. Sorted and deduplicated
+    // here because every reader of the list treats it as a set - the listings sort what they
+    // print, and the selection asks whether a name is in it.
+    task.tags = inner
+        .tags
+        .iter()
+        .chain(&outer.tags)
+        .cloned()
+        .collect::<Vec<_>>();
+    task.tags.sort_unstable();
+    task.tags.dedup();
     // The outer map first, so a name the task sets itself keeps the task's value.
     let mut vars = outer.vars.clone();
     vars.extend(inner.vars.clone());
@@ -639,6 +786,16 @@ fn seek(c: &Compiled, from: usize, entered: &[usize]) -> usize {
                 .any(|(id, section)| section == Section::Rescue && !entered.contains(&id))
         })
         .unwrap_or(c.steps.len())
+}
+
+/// Whether a step sits in the `block:` list of every block around it.
+///
+/// Measured on ansible-core 2.19.12: `--list-tasks` and `--list-tags` walk a block's body and
+/// nothing else, so a task written in a `rescue:` or an `always:` is listed nowhere and its tags
+/// do not reach `TASK TAGS`. That is the reference's own behaviour, not an omission of ours -
+/// which is why the listing asks this rather than filtering by hand.
+pub(crate) fn listed(c: &Compiled, index: usize) -> bool {
+    ancestors(c, index).all(|(_, section)| section == Section::Body)
 }
 
 /// The step a host starts the play on. Not always the first one: `block: []` with a `rescue`
@@ -707,8 +864,19 @@ mod tests {
     use crate::playbook::parse;
 
     fn compiled(text: &str) -> Compiled {
+        selected(text, &selection(&[], &[]))
+    }
+
+    fn selected(text: &str, selection: &TagSelection) -> Compiled {
         let pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
-        compile(&pb.plays[0], &RoleSearch::default()).unwrap_or_else(|e| panic!("{e:#}"))
+        compile(&pb.plays[0], &RoleSearch::default(), selection).unwrap_or_else(|e| panic!("{e:#}"))
+    }
+
+    fn selection(run: &[&str], skip: &[&str]) -> TagSelection {
+        TagSelection::new(
+            run.iter().map(|s| s.to_string()).collect(),
+            skip.iter().map(|s| s.to_string()).collect(),
+        )
     }
 
     fn names(c: &Compiled) -> Vec<&str> {
@@ -1126,6 +1294,148 @@ mod tests {
         assert_eq!(c.steps[0].kind, StepKind::Meta);
         assert_eq!(meta_action(&c.steps[0].task), "noop");
         assert_eq!(c.steps[1].kind, StepKind::Task);
+    }
+
+    /// The measurement playbook the tag algebra was read off, task for task.
+    const TAGGED: &str = r#"
+- hosts: all
+  tasks:
+    - name: a
+      debug: msg=a
+      tags: [x]
+    - name: b
+      debug: msg=b
+      tags: y
+    - name: c-always
+      debug: msg=c
+      tags: always
+    - name: d-never
+      debug: msg=d
+      tags: never
+    - block:
+        - name: e-in-block
+          debug: msg=e
+      tags: [blk]
+    - name: f-untagged
+      debug: msg=f
+"#;
+
+    /// Every selection measured against ansible-core 2.19.12 on this exact playbook, each one
+    /// asserting the whole list of surviving names rather than the presence of one of them.
+    ///
+    /// What would make this red: `always` treated as an ordinary tag, which turns `--tags x`
+    /// into `[a]` and empties `--tags never`, `--tags untagged` and `--tags blk` of the one
+    /// task that has to be in all four; `never` forgotten, which puts `d-never` into the
+    /// default list; `untagged` read as an empty set rather than as the reference's
+    /// one-element `{untagged}`, which breaks `--tags untagged` and `--skip-tags untagged` in
+    /// opposite directions; or `--skip-tags all` reading as "skip everything", which drops the
+    /// `always` task the reference keeps.
+    #[test]
+    fn every_measured_tag_selection_keeps_the_tasks_the_reference_keeps() {
+        let cases: &[(&[&str], &[&str], &[&str])] = &[
+            (
+                &[],
+                &[],
+                &["a", "b", "c-always", "e-in-block", "f-untagged"],
+            ),
+            (
+                &["all"],
+                &[],
+                &["a", "b", "c-always", "e-in-block", "f-untagged"],
+            ),
+            (&["x"], &[], &["a", "c-always"]),
+            (&["blk"], &[], &["c-always", "e-in-block"]),
+            (&["never"], &[], &["c-always", "d-never"]),
+            (&["untagged"], &[], &["c-always", "f-untagged"]),
+            (&["tagged"], &[], &["a", "b", "c-always", "e-in-block"]),
+            (&["nosuchtag"], &[], &["c-always"]),
+            (&[], &["y"], &["a", "c-always", "e-in-block", "f-untagged"]),
+            (&[], &["always"], &["a", "b", "e-in-block", "f-untagged"]),
+            (
+                &[],
+                &["never"],
+                &["a", "b", "c-always", "e-in-block", "f-untagged"],
+            ),
+            (&[], &["untagged"], &["a", "b", "c-always", "e-in-block"]),
+            (&[], &["tagged"], &["f-untagged"]),
+            (&[], &["all"], &["c-always"]),
+            (&["x"], &["x"], &["c-always"]),
+        ];
+        for (run, skip, want) in cases {
+            let c = selected(TAGGED, &selection(run, skip));
+            assert_eq!(names(&c), *want, "--tags {run:?} --skip-tags {skip:?}");
+        }
+    }
+
+    /// A block's tags reach the tasks under it and join whatever they carry themselves, at any
+    /// depth, and the play's own tags reach all of them.
+    ///
+    /// What would make this red: the merge overwriting instead of joining, which loses either
+    /// the inner tag or the outer one and makes one of the two `--tags` below select nothing.
+    #[test]
+    fn tags_accumulate_from_the_play_down_through_nested_blocks() {
+        let text = r#"
+- hosts: all
+  tags: [play]
+  tasks:
+    - block:
+        - block:
+            - name: deep
+              debug: msg=d
+              tags: [own]
+          tags: [inner]
+      tags: [outer]
+"#;
+        let c = compiled(text);
+        assert_eq!(c.steps[0].task.tags, ["inner", "outer", "own", "play"]);
+        for tag in ["play", "outer", "inner", "own"] {
+            assert_eq!(
+                names(&selected(text, &selection(&[tag], &[]))),
+                ["deep"],
+                "--tags {tag}"
+            );
+            assert!(
+                names(&selected(text, &selection(&[], &[tag]))).is_empty(),
+                "--skip-tags {tag}"
+            );
+        }
+    }
+
+    /// A block whose tasks the selection all drops leaves a span with nothing in it, and the
+    /// spans of everything around it still cover exactly the steps they hold.
+    ///
+    /// What would make this red: filtering the finished list instead of never pushing the
+    /// dropped steps. Every span after the first dropped step would then be off by one, which
+    /// sends a host into a section it never entered.
+    #[test]
+    fn filtering_leaves_every_span_covering_its_own_steps() {
+        let c = selected(
+            r#"
+- hosts: all
+  tasks:
+    - name: kept before
+      debug: msg=a
+      tags: [keep]
+    - block:
+        - name: dropped
+          debug: msg=b
+      always:
+        - name: kept cleanup
+          debug: msg=c
+          tags: [keep]
+      tags: [drop]
+    - name: kept after
+      debug: msg=d
+      tags: [keep]
+"#,
+            &selection(&["keep"], &[]),
+        );
+        assert_eq!(names(&c), ["kept before", "kept cleanup", "kept after"]);
+        let span = &c.blocks[0];
+        assert_eq!(span.body, 1..1, "the body lost its only task");
+        assert_eq!(span.rescue, 1..1);
+        assert_eq!(span.always, 1..2);
+        assert_eq!(walk(&c, 0), ["kept before", "kept cleanup", "kept after"]);
     }
 
     /// The action table is the reference's own list, sorted and free of duplicates.

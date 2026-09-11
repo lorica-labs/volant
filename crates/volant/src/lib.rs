@@ -8,6 +8,7 @@ pub mod config;
 pub(crate) mod executor;
 pub mod inventory;
 pub mod keywords;
+pub(crate) mod listing;
 pub mod playbook;
 pub mod preflight;
 pub(crate) mod render;

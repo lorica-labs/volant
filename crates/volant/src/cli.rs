@@ -9,10 +9,11 @@ use anstream::ColorChoice;
 use clap::Parser;
 use tokio::sync::watch;
 
-use crate::compile::{self, Compiled};
+use crate::compile::{self, Compiled, TagSelection};
 use crate::config::Config;
 use crate::executor::{self, RunOptions, RunState};
 use crate::inventory::{Host, Inventory};
+use crate::listing::{self, Listing};
 use crate::render::Renderer;
 use crate::roles::RoleSearch;
 use crate::stats::{Refusal, Stats, error_code, exit_code};
@@ -35,6 +36,24 @@ pub struct PlaybookArgs {
     /// Limit the play to this host pattern.
     #[arg(short = 'l', long = "limit", value_name = "SUBSET")]
     pub limit: Option<String>,
+    /// Only run tasks carrying these tags. Comma-separated, repeatable.
+    #[arg(short = 't', long = "tags", value_name = "TAGS")]
+    pub tags: Vec<String>,
+    /// Only run tasks carrying none of these tags. Comma-separated, repeatable.
+    #[arg(long = "skip-tags", value_name = "SKIP_TAGS")]
+    pub skip_tags: Vec<String>,
+    /// List the tasks the run would execute, and stop.
+    #[arg(long = "list-tasks")]
+    pub list_tasks: bool,
+    /// List the tags the run would select, and stop.
+    #[arg(long = "list-tags")]
+    pub list_tags: bool,
+    /// List the hosts each play would run on, and stop.
+    #[arg(long = "list-hosts")]
+    pub list_hosts: bool,
+    /// Load and compile the playbooks without running anything.
+    #[arg(long = "syntax-check")]
+    pub syntax_check: bool,
     /// Disable coloured output.
     #[arg(long)]
     pub no_color: bool,
@@ -114,11 +133,26 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .iter()
         .map(|p| playbook::load(p))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let mode = Listing {
+        tasks: args.list_tasks,
+        tags: args.list_tags,
+        hosts: args.list_hosts,
+        syntax: args.syntax_check,
+    };
+    let selection = tag_selection(args, &config, &mode);
     // Every playbook is loaded first, then every one of them is checked, so an operator gets
     // the refusal for the second playbook before the first one has touched a host. Nothing
     // below this line may assume a keyword was handled that the pre-flight did not let past.
-    for pb in &playbooks {
-        preflight::check(pb)?;
+    //
+    // A listing skips this on purpose. It connects to nothing and runs nothing, so a playbook
+    // this release cannot execute still lists, which is what lets an operator read a role
+    // before the release that runs its modules. What it does not skip is the loader's own
+    // refusals above, or the compilation's below: a playbook the reference cannot parse, or a
+    // role nobody can find, is still refused here with the reference's own code.
+    if !mode.wanted() {
+        for pb in &playbooks {
+            preflight::check(pb)?;
+        }
     }
     // Roles are read and spliced here, before the first `PLAY` banner: a role nobody can find
     // stops the run with nothing printed, which is where the reference stops it too. The whole
@@ -129,9 +163,43 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         let mut plays = Vec::new();
         for play in &pb.plays {
             let search = RoleSearch::new(&play.dir, &config);
-            plays.push(compile::compile(play, &search).map_err(|e| Refusal::or(4, e))?);
+            plays.push(compile::compile(play, &search, &selection).map_err(|e| Refusal::or(4, e))?);
         }
         compiled.push(plays);
+    }
+    // The subset the whole run is narrowed to, resolved before anything else looks at a host.
+    // The reference resolves it here too, before it reads a play: a `--limit` matching nothing
+    // stops a listing as surely as it stops a run, measured, exit 1.
+    let limit = resolve_limit(args, &inventory, out)?;
+    // `resolve` recomputes inventory-load-time warnings (e.g. a host/group homonym) on every
+    // call, matching Ansible's own semantics for a single resolution; but a playbook with N plays
+    // calls `resolve` N times, and Ansible only ever prints such a warning once per run, at
+    // inventory load. Deduplicating here, at the point of printing, keeps `resolve`'s contract
+    // (its `Resolution.warnings` always reflects the truth for that one call, which callers other
+    // than this CLI loop may rely on) while matching the reference's once-per-run output.
+    let mut warned: HashSet<String> = HashSet::new();
+    if mode.wanted() {
+        let mut entries: Vec<listing::PlaybookEntry> = Vec::new();
+        for (argument, (pb, steps)) in args.playbooks.iter().zip(playbooks.iter().zip(&compiled)) {
+            let mut plays = Vec::new();
+            for (play, compiled) in pb.plays.iter().zip(steps) {
+                // Resolved even for `--list-tasks`, which never prints a host: the reference
+                // warns about a pattern nothing matches whichever listing was asked for, and
+                // that warning is the only sign an operator gets of a typo in `hosts:`.
+                let hosts = play_hosts(&inventory, play, &limit, out, &mut warned);
+                plays.push(listing::PlayEntry {
+                    play,
+                    compiled,
+                    hosts: hosts.into_iter().map(|h| h.name).collect(),
+                });
+            }
+            entries.push(listing::PlaybookEntry {
+                argument: argument.display().to_string(),
+                plays,
+            });
+        }
+        print!("{}", listing::render(&entries, mode));
+        return Ok(0);
     }
     // The second half of the pre-flight: what a role or an imported file brought in is refused
     // by its own name too, and before the first connection like everything else.
@@ -238,38 +306,6 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         links: HashMap::new(),
     };
 
-    let limit: Option<HashSet<String>> = match &args.limit {
-        None => None,
-        Some(pattern) => {
-            let resolution = inventory.resolve(pattern);
-            // A `--limit` naming a host that is not there is a warning and not a refusal, the
-            // way it is in a play's own `hosts`: measured, `-l web1,web-typo` warns
-            // `Could not match supplied host pattern, ignoring: web-typo` and then runs on
-            // `web1`. Losing it meant a mistyped name silently narrowed the run to nothing it
-            // was asked about.
-            for unmatched in &resolution.unmatched {
-                out.warning(&format!(
-                    "Could not match supplied host pattern, ignoring: {unmatched}"
-                ));
-            }
-            let names: HashSet<String> = resolution.hosts.into_iter().map(|h| h.name).collect();
-            if names.is_empty() {
-                // Exit 1, which is the reference's own code here, measured.
-                anyhow::bail!(
-                    "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
-                );
-            }
-            Some(names)
-        }
-    };
-
-    // `resolve` recomputes inventory-load-time warnings (e.g. a host/group homonym) on every
-    // call, matching Ansible's own semantics for a single resolution; but a playbook with N plays
-    // calls `resolve` N times, and Ansible only ever prints such a warning once per run, at
-    // inventory load. Deduplicating here, at the point of printing, keeps `resolve`'s contract
-    // (its `Resolution.warnings` always reflects the truth for that one call, which callers other
-    // than this CLI loop may rely on) while matching the reference's once-per-run output.
-    let mut warned: HashSet<String> = HashSet::new();
     // A controller with no local agent can still drive remote hosts, so the local agent only
     // has to be there once a play actually targets a host that runs one here. Saying so before
     // that play starts beats one `UNREACHABLE` per local host.
@@ -293,25 +329,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     state.vars.lock().expect("vars lock").rebase(&play.dir)?;
                     current_dir = play.dir.clone();
                 }
-                let resolution = inventory.resolve(&play.hosts);
-                for warning in &resolution.warnings {
-                    if warned.insert(warning.clone()) {
-                        out.warning(warning);
-                    }
-                }
-                for pattern in &resolution.unmatched {
-                    out.warning(&format!(
-                        "Could not match supplied host pattern, ignoring: {pattern}"
-                    ));
-                }
-                let hosts: Vec<Host> = match &limit {
-                    Some(allowed) => resolution
-                        .hosts
-                        .into_iter()
-                        .filter(|h| allowed.contains(&h.name))
-                        .collect(),
-                    None => resolution.hosts,
-                };
+                let hosts = play_hosts(&inventory, play, &limit, out, &mut warned);
                 if !local_agent_checked
                     && hosts.iter().any(|h| {
                         matches!(
@@ -350,6 +368,98 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     }
     // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))
+}
+
+/// The tags the run selects, from the configuration file, the environment and the command line.
+///
+/// Measured on ansible-core 2.19.12: `--tags` and `--skip-tags` **append** to the list
+/// `[tags] run` or `ANSIBLE_RUN_TAGS` set, rather than replacing it, because the option's own
+/// default is that list and `append` adds to a default. So `[tags] run = x` with `--tags y`
+/// selects `x` and `y`. A value is split on commas and trimmed wherever it came from, so
+/// `--tags x,y`, `--tags 'x, y'` and `--tags x --tags y` are the same three-word request.
+///
+/// `--list-tags` with nothing asked for is the one place the reference widens the selection
+/// instead of narrowing it: measured, it lists `never` tags too, because the point of the
+/// command is to show every tag a playbook has. A `--tags` or a `--skip-tags` from any source
+/// takes that back.
+fn tag_selection(args: &PlaybookArgs, config: &Config, mode: &Listing) -> TagSelection {
+    let joined = |from_config: &[String], from_cli: &[String]| -> Vec<String> {
+        let mut tags = from_config.to_vec();
+        tags.extend(
+            from_cli
+                .iter()
+                .flat_map(|value| crate::config::tag_list(value)),
+        );
+        tags
+    };
+    let run = joined(&config.tags_run, &args.tags);
+    let skip = joined(&config.tags_skip, &args.skip_tags);
+    if run.is_empty() && skip.is_empty() && mode.tags {
+        return TagSelection::new(vec!["never".to_string(), "all".to_string()], Vec::new());
+    }
+    TagSelection::new(run, skip)
+}
+
+/// The host names `--limit` narrows the whole run to, or `None` when it was not given.
+///
+/// Exit 1 when it leaves nothing, which is the reference's own code, measured - and measured
+/// again for a listing: `--list-hosts --limit nosuch` exits 1 there too, printing nothing.
+fn resolve_limit(
+    args: &PlaybookArgs,
+    inventory: &Inventory,
+    out: &mut Renderer,
+) -> anyhow::Result<Option<HashSet<String>>> {
+    let Some(pattern) = &args.limit else {
+        return Ok(None);
+    };
+    let resolution = inventory.resolve(pattern);
+    // A `--limit` naming a host that is not there is a warning and not a refusal, the way it is
+    // in a play's own `hosts`: measured, `-l web1,web-typo` warns `Could not match supplied host
+    // pattern, ignoring: web-typo` and then runs on `web1`. Losing it meant a mistyped name
+    // silently narrowed the run to nothing it was asked about.
+    for unmatched in &resolution.unmatched {
+        out.warning(&format!(
+            "Could not match supplied host pattern, ignoring: {unmatched}"
+        ));
+    }
+    let names: HashSet<String> = resolution.hosts.into_iter().map(|h| h.name).collect();
+    if names.is_empty() {
+        anyhow::bail!(
+            "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
+        );
+    }
+    Ok(Some(names))
+}
+
+/// The hosts one play would run on: its own pattern resolved, narrowed by `--limit`. One
+/// function for the run and for `--list-hosts`, so the listing cannot show a host list the run
+/// would not use.
+fn play_hosts(
+    inventory: &Inventory,
+    play: &playbook::Play,
+    limit: &Option<HashSet<String>>,
+    out: &mut Renderer,
+    warned: &mut HashSet<String>,
+) -> Vec<Host> {
+    let resolution = inventory.resolve(&play.hosts);
+    for warning in &resolution.warnings {
+        if warned.insert(warning.clone()) {
+            out.warning(warning);
+        }
+    }
+    for pattern in &resolution.unmatched {
+        out.warning(&format!(
+            "Could not match supplied host pattern, ignoring: {pattern}"
+        ));
+    }
+    match limit {
+        Some(allowed) => resolution
+            .hosts
+            .into_iter()
+            .filter(|h| allowed.contains(&h.name))
+            .collect(),
+        None => resolution.hosts,
+    }
 }
 
 /// Reads the escalation password from the terminal, with the prompt on stderr so a redirected

@@ -1,0 +1,7 @@
+argument_specs:
+  main:
+    short_description: The spec role
+    options:
+      p:
+        type: str
+        required: true

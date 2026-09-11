@@ -1,0 +1,16 @@
+# What is spliced and what is not: import_tasks hands its tags to the file it reads,
+# include_tasks stays one unexpanded task, and import_playbook adds its plays to this file.
+- name: imports play
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: the import
+      import_tasks: imported.yml
+      tags: [imp]
+    - name: the include
+      include_tasks: imported.yml
+      tags: [inc]
+    - import_role:
+        name: base
+      tags: [ir]
+- import_playbook: subplay.yml

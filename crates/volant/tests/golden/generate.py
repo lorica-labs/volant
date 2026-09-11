@@ -5,6 +5,7 @@ The interpreter comes from the ansible-core tool environment, so PyYAML is avail
 """
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -64,7 +65,7 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
-    return inventory()
+    return inventory() or listings()
 
 
 HOMONYM_WARNING = "Found both group and host with same name"
@@ -100,6 +101,47 @@ def inventory():
         )
         f.write("\n")
     print(f"inventory golden: {len(hostvars)} hosts, {len(patterns)} patterns")
+    return 0
+
+
+def listings():
+    """What `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check` print, byte for
+    byte, for every invocation in listing/args.txt.
+
+    The fixtures in listing/ are written so this recording can be compared with anything: no
+    play carries more than one tag and no play used with --list-hosts matches more than one
+    host, because the reference prints both out of a Python set and a set of two short strings
+    iterates in an order that changes from one process to the next (measured: four distinct
+    orders in eight runs of the same command). Adding a second tag or a second host to one of
+    those plays would make this golden flap rather than fail.
+
+    Only stdout and the exit code are recorded. stderr carries warnings whose wording is a
+    separate question from the layout this gate exists to pin.
+    """
+    here = os.path.join(HERE, "listing")
+    env = dict(os.environ, ANSIBLE_NOCOLOR="1")
+    # An ansible.cfg anywhere above this directory would otherwise change the answers - roles
+    # path, tags, anything. The recording has to depend on the fixtures alone.
+    env.pop("ANSIBLE_CONFIG", None)
+    for name in list(env):
+        if name.startswith("ANSIBLE_"):
+            del env[name]
+    env["ANSIBLE_NOCOLOR"] = "1"
+    expected = {}
+    with open(os.path.join(here, "args.txt"), encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            run = subprocess.run(
+                ["ansible-playbook", "-i", "inv.ini", *shlex.split(line)],
+                cwd=here, env=env, capture_output=True, text=True,
+            )
+            expected[line] = {"stdout": run.stdout, "code": run.returncode}
+    with open(os.path.join(HERE, "expected_listing.json"), "w", encoding="utf-8") as f:
+        json.dump(expected, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+    print(f"listing golden: {len(expected)} invocations recorded")
     return 0
 
 

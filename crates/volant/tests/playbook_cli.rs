@@ -469,6 +469,60 @@ fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// `[tags] run`, `ANSIBLE_RUN_TAGS` and `--tags` are three sources of one list, and the command
+/// line **adds** to whichever of the other two was read rather than replacing it.
+///
+/// Measured on ansible-core 2.19.12: with `[tags] run = x` in `ansible.cfg`, `--tags y` lists
+/// the `x` task **and** the `y` task. The option's own default is that list and the option
+/// appends to its default, so a command line can only ever widen what the file asked for. An
+/// engine that took the command line as a replacement would run less than the reference does
+/// from the same two files, silently.
+///
+/// What would make this red: either source dropped, which selects only the other one's tasks;
+/// or the command line replacing rather than adding, which loses the `x` task here.
+#[test]
+fn the_three_sources_of_a_tag_list_add_up() {
+    let dir = std::env::temp_dir().join(format!("volant-cfgtags-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = dir.join("ansible.cfg");
+    std::fs::write(&cfg, "[tags]\nrun = x\n").unwrap();
+    let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
+    let list = |run_tags: Option<&str>, args: &[&str]| -> String {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+        command
+            .args(["playbook", "-i", "inv.ini", "--list-tasks"])
+            .args(args)
+            .arg("tags.yml")
+            .current_dir(&listing)
+            .env("NO_COLOR", "1")
+            .env("ANSIBLE_CONFIG", cfg.display().to_string())
+            .env_remove("ANSIBLE_RUN_TAGS")
+            .env_remove("ANSIBLE_SKIP_TAGS");
+        if let Some(tags) = run_tags {
+            command.env("ANSIBLE_RUN_TAGS", tags);
+        }
+        String::from_utf8_lossy(&command.output().unwrap().stdout).to_string()
+    };
+    let from_file = list(None, &[]);
+    assert!(
+        from_file.contains("\n      a\t") && !from_file.contains("\n      b\t"),
+        "the file's own list is read: {from_file}"
+    );
+    let both = list(None, &["--tags", "y"]);
+    assert!(
+        both.contains("\n      a\t") && both.contains("\n      b\t"),
+        "the command line adds to the file's list, it does not replace it: {both}"
+    );
+    // The environment replaces the file, and the command line then adds to the environment.
+    let from_env = list(Some("y"), &[]);
+    assert!(
+        from_env.contains("\n      b\t") && !from_env.contains("\n      a\t"),
+        "the environment replaces the file's list: {from_env}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
     let out = volant(&[
@@ -1285,13 +1339,14 @@ fn a_missing_vars_files_entry_is_skipped() {
         &fixture("vars/inventory.ini"),
         &fixture("bad-vars-file.yml"),
     ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
+    // Both streams: the play's own output is on stdout and the warning is on stderr, where
+    // ansible-playbook puts every warning it prints.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
         text.contains(r#"ok: [alpha] => {"msg": "reached on alpha"}"#)
             && text.contains(r#"ok: [beta] => {"msg": "reached on beta"}"#),
@@ -1724,6 +1779,17 @@ const RUNS_PROBES: &[RunsProbe] = &[
         2,
         "nosuchuser-volant-probe",
     ),
+    // The playbook asks for a task that cannot succeed and then excludes it by tag. Selecting
+    // nothing leaves the failure in the run, so deleting the selection turns exit 0 into exit 2
+    // -- a red that cannot be produced by the tag being read and then ignored.
+    runs(
+        "task",
+        "tags",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      tags: [probe]\n    - name: Never selected\n      command: nosuchbinary-volant-probe\n      tags: [other]\n",
+        &["--tags", "probe"],
+        0,
+        "\"msg\": \"probe\"",
+    ),
     runs(
         "task",
         "changed_when",
@@ -1911,6 +1977,17 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "TASK [A named probe]",
     ),
+    // The play's tags have to reach the task under it: the task carries none of its own, so
+    // `--tags probe` selects it only through the play. Deleting the inheritance selects nothing,
+    // the command that cannot succeed never runs, and the exit code drops from 2 to 0.
+    runs(
+        "play",
+        "tags",
+        "- hosts: localhost\n  gather_facts: false\n  tags: [probe]\n  tasks:\n    - name: Probe task\n      command: nosuchbinary-volant-probe\n",
+        &["--tags", "probe"],
+        2,
+        "nosuchbinary-volant-probe",
+    ),
     runs(
         "play",
         "vars",
@@ -1989,6 +2066,16 @@ const RUNS_PROBES: &[RunsProbe] = &[
         &[],
         0,
         "...ignoring",
+    ),
+    // Same shape one level in: the task carries no tag of its own and is selected only through
+    // the block's. Deleting the inheritance selects nothing and the run exits 0 instead of 2.
+    runs(
+        "block",
+        "tags",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: nosuchbinary-volant-probe\n      tags: [probe]\n",
+        &["--tags", "probe"],
+        2,
+        "nosuchbinary-volant-probe",
     ),
     runs(
         "block",

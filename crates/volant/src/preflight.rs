@@ -190,7 +190,7 @@ mod tests {
     /// dropped here, which is exactly the silent skip this module exists to stop.
     #[test]
     fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["until", "notify", "no_log", "tags", "environment"] {
+        for kw in ["until", "notify", "no_log", "run_once", "environment"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
             ));
@@ -353,7 +353,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            105,
+            102,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

@@ -1,0 +1,6 @@
+- name: spec named task
+  debug: msg=spec
+  notify: touched
+- debug: msg=unnamed
+- include_role:
+    name: child

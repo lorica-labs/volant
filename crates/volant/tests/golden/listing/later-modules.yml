@@ -1,0 +1,18 @@
+# Everything here loads in the reference and none of it runs in this release: a module that has
+# not been written yet, a keyword that is still refused before the first connection, and a
+# second one. Listing it is the point - a playbook can be read before the release that runs it.
+- name: later play
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a line in a file
+      lineinfile:
+        path: /tmp/volant-listing-probe
+        line: hello
+    - name: fired and forgotten
+      command: "true"
+      async: 5
+      poll: 0
+    - name: run somewhere else
+      debug: msg=elsewhere
+      delegate_to: h2

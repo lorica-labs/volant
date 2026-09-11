@@ -1,0 +1,45 @@
+# One ansible-playbook invocation per line, run in this directory with `-i inv.ini`. Each line
+# is a key of expected_listing.json and a case of the golden test.
+--list-tasks tags.yml
+--list-tasks --tags x tags.yml
+--list-tasks --tags blk tags.yml
+--list-tasks --tags never tags.yml
+--list-tasks --tags untagged tags.yml
+--list-tasks --tags tagged tags.yml
+--list-tasks --tags nosuchtag tags.yml
+--list-tasks --tags x --tags y tags.yml
+--list-tasks --tags x,y tags.yml
+--list-tasks --skip-tags y tags.yml
+--list-tasks --skip-tags always tags.yml
+--list-tasks --skip-tags tagged tags.yml
+--list-tasks --skip-tags all tags.yml
+--list-tasks --tags x --skip-tags x tags.yml
+--list-tags tags.yml
+--list-tags --tags x tags.yml
+--list-tasks roles.yml
+--list-tasks --tags rt roles.yml
+--list-tags roles.yml
+--list-hosts roles.yml
+--list-hosts --limit h1 roles.yml
+--list-tasks blocks.yml
+--list-tasks --tags inner blocks.yml
+--list-tasks --skip-tags outer blocks.yml
+--list-tags blocks.yml
+--list-tasks imports.yml
+--list-tasks --tags own imports.yml
+--list-tasks --tags inc imports.yml
+--list-tags imports.yml
+--list-hosts imports.yml
+--list-tasks meta.yml
+--list-tasks --tags m meta.yml
+--list-tasks later-modules.yml
+--list-hosts hosts.yml
+--list-hosts --limit h1 hosts.yml
+--list-hosts --limit nosuchhost hosts.yml
+--list-hosts --list-tasks hosts.yml
+--list-tasks --list-tags tags.yml
+--syntax-check roles.yml
+--syntax-check later-modules.yml
+--syntax-check tags.yml roles.yml
+--syntax-check --list-tasks tags.yml
+--list-tasks tags.yml roles.yml

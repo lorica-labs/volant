@@ -1,0 +1,23 @@
+# Blocks: a named one whose name is shown nowhere, a nested one, a tag on each, and the two
+# sections this release cannot enter yet.
+- name: blocks play
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a named block
+      block:
+        - name: in the body
+          debug: msg=body
+        - block:
+            - name: deep in a nested block
+              debug: msg=deep
+          tags: [inner]
+      rescue:
+        - name: in the rescue
+          debug: msg=rescue
+      always:
+        - name: in the always
+          debug: msg=always
+      tags: [outer]
+    - name: outside every block
+      debug: msg=outside

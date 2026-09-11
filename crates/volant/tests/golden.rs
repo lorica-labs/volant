@@ -137,6 +137,66 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
     );
 }
 
+/// Every invocation in `tests/golden/listing/args.txt`, compared with ansible-core's own output
+/// byte for byte.
+///
+/// This is the widest gate in the suite and the cheapest. The four listing commands print what
+/// a compiled play *is*, so the recording covers the things behavioural tests reach only
+/// indirectly: the order roles and their dependencies are spliced in, the `role : name` prefix
+/// and its absence on an unnamed task, an `import_tasks` expanded where it stands while an
+/// `include_tasks` stays one task, an `import_playbook` numbering its plays into the file that
+/// read it, the tags a block hands down, and which tasks a `--tags` leaves out.
+///
+/// What would make this red: a space, a tab, a tag out of order, a `never` task listed, an
+/// include expanded, a role prefix on a task that has no name of its own - and any of the
+/// compilation differences above.
+///
+/// The fixtures avoid the two places the reference is not reproducible: a play with two tags
+/// and a play matching two hosts both print out of a Python set, whose iteration order changes
+/// between processes. See `generate.py`'s `listings()`.
+#[test]
+fn every_listing_matches_the_reference_byte_for_byte() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
+    let expected: serde_json::Map<String, Value> =
+        serde_json::from_str(include_str!("golden/expected_listing.json"))
+            .expect("expected_listing.json parses");
+    let mut failures = Vec::new();
+    for (line, want) in &expected {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_volant"))
+            .arg("playbook")
+            .args(["-i", "inv.ini"])
+            .args(line.split_whitespace())
+            .current_dir(&dir)
+            .env("NO_COLOR", "1")
+            .env_remove("COLUMNS")
+            // The recording was made with none of these set; one exported on the machine
+            // running the tests would change the answer for a reason that is not the engine's.
+            .env_remove("ANSIBLE_CONFIG")
+            .env_remove("ANSIBLE_ROLES_PATH")
+            .env_remove("ANSIBLE_INVENTORY")
+            .env_remove("ANSIBLE_RUN_TAGS")
+            .env_remove("ANSIBLE_SKIP_TAGS")
+            .output()
+            .expect("volant runs");
+        let got = String::from_utf8_lossy(&out.stdout);
+        let wanted = want["stdout"].as_str().expect("a recorded stdout");
+        let code = want["code"].as_i64().map(|c| c as i32);
+        if got != wanted || out.status.code() != code {
+            failures.push(format!(
+                "{line}\n--- reference (exit {code:?})\n{wanted}\n--- volant (exit {:?})\n{got}\n--- stderr\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} listing(s) differ from ansible-core:\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
 #[test]
 fn inventory_matches_the_reference() {
     let expected: Value =

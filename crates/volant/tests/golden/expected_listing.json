@@ -1,0 +1,174 @@
+{
+  "--list-hosts --limit h1 hosts.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n"
+  },
+  "--list-hosts --limit h1 roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n"
+  },
+  "--list-hosts --limit nosuchhost hosts.yml": {
+    "code": 1,
+    "stdout": ""
+  },
+  "--list-hosts --list-tasks hosts.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n    tasks:\n      t\tTAGS: []\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n    tasks:\n      t\tTAGS: []\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n    tasks:\n      t\tTAGS: []\n"
+  },
+  "--list-hosts hosts.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n"
+  },
+  "--list-hosts imports.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    pattern: ['web']\n    hosts (1):\n      h1\n"
+  },
+  "--list-hosts roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n"
+  },
+  "--list-tags --tags x tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n      TASK TAGS: [always, x]\n"
+  },
+  "--list-tags blocks.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n      TASK TAGS: [inner, outer]\n"
+  },
+  "--list-tags imports.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n      TASK TAGS: [imp, inc, ir, own]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n      TASK TAGS: [sub]\n"
+  },
+  "--list-tags roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n      TASK TAGS: [always, rt]\n"
+  },
+  "--list-tags tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n      TASK TAGS: [always, blk, never, x, y]\n"
+  },
+  "--list-tasks --list-tags tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      d-never\tTAGS: [never]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n      TASK TAGS: [always, blk, never, x, y]\n"
+  },
+  "--list-tasks --skip-tags all tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks --skip-tags always tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  "--list-tasks --skip-tags outer blocks.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      outside every block\tTAGS: []\n"
+  },
+  "--list-tasks --skip-tags tagged tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      f-untagged\tTAGS: []\n"
+  },
+  "--list-tasks --skip-tags y tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  "--list-tasks --tags blk tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n"
+  },
+  "--list-tasks --tags inc imports.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      the include\tTAGS: [inc]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n"
+  },
+  "--list-tasks --tags inner blocks.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      deep in a nested block\tTAGS: [inner, outer]\n"
+  },
+  "--list-tasks --tags m meta.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: meta.yml\n\n  play #1 (h1): meta play\tTAGS: []\n    tasks:\n      meta\tTAGS: [m]\n"
+  },
+  "--list-tasks --tags never tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      d-never\tTAGS: [never]\n"
+  },
+  "--list-tasks --tags nosuchtag tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks --tags own imports.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      imported one\tTAGS: [imp, own]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n"
+  },
+  "--list-tasks --tags rt roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n"
+  },
+  "--list-tasks --tags tagged tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n"
+  },
+  "--list-tasks --tags untagged tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      f-untagged\tTAGS: []\n"
+  },
+  "--list-tasks --tags x --skip-tags x tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks --tags x --tags y tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks --tags x tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks --tags x,y tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n"
+  },
+  "--list-tasks blocks.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      in the body\tTAGS: [outer]\n      deep in a nested block\tTAGS: [inner, outer]\n      outside every block\tTAGS: []\n"
+  },
+  "--list-tasks imports.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      imported one\tTAGS: [imp, own]\n      imported two\tTAGS: [imp]\n      the include\tTAGS: [inc]\n      base : base task\tTAGS: [ir]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n      a task of the imported play\tTAGS: [sub]\n"
+  },
+  "--list-tasks later-modules.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: later-modules.yml\n\n  play #1 (h1): later play\tTAGS: []\n    tasks:\n      a line in a file\tTAGS: []\n      fired and forgotten\tTAGS: []\n      run somewhere else\tTAGS: []\n"
+  },
+  "--list-tasks meta.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: meta.yml\n\n  play #1 (h1): meta play\tTAGS: []\n    tasks:\n      first\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: [m]\n      last\tTAGS: []\n"
+  },
+  "--list-tasks roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
+  },
+  "--list-tasks tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  "--list-tasks tags.yml roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n    tasks:\n      before the roles\tTAGS: []\n      base : base task\tTAGS: []\n      dird : dird task\tTAGS: []\n      spec : Validating arguments against arg spec 'main' - The spec role\tTAGS: [always, rt]\n      spec : spec named task\tTAGS: [rt]\n      debug\tTAGS: [rt]\n      include_role\tTAGS: [rt]\n      after the roles\tTAGS: []\n"
+  },
+  "--syntax-check --list-tasks tags.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n"
+  },
+  "--syntax-check later-modules.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: later-modules.yml\n"
+  },
+  "--syntax-check roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: roles.yml\n"
+  },
+  "--syntax-check tags.yml roles.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\nplaybook: roles.yml\n"
+  }
+}

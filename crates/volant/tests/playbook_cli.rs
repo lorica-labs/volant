@@ -1559,6 +1559,245 @@ fn a_cleanup_written_as_a_block_runs_all_of_it() {
     );
 }
 
+/// A failure a `rescue` takes is shown as a failure, counted as `rescued`, and the play goes
+/// on for that host - while a host that failed nothing walks past the rescue without entering
+/// it.
+///
+/// Measured on ansible-core 2.19.12 on this shape, two hosts, only `h1` failing: `h1` prints
+/// `fatal: [h1]: FAILED!`, the rescue runs on `h1` alone, the `always` runs on both, the step
+/// behind the block runs on both with `ansible_play_hosts` still two long, and the recap reads
+/// `failed=0 rescued=1` for `h1` and `rescued=0` for `h2`, exit 0.
+///
+/// What would make this red: a rescue nobody enters (no `TASK [Rescue task]`); a body that
+/// carries on under the failure (`Never reached on h1` showing a line for `h1`); a rescued
+/// failure counted as `failed`, which exits 2 where the reference exits 0; a rescued host taken
+/// out of the live set, which reads `hosts=1`; or `h2` walking into the rescue it has no
+/// business in.
+#[test]
+fn a_failure_in_a_block_is_rescued_and_the_play_goes_on() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("blocks/inv.ini"),
+            &fixture("blocks/rescue.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a rescued failure is not a failed run: {text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("fatal: [h1]: FAILED!"),
+        "a rescued task still says it failed: {text}"
+    );
+    let rescue = section(&text, "Rescue task");
+    assert!(
+        rescue.contains("Fails in the block / command / rc="),
+        "the rescue reads the two variables the failure set: {text}"
+    );
+    assert!(
+        !rescue.contains("[h2]"),
+        "only the host that failed enters the rescue: {text}"
+    );
+    let never = section(&text, "Never reached on h1");
+    assert!(
+        never.contains("changed: [h2]") && !never.contains("[h1]"),
+        "the body goes on for h2 and stops for h1: {text}"
+    );
+    assert!(
+        section(&text, "After the block").contains("\"msg\": \"hosts=2\""),
+        "a rescued host is still one of the play's hosts: {text}"
+    );
+    assert!(
+        text.contains("h1                         : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=1"),
+        "the failure is counted as rescued and nothing else: {text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=4    changed=3    unreachable=0    failed=0    skipped=1    rescued=0"),
+        "the host that failed nothing steps over the rescue: {text}"
+    );
+}
+
+/// A rescue that fails itself still runs the `always`, and then the host leaves the play.
+///
+/// Measured on ansible-core 2.19.12 on this shape: the `always` runs, the step behind the block
+/// does not run for that host, and the recap reads `failed=1 rescued=1` - the body's rescue is
+/// kept, the rescue's own failure is not rescued again - at exit 2. Measured with it: by the
+/// time its `always` runs, the host is already out of `ansible_play_hosts`.
+///
+/// What would make this red: an `always` skipped after a failed rescue, which drops the cleanup
+/// a playbook wrote for exactly this case; a rescue that rescues itself, which would loop; or a
+/// host carrying on into the play after its rescue failed.
+#[test]
+fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("blocks/inv.ini"),
+            &fixture("blocks/rescue-fails.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let always = section(&text, "Always after failed rescue");
+    assert!(
+        always.contains("[h1]") && always.contains("[h2]"),
+        "the cleanup runs for the host on its way out as well: {text}"
+    );
+    assert!(
+        always.contains("\"msg\": \"hosts=1\""),
+        "the host whose rescue failed has already left the live set: {text}"
+    );
+    assert!(
+        !section(&text, "Not reached on h1").contains("[h1]"),
+        "the host leaves the play after its cleanup: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=1"
+        ),
+        "the body's rescue is kept and the rescue's own failure stands: {text}"
+    );
+}
+
+/// A block whose `when` is false skips every task inside it, one line each.
+///
+/// Measured on ansible-core 2.19.12: the banner of each inner task is printed with a
+/// `skipping: [h]` under it, nested blocks included, and the recap counts one `skipped` per
+/// task rather than one per block.
+///
+/// What would make this red: a block skipped whole, which prints nothing and recaps
+/// `skipped=0` - a playbook's tasks silently absent from the run and from the report.
+#[test]
+fn a_block_whose_when_is_false_skips_every_task_inside() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/when-false.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches("skipping: [localhost]").count(),
+        2,
+        "one line per task inside the block, the nested one included: {text}"
+    );
+    assert!(
+        text.contains("localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=2"),
+        "both tasks are counted as skipped: {text}"
+    );
+}
+
+/// A host that cannot be reached is not rescued, and its `always` does not run either.
+///
+/// Measured on ansible-core 2.19.12: an unreachable host inside a block leaves the play at
+/// once, the rescue does not take it and the `always` is not run, the recap reads
+/// `unreachable=1 rescued=0` and the run exits 4. The trigger here is this engine's own - an
+/// unknown connection plugin, which it reports as `UNREACHABLE` - and what is under test is
+/// what a host leaving that way does to the sections around it.
+///
+/// What would make this red: an unreachable host routed through the failure path, which would
+/// print `msg: rescued`, exit 2 instead of 4, and report a host as recovered when nothing ever
+/// reached it.
+#[test]
+fn an_unreachable_host_is_not_rescued() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("blocks/unreachable.ini"),
+            &fixture("blocks/unreachable.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
+    assert!(
+        !text.contains("TASK [Rescue task]") && !text.contains("TASK [Always task]"),
+        "neither section runs for a host nothing reached: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0"
+        ),
+        "an unreachable host is counted once, as unreachable: {text}"
+    );
+}
+
+/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that
+/// names it.
+///
+/// The connection dies between two steps of a block's body, which is the one way a host can go
+/// unreachable with work already behind it. Measured on ansible-core 2.19.12: an unreachable
+/// host inside a block is not rescued and its `always` does not run either, and the run exits 4.
+///
+/// What would make this red - and it is the worst outcome this file guards against - a lost
+/// host routed into the rescue, which would print `rescued`, run the cleanup on a host that is
+/// not there, and exit 0 on a playbook that did half of what it says.
+#[test]
+fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/agent-dies.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("fatal: [localhost]: UNREACHABLE!"), "{text}");
+    for absent in [
+        "TASK [Never reached]",
+        "TASK [Rescue task]",
+        "TASK [Always task]",
+        "TASK [After the block]",
+    ] {
+        assert!(!text.contains(absent), "{absent} must not run: {text}");
+    }
+    assert!(
+        text.contains(
+            "localhost                  : ok=1    changed=1    unreachable=1    failed=0    skipped=0    rescued=0"
+        ),
+        "the step it did run is counted, and the loss is counted once: {text}"
+    );
+}
+
+/// A failure `ignore_errors` swallows never reaches the rescue: the body carries on.
+///
+/// Measured on ansible-core 2.19.12: the task prints `fatal:` followed by `...ignoring`, the
+/// next task of the body runs, the rescue does not, and the recap reads `ignored=1 rescued=0`
+/// at exit 0.
+///
+/// What would make this red: the rescue path reading the failure before `ignore_errors` does,
+/// which jumps into a recovery for a failure the playbook said to ignore and skips the rest of
+/// the body on the way.
+#[test]
+fn ignore_errors_inside_a_block_does_not_enter_the_rescue() {
+    let out = volant_within(
+        &["playbook", &fixture("blocks/ignored.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(
+        text.contains("TASK [Still in the body]"),
+        "the body carries on under an ignored failure: {text}"
+    );
+    assert!(
+        !text.contains("TASK [Never rescued]"),
+        "an ignored failure is not a failure to recover from: {text}"
+    );
+    assert!(
+        text.contains("localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1"),
+        "counted as ignored, never as rescued: {text}"
+    );
+}
+
 /// A `meta` shows one banner per live host and counts nothing.
 ///
 /// Measured on ansible-core 2.19.12 with three hosts, one of them already out of the play:
@@ -1679,8 +1918,8 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
             "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
         ),
         (
-            "rescue",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      rescue:\n        - command: echo sorry\n",
+            "notify",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      notify: probe\n",
         ),
         (
             "serial",
@@ -2024,6 +2263,17 @@ const RUNS_PROBES: &[RunsProbe] = &[
         &[],
         2,
         "TASK [Always probe]",
+    ),
+    // Measured on ansible-core 2.19.12: a task failing in the body sends the host into the
+    // rescue, and the run exits 0 with `rescued=1`. Written so the failure is the only thing
+    // that can end the run: drop the rescue's handling and the failure stands, exit 2.
+    runs(
+        "block",
+        "rescue",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: nosuchbinary-volant-probe\n      rescue:\n        - name: Rescue probe\n          command: echo hi\n",
+        &[],
+        0,
+        "TASK [Rescue probe]",
     ),
     // A block's own name is shown nowhere - measured, neither as a banner nor in a listing -
     // so what proves the keyword is read is that the block still runs with one written on it.

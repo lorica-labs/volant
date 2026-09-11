@@ -14,7 +14,9 @@ use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
-use crate::compile::{Compiled, Step, StepKind, after, after_failure, after_pending, first};
+use crate::compile::{
+    Compiled, Step, StepKind, after, after_failure, after_pending, first, rescue_target,
+};
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
@@ -1398,10 +1400,64 @@ fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) ->
     Value::Object(agg)
 }
 
-fn classify(result: &TaskResult, ignore_errors: bool) -> Outcome {
+/// `ansible_failed_task`: the task that failed, as a rescue reads it.
+///
+/// Measured on ansible-core 2.19.12 with a `command` carrying `register`, `when`, `tags` and
+/// `vars`: the dictionary holds one key per task keyword, `action` holding the module's short
+/// name, plus six keys of the engine's own (`uuid`, `finalized`, `squashed`, `_resolved_action`,
+/// `async_val`, `loop_with`) that describe nothing a playbook wrote. Those six are deliberately
+/// not reproduced, and neither are the `_ansible_*` keys the reference adds to `args` on its way
+/// to the module.
+///
+/// The keys come from the keyword table itself rather than from a list written here, so a
+/// keyword added to the grammar appears in this dictionary too. Two families are left out
+/// because the reference has already resolved them by the time it builds it: `local_action`,
+/// which is folded into `action`, and the `with_*` lookups, which are folded into `loop`.
+///
+/// A keyword this release parks reads `null` here rather than the reference's default. The
+/// default would describe something nothing in this engine honours, and a rescue reading
+/// `ansible_failed_task.connection` is better told nothing than told `ssh` by an engine that
+/// never looked at the keyword.
+///
+/// `become_method` is not one of those: this release honours it. It reads `null` here anyway
+/// because its resolved value lives with the host's variables, not on `PlayTask`, and this
+/// function only takes the task - not because nothing looked at the keyword.
+fn failed_task_value(task: &PlayTask) -> Value {
+    let mut out = Map::new();
+    let strings = |list: &[String]| Value::Array(list.iter().map(|s| json!(s)).collect());
+    for kw in crate::keywords::TASK_KEYWORDS {
+        if kw.name == "local_action" || kw.name.starts_with("with_") {
+            continue;
+        }
+        let value = match kw.name {
+            "action" => json!(short_name(&task.module)),
+            "args" => Value::Object(task.args.clone()),
+            "become" => json!(task.r#become),
+            "become_user" => json!(task.become_user),
+            "changed_when" => strings(&task.changed_when),
+            "failed_when" => strings(&task.failed_when),
+            "ignore_errors" => json!(task.ignore_errors),
+            "loop" => task.loop_items.clone().unwrap_or(Value::Null),
+            "loop_control" => json!({"loop_var": task.loop_var, "label": task.loop_label}),
+            "name" => json!(task.name),
+            "register" => json!(task.register),
+            "tags" => strings(&task.tags),
+            "timeout" => json!(task.timeout),
+            "vars" => Value::Object(task.vars.clone()),
+            "when" => strings(&task.when),
+            _ => Value::Null,
+        };
+        out.insert(kw.name.to_string(), value);
+    }
+    Value::Object(out)
+}
+
+fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool) -> Outcome {
     if result.failed() {
         if ignore_errors {
             Outcome::Ignored
+        } else if rescuable {
+            Outcome::Rescued
         } else {
             Outcome::Failed
         }
@@ -1454,23 +1510,47 @@ async fn drive_host(
     let n = plan.compiled.steps.len();
     skipped(&tx, &name, 0..pos).await;
     let mut batch_id: u64 = 0;
-    // The step a failure was just reported at, and the `always` section this host is draining
-    // on its way out - as the index that section ends at. Those two are the only state a
-    // failure adds: the coordinator still knows one thing about a host, that it failed.
-    let mut failed_at: Option<usize> = None;
+    // The step a failure was just reported at with the result it failed with, and the `always`
+    // section this host is draining on its way out - as the index that section ends at. Those
+    // two are the only state a failure adds: the coordinator still knows one thing about a
+    // host, that it failed.
+    let mut failed_at: Option<(usize, TaskResult)> = None;
     let mut cleanup: Option<usize> = None;
 
     'run: loop {
-        if let Some(index) = failed_at.take() {
-            // Measured on ansible-core 2.19.12: a task failing inside a nested block runs the
-            // inner `always`, then the outer one, and only then leaves the play.
-            match after_failure(&plan.compiled, index) {
-                Some((next, end)) => {
+        if let Some((index, result)) = failed_at.take() {
+            match rescue_target(&plan.compiled, index) {
+                // A `rescue` takes this failure: the host jumps into it and stays in the play,
+                // which is why `failed` was never set for it. The two variables the recovery
+                // reads are written on the way in, and they outlive the block and the play -
+                // measured, a task after the block and a task in the next play both still read
+                // `ansible_failed_task`.
+                Some(next) => {
+                    let task = &plan.compiled.steps[index].task;
+                    {
+                        let mut vars = store.lock().expect("vars lock");
+                        vars.set_fact(&name, "ansible_failed_task", failed_task_value(task));
+                        vars.set_fact(
+                            &name,
+                            "ansible_failed_result",
+                            Value::Object(result.0.clone()),
+                        );
+                    }
                     skipped(&tx, &name, index + 1..next).await;
                     pos = next;
-                    cleanup = Some(end);
                 }
-                None => break 'run,
+                // Measured on ansible-core 2.19.12: a task failing inside a nested block runs
+                // the inner `always`, then the outer one, and only then leaves the play. A
+                // `cleanup` already in hand is left where it is: a failure raised while
+                // draining one `always` still has to finish leaving through the ones outside.
+                None => match after_failure(&plan.compiled, index) {
+                    Some((next, end)) => {
+                        skipped(&tx, &name, index + 1..next).await;
+                        pos = next;
+                        cleanup = Some(end);
+                    }
+                    None => break 'run,
+                },
             }
         }
         if pos >= n || *stop.borrow() {
@@ -1483,6 +1563,10 @@ async fn drive_host(
         // so it cannot span two target users.
         let mut batch_escalation: Option<Escalation> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
+        // The last step of the batch, when where the host goes after it is not yet decided.
+        // See the `Prepared::Remote` arm: a step a rescue would catch cannot say what it steps
+        // over until its own result is in.
+        let mut undecided: Option<usize> = None;
         while pos < n {
             let step = &plan.compiled.steps[pos];
             let task = &step.task;
@@ -1546,7 +1630,8 @@ async fn drive_host(
                         .into_iter()
                         .map(|i| (i.element, i.skipped.unwrap_or_default()))
                         .collect();
-                    report_task(&tx, &name, pos, task, &results, &labels, false).await;
+                    // A skipped task fails nothing, so no rescue is in question for it.
+                    report_task(&tx, &name, pos, task, &results, &labels, false, false).await;
                     if let Some(reg) = &task.register {
                         store.lock().expect("vars lock").set_fact(
                             &name,
@@ -1603,7 +1688,8 @@ async fn drive_host(
                             registered_value(task, &results),
                         );
                     }
-                    if report_task(
+                    let rescuable = rescue_target(&plan.compiled, pos).is_some();
+                    if let Some(result) = report_task(
                         &tx,
                         &name,
                         pos,
@@ -1611,11 +1697,12 @@ async fn drive_host(
                         &results,
                         &labels,
                         short_name(&task.module) == "debug",
+                        rescuable,
                     )
                     .await
                     {
-                        failed = true;
-                        failed_at = Some(pos);
+                        failed |= !rescuable;
+                        failed_at = Some((pos, result));
                         break;
                     }
                     pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
@@ -1637,6 +1724,15 @@ async fn drive_host(
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty();
                     batch.push((pos, items));
+                    // Where this host goes after a step a `rescue` would catch depends on how
+                    // that step ends, so the batch stops here and `pos` waits for the result.
+                    // Moving it now would step over that very rescue and tell the coordinator
+                    // so - the host would then enter a section already reported as passed, and
+                    // its `fatal:` line would print under the banner of a later task.
+                    if rescue_target(&plan.compiled, pos).is_some() {
+                        undecided = Some(pos);
+                        break;
+                    }
                     pos = advance(&tx, &name, &plan.compiled, pos, &mut cleanup).await;
                     if boundary {
                         break;
@@ -1677,14 +1773,27 @@ async fn drive_host(
                 // and not the host going away. `ignore_errors` is deliberately not honoured:
                 // the batch never ran, and a run that reported success while having quietly
                 // skipped every escalated task is the worst outcome available here.
+                // Measured on ansible-core 2.19.12: a `become_user` the host refuses is a task
+                // failure like any other, so a rescue around it takes it (`rescued=1`, exit 0).
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
                     let mut task = plan.compiled.steps[index].task.clone();
                     task.ignore_errors = Some(false);
                     let results = vec![(None, TaskResult::failed_with(msg))];
-                    report_task(&tx, &name, index, &task, &results, &[None], false).await;
-                    failed = true;
-                    failed_at = Some(index);
+                    let rescuable = rescue_target(&plan.compiled, index).is_some();
+                    let result = report_task(
+                        &tx,
+                        &name,
+                        index,
+                        &task,
+                        &results,
+                        &[None],
+                        false,
+                        rescuable,
+                    )
+                    .await;
+                    failed |= !rescuable;
+                    failed_at = Some((index, result.unwrap_or_default()));
                     continue 'run;
                 }
                 Err(err) => {
@@ -1755,6 +1864,14 @@ async fn drive_host(
             };
             // Report every task of the batch in order; tasks the agent never reached (after a
             // failure) are not reported at all, as in Ansible.
+            //
+            // `undecided`, when set, is always this loop's last entry - the step whose own
+            // batch-ending push is the one in the `Prepared::Remote` arm above. Whether it was
+            // actually reported is tracked rather than assumed: the agent can end the batch
+            // `Ok` without a result for it (a bug elsewhere, or a connection hiccup the batch
+            // outcome does not carry), and advancing past a step with no `TaskDone` behind it
+            // is the exact barrier stall this task exists to avoid.
+            let mut undecided_reported = false;
             for (bi, (index, items)) in batch.iter().enumerate() {
                 let task = &plan.compiled.steps[*index].task;
                 let mut results = Vec::new();
@@ -1782,10 +1899,18 @@ async fn drive_host(
                         registered_value(task, &results),
                     );
                 }
-                if report_task(&tx, &name, *index, task, &results, &labels, false).await {
-                    failed = true;
-                    failed_at = Some(*index);
+                let rescuable = rescue_target(&plan.compiled, *index).is_some();
+                if let Some(result) = report_task(
+                    &tx, &name, *index, task, &results, &labels, false, rescuable,
+                )
+                .await
+                {
+                    failed |= !rescuable;
+                    failed_at = Some((*index, result));
                     break;
+                }
+                if undecided == Some(*index) {
+                    undecided_reported = true;
                 }
             }
             // The results are in and reported, so the next host may start while this one
@@ -1820,6 +1945,16 @@ async fn drive_host(
                 Ok(BatchOutcome::Cancelled { .. }) => break 'run,
                 Ok(_) => {}
             }
+            // The step held back above did not fail, so it steps over its block's rescue after
+            // all, and only now is that true enough to tell the coordinator. Guarded by
+            // `undecided_reported`: a step this loop never actually reported has not told us
+            // that, whatever `ended` says about the rest of the batch.
+            if failed_at.is_none()
+                && undecided_reported
+                && let Some(step) = undecided
+            {
+                pos = advance(&tx, &name, &plan.compiled, step, &mut cleanup).await;
+            }
         }
 
         if failed_at.is_none()
@@ -1836,9 +1971,15 @@ async fn drive_host(
                 None,
                 TaskResult::failed_with(format!("Task failed: {}", err.0)),
             )];
-            if report_task(&tx, &name, index, task, &results, &[None], false).await {
-                failed = true;
-                failed_at = Some(index);
+            // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
+            // fails that task, and a rescue around it takes the failure with the error's own
+            // sentence in `ansible_failed_result.msg`.
+            let rescuable = rescue_target(&plan.compiled, index).is_some();
+            if let Some(result) =
+                report_task(&tx, &name, index, task, &results, &[None], false, rescuable).await
+            {
+                failed |= !rescuable;
+                failed_at = Some((index, result));
             } else {
                 pos = advance(&tx, &name, &plan.compiled, index, &mut cleanup).await;
             }
@@ -1960,10 +2101,10 @@ async fn advance(
 ///
 /// It is what keeps a host that steps over a section from waiting on itself: the progress every
 /// barrier reads is the lowest step any live host has finished, so a host that jumped from 3 to
-/// 9 without saying so would hold that figure at 3 while waiting for it to reach 8. Only a host
-/// that has failed steps over anything today, and a failed host is out of the live set before
-/// it does, so the case is not reachable yet - it becomes reachable the moment a live host
-/// steps over a rescue.
+/// 9 without saying so would hold that figure at 3 while waiting for it to reach 8. Both halves
+/// of that are live now: a host that failed steps over the rest of the body on its way to a
+/// cleanup, and a host that failed nothing steps over every `rescue` it walks past - the second
+/// with the whole play still waiting on it.
 async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<usize>) {
     for index in range {
         let _ = tx
@@ -1975,9 +2116,15 @@ async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<us
     }
 }
 
-/// Sends the result lines of one task and its `TaskDone`. Returns whether the host failed.
+/// Sends the result lines of one task and its `TaskDone`. Returns the result a rescue would be
+/// given as `ansible_failed_result` when the task failed for good, and `None` when it did not:
+/// for a loop that is the aggregate, `results` and all, as the reference hands it over.
+///
 /// `labels` is parallel to `results`: each item's display label, honouring a custom
-/// `loop_control.label` template where the playbook gave one.
+/// `loop_control.label` template where the playbook gave one. `rescuable` says whether a
+/// `rescue` around this step takes a failure here, which is what tells a `fatal:` line that
+/// counts `failed` from one that counts `rescued`.
+#[allow(clippy::too_many_arguments)]
 async fn report_task(
     tx: &mpsc::Sender<Event>,
     host: &str,
@@ -1986,11 +2133,16 @@ async fn report_task(
     results: &[(Option<Value>, TaskResult)],
     labels: &[Option<String>],
     dump: bool,
-) -> bool {
+    rescuable: bool,
+) -> Option<TaskResult> {
     let is_loop = task.loop_items.is_some();
     let mut any_failed = false;
+    let mut first_failure: Option<TaskResult> = None;
     for (i, (_element, r)) in results.iter().enumerate() {
-        let outcome = classify(r, task.ignores_errors());
+        let outcome = classify(r, task.ignores_errors(), rescuable);
+        if r.failed() && first_failure.is_none() {
+            first_failure = Some(r.clone());
+        }
         any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
         let _ = tx
@@ -2006,6 +2158,7 @@ async fn report_task(
             })
             .await;
     }
+    let mut failure = first_failure;
     if is_loop {
         // A loop over an empty list has no item lines to carry it, so the aggregate is the whole
         // display: one `skipping` line for the task.
@@ -2023,7 +2176,14 @@ async fn report_task(
             // item's own line carries the message, and `...ignoring` follows the items alone.
             (aggregate, false)
         };
-        let outcome = classify(&aggregate, task.ignores_errors());
+        let outcome = classify(&aggregate, task.ignores_errors(), rescuable);
+        // Measured on ansible-core 2.19.12: a rescue reading `ansible_failed_result.results`
+        // after a loop whose second item failed sees all three items. The aggregate is the
+        // whole task's result, which is what the reference hands over - an item's own result
+        // would lose the ones behind it.
+        if any_failed {
+            failure = Some(aggregate.clone());
+        }
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),
@@ -2043,7 +2203,11 @@ async fn report_task(
             index,
         })
         .await;
-    any_failed && !task.ignores_errors()
+    if any_failed && !task.ignores_errors() {
+        failure.or_else(|| Some(TaskResult::default()))
+    } else {
+        None
+    }
 }
 
 /// Opens one link, escalated when `escalation` is given. Every way this can fail is a host the
@@ -2408,6 +2572,64 @@ mod tests {
 
     fn result(v: Value) -> TaskResult {
         TaskResult(v.as_object().unwrap().clone())
+    }
+
+    /// `ansible_failed_task` carries the keys the reference carries, and the ones this engine
+    /// models carry the task's own values.
+    ///
+    /// Measured on ansible-core 2.19.12: the dictionary has 46 keys, six of them the engine's
+    /// own bookkeeping (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`,
+    /// `loop_with`); of the forty left, `local_action` and the `with_*` lookups are absent
+    /// because the reference has already folded them into `action` and `loop`.
+    ///
+    /// What would make this red: a key dropped, which turns a rescue reading it into a failure
+    /// of its own; or `action` carrying the fully qualified module name, which the reference
+    /// keeps in a private key and which every playbook comparing `.action` to a short name
+    /// would then miss.
+    #[test]
+    fn the_failed_task_carries_the_reference_s_own_keys() {
+        let mut task = task("ansible.builtin.command");
+        task.name = "boom".to_string();
+        task.register = Some("b".to_string());
+        task.when = vec!["true".to_string()];
+        task.tags = vec!["t1".to_string()];
+        task.vars = vars(json!({"v": 1}));
+        let value = failed_task_value(&task);
+        let object = value.as_object().expect("an object");
+        assert_eq!(object.len(), 40, "{value}");
+        for key in [
+            "action",
+            "args",
+            "become",
+            "connection",
+            "loop",
+            "loop_control",
+            "name",
+            "register",
+            "tags",
+            "vars",
+            "when",
+        ] {
+            assert!(object.contains_key(key), "{key} is missing from {value}");
+        }
+        assert!(!object.contains_key("local_action"), "{value}");
+        assert!(!object.contains_key("with_items"), "{value}");
+        assert_eq!(object["action"], json!("command"));
+        assert_eq!(object["name"], json!("boom"));
+        assert_eq!(object["register"], json!("b"));
+        assert_eq!(object["when"], json!(["true"]));
+        assert_eq!(object["tags"], json!(["t1"]));
+        assert_eq!(object["vars"], json!({"v": 1}));
+        assert_eq!(object["loop"], Value::Null);
+        assert_eq!(
+            object["loop_control"],
+            json!({"loop_var": "item", "label": null})
+        );
+        assert_eq!(
+            object["connection"],
+            Value::Null,
+            "a keyword nothing here honours says nothing rather than the reference's default"
+        );
     }
 
     #[test]

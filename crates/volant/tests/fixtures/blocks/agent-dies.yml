@@ -1,0 +1,19 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Around it
+      block:
+        - name: First in the body
+          command: echo hello
+        - name: Kill the agent running this task
+          shell: kill $PPID
+        - name: Never reached
+          command: echo unreachable
+      rescue:
+        - name: Rescue task
+          command: echo rescued
+      always:
+        - name: Always task
+          command: echo cleanup
+    - name: After the block
+      command: echo after

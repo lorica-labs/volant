@@ -1,0 +1,12 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Ignored failure
+          command: nosuchbinary-volant-probe
+          ignore_errors: true
+        - name: Still in the body
+          command: "true"
+      rescue:
+        - name: Never rescued
+          command: "true"

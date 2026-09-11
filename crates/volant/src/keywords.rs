@@ -203,9 +203,7 @@ pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
 ///
 /// `name` runs because this release honours it the way the reference does: measured, a block's
 /// name is shown nowhere, neither as a banner nor in `--list-tasks`, and its tasks keep their
-/// own names. `rescue` is parked because nothing enters a rescue section yet: the compiler
-/// lays the section out and the driver deliberately steps over it, so a playbook that expects
-/// a failure to be recovered is refused rather than run without the recovery it wrote.
+/// own names.
 pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("always", Runs),
     kw("any_errors_fatal", Preflight),
@@ -231,7 +229,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("notify", Preflight),
     kw("port", Preflight),
     kw("remote_user", Preflight),
-    kw("rescue", Preflight),
+    kw("rescue", Runs),
     kw("run_once", Preflight),
     kw("tags", Runs),
     kw("throttle", Preflight),

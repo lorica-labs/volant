@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Needs the host
+          command: "true"
+      rescue:
+        - name: Rescue task
+          debug:
+            msg: rescued
+      always:
+        - name: Always task
+          debug:
+            msg: cleanup

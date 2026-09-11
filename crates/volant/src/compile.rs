@@ -773,6 +773,20 @@ fn ancestors(c: &Compiled, index: usize) -> impl Iterator<Item = (usize, Section
     })
 }
 
+/// The rescues a host standing on `index` is already inside, innermost first: the sections it
+/// may walk through that a host on the happy path steps over.
+///
+/// Read off the step rather than carried by the host because a step names every block around it
+/// and the section it sits in each of them, so the answer is the same whichever way the host
+/// arrived. It is the set every seek from that step needs: a cleanup or a recovery written
+/// inside a rescue is only reachable for a host that entered that rescue.
+fn entered(c: &Compiled, index: usize) -> Vec<usize> {
+    ancestors(c, index)
+        .filter(|&(_, section)| section == Section::Rescue)
+        .map(|(id, _)| id)
+        .collect()
+}
+
 /// The first index at or after `from` that a host has a reason to run, given the rescues it is
 /// already inside, or the length of the list when there is none.
 ///
@@ -810,11 +824,36 @@ pub(crate) fn first(c: &Compiled) -> usize {
 /// block whose `block:` list is empty is entered *on* its rescue, so entry needs the same care
 /// as exit.
 pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
-    let entered: Vec<usize> = ancestors(c, pos)
-        .filter(|&(_, section)| section == Section::Rescue)
-        .map(|(id, _)| id)
-        .collect();
-    seek(c, pos + 1, &entered)
+    seek(c, pos + 1, &entered(c, pos))
+}
+
+/// Where a host goes when the task at `pos` has just failed and a `rescue` takes that failure:
+/// the first step of that rescue, or `None` when nothing rescues it and the host is on its way
+/// out of the play.
+///
+/// The rescue that takes a failure belongs to the innermost enclosing block whose **body** holds
+/// the step and whose rescue section has steps in it. A failure raised inside a rescue, or
+/// inside an `always`, belongs to whatever encloses that block and never to the block itself -
+/// a rescue does not rescue itself, which would be a loop. Measured on ansible-core 2.19.12:
+/// a rescue that fails leaves the play through the `always` sections around it (`failed=1
+/// rescued=1`), the same failure is taken by a **grandparent's** rescue when there is one
+/// (`rescued=2`, exit 0), and a failure raised in a child block's `always` is taken by the
+/// parent's rescue with the rest of that `always` left unrun (`rescued=1`, exit 0).
+pub(crate) fn rescue_target(c: &Compiled, pos: usize) -> Option<usize> {
+    let (id, _) = ancestors(c, pos)
+        .find(|&(id, section)| section == Section::Body && !c.blocks[id].rescue.is_empty())?;
+    // Entered like any other step: a rescue that opens on a block with an empty `block:` list
+    // opens on that block's own rescue, which this failure has not entered. The rescues the
+    // host was already inside travel with it, or the recovery of a block written inside one of
+    // them would be stepped over on the way in.
+    let mut inside = entered(c, pos);
+    inside.push(id);
+    // No `start < end` guard here, unlike `after_failure` below: measured and deliberate. A
+    // rescue whose only step sits inside a nested block's own un-entered rescue - `block: []`
+    // there, with a `rescue:` of its own - has nothing to run, and the reference still counts
+    // `rescued=1` and exits 0, walking straight into whatever comes after. Guarding this the
+    // way `after_failure` does would turn that into an unrescued failure instead.
+    Some(seek(c, c.blocks[id].rescue.start, &inside))
 }
 
 /// Where a host goes when the task at `pos` has just failed: the `always` section of the
@@ -829,6 +868,7 @@ pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
 /// of two tasks in a nested block whose first task fails runs neither the second nor the step
 /// behind the nested block, and the recap reads `failed=2`.
 pub(crate) fn after_failure(c: &Compiled, pos: usize) -> Option<(usize, usize)> {
+    let inside = entered(c, pos);
     ancestors(c, pos)
         .filter(|&(_, section)| section != Section::Always)
         .map(|(id, _)| {
@@ -836,7 +876,12 @@ pub(crate) fn after_failure(c: &Compiled, pos: usize) -> Option<(usize, usize)> 
             // Entered like any other step, so a cleanup that opens on a block with an empty
             // `block:` list opens on that block's rescue and is not run there either. A
             // section with nothing left to run is no section at all, and the walk goes on.
-            (seek(c, always.start, &[]), always.end)
+            //
+            // The rescues the host is inside travel with it: a block written in a rescue has
+            // its own `always`, and measured on ansible-core 2.19.12 that cleanup runs when
+            // the block fails. Seeking with an empty set would step over every one of its
+            // steps - the whole cleanup skipped, and nothing said about it.
+            (seek(c, always.start, &inside), always.end)
         })
         .find(|&(start, end)| start < end)
 }
@@ -1231,6 +1276,155 @@ mod tests {
         );
         assert_eq!(first(&c), 1, "the play does not start inside a rescue");
         assert_eq!(walk(&c, first(&c)), ["one", "cleanup", "two"]);
+    }
+
+    /// Which rescue takes a failure, at every place in a three-level play one can be raised.
+    ///
+    /// Measured on ansible-core 2.19.12, one playbook per line: a failure in a body goes to that
+    /// block's rescue; a failure in a rescue is **not** taken by the block whose rescue it is,
+    /// and goes to the grandparent's rescue when there is one (`rescued=2`, exit 0); a failure
+    /// in an `always` goes to the enclosing block's rescue (`rescued=1`, exit 0).
+    ///
+    /// What would make this red: reading the block off the step and ignoring the section, which
+    /// sends a failing rescue back into its own rescue - the same steps for ever, and a run that
+    /// never returns.
+    #[test]
+    fn the_rescue_that_takes_a_failure_is_never_the_one_it_was_raised_in() {
+        let c = compiled(NESTED);
+        let at = |name: &str| names(&c).iter().position(|n| *n == name).expect(name);
+        let target = |name: &str| rescue_target(&c, at(name)).map(|i| c.steps[i].task.name.clone());
+        assert_eq!(target("body one").as_deref(), Some("outer rescue"));
+        assert_eq!(target("nested body").as_deref(), Some("nested rescue"));
+        assert_eq!(
+            target("nested rescue").as_deref(),
+            Some("outer rescue"),
+            "a rescue does not rescue itself; the block around it does"
+        );
+        assert_eq!(
+            target("nested always").as_deref(),
+            Some("outer rescue"),
+            "measured: a failure in a child's always is taken by the parent's rescue"
+        );
+        assert_eq!(target("outer rescue"), None);
+        assert_eq!(target("outer always"), None);
+        assert_eq!(
+            target("before"),
+            None,
+            "a step in no block is rescued by none"
+        );
+    }
+
+    /// A block that has an `always` and no `rescue` rescues nothing, and the cleanup still runs.
+    ///
+    /// Measured on ansible-core 2.19.12: `failed=1 rescued=0`, the `always` task runs, and the
+    /// step behind the block does not.
+    #[test]
+    fn a_block_without_a_rescue_cleans_up_and_lets_the_failure_stand() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      always:
+        - name: cleanup
+          command: "true"
+    - name: after
+      command: "true"
+"#,
+        );
+        assert_eq!(rescue_target(&c, 0), None);
+        assert_eq!(walk_failure(&c, 0), ["cleanup"]);
+    }
+
+    /// A block written inside a rescue is reachable in both directions: its recovery takes a
+    /// failure raised in it, and its cleanup runs on the way out.
+    ///
+    /// Measured on ansible-core 2.19.12: the parent's body fails, the rescue runs, the block in
+    /// it fails, its own `always` runs, then the parent's `always`, and the recap reads
+    /// `ok=2 failed=1 rescued=1`.
+    ///
+    /// What would make this red: seeking into those sections as if the host had entered no
+    /// rescue. Every step of them sits in a rescue, so all of them would be stepped over - the
+    /// cleanup a playbook wrote inside its recovery, skipped in silence.
+    #[test]
+    fn a_block_inside_a_rescue_keeps_its_own_sections() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: body fails
+          command: "true"
+      rescue:
+        - block:
+            - name: in the rescue
+              command: "true"
+          rescue:
+            - name: rescue of the rescue
+              command: "true"
+          always:
+            - name: cleanup in the rescue
+              command: "true"
+      always:
+        - name: outer cleanup
+          command: "true"
+"#,
+        );
+        let at = |name: &str| names(&c).iter().position(|n| *n == name).expect(name);
+        assert_eq!(
+            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
+            Some("in the rescue".to_string()),
+            "the rescue is entered on its first step, not on its first index"
+        );
+        assert_eq!(
+            rescue_target(&c, at("in the rescue")).map(|i| c.steps[i].task.name.clone()),
+            Some("rescue of the rescue".to_string())
+        );
+        assert_eq!(
+            walk_failure(&c, at("in the rescue")),
+            ["cleanup in the rescue", "outer cleanup"]
+        );
+    }
+
+    /// The fixture above cannot tell a sought target from a raw index: its rescue's first index
+    /// already is its first runnable step. Here it is not - a nested block with an empty
+    /// `block:` list opens the rescue on its own un-entered rescue, and `rescue_target` has to
+    /// seek past that to reach a step the failure can actually run.
+    ///
+    /// Measured on ansible-core 2.19.12: a rescue built this way still reads `rescued=1`, exit
+    /// 0, with nothing from the nested rescue running.
+    ///
+    /// What would make this red: `rescue_target` returning `c.blocks[id].rescue.start` unchanged
+    /// instead of seeking. That raw index is "rescue recovery" here, a step sitting in the
+    /// nested block's own rescue, which this failure never entered - so an unsought return
+    /// would name it instead of "rescue cleanup", the sibling behind it.
+    #[test]
+    fn rescue_target_seeks_past_a_nested_blocks_own_rescue() {
+        let c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: fails
+          command: "true"
+      rescue:
+        - block: []
+          rescue:
+            - name: rescue recovery
+              command: "true"
+        - name: rescue cleanup
+          command: "true"
+      always:
+        - name: outer cleanup
+          command: "true"
+"#,
+        );
+        assert_eq!(
+            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
+            Some("rescue cleanup".to_string())
+        );
     }
 
     /// Every keyword a block carries reaches the tasks under it, and a task that says something

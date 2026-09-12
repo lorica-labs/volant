@@ -71,7 +71,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("module_defaults", Preflight),
     kw("name", Runs),
     kw("no_log", Preflight),
-    kw("notify", Preflight),
+    kw("notify", Runs),
     kw("poll", Preflight),
     kw("port", Preflight),
     kw("register", Runs),
@@ -124,8 +124,9 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 ///
 /// `roles`, `pre_tasks` and `post_tasks` run: the compiler reads each role from disk and splices
 /// its tasks, its dependencies and its argument-spec check into the step list, in the section
-/// order the reference runs them in. `handlers` stays parked - a role's handlers are read by
-/// nothing yet, and `notify` is parked too, so no handler can be reached from anywhere.
+/// order the reference runs them in. `handlers` runs with them: the play's list and every role's
+/// `handlers/` directory become one list, and a `notify` on a task or a block reaches it.
+/// `force_handlers` runs as well, from the play, from `[defaults]` and from `--force-handlers`.
 ///
 /// `tags` runs everywhere it can be written - on a play, on a block, on a role entry and on a
 /// task. The compiler folds the outer tags into every task under them and drops the tasks
@@ -145,11 +146,11 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("diff", Preflight),
     kw("environment", Preflight),
     kw("fact_path", Preflight),
-    kw("force_handlers", Preflight),
+    kw("force_handlers", Runs),
     kw("gather_facts", Runs),
     kw("gather_subset", Preflight),
     kw("gather_timeout", Preflight),
-    kw("handlers", Preflight),
+    kw("handlers", Runs),
     kw("hosts", Runs),
     kw("ignore_errors", Preflight),
     kw("ignore_unreachable", Preflight),
@@ -226,7 +227,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("module_defaults", Preflight),
     kw("name", Runs),
     kw("no_log", Preflight),
-    kw("notify", Preflight),
+    kw("notify", Runs),
     kw("port", Preflight),
     kw("remote_user", Preflight),
     kw("rescue", Runs),
@@ -241,6 +242,13 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
 /// The three section keywords of a block, in the order [`BLOCK_KEYWORDS`] lists them. A mapping
 /// carrying any of them is a block rather than a task.
 pub const BLOCK_SECTIONS: &[&str] = &["always", "block", "rescue"];
+
+/// What a handler carries that a task does not.
+///
+/// `Handler.fattributes` on ansible-core 2.19.12 is `Task.fattributes` plus this one name, so the
+/// table holds the difference rather than a second copy of forty rows that would drift from the
+/// first. A key written on a handler is looked up here and then in [`TASK_KEYWORDS`].
+pub const HANDLER_KEYWORDS: &[Keyword] = &[kw("listen", Runs)];
 
 pub fn task_keyword(name: &str) -> Option<&'static Keyword> {
     TASK_KEYWORDS.iter().find(|k| k.name == name)
@@ -258,6 +266,10 @@ pub fn block_keyword(name: &str) -> Option<&'static Keyword> {
     BLOCK_KEYWORDS.iter().find(|k| k.name == name)
 }
 
+pub fn handler_keyword(name: &str) -> Option<&'static Keyword> {
+    HANDLER_KEYWORDS.iter().find(|k| k.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +284,7 @@ mod tests {
             PLAY_KEYWORDS,
             LOOP_CONTROL_KEYWORDS,
             BLOCK_KEYWORDS,
+            HANDLER_KEYWORDS,
         ] {
             let names: Vec<&str> = table.iter().map(|k| k.name).collect();
             let mut sorted = names.clone();
@@ -473,6 +486,15 @@ mod tests {
         ];
         let ours: Vec<&str> = BLOCK_KEYWORDS.iter().map(|k| k.name).collect();
         assert_eq!(ours, block_fattributes);
+
+        // `Handler.fattributes` read the same way is `Task.fattributes` plus `listen` and
+        // nothing else, which is why this table holds the difference alone.
+        let ours: Vec<&str> = HANDLER_KEYWORDS.iter().map(|k| k.name).collect();
+        assert_eq!(ours, ["listen"]);
+        assert!(
+            task_keyword("listen").is_none(),
+            "a handler keyword is not a task keyword; a name in both would hide one of the two"
+        );
     }
 
     /// A block section is never also a task keyword: the loader tells a block from a task by

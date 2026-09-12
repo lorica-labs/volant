@@ -1131,11 +1131,26 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
 
 /// The lines one task printed: everything between its header and the next banner.
 fn section<'a>(text: &'a str, task: &str) -> &'a str {
+    banner_section(text, &format!("TASK [{task}]"))
+}
+
+/// The same, for a handler: its banner reads `RUNNING HANDLER [name]`.
+fn handler_section<'a>(text: &'a str, name: &'a str) -> &'a str {
+    banner_section(text, &format!("RUNNING HANDLER [{name}]"))
+}
+
+fn banner_section<'a>(text: &'a str, banner: &str) -> &'a str {
     let after = text
-        .split_once(&format!("TASK [{task}]"))
-        .unwrap_or_else(|| panic!("no task named {task} in:\n{text}"))
+        .split_once(banner)
+        .unwrap_or_else(|| panic!("no {banner} in:\n{text}"))
         .1;
-    match after.find("\nTASK [").or_else(|| after.find("\nPLAY ")) {
+    match after
+        .find("\nTASK [")
+        .into_iter()
+        .chain(after.find("\nRUNNING HANDLER ["))
+        .chain(after.find("\nPLAY "))
+        .min()
+    {
         Some(end) => &after[..end],
         None => after,
     }
@@ -1863,7 +1878,7 @@ fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
 // below carry it.
 
 use volant::keywords::{
-    BLOCK_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+    BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
 };
 
 const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
@@ -1918,8 +1933,8 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
             "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
         ),
         (
-            "notify",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      notify: probe\n",
+            "run_once",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      run_once: probe\n",
         ),
         (
             "serial",
@@ -1943,6 +1958,345 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
         );
     }
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// Every handler the tasks notified, run once each, in **definition** order, at the flush point
+/// the playbook asked for and at the one that closes the section.
+///
+/// The whole of this is measured on ansible-core 2.19.12 with this fixture. `second handler` is
+/// written first and notified second, and it runs first; `first handler` is notified twice and
+/// runs once; `ok does not notify` came back `ok` and notifies nothing; `notify listen` reaches
+/// two handlers through `listen: group`, one of which carries no `name` of that spelling, and
+/// only h1 notified so only h1 has a line under those banners; the explicit `meta` shows one
+/// `TASK [meta]` per live host with nothing under it; `after flush` notifies `second handler`
+/// again and it runs a second time, at the flush that closes `tasks`, for h1 alone because h2
+/// has failed by then. Recap `h1 ok=9 changed=4 skipped=1`, `h2 ok=6 failed=1 skipped=1`, exit 2.
+///
+/// What would make this red: handlers run in notification order (`first handler` first); a
+/// handler run twice for one notification (`ok=10`); a task that came back `ok` notifying; a
+/// `listen` name resolving to nothing; a host that never notified showing a line under a handler
+/// banner; or a host that failed still running its handlers, which is what `--force-handlers` is
+/// for and what the next test asks for instead.
+#[test]
+fn handlers_run_once_in_definition_order_after_the_tasks() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/handlers.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let banners: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("RUNNING HANDLER ["))
+        .map(|l| l.split(']').next().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        banners,
+        [
+            "RUNNING HANDLER [second handler",
+            "RUNNING HANDLER [first handler",
+            "RUNNING HANDLER [listener",
+            "RUNNING HANDLER [second handler",
+        ],
+        "definition order, and `second handler` once per notification: {text}"
+    );
+    assert!(
+        !handler_section(&text, "listener").contains("[h2]"),
+        "only the host that notified has a line: {text}"
+    );
+    assert_eq!(
+        text.matches("TASK [meta]").count(),
+        2,
+        "one banner per live host for the explicit flush, with nothing under it: {text}"
+    );
+    let between = text
+        .split_once("TASK [meta]")
+        .and_then(|(_, rest)| rest.split_once("RUNNING HANDLER"))
+        .map(|(before, _)| before)
+        .unwrap_or_default();
+    assert!(
+        !between.contains("ok: ") && !between.contains("changed: "),
+        "a flush shows no result line of its own: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=9    changed=4    unreachable=0    failed=0    skipped=1"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "h2                         : ok=6    changed=3    unreachable=0    failed=1    skipped=1"
+        ),
+        "a host that failed after notifying does not run its handlers: {text}"
+    );
+}
+
+/// A task that changed nothing notifies nothing, and the handler shows nowhere.
+///
+/// Measured on this fixture: one line, `ok: [localhost]`, recap `ok=1` and no `RUNNING HANDLER`
+/// anywhere. What would make this red: `notify` read without looking at whether the task changed
+/// anything, which runs every handler of every playbook on every run.
+#[test]
+fn a_task_that_did_not_change_does_not_notify() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/unchanged.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("RUNNING HANDLER"), "{text}");
+    assert!(
+        text.contains(
+            "localhost                  : ok=1    changed=0    unreachable=0    failed=0"
+        ),
+        "{text}"
+    );
+}
+
+/// `--force-handlers` runs the handlers of a host that failed, and the failure still stands.
+///
+/// Measured on ansible-core 2.19.12 with the same fixture as above: the only difference is one
+/// line, `ok: [h2]` under the last `RUNNING HANDLER [second handler]`, and `h2 ok=7` against
+/// `ok=6`. The exit code is still 2 and `failed=1` is still there.
+///
+/// What would make this red: the flag read and the driver still leaving the play at the failure,
+/// which is the shape of a keyword accepted and then ignored; or a forced host counted as
+/// something other than failed, which would turn exit 2 into exit 0.
+#[test]
+fn force_handlers_runs_them_on_a_failed_host() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/handlers.yml"),
+            "--force-handlers",
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains(
+            "h2                         : ok=7    changed=3    unreachable=0    failed=1    skipped=1"
+        ),
+        "the failed host ran the handler it notified and is still counted failed: {text}"
+    );
+}
+
+/// A `notify` naming nothing stops the run with the reference's own sentence and exit 1.
+///
+/// Measured on ansible-core 2.19.12: that text, exit **1** and no recap. The one divergence is
+/// the moment - the reference prints the notifying task's banner first and refuses while running
+/// it, this refuses before the first connection, so nothing has run at all.
+///
+/// What would make this red: exit 4, which is what an unloadable playbook gets and what a
+/// refusal raised without its own code would be; or the run going ahead with a `notify` nobody
+/// answers, which is a playbook asking for work that never happens.
+#[test]
+fn an_unknown_handler_is_refused_with_exit_1() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/unknown.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{err}{text}");
+    assert!(
+        err.contains(
+            "The requested handler 'nobody' was not found in either the main handlers list nor in the listening handlers list"
+        ),
+        "{err}"
+    );
+    assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
+}
+
+/// A handler that fails fails its host, and the handlers behind it do not run.
+///
+/// Measured on ansible-core 2.19.12 on this fixture: `fatal:` under
+/// `RUNNING HANDLER [bad handler]`, `good handler` nowhere, recap `ok=1 changed=1 failed=1`,
+/// exit 2. Measured again with `--force-handlers`: `good handler` still does not run, so the
+/// flag buys a failed host its handlers and not a failed handler its successors.
+///
+/// What would make this red: a handler whose failure goes unreported, which is a task that
+/// failed and a run that exits 0.
+#[test]
+fn a_failing_handler_fails_the_host() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/failing.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        handler_section(&text, "bad handler").contains("fatal: [localhost]: FAILED!"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("good handler"),
+        "the host leaves, so the handler behind the failing one does not run: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=1    changed=1    unreachable=0    failed=1"
+        ),
+        "{text}"
+    );
+}
+
+/// A handler is an ordinary task: it loops, it has a `when`, and a task in a `rescue` may notify
+/// one.
+///
+/// Measured on ansible-core 2.19.12 on this fixture: `(item=1)` and `(item=2)` under
+/// `RUNNING HANDLER [loopy]`, `skipping: [localhost]` under `[conditional]`, `rescued-notify`
+/// under `[from rescue]`, recap `ok=4 changed=2 skipped=1 rescued=1`, exit 0.
+///
+/// What would make this red: a notification raised inside a rescue lost with the failure that
+/// led to it, which is a handler a playbook asked for and never got.
+#[test]
+fn handlers_accept_loops_conditions_and_notifications_from_a_rescue() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/shapes.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let loopy = handler_section(&text, "loopy");
+    assert!(
+        loopy.contains("(item=1)") && loopy.contains("(item=2)"),
+        "{text}"
+    );
+    assert!(
+        handler_section(&text, "conditional").contains("skipping: [localhost]"),
+        "{text}"
+    );
+    assert!(
+        handler_section(&text, "from rescue").contains("rescued-notify"),
+        "a task in a rescue notifies like any other: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=1    rescued=1"
+        ),
+        "{text}"
+    );
+}
+
+/// A `meta: flush_handlers` written inside a block runs the handlers there, inside that block:
+/// one that fails is taken by the block's own `rescue`, and the block's `always` still runs.
+///
+/// Measured on ansible-core 2.19.12 on this fixture: `TASK [meta]`, then
+/// `RUNNING HANDLER [bad handler]` with a `fatal:` under it, then `the rescue`, then
+/// `the cleanup`, then `after the block`; recap `ok=5 changed=2 rescued=1 failed=0`, exit 0.
+///
+/// This is the fixture the splice is written for. The handler steps are inserted **into** the
+/// block's body, one past the flush, and every block range that ends there has to grow with
+/// them: that is what the `>=` in `Compiled::splice` is for. What would make this red:
+/// `range.start > at` instead of `>=`, which leaves this block's `rescue` starting at the first
+/// spliced handler, so the failing handler is "rescued" into itself and the run never returns.
+/// `volant_within` is what says so, since no assertion on printed output can catch a hang.
+#[test]
+fn a_flush_inside_a_block_runs_its_handlers_inside_that_block() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/flush-in-block.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        handler_section(&text, "bad handler").contains("fatal: [localhost]: FAILED!"),
+        "{text}"
+    );
+    assert!(
+        section(&text, "the rescue").contains("rescue-ran"),
+        "the block's rescue takes the handler's failure: {text}"
+    );
+    assert!(
+        section(&text, "the cleanup").contains("cleanup-ran")
+            && section(&text, "after the block").contains("\"msg\": \"after\""),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=5    changed=2    unreachable=0    failed=0    skipped=0    rescued=1"
+        ),
+        "{text}"
+    );
+}
+
+/// A flush point one host runs and another steps over.
+///
+/// The flush is written in a `rescue` only `h1` enters. Measured on ansible-core 2.19.12 on this
+/// fixture: one `TASK [meta]` banner, `RUNNING HANDLER [the handler]` with `ok: [h1]` alone under
+/// it, then `after the block` for both hosts, then the handler again for `h2` alone at the flush
+/// that closes `tasks` - `h2`'s own notification, which the rescue's flush never reached. Recap
+/// `h1 ok=4 changed=1 rescued=1`, `h2 ok=3 changed=1 skipped=1`, exit 0.
+///
+/// This is the other half of the splice's safety, and the half the plan did not have. `h2` walks
+/// from the block's body straight past the rescue, which means past a flush point, while `h1` is
+/// still short of it - so `h2` has to stop there and wait for the handler steps to go in, exactly
+/// as `h1` does after running it. Reading the list one step earlier would leave `h2` holding an
+/// index into a list that has since grown underneath it.
+///
+/// What would make this red: a host that steps over a flush point without waiting for it. The
+/// step behind the block reads `ansible_play_hosts`, so it is a barrier and `h2` cannot simply
+/// race to the end; what it does instead is run whatever step its stale index now names.
+#[test]
+fn a_host_that_steps_over_a_flush_point_waits_for_it_too() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/flush-in-rescue.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches("TASK [meta]").count(),
+        1,
+        "the flush shows for the host that entered the rescue and for no other: {text}"
+    );
+    let banners: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("RUNNING HANDLER ["))
+        .collect();
+    assert_eq!(
+        banners.len(),
+        2,
+        "one flush each, at different points: {text}"
+    );
+    let first = handler_section(&text, "the handler");
+    assert!(
+        first.contains("[h1]") && !first.contains("[h2]"),
+        "only the host that reached the flush runs its handler there: {text}"
+    );
+    assert!(
+        section(&text, "after the block").contains("[h1]")
+            && section(&text, "after the block").contains("[h2]"),
+        "both hosts are still in the play behind the block: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
+        ) && text.contains(
+            "h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
+        ),
+        "{text}"
+    );
 }
 
 /// A `Runs` row and what proves it: the playbook to run, the arguments to run it with, the exit
@@ -2370,6 +2724,55 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "\"msg\": \"alpha\"",
     ),
+    // The handler keywords. Each body is written so that dropping the keyword's handling leaves
+    // the probe with nothing to print: no handler list means no handler to notify, no `notify`
+    // means nothing asks for one, no `listen` means the name reaches nothing, and without
+    // `force_handlers` the failed host leaves before its handler.
+    runs(
+        "play",
+        "handlers",
+        "- hosts: localhost\n  gather_facts: false\n  handlers:\n    - name: Probe handler\n      debug:\n        msg: handler-ran\n  tasks:\n    - name: Probe task\n      command: echo hi\n      notify: Probe handler\n",
+        &[],
+        0,
+        "RUNNING HANDLER [Probe handler]",
+    ),
+    runs(
+        "task",
+        "notify",
+        "- hosts: localhost\n  gather_facts: false\n  handlers:\n    - name: Probe handler\n      command: nosuchbinary-volant-probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n      notify: Probe handler\n",
+        &[],
+        2,
+        "nosuchbinary-volant-probe",
+    ),
+    // A `notify` on the block, not on the task under it: the task carries none of its own, so
+    // dropping the inheritance leaves the handler unnotified and the run exits 0.
+    runs(
+        "block",
+        "notify",
+        "- hosts: localhost\n  gather_facts: false\n  handlers:\n    - name: Probe handler\n      command: nosuchbinary-volant-probe\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      notify: Probe handler\n",
+        &[],
+        2,
+        "nosuchbinary-volant-probe",
+    ),
+    // The notified name is one no handler carries as its `name`, so only `listen` can reach it.
+    runs(
+        "handler",
+        "listen",
+        "- hosts: localhost\n  gather_facts: false\n  handlers:\n    - name: Probe handler\n      command: nosuchbinary-volant-probe\n      listen: probe-group\n  tasks:\n    - name: Probe task\n      command: echo hi\n      notify: probe-group\n",
+        &[],
+        2,
+        "nosuchbinary-volant-probe",
+    ),
+    // The host fails after notifying, so the handler only runs because of the flag. Without it
+    // the run still exits 2, which is why the proof is the handler's own output line.
+    runs(
+        "play",
+        "force_handlers",
+        "- hosts: localhost\n  gather_facts: false\n  force_handlers: true\n  handlers:\n    - name: Probe handler\n      debug:\n        msg: forced-handler-ran\n  tasks:\n    - name: Probe task\n      command: echo hi\n      notify: Probe handler\n    - name: Probe failure\n      command: nosuchbinary-volant-probe\n",
+        &[],
+        2,
+        "\"msg\": \"forced-handler-ran\"",
+    ),
 ];
 
 /// Every keyword the table marks `Runs` has a proof, and every proof belongs to a row.
@@ -2384,6 +2787,7 @@ fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
         ("play", PLAY_KEYWORDS),
         ("loop_control", LOOP_CONTROL_KEYWORDS),
         ("block", BLOCK_KEYWORDS),
+        ("handler", HANDLER_KEYWORDS),
     ]
     .into_iter()
     .flat_map(|(table, keywords)| {

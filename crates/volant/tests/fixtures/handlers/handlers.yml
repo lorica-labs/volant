@@ -1,0 +1,33 @@
+- hosts: h1,h2
+  gather_facts: false
+  handlers:
+    - name: second handler
+      debug: msg=second
+    - name: first handler
+      debug: msg=first
+      listen: group
+    - name: listener
+      debug: msg=listener
+      listen: group
+  tasks:
+    - name: notifies first then second
+      command: "true"
+      notify: [first handler, second handler]
+    - name: notifies first again
+      command: "true"
+      notify: first handler
+    - name: ok does not notify
+      command: "true"
+      changed_when: false
+      notify: second handler
+    - name: notify listen
+      command: "true"
+      notify: group
+      when: inventory_hostname == 'h1'
+    - meta: flush_handlers
+    - name: after flush
+      command: "true"
+      notify: second handler
+    - name: h2 fails after notifying
+      command: "false"
+      when: inventory_hostname == 'h2'

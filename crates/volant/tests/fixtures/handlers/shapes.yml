@@ -1,0 +1,22 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: loopy
+      debug: msg="{{ item }}"
+      loop: [1, 2]
+    - name: conditional
+      debug: msg=cond
+      when: false
+    - name: from rescue
+      debug: msg=rescued-notify
+  tasks:
+    - name: notifies a loop and a condition
+      command: "true"
+      notify: [loopy, conditional]
+    - block:
+        - name: fails in the body
+          command: "false"
+      rescue:
+        - name: notifies from the rescue
+          command: "true"
+          notify: from rescue

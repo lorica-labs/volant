@@ -27,6 +27,10 @@ pub struct Config {
     pub r#become: bool,
     pub become_user: String,
     pub become_method: String,
+    /// Whether a host that failed still runs the handlers it notified. Measured on ansible-core
+    /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
+    /// to the recap.
+    pub force_handlers: bool,
     /// Where a role is looked for once the directory beside the playbook has been tried.
     /// Measured on ansible-core 2.19.12: a `roles_path` **replaces** the three default
     /// directories rather than adding to them, and it never displaces `<playbook_dir>/roles`,
@@ -57,6 +61,7 @@ impl Default for Config {
             r#become: false,
             become_user: DEFAULT_BECOME_USER.to_string(),
             become_method: DEFAULT_BECOME_METHOD.to_string(),
+            force_handlers: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
             tags_run: Vec::new(),
@@ -184,6 +189,11 @@ impl Config {
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {
             config.r#become = on;
+        }
+        if let Ok(flag) = std::env::var("ANSIBLE_FORCE_HANDLERS")
+            && let Some(on) = crate::yaml::bool_from_str(flag.trim())
+        {
+            config.force_handlers = on;
         }
         // Measured: the environment replaces the file's `roles_path` rather than being appended
         // to it, and a relative entry is read against the working directory.
@@ -369,6 +379,11 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             "host_key_checking" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.host_key_checking = on;
+                }
+            }
+            "force_handlers" => {
+                if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
+                    config.force_handlers = on;
                 }
             }
             "remote_tmp" => {

@@ -103,6 +103,30 @@ pub(crate) enum StepKind {
     /// `meta`: something asked of the engine rather than of the host. It shows a banner and
     /// reports nothing, which is why it is the one step kind that prints once per live host.
     Meta,
+    /// A flush point: where the notified handlers run. `explicit` is set for the one a playbook
+    /// wrote as `meta: flush_handlers`, which shows the same `TASK [meta]` banner every other
+    /// `meta` shows; the three the compiler puts in itself show nothing, measured.
+    ///
+    /// It is the one step whose *successors* are not known when the play is compiled: the
+    /// coordinator inserts the handler steps behind it once every host has reported it, so a
+    /// driver that has reported it waits before reading the list again.
+    Flush { explicit: bool },
+    /// One handler of [`Compiled::handlers`], spliced in behind a flush point. It runs for a host
+    /// that notified it and reports nothing for a host that did not.
+    Handler(usize),
+}
+
+/// One handler, with everything a flush needs to decide whether to run it and what to call it.
+#[derive(Debug, Clone)]
+pub(crate) struct Handler {
+    pub task: PlayTask,
+    /// The extra names this handler answers to. Measured on ansible-core 2.19.12: `listen` works
+    /// for a name no handler carries as its `name`, and two handlers listening to one name both
+    /// run, in definition order.
+    pub listen: Vec<String>,
+    /// The role instance it came from, which is what puts `base : ` in front of its banner and
+    /// what decides which variable layers it reads.
+    pub role: Option<usize>,
 }
 
 /// Which of a block's three lists a step came from.
@@ -156,14 +180,87 @@ pub(crate) struct Compiled {
     /// So this is one map per layer for the whole play, not something that accumulates as the
     /// list is walked, and a role's own values are laid over it for that role's own steps.
     pub exported: RoleVars,
+    /// Every handler the play can reach, in the order they run: each role's, in the order the
+    /// roles run, then the play's own. Measured on ansible-core 2.19.12 - handlers run in
+    /// **definition** order and not in notification order, and a role's run before the play's at
+    /// the same flush.
+    pub handlers: Vec<Handler>,
+}
+
+impl Compiled {
+    /// Inserts `steps` at `at`, growing every block range that ends at or after `at` and shifting
+    /// every range that starts at or after it.
+    ///
+    /// Called by the coordinator alone, at a flush point, once every host has reported that step
+    /// and before any of them reads the list again - which is what keeps the index each driver
+    /// holds pointing at the step it was pointing at. A range that *ends* at `at` has to grow:
+    /// `at` is one past the flush, so a flush written last in a block's body ends that body
+    /// exactly there, and testing `>` instead of `>=` would drop the spliced handlers into that
+    /// block's rescue, where a host that failed nothing never goes.
+    pub(crate) fn splice(&mut self, at: usize, steps: Vec<Step>) {
+        let n = steps.len();
+        for span in &mut self.blocks {
+            for range in [&mut span.body, &mut span.rescue, &mut span.always] {
+                if range.start >= at {
+                    range.start += n;
+                }
+                if range.end >= at {
+                    range.end += n;
+                }
+            }
+        }
+        self.steps.splice(at..at, steps);
+    }
+}
+
+/// The handlers one name notifies, in definition order: the **first** one carrying it as its
+/// `name`, and **every** one listening for it.
+///
+/// The asymmetry is measured on ansible-core 2.19.12, both halves on their own: two handlers
+/// written with the same name run the first alone, and a handler named `x` beside one listening
+/// for `x` both run when `x` is notified. It is what makes a role that runs three times
+/// contribute one handler rather than three - the three copies share a name, and only the first
+/// of them is ever reached.
+pub(crate) fn resolve_notify(c: &Compiled, name: &str) -> Vec<usize> {
+    let named = c.handlers.iter().position(|h| h.task.name == name);
+    c.handlers
+        .iter()
+        .enumerate()
+        .filter(|(i, h)| named == Some(*i) || h.listen.iter().any(|l| l == name))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The steps a flush point at `at` inserts behind itself: one per handler, in definition order.
+///
+/// All of them, not only the notified ones, because the coordinator decides this for every host
+/// at once and which handlers a host notified is the driver's own business. A step for a handler
+/// the host did not notify reports nothing and shows nothing.
+///
+/// They carry the flush step's own block and section, which is what makes the spliced steps part
+/// of the section the flush was written in: measured on ansible-core 2.19.12, a handler that
+/// fails at a flush written inside a block is taken by that block's `rescue` (`rescued=1`, exit
+/// 0), and a host that never entered a rescue holding the flush steps over the handlers too.
+pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
+    let (block, section) = (c.steps[at].block, c.steps[at].section);
+    c.handlers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| Step {
+            kind: StepKind::Handler(i),
+            task: h.task.clone(),
+            block,
+            section,
+            role: h.role,
+        })
+        .collect()
 }
 
 /// Every `meta` action ansible-core 2.19.12 accepts, and whether this release honours it.
 ///
-/// `noop` and `flush_handlers` do nothing here and nothing there: `noop` is defined as doing
-/// nothing, and no handler can reach a run yet because `handlers`, `notify` and `force_handlers`
-/// are all refused before it starts, so there is never anything to flush. The rest ask for
-/// something this release cannot do and are refused by their own names.
+/// `noop` does nothing here and nothing there, and `flush_handlers` compiles into a flush point
+/// of its own. The rest ask for something this release cannot do and are refused by their own
+/// names.
 pub(crate) const META_ACTIONS: &[(&str, bool)] = &[
     ("clear_facts", false),
     ("clear_host_errors", false),
@@ -174,6 +271,9 @@ pub(crate) const META_ACTIONS: &[(&str, bool)] = &[
     ("refresh_inventory", false),
     ("reset_connection", false),
 ];
+
+/// The `meta` action that runs the notified handlers where it stands.
+pub(crate) const FLUSH_HANDLERS: &str = "flush_handlers";
 
 /// The action a `meta` task asked for.
 pub(crate) fn meta_action(task: &PlayTask) -> &str {
@@ -242,6 +342,9 @@ struct Builder<'a> {
     steps: Vec<Step>,
     blocks: Vec<BlockSpan>,
     roles: Vec<RoleVars>,
+    /// Every role's handlers, in the order the roles run. The play's own are appended behind
+    /// them, once, when the walk is over.
+    handlers: Vec<Handler>,
     search: &'a RoleSearch,
     /// The directory relative paths are read against: the playbook's, then a role's `tasks/`
     /// while its tasks are being compiled, then the directory of an imported file while its own
@@ -268,6 +371,27 @@ impl Builder<'_> {
         if self.selection.selects(&step.task.tags) {
             self.steps.push(step);
         }
+    }
+
+    /// One of the three flush points the compiler puts in itself, at the end of a section that
+    /// has something in it: `mark` is where the section started, so a section that laid out no
+    /// step gets no flush point. Nothing there could have notified anything, and a step every
+    /// host has to report through is a barrier.
+    ///
+    /// Pushed past [`Builder::push`] on purpose: it is the engine's own structure and not
+    /// something the playbook wrote, so no `--tags` may drop it. A flush point the selection
+    /// removed would leave the handlers a selected task notified with nowhere to run.
+    fn flush_point(&mut self, mark: usize) {
+        if self.steps.len() == mark {
+            return;
+        }
+        self.steps.push(Step {
+            kind: StepKind::Flush { explicit: false },
+            task: PlayTask::empty(),
+            block: None,
+            section: Section::Body,
+            role: None,
+        });
     }
 
     fn items(
@@ -327,10 +451,10 @@ impl Builder<'_> {
             _ => {}
         }
         let task = merge(inherited, task);
-        let kind = if crate::playbook::is_meta(&task) {
-            StepKind::Meta
-        } else {
-            StepKind::Task
+        let kind = match crate::playbook::is_meta(&task) {
+            true if meta_action(&task) == FLUSH_HANDLERS => StepKind::Flush { explicit: true },
+            true => StepKind::Meta,
+            false => StepKind::Task,
         };
         self.push(Step {
             kind,
@@ -454,6 +578,16 @@ impl Builder<'_> {
             vars: role.vars,
             params: entry.params.clone(),
         });
+        // The role's handlers, before its tasks are walked, so a role imported by another one
+        // contributes its handlers in front of the importer's. Their keywords are merged the way
+        // a task's are: a `when` or a `become` written on the role entry reaches them too.
+        for handler in role.handlers {
+            self.handlers.push(Handler {
+                task: merge(&kw, &handler.task),
+                listen: handler.listen,
+                role: Some(index),
+            });
+        }
         if let Some(spec) = role.argument_spec {
             let task = merge(
                 &kw,
@@ -651,6 +785,7 @@ pub(crate) fn compile(
         steps: Vec::new(),
         blocks: Vec::new(),
         roles: Vec::new(),
+        handlers: Vec::new(),
         search,
         file_dir: play.dir.clone(),
         role_tasks: None,
@@ -664,13 +799,37 @@ pub(crate) fn compile(
         tags: play.tags.clone(),
         ..PlayTask::empty()
     };
+    // A flush point closes each of the three sections. Measured on ansible-core 2.19.12: the
+    // implicit ones are after `pre_tasks`, after the roles and `tasks` **together**, and after
+    // `post_tasks`, and what they run counts `ok`/`changed` in the recap like any other task.
+    //
+    // Laid out here, as the walk reaches each boundary, rather than inserted afterwards: a step
+    // put into the finished list would grow the span of a block that happens to end exactly
+    // there, and a host draining that block's `always` after a failure would then walk into a
+    // flush it has no business in. Whether the play has a handler at all is not known yet - a
+    // role read below contributes its own - so all three are always there. A play with nothing
+    // to flush pays three steps that report and show nothing.
+    let mut mark = builder.steps.len();
     builder.items(&play.pre_tasks, &empty, None, Section::Body, None)?;
+    builder.flush_point(mark);
+    mark = builder.steps.len();
     let mut seen: Seen = Vec::new();
     for entry in &play.roles {
         builder.role(entry, &empty, &mut seen, None, Section::Body)?;
     }
     builder.items(&play.tasks, &empty, None, Section::Body, None)?;
+    builder.flush_point(mark);
+    mark = builder.steps.len();
     builder.items(&play.post_tasks, &empty, None, Section::Body, None)?;
+    builder.flush_point(mark);
+    // The play's own handlers run behind every role's, measured.
+    for handler in &play.handlers {
+        builder.handlers.push(Handler {
+            task: handler.task.clone(),
+            listen: handler.listen.clone(),
+            role: None,
+        });
+    }
 
     // Every role lends its `defaults` and its `vars` to the whole play, so the two layers are
     // folded once here rather than accumulated as the list is walked, and each role's own values
@@ -693,6 +852,7 @@ pub(crate) fn compile(
         blocks: builder.blocks,
         roles,
         exported,
+        handlers: builder.handlers,
     })
 }
 
@@ -742,6 +902,16 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .collect::<Vec<_>>();
     task.tags.sort_unstable();
     task.tags.dedup();
+    // A `notify` written on a block reaches the tasks under it - measured on ansible-core
+    // 2.19.12, a block carrying `notify: h` runs `h` when a task inside it changes something -
+    // and a task that notifies something of its own keeps both. Left in the order they were
+    // written, with the task's own first: nothing depends on it, since handlers run in
+    // definition order, but a refusal names the first name the playbook wrote.
+    for name in &outer.notify {
+        if !task.notify.contains(name) {
+            task.notify.push(name.clone());
+        }
+    }
     // The outer map first, so a name the task sets itself keeps the task's value.
     let mut vars = outer.vars.clone();
     vars.extend(inner.vars.clone());
@@ -809,7 +979,15 @@ fn seek(c: &Compiled, from: usize, entered: &[usize]) -> usize {
 /// nothing else, so a task written in a `rescue:` or an `always:` is listed nowhere and its tags
 /// do not reach `TASK TAGS`. That is the reference's own behaviour, not an omission of ours -
 /// which is why the listing asks this rather than filtering by hand.
+///
+/// A flush point the compiler put in itself is listed nowhere either, and neither is a handler:
+/// measured, `--list-tasks` on a playbook full of handlers shows the `meta` a playbook wrote and
+/// not one handler. The step is engine structure rather than something the playbook says.
 pub(crate) fn listed(c: &Compiled, index: usize) -> bool {
+    match c.steps[index].kind {
+        StepKind::Flush { explicit: false } | StepKind::Handler(_) => return false,
+        _ => {}
+    }
     ancestors(c, index).all(|(_, section)| section == Section::Body)
 }
 
@@ -925,8 +1103,29 @@ mod tests {
         )
     }
 
+    /// Whether a step is one of the flush points the compiler puts in itself. They carry no task
+    /// and stand at the end of a section, so the helpers below leave them out: what these tests
+    /// are about is where the playbook's own steps landed. The flush points have a test of their
+    /// own, `each_section_ends_with_a_flush_point_that_nothing_lists`.
+    fn structural(step: &Step) -> bool {
+        matches!(step.kind, StepKind::Flush { explicit: false })
+    }
+
     fn names(c: &Compiled) -> Vec<&str> {
-        c.steps.iter().map(|s| s.task.name.as_str()).collect()
+        c.steps
+            .iter()
+            .filter(|s| !structural(s))
+            .map(|s| s.task.name.as_str())
+            .collect()
+    }
+
+    /// The index of the step with this name, which is not its position in [`names`] once a play
+    /// has a flush point in the middle of it.
+    fn index_of(c: &Compiled, name: &str) -> usize {
+        c.steps
+            .iter()
+            .position(|s| s.task.name == name)
+            .unwrap_or_else(|| panic!("no step named {name}"))
     }
 
     /// The order a host walks a compiled play from a given step, on the happy path.
@@ -934,7 +1133,9 @@ mod tests {
         let mut pos = from;
         let mut seen = Vec::new();
         while pos < c.steps.len() {
-            seen.push(c.steps[pos].task.name.as_str());
+            if !structural(&c.steps[pos]) {
+                seen.push(c.steps[pos].task.name.as_str());
+            }
             pos = after(c, pos);
         }
         seen
@@ -945,7 +1146,9 @@ mod tests {
         let mut seen = Vec::new();
         let mut at = after_failure(c, failed);
         while let Some((pos, cleanup)) = at {
-            seen.push(c.steps[pos].task.name.as_str());
+            if !structural(&c.steps[pos]) {
+                seen.push(c.steps[pos].task.name.as_str());
+            }
             at = after_pending(c, pos, cleanup);
         }
         seen
@@ -1291,7 +1494,7 @@ mod tests {
     #[test]
     fn the_rescue_that_takes_a_failure_is_never_the_one_it_was_raised_in() {
         let c = compiled(NESTED);
-        let at = |name: &str| names(&c).iter().position(|n| *n == name).expect(name);
+        let at = |name: &str| index_of(&c, name);
         let target = |name: &str| rescue_target(&c, at(name)).map(|i| c.steps[i].task.name.clone());
         assert_eq!(target("body one").as_deref(), Some("outer rescue"));
         assert_eq!(target("nested body").as_deref(), Some("nested rescue"));
@@ -1372,7 +1575,7 @@ mod tests {
           command: "true"
 "#,
         );
-        let at = |name: &str| names(&c).iter().position(|n| *n == name).expect(name);
+        let at = |name: &str| index_of(&c, name);
         assert_eq!(
             rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
             Some("in the rescue".to_string()),
@@ -1631,6 +1834,183 @@ mod tests {
         assert_eq!(span.rescue, 1..1);
         assert_eq!(span.always, 1..2);
         assert_eq!(walk(&c, 0), ["kept before", "kept cleanup", "kept after"]);
+    }
+
+    /// Inserting steps one past the last step of a block's body grows that body and shifts the
+    /// two sections behind it, and inserting past the block moves nothing.
+    ///
+    /// What would make this red: `range.end > at` instead of `>=`. The body would not grow, so
+    /// the steps spliced in would sit in a range that says they belong to nothing - and the
+    /// handler steps a flush point inserts are exactly that shape, since a flush written last in
+    /// a body ends it one index before them.
+    #[test]
+    fn a_splice_grows_the_section_it_lands_at_the_end_of() {
+        let mut c = compiled(
+            r#"
+- hosts: all
+  tasks:
+    - block:
+        - name: body one
+          command: "true"
+        - name: body two
+          command: "true"
+      rescue:
+        - name: recovery
+          command: "true"
+      always:
+        - name: cleanup
+          command: "true"
+    - name: after
+      command: "true"
+"#,
+        );
+        assert_eq!((c.blocks[0].body.start, c.blocks[0].body.end), (0, 2));
+        assert_eq!((c.blocks[0].rescue.start, c.blocks[0].rescue.end), (2, 3));
+        assert_eq!((c.blocks[0].always.start, c.blocks[0].always.end), (3, 4));
+        let step = |name: &str| Step {
+            kind: StepKind::Task,
+            task: PlayTask {
+                name: name.to_string(),
+                module: "command".to_string(),
+                ..PlayTask::empty()
+            },
+            block: Some(0),
+            section: Section::Body,
+            role: None,
+        };
+        c.splice(2, vec![step("spliced one"), step("spliced two")]);
+        assert_eq!(
+            names(&c),
+            [
+                "body one",
+                "body two",
+                "spliced one",
+                "spliced two",
+                "recovery",
+                "cleanup",
+                "after",
+            ]
+        );
+        assert_eq!((c.blocks[0].body.start, c.blocks[0].body.end), (0, 4));
+        assert_eq!((c.blocks[0].rescue.start, c.blocks[0].rescue.end), (4, 5));
+        assert_eq!((c.blocks[0].always.start, c.blocks[0].always.end), (5, 6));
+        // A host that failed in the body is still taken by the block's own rescue and not by
+        // the steps that were just put in front of it.
+        assert_eq!(
+            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
+            Some("recovery".to_string())
+        );
+        // Past the block, nothing moves. "Past" means past the step behind it: splicing at the
+        // index one after the last step of a section is splicing **into** that section, which is
+        // what the `>=` above is for and what a flush written last in a body asks for.
+        let before = c.blocks[0].clone();
+        c.splice(7, vec![step("at the end")]);
+        assert_eq!(c.blocks[0].body, before.body);
+        assert_eq!(c.blocks[0].rescue, before.rescue);
+        assert_eq!(c.blocks[0].always, before.always);
+    }
+
+    /// A `notify` reaches the **first** handler of that name and **every** handler listening for
+    /// it, in definition order.
+    ///
+    /// Measured on ansible-core 2.19.12, both halves separately: two handlers written with the
+    /// same name run the first alone, and a handler named `x` beside one listening for `x` both
+    /// run when `x` is notified.
+    ///
+    /// What would make this red: every name match returned, which plays a role's handler once
+    /// per instance of that role - three times for the role list this repository's own fixture
+    /// writes; or `listen` ignored, which loses a handler a playbook asked for.
+    #[test]
+    fn a_notify_takes_the_first_handler_of_that_name_and_every_listener() {
+        let c = compiled(
+            r#"
+- hosts: all
+  handlers:
+    - name: twice
+      debug: msg=one
+    - name: twice
+      debug: msg=two
+    - name: listening
+      debug: msg=three
+      listen: twice
+  tasks:
+    - command: "true"
+      notify: twice
+"#,
+        );
+        assert_eq!(c.handlers.len(), 3);
+        assert_eq!(resolve_notify(&c, "twice"), [0, 2]);
+        assert_eq!(resolve_notify(&c, "listening"), [2]);
+        assert!(resolve_notify(&c, "nobody").is_empty());
+    }
+
+    /// The three flush points close the three sections, and neither they nor a handler are
+    /// listed anywhere.
+    ///
+    /// Measured on ansible-core 2.19.12: `--list-tasks` on a playbook full of handlers shows the
+    /// `meta` the playbook wrote and not one handler, and the implicit flushes are the
+    /// reference's own structure rather than anything it prints.
+    #[test]
+    fn each_section_ends_with_a_flush_point_that_nothing_lists() {
+        let c = compiled(
+            r#"
+- hosts: all
+  pre_tasks:
+    - name: pre
+      command: "true"
+  tasks:
+    - name: body
+      command: "true"
+    - meta: flush_handlers
+  post_tasks:
+    - name: post
+      command: "true"
+"#,
+        );
+        let kinds: Vec<StepKind> = c.steps.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                StepKind::Task,
+                StepKind::Flush { explicit: false },
+                StepKind::Task,
+                StepKind::Flush { explicit: true },
+                StepKind::Flush { explicit: false },
+                StepKind::Task,
+                StepKind::Flush { explicit: false },
+            ]
+        );
+        let listed: Vec<&str> = (0..c.steps.len())
+            .filter(|&i| listed(&c, i))
+            .map(|i| c.steps[i].task.name.as_str())
+            .collect();
+        assert_eq!(listed, ["pre", "body", "meta", "post"]);
+    }
+
+    /// A `notify` on a block reaches the tasks under it, and a task that notifies something of
+    /// its own keeps both. Measured on ansible-core 2.19.12.
+    #[test]
+    fn a_block_s_notify_reaches_the_tasks_under_it() {
+        let c = compiled(
+            r#"
+- hosts: all
+  handlers:
+    - name: h
+      debug: msg=h
+    - name: own
+      debug: msg=own
+  tasks:
+    - block:
+        - name: inherits
+          command: "true"
+        - name: adds its own
+          command: "true"
+          notify: own
+      notify: h
+"#,
+        );
+        assert_eq!(c.steps[0].task.notify, ["h"]);
+        assert_eq!(c.steps[1].task.notify, ["own", "h"]);
     }
 
     /// The action table is the reference's own list, sorted and free of duplicates.

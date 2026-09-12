@@ -194,7 +194,7 @@ at load time.
 
 ## Not there yet
 
-- Roles, collections beyond the native modules, handlers and `notify`.
+- Roles and collections beyond the native modules.
 - Python modules: only the [native modules](modules.md) run.
 - Facts. `gather_facts` is accepted and warns; no `ansible_*` fact is ever defined.
 - `serial`, `run_once`, `delegate_to`, `until`, `block`/`rescue`, `include_*` and `import_*`.

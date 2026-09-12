@@ -47,7 +47,7 @@ For the modules whose arguments these variables and templates feed, see the [nat
 ## Not there yet
 
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
-- Roles, collections beyond native modules, handlers and `notify`.
+- Roles and collections beyond native modules.
 - `serial`, `run_once`, `delegate_to`.
 - `until`/`retries`, `block`/`rescue`.
 - `include_*` and `import_*`.

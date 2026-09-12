@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: bad handler
+      command: "false"
+    - name: good handler
+      debug: msg=good
+  tasks:
+    - name: notifies both
+      command: "true"
+      notify: [bad handler, good handler]

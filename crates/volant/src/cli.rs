@@ -84,6 +84,9 @@ pub struct PlaybookArgs {
     /// Ask for the escalation password on the terminal.
     #[arg(short = 'K', long = "ask-become-pass")]
     pub ask_become_pass: bool,
+
+    #[arg(long = "force-handlers")]
+    pub force_handlers: bool,
 }
 
 /// Runs the playbooks and returns the process exit code.
@@ -290,6 +293,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let options = RunOptions {
         defaults,
         forks,
+        // The play's own keyword speaks over this; measured, the flag and `[defaults]
+        // force_handlers` are the same request.
+        force_handlers: args.force_handlers || config.force_handlers,
         stop: stop_rx.clone(),
     };
 

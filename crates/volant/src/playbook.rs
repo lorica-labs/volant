@@ -9,7 +9,8 @@ use serde_json::{Map, Value};
 use volant_protocol::modules::{import_module, is_known, native, short_name};
 
 use crate::keywords::{
-    BLOCK_SECTIONS, Support, block_keyword, loop_control_keyword, play_keyword, task_keyword,
+    BLOCK_SECTIONS, Support, block_keyword, handler_keyword, loop_control_keyword, play_keyword,
+    task_keyword,
 };
 use crate::roles::{RoleEntry, RoleFrom};
 use crate::yaml::{as_bool, field, to_json};
@@ -37,6 +38,13 @@ pub struct Play {
     pub pre_tasks: Vec<TaskOrBlock>,
     pub post_tasks: Vec<TaskOrBlock>,
     pub roles: Vec<RoleEntry>,
+    /// The play's own `handlers:` list, in the order it was written, which is the order they run
+    /// in. A role's handlers join them at compile time, in front of these.
+    pub handlers: Vec<HandlerTask>,
+    /// `force_handlers`, unset when the play says nothing: `[defaults] force_handlers` and
+    /// `--force-handlers` then speak instead, and the flag and the file are equivalent - measured
+    /// on ansible-core 2.19.12, the same playbook exits with the same recap either way.
+    pub force_handlers: Option<bool>,
     /// The directory of the file this play was written in, which is not always the directory of
     /// the playbook the operator named: `import_playbook` splices another file's plays in place,
     /// and everything a play reads from disk - its `vars_files`, its `group_vars/`, its roles -
@@ -54,6 +62,16 @@ pub struct Play {
     /// way it does in the reference; the pre-flight then refuses the run before the first
     /// connection. Nothing may quietly drop a keyword between the two.
     pub unsupported: Vec<&'static str>,
+}
+
+/// One handler as the playbook wrote it: a task, plus the names it answers to besides its own.
+///
+/// `listen` is the one attribute `Handler.fattributes` has and `Task.fattributes` does not, which
+/// is why a handler is read by its own function rather than by the ordinary task reader alone.
+#[derive(Debug, Clone)]
+pub struct HandlerTask {
+    pub task: PlayTask,
+    pub listen: Vec<String>,
 }
 
 /// One entry of a task list: a task, or a block grouping more of them.
@@ -111,6 +129,10 @@ pub struct PlayTask {
     pub failed_when: Vec<String>,
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
+    /// The handlers this task asks for when it changes something, as written. A block's `notify`
+    /// comes down here too, which is what makes a `notify` on a block apply to its tasks -
+    /// measured on ansible-core 2.19.12.
+    pub notify: Vec<String>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. A task
     /// carrying one is loaded whole and refused by the pre-flight, never run without it.
     ///
@@ -151,6 +173,7 @@ impl PlayTask {
             failed_when: Vec::new(),
             r#become: None,
             become_user: None,
+            notify: Vec::new(),
             unsupported: Vec::new(),
         }
     }
@@ -488,6 +511,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         pre_tasks,
         post_tasks,
         roles,
+        handlers: parse_handlers(field(yaml, "handlers"))?,
+        force_handlers: boolean(yaml, "force_handlers")?,
         dir: dir.to_path_buf(),
         r#become,
         become_user,
@@ -583,6 +608,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             when: conditions(yaml, "when", &context)?,
             r#become,
             become_user,
+            notify: names(yaml, "notify", &context)?,
             unsupported,
             ..PlayTask::empty()
         },
@@ -606,6 +632,21 @@ pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> 
             task_list(Some(node), "tasks").with_context(|| source.clone())
         }
         Some(_) => bail!("{source}: included task files must contain a list of tasks"),
+    }
+}
+
+/// The handler list of one file, for a role's `handlers/main.yml`.
+pub(crate) fn parse_handlers_file(path: &Path) -> anyhow::Result<Vec<HandlerTask>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let source = path.display().to_string();
+    let docs = crate::yaml::load(&text, &source)?;
+    match docs.first() {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        Some(node @ Yaml::Sequence(_)) => {
+            parse_handlers(Some(node)).with_context(|| source.clone())
+        }
+        Some(_) => bail!("{source}: a handlers file must contain a list of handlers"),
     }
 }
 
@@ -642,7 +683,7 @@ fn parse_item(yaml: &Yaml) -> anyhow::Result<TaskOrBlock> {
             bail!("'{section}' keyword cannot be used without 'block'");
         }
     }
-    Ok(TaskOrBlock::Task(parse_task(yaml)?))
+    Ok(TaskOrBlock::Task(parse_task(yaml, false)?))
 }
 
 /// A block, with its three sections parsed recursively and its inherited keywords read into a
@@ -688,13 +729,17 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             when: conditions(yaml, "when", &context)?,
             r#become,
             become_user,
+            notify: names(yaml, "notify", &context)?,
             unsupported,
             ..PlayTask::empty()
         },
     })
 }
 
-fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
+/// One task. `handler` says whether the mapping is a handler, which is the one shape that may
+/// carry `listen`: read here so the key is not mistaken for a module, and read from its own table
+/// so the row can be flipped like any other.
+fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let map = yaml
         .as_mapping()
         .ok_or_else(|| anyhow!("a task must be a mapping"))?;
@@ -708,6 +753,12 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("task '{label}': keys must be strings"))?;
+        if handler && let Some(k) = handler_keyword(key) {
+            if k.support == Support::Preflight {
+                unsupported.push(k.name);
+            }
+            continue;
+        }
         match task_keyword(key) {
             Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
             Some(_) => {}
@@ -849,6 +900,7 @@ fn parse_task(yaml: &Yaml) -> anyhow::Result<PlayTask> {
         failed_when,
         r#become,
         become_user,
+        notify: names(yaml, "notify", &context)?,
         unsupported,
     })
 }
@@ -920,6 +972,57 @@ fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Map<String, 
             _ => bail!("{context}'{key}' must be a mapping"),
         },
     }
+}
+
+/// `notify` and `listen`: one name or a list of them, kept in the order they were written - the
+/// order a `notify` is written in decides nothing (handlers run in definition order, measured),
+/// but keeping it is what lets a refusal name the first one the playbook wrote.
+fn names(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<String>> {
+    let one = |node: &Yaml| -> anyhow::Result<String> {
+        node.as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("{context}'{key}' must be a name or a list of names"))
+    };
+    match field(yaml, key) {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        Some(Yaml::Sequence(items)) => items.iter().map(one).collect(),
+        Some(node) => Ok(vec![one(node)?]),
+    }
+}
+
+/// A play's `handlers:` list, in the order it was written, which is the order they run in.
+///
+/// A block written in a handlers list is refused rather than flattened: the reference runs one,
+/// and this release has nowhere to put a block's `rescue` in a flush. Refusing it by name beats
+/// reading the block and running its tasks under rules nobody wrote.
+fn parse_handlers(node: Option<&Yaml>) -> anyhow::Result<Vec<HandlerTask>> {
+    let Some(node) = node else {
+        return Ok(Vec::new());
+    };
+    let items = match node {
+        Yaml::Sequence(items) => items,
+        Yaml::Value(Scalar::Null) => return Ok(Vec::new()),
+        _ => bail!("'handlers' must be a list"),
+    };
+    let mut handlers = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let context = format!("handler {}: ", i + 1);
+        let map = item
+            .as_mapping()
+            .ok_or_else(|| anyhow!("{context}a handler must be a mapping"))?;
+        if map.keys().any(|k| {
+            k.as_str()
+                .is_some_and(|k| BLOCK_SECTIONS.contains(&k) || k == "rescue")
+        }) {
+            bail!("{context}a block in a handlers list is not supported yet");
+        }
+        let listen = names(item, "listen", &context)?;
+        handlers.push(HandlerTask {
+            task: parse_task(item, true).context(context)?,
+            listen,
+        });
+    }
+    Ok(handlers)
 }
 
 /// `when`, `changed_when`, `failed_when`: one expression or a list of them. A YAML boolean is
@@ -1364,7 +1467,7 @@ mod tests {
     /// executor that ignores it.
     #[test]
     fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
-        for kw in ["until", "notify", "delegate_to", "become_flags", "no_log"] {
+        for kw in ["until", "retries", "delegate_to", "become_flags", "no_log"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
                 "x.yml",

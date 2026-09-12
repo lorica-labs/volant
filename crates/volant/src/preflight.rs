@@ -59,6 +59,12 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
             bail!("role '{}': keyword '{kw}' is not supported yet", entry.name);
         }
     }
+    // A handler is a task the play wrote, so the first pass refuses what it carries too. Only
+    // the `notify` names wait for the second pass, because resolving one needs the whole
+    // compiled play - a role read from disk contributes handlers this list has never seen.
+    for handler in &play.handlers {
+        check_task(&handler.task)?;
+    }
     check_items(&play.pre_tasks)?;
     check_items(&play.tasks)?;
     check_items(&play.post_tasks)
@@ -74,7 +80,58 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
 /// is.
 pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
     for step in &compiled.steps {
-        check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
+        // A flush point the compiler put in itself carries no task at all, so there is no module
+        // and no `meta` action to judge; a handler step does not exist yet, and the handlers
+        // themselves are checked below. Everything else goes through, `meta` included - a role's
+        // `meta: end_play` has to be refused here, since the first pass never saw that file.
+        if !matches!(
+            step.kind,
+            crate::compile::StepKind::Flush { .. } | crate::compile::StepKind::Handler(_)
+        ) {
+            check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
+        }
+        check_notify(compiled, &step.task)?;
+    }
+    for handler in &compiled.handlers {
+        check_task(&handler.task).map_err(|e| Refusal::or(CODE, e))?;
+        // A handler notifying another handler is ordinary - measured, the second one runs in the
+        // same flush when it is defined behind the first - so its names are resolved here too.
+        check_notify(compiled, &handler.task)?;
+    }
+    Ok(())
+}
+
+/// Every `notify` on a step or a handler names a handler this play has.
+///
+/// Measured on ansible-core 2.19.12: a name nothing answers to stops the run with this sentence
+/// and exit **1**, after the notifying task's banner and with no recap. This refuses before the
+/// first connection instead, so nothing has run when the operator reads it - the same code, one
+/// moment earlier, and the divergence is deliberate.
+///
+/// A templated name is the one shape this cannot resolve here, and it is refused rather than left
+/// to a run. Measured: the reference renders it and finds the handler, so this is a divergence -
+/// but resolving it would mean rendering the name per host and per loop item, and a name that
+/// then answers to nothing would have to fail a task that has already printed its result line.
+/// Refusing it by its own name is the smaller thing to be wrong about.
+fn check_notify(c: &crate::compile::Compiled, task: &PlayTask) -> anyhow::Result<()> {
+    for name in &task.notify {
+        if crate::template::Templar::is_template(name) {
+            return Err(Refusal::at(
+                CODE,
+                format!(
+                    "task '{}': a templated 'notify' is not supported yet",
+                    task.name
+                ),
+            ));
+        }
+        if crate::compile::resolve_notify(c, name).is_empty() {
+            return Err(Refusal::at(
+                1,
+                format!(
+                    "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -199,7 +256,7 @@ mod tests {
     /// dropped here, which is exactly the silent skip this module exists to stop.
     #[test]
     fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["until", "notify", "no_log", "run_once", "environment"] {
+        for kw in ["until", "delegate_to", "no_log", "run_once", "environment"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
             ));
@@ -209,7 +266,7 @@ mod tests {
             );
             assert!(text.contains("play 1") && text.contains("'T'"), "{text}");
         }
-        for kw in ["serial", "vars_prompt", "handlers", "order"] {
+        for kw in ["serial", "vars_prompt", "max_fail_percentage", "order"] {
             let text = refusal(&format!(
                 "- hosts: all\n  {kw}: 1\n  tasks:\n    - command: echo hi\n"
             ));
@@ -287,7 +344,8 @@ mod tests {
     /// failing to load.
     fn preflight_probes() -> Vec<(&'static str, String)> {
         use crate::keywords::{
-            BLOCK_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+            BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support,
+            TASK_KEYWORDS,
         };
         let task = |kw: &str| {
             format!(
@@ -336,6 +394,16 @@ mod tests {
                 ),
             )
         }));
+        // A handler has a grammar of its own too, one name wide today. It is walked here so that
+        // a row added to it is probed by the same rule as every other table's.
+        probes.extend(parked(HANDLER_KEYWORDS).map(|kw| {
+            (
+                kw,
+                format!(
+                    "- hosts: all\n  handlers:\n    - name: Probe task\n      command: echo hi\n      {kw}: probe\n  tasks:\n    - command: echo hi\n"
+                ),
+            )
+        }));
         probes
     }
 
@@ -356,7 +424,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            101,
+            97,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

@@ -1,0 +1,19 @@
+- hosts: h1,h2
+  gather_facts: false
+  handlers:
+    - name: the handler
+      debug: msg=handler-ran
+  tasks:
+    - name: both notify
+      command: "true"
+      notify: the handler
+    - block:
+        - name: fails on h1 only
+          command: "false"
+          when: inventory_hostname == 'h1'
+      rescue:
+        - name: recovering
+          debug: msg=rescued
+        - meta: flush_handlers
+    - name: after the block
+      debug: msg="hosts={{ ansible_play_hosts | length }}"

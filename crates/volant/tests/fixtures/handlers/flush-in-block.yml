@@ -1,0 +1,21 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: bad handler
+      command: "false"
+  tasks:
+    - name: notifies the bad handler
+      command: "true"
+      notify: bad handler
+    - block:
+        - name: in the body
+          command: "true"
+        - meta: flush_handlers
+      rescue:
+        - name: the rescue
+          debug: msg=rescue-ran
+      always:
+        - name: the cleanup
+          debug: msg=cleanup-ran
+    - name: after the block
+      debug: msg=after

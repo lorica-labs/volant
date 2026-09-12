@@ -20,6 +20,9 @@
     - name: play task after roles
       debug:
         msg: "shared={{ shared }} d={{ d | default('unset') }} p={{ p | default('unset') }}"
+    - name: notifies the role's handler
+      command: "true"
+      notify: base handler
     - import_role:
         name: base
         tasks_from: extra

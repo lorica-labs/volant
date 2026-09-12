@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: never notified
+      debug: msg=nope
+  tasks:
+    - name: changes nothing
+      command: "true"
+      changed_when: false
+      notify: never notified

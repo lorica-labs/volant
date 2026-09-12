@@ -16,7 +16,7 @@ use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
 use crate::config::Config;
-use crate::playbook::{PlayTask, TaskOrBlock};
+use crate::playbook::{HandlerTask, PlayTask, TaskOrBlock};
 use crate::stats::Refusal;
 
 /// Which file of each of a role's directories to read. `main` everywhere unless the entry that
@@ -57,15 +57,15 @@ pub struct RoleEntry {
 }
 
 /// What one role directory holds.
-///
-/// No handlers: `notify` and the play's `handlers` are both still refused before the first
-/// connection, so nothing could reach them, and a directory read into a list nobody runs is the
-/// silent skip this project spends its tests on. They arrive with the handlers themselves.
 #[derive(Debug, Clone)]
 pub struct LoadedRole {
     pub defaults: Map<String, Value>,
     pub vars: Map<String, Value>,
     pub tasks: Vec<TaskOrBlock>,
+    /// The role's `handlers/` directory, read with the same file-before-directory rule as its
+    /// tasks. They join the play's own handlers at compile time, in front of them - measured on
+    /// ansible-core 2.19.12, a role's handler runs before the play's at the same flush.
+    pub handlers: Vec<HandlerTask>,
     pub dependencies: Vec<RoleEntry>,
     pub allow_duplicates: bool,
     /// The `options` mapping of the `argument_specs` entry named after the tasks file, when the
@@ -169,12 +169,21 @@ pub fn load(path: &Path, from: &RoleFrom) -> anyhow::Result<LoadedRole> {
             tasks
         }
     };
+    // A handlers file the entry asked for by name is required the way a tasks file is; `main` is
+    // not, because a role with no `handlers/` at all is ordinary.
+    let mut handlers = Vec::new();
+    for file in
+        files(path, "handlers", &from.handlers, from.handlers != "main")?.unwrap_or_default()
+    {
+        handlers.extend(crate::playbook::parse_handlers_file(&file)?);
+    }
     let (dependencies, allow_duplicates) = meta(path)?;
     let (argument_spec, argument_spec_description) = argument_spec(path, &from.tasks)?;
     Ok(LoadedRole {
         defaults,
         vars,
         tasks,
+        handlers,
         dependencies,
         allow_duplicates,
         argument_spec,

@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - name: before the include
+          debug: msg=before
+        - name: include that fails
+          include_tasks: failing.yml
+        - name: after the include
+          debug: msg=after
+      rescue:
+        - name: the rescue
+          debug: msg="rescued {{ ansible_failed_task.name }}"
+      always:
+        - name: the always
+          debug: msg=always
+    - name: past the block
+      debug: msg=past

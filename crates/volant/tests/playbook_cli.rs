@@ -3647,12 +3647,17 @@ fn every_runs_keyword_changes_something_observable() {
 /// the playbook rather than beside its importer.
 #[test]
 fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("inventory.ini"),
-        &fixture("roles/roles.yml"),
-    ]);
+    // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
+    // splice point and can block there. An assertion on elapsed time cannot fail on a hang.
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("roles/roles.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -3744,12 +3749,17 @@ fn identical_role_entries_run_once_and_different_parameters_run_twice() {
 /// `p=role-param` - a role parameter outliving the role that was given it.
 #[test]
 fn role_variables_stay_visible_after_the_role() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("inventory.ini"),
-        &fixture("roles/roles.yml"),
-    ]);
+    // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
+    // splice point and can block there. An assertion on elapsed time cannot fail on a hang.
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("roles/roles.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
@@ -3780,12 +3790,17 @@ fn role_variables_stay_visible_after_the_role() {
 /// key as a task variable, which leaves all four reading `fact`.
 #[test]
 fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("inventory.ini"),
-        &fixture("roles/roles.yml"),
-    ]);
+    // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
+    // splice point and can block there. An assertion on elapsed time cannot fail on a hang.
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("roles/roles.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert_eq!(
@@ -3802,29 +3817,36 @@ fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
     );
 }
 
-/// `import_role` runs a role the play's `roles:` list has already run with the same parameters.
+/// `import_role` and `include_role` both run a role the play's `roles:` list has already run with
+/// the same parameters.
 ///
-/// Measured on ansible-core 2.19.12 on this fixture: `base` runs five times - four entries in
-/// `roles:` counting `child`'s dependency, then once more for the bare `import_role: { name:
-/// base }` in `tasks:`, whose entry is identical to the bare one the list already ran.
+/// Measured on ansible-core 2.19.12 on this fixture: `base` runs six times - four entries in
+/// `roles:` counting `child`'s dependency, then once for the bare `import_role: { name: base }` in
+/// `tasks:` whose entry is identical to the bare one the list already ran, then once for the
+/// `include_role` behind it.
 ///
-/// What would make this red: letting `import_role` consult the play's own list of what it has
-/// run, which drops the import and leaves four - a run reporting success having done less than
-/// the playbook asked for.
+/// What would make this red: letting either statement consult the play's own list of what it has
+/// run, which drops it and leaves five - a run reporting success having done less than the
+/// playbook asked for.
 #[test]
 fn an_import_role_runs_again_what_the_roles_list_already_ran() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("inventory.ini"),
-        &fixture("roles/roles.yml"),
-    ]);
+    // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
+    // splice point and can block there. An assertion on elapsed time cannot fail on a hang.
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("roles/roles.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert_eq!(
         text.matches("TASK [base : base task]").count(),
-        5,
-        "four entries and the import that repeats one of them: {text}"
+        6,
+        "four entries, the import and the include that each repeat one of them: {text}"
     );
 }
 
@@ -3887,6 +3909,279 @@ fn an_import_statement_refuses_an_argument_it_does_not_take() {
         let err = String::from_utf8(out.stderr).unwrap();
         assert_eq!(out.status.code(), Some(4), "{err}");
         assert!(err.contains(message), "{err}");
+    }
+}
+
+/// Everything an `include_tasks` does, on the campaign's own fixture.
+///
+/// Measured on ansible-core 2.19.12, line for line. A static include names one absolute path for
+/// both hosts; a name templated per host gives one `included:` line each, and the tasks behind
+/// them run for their own host alone; a `loop` gives one line per item with its own `=> (item=)`
+/// and the tasks repeat per item; an include a `when` left out for one host is `skipping:` there
+/// and runs for the other; and a file that is not there is a `fatal:` carrying `include` as the
+/// playbook wrote it and `reason` naming the controller path. Recap `h1 ok=10 skipped=1`,
+/// `h2 ok=9 failed=1`, exit 2.
+///
+/// What would make this red: the host mask ignored, which runs `from a` on h2 in the dynamic
+/// include; one `ok` for a two-item loop rather than one per item, which reads `ok=9`; a missing
+/// file reported as `UNREACHABLE` instead of a task failure; or a splice that nobody waits for,
+/// which hangs and `volant_within` fails rather than reporting an elapsed time.
+#[test]
+fn include_tasks_splices_what_each_host_asked_for() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/include.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let dir = fixture("include");
+    for line in [
+        format!("included: {dir}/inc-a.yml for h1, h2"),
+        format!("included: {dir}/inc-a.yml for h1"),
+        format!("included: {dir}/inc-b.yml for h2"),
+        format!("included: {dir}/inc-a.yml for h1, h2 => (item=1)"),
+        format!("included: {dir}/inc-a.yml for h1, h2 => (item=2)"),
+    ] {
+        assert!(text.contains(&line), "missing {line}:\n{text}");
+    }
+    // The dynamic include ran `from a` for h1 alone and `from b` for h2 alone, each under its
+    // own banner: the mask, not the banner, is what decides who shows a line.
+    assert_eq!(text.matches("TASK [from a]").count(), 4, "{text}");
+    assert_eq!(text.matches("\"msg\": \"a on h2\"").count(), 3, "{text}");
+    assert!(text.contains("skipping: [h1]"), "{text}");
+    assert!(
+        text.contains(
+            "fatal: [h2]: FAILED! => {\"changed\": false, \"include\": \"nosuch.yml\", \"reason\": \"Could not find or access '"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("h1                         : ok=10   changed=0    unreachable=0    failed=0    skipped=1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=9    changed=0    unreachable=0    failed=1    skipped=0"),
+        "{text}"
+    );
+}
+
+/// The tags written on an `include_tasks` stop at the statement.
+///
+/// Measured on ansible-core 2.19.12 with the campaign's `tags2.yml`: `--tags inc` runs the
+/// statement - the `included:` line is there - and **not** the untagged task it brought in, while
+/// the play's own `always` task still runs. Measured the other way round too: `--tags playtag`,
+/// the play's own tag, does reach the included task, so what stops at the statement is its own
+/// tags and not the play's.
+///
+/// What would make this red: handing the statement's tags to the tasks it brought in, which runs
+/// `from b` under `--tags inc`.
+#[test]
+fn an_include_does_not_hand_its_tags_to_what_it_brings_in() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            "--tags",
+            "inc",
+            &fixture("include/tags.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("included: "), "{text}");
+    assert!(
+        !text.contains("TASK [from b]"),
+        "the tags stop there: {text}"
+    );
+    assert!(text.contains("TASK [always]"), "{text}");
+}
+
+/// `include_vars` reads a file of variables and they beat the play's own.
+///
+/// Measured on ansible-core 2.19.12 with the campaign's `include-vars.yml`: the first statement
+/// overrides the play's `iv: play`, a `name:` groups the file under that one key, and a file that
+/// is nowhere fails with `ansible_included_var_files` empty and every path it looked in listed.
+/// With `ignore_errors` the run still exits 0 with `ignored=1`.
+///
+/// What would make this red: the variables landing under the play's `vars:` instead of over them,
+/// which reads `iv=play`; a `name:` ignored, which leaves `ns.iv` undefined; or a file nobody can
+/// find reported as found.
+#[test]
+fn include_vars_sets_the_file_s_variables_over_the_play_s() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/vars.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("\"iv\": \"from-include\""), "{text}");
+    assert!(text.contains("\"ns.iv\": \"from-include\""), "{text}");
+    assert!(
+        text.contains("\"ansible_included_var_files\": []"),
+        "{text}"
+    );
+    assert!(text.contains("Searched in:"), "{text}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(
+        text.contains("localhost") || text.contains("h1                         : ok=5"),
+        "{text}"
+    );
+}
+
+/// A `rescue` around an `include_tasks` takes a failure raised by a task the include brought in.
+///
+/// Measured on ansible-core 2.19.12: a block whose body includes a file whose task fails runs the
+/// block's `rescue`, then its `always`, then the task behind the block, and the recap reads
+/// `ok=5 rescued=1` at exit 0. `ansible_failed_task.name` is the included task's own name.
+///
+/// What would make this red: the spliced steps landing outside the block, so the failure has no
+/// rescue to reach and the host leaves the play - `rescued=0 failed=1` and exit 2.
+#[test]
+fn a_rescue_takes_a_failure_raised_inside_an_include() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/in-block.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("\"msg\": \"rescued included task that fails\""),
+        "{text}"
+    );
+    assert!(text.contains("\"msg\": \"always\""), "{text}");
+    assert!(text.contains("\"msg\": \"past\""), "{text}");
+    assert!(
+        text.contains("h1                         : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=1"),
+        "{text}"
+    );
+}
+
+/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out
+/// of a failed block, plus a `loop` over an empty list.
+///
+/// Measured on ansible-core 2.19.12, line for line: the empty loop shows one `skipping:` per host
+/// and counts one `skipped`, and both includes bring their file in for both hosts. Recap
+/// `ok=5 skipped=1 rescued=1` for each host, exit 0.
+///
+/// This is the shape where a splice moves an index a host is already carrying: the end of the
+/// `always` section it is draining sits past the insertion point and has to move with it. What
+/// would make this red: that index left where it was, which drains the wrong steps or walks off
+/// the end of the section; or an include reached with the batch unreported, which is a deadlock
+/// and fails on the deadline rather than on an assertion.
+#[test]
+fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/cleanup.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(text.matches("skipping: [h").count(), 2, "{text}");
+    let dir = fixture("include");
+    assert!(
+        text.contains(&format!("included: {dir}/inc-a.yml for h1, h2")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("included: {dir}/inc-b.yml for h1, h2")),
+        "{text}"
+    );
+    assert!(text.contains("\"msg\": \"past\""), "{text}");
+    for host in ["h1", "h2"] {
+        assert!(
+            text.contains(&format!(
+                "{host}                         : ok=5    changed=0    unreachable=0    failed=0    skipped=1    rescued=1"
+            )),
+            "{text}"
+        );
+    }
+}
+
+/// A file that includes itself is bounded rather than followed.
+///
+/// Measured on ansible-core 2.19.12: it is not bounded there at all - the file is read again and
+/// again until Python's stack is gone, four thousand lines of output later, and
+/// `ansible-playbook` exits **250** reporting its own crash. This engine refuses at the depth its
+/// other recursions share, in its own words, as an ordinary task failure with a recap behind it.
+///
+/// What would make this red: the ceiling removed, which grows the step list until the process is
+/// killed and `volant_within` fails on the deadline rather than on an assertion.
+#[test]
+fn an_include_that_includes_itself_is_bounded() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/self-include.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("includes nest deeper than 32 levels"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("\"msg\": \"never\""),
+        "the host left at the ceiling: {text}"
+    );
+}
+
+/// An argument an include statement does not take, or takes and this release cannot honour, is
+/// refused by its own name before the first connection.
+///
+/// `include_role: public: true` is measured to export the role's `defaults` and `vars` to
+/// everything behind the statement, where the default keeps them to the role's own tasks - which
+/// would mean changing the play's variable layers while its hosts stand at different steps of it.
+/// `include_vars: dir:` is measured to read every file of a directory in name order. Both are
+/// refused rather than read and dropped.
+///
+/// What would make this red: either option accepted and forgotten, which runs the playbook
+/// without what the operator asked for and reports success.
+#[test]
+fn an_include_statement_refuses_an_argument_it_cannot_honour() {
+    for (file, message) in [
+        ("include/refused.yml", "'include_role' option 'public'"),
+        ("include/vars-dir.yml", "'include_vars' option 'dir'"),
+    ] {
+        let out = volant(&[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture(file),
+        ]);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(4), "{text}");
+        assert!(text.contains(message), "{text}");
+        assert!(!text.contains("PLAY ["), "nothing runs before it: {text}");
     }
 }
 

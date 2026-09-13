@@ -3,6 +3,7 @@
 //! groups consecutive remote tasks into batches, and runs `set_fact` and `debug` locally.
 //! Output is shown task by task, once every live host has reported that task.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -15,7 +16,8 @@ use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{
-    Compiled, Step, StepKind, after, after_failure, after_pending, first, rescue_target,
+    Compiled, IncludeKind, IncludeRequest, IncludeTarget, Step, StepKind, after, after_failure,
+    after_pending, first, rescue_target,
 };
 use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
@@ -163,6 +165,22 @@ enum Event {
         name: String,
         left: u32,
     },
+    /// What `host` asked for at the include step `index`, already read and compiled. Empty when
+    /// every item was skipped or failed to resolve, which still has to be said: the coordinator
+    /// splices at every include point whether or not anybody asked for anything, and a driver
+    /// waiting for that splice has no way to learn there was nothing to wait for.
+    ///
+    /// The expansion is done by the driver rather than by the coordinator so that everything that
+    /// can go wrong with it - a file that is not there, a file that is not a list of tasks, a
+    /// role nobody can find, an argument this release refuses - fails **that host's** task,
+    /// through the ordinary failure path: a `rescue` around the statement takes it, `ignore_errors`
+    /// swallows it, and the other hosts carry on. A coordinator that read the file itself would
+    /// have to invent a way to fail some of its hosts and release the rest.
+    Include {
+        host: String,
+        index: usize,
+        groups: Vec<IncludeGroup>,
+    },
     /// Every result of task `index` on `host` has been sent.
     TaskDone { host: String, index: usize },
     /// This host reached step `index` and has no result to show for it. It is the one event
@@ -183,6 +201,21 @@ enum Event {
         /// 2.19.12: the reference censors the `UNREACHABLE!` line too, reason and all.
         censored: bool,
     },
+}
+
+/// One expansion a host asked for at an include step.
+struct IncludeGroup {
+    /// What two hosts have to agree on to share one `included:` line. See
+    /// [`crate::compile::IncludeRequest::key`].
+    key: String,
+    /// What that line names: the file's absolute path, or the role's bare name.
+    what: String,
+    /// The loop item's label, for the `=> (item=...)` the line carries.
+    label: Option<String>,
+    /// What the statement hands down to everything it brought in.
+    params: Map<String, Value>,
+    /// The steps, blocks, roles and handlers the statement brought in, numbered from zero.
+    expanded: Compiled,
 }
 
 /// Everything a host driver needs about the play, shared read-only.
@@ -437,9 +470,13 @@ async fn run_batch(
     // to, which is before the batch in front of them has run, so its reports do arrive out of
     // order. See `finished`.
     let mut frontier: HashMap<String, usize> = HashMap::new();
-    // The last flush point the handler steps have been spliced in behind, republished with every
+    // The last splice point the coordinator has published a splice for, republished with every
     // `Progress` so a driver waiting on one reads it whatever else moved.
     let mut spliced: Option<usize> = None;
+    // What each host asked for at each include step, in arrival order. Keyed by index because a
+    // host reports its request and then blocks, which it may do while this loop is still holding
+    // an earlier index for a slower host.
+    let mut includes: HashMap<usize, Vec<(String, Vec<IncludeGroup>)>> = HashMap::new();
     let mut index = 0;
     // Not `for .. in steps.iter()`: the list grows at a flush point, so its length is read again
     // each time round. The step is cloned rather than borrowed for the same reason - the splice
@@ -509,6 +546,13 @@ async fn run_batch(
                         };
                         pending.entry((host, index)).or_default().push(event);
                     }
+                    Some(Event::Include {
+                        host,
+                        index,
+                        groups,
+                    }) => {
+                        includes.entry(index).or_default().push((host, groups));
+                    }
                     Some(Event::TaskDone { host, index }) => {
                         finished(&mut done, &mut frontier, &host, index);
                         publish(
@@ -575,10 +619,65 @@ async fn run_batch(
         //
         // A play with no handlers splices nothing and still publishes, because the drivers
         // waiting on it have no way to know that and would wait for ever.
-        if matches!(step.kind, StepKind::Flush { .. }) {
+        if crate::compile::is_splice_point(&step.kind) {
             let mut next = { (**plan_tx.borrow()).clone() };
-            let steps = crate::compile::handler_steps(&next, index);
-            next.splice(index + 1, steps);
+            match step.kind {
+                StepKind::Flush { .. } => {
+                    let steps = crate::compile::handler_steps(&next, index);
+                    next.splice(index + 1, steps);
+                }
+                // The requests of every host, grouped so two hosts that asked for the same thing
+                // share one `included:` line and one copy of the steps behind it. First
+                // appearance decides the order, walked in the play's host order and then in each
+                // host's item order, which is the order the reference prints them in.
+                _ => {
+                    let mut arrived = includes.remove(&index).unwrap_or_default();
+                    arrived.sort_by_key(|(host, _)| play_hosts.iter().position(|h| h == host));
+                    let mut order: Vec<String> = Vec::new();
+                    let mut grouped: HashMap<String, (IncludeGroup, Vec<String>)> = HashMap::new();
+                    for (host, groups) in arrived {
+                        for group in groups {
+                            match grouped.entry(group.key.clone()) {
+                                Entry::Vacant(slot) => {
+                                    order.push(group.key.clone());
+                                    slot.insert((group, vec![host.clone()]));
+                                }
+                                Entry::Occupied(mut slot) => slot.get_mut().1.push(host.clone()),
+                            }
+                        }
+                    }
+                    let mut lines: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
+                    let mut expansions: Vec<crate::compile::Grafted> = Vec::new();
+                    for key in order {
+                        let (group, hosts) = grouped.remove(&key).expect("a key just inserted");
+                        lines.push((group.what, hosts.clone(), group.label));
+                        expansions.push(crate::compile::Grafted {
+                            expanded: group.expanded,
+                            params: group.params,
+                            hosts: hosts.into(),
+                        });
+                    }
+                    crate::compile::graft(&mut next, index + 1, &step, expansions);
+                    for (what, hosts, label) in lines {
+                        // The banner goes in front of the first line this step shows, and for an
+                        // include that is often this one: every host resolved its file, so none
+                        // of them printed a result.
+                        if !header_shown {
+                            let live = progress_tx.borrow().clone();
+                            let against = hosts.first().map(String::as_str).unwrap_or_default();
+                            header(&step, &task_name(&step, against, &plan, &live, state), out);
+                            header_shown = true;
+                        }
+                        out.included(&what, &hosts, label.as_deref());
+                        // Measured on ansible-core 2.19.12: one `ok` per host per item, so a
+                        // two-item loop over two hosts counts four. The statement's own aggregate
+                        // counts nothing, which is what keeps `h1 ok=10` at ten.
+                        for host in &hosts {
+                            stats.record(host, Outcome::Ok, false);
+                        }
+                    }
+                }
+            }
             plan_tx.send_replace(Arc::new(next));
             spliced = Some(index);
             publish(
@@ -660,6 +759,10 @@ async fn run_batch(
             Event::Banner { index, .. } => {
                 header_for(index, &plan, &play_hosts, &progress_tx, state, out);
             }
+            // An include whose request arrives here is one the step loop will never reach: it
+            // has already ended, because every host of the batch has left it. There is nothing
+            // left to splice the steps in for, and nothing left to run them.
+            Event::Include { .. } => {}
             event @ (Event::Result { .. } | Event::Retrying { .. }) => {
                 report_result(event, stats, out)
             }
@@ -1156,6 +1259,7 @@ fn task_name(
             plan,
             &task.vars,
             step.role,
+            step.include_params.as_deref(),
             live,
             state.templar.as_ref(),
             &state.vars,
@@ -1199,11 +1303,13 @@ fn retry_name(task: &PlayTask, vars: &Map<String, Value>, templar: &Templar) -> 
 /// a step that belongs to no role. Role parameters are the one layer that does not leave the
 /// role - measured, a parameter beats a `set_fact` inside the role and is not defined at all in
 /// the play's own tasks afterwards.
+#[allow(clippy::too_many_arguments)]
 fn host_vars(
     host: &str,
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
     role: Option<usize>,
+    include_params: Option<&Map<String, Value>>,
     live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
@@ -1212,13 +1318,19 @@ fn host_vars(
     let role = role
         .and_then(|i| compiled.roles.get(i))
         .unwrap_or(&compiled.exported);
+    // What an include handed down joins the role parameters rather than the task variables:
+    // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
+    let mut role_params = role.params.clone();
+    for (key, value) in include_params.into_iter().flatten() {
+        role_params.insert(key.clone(), value.clone());
+    }
     let scope = Scope {
         play_vars: plan.play_vars.clone(),
         vars_files: plan.vars_files.get(host).cloned().unwrap_or_default(),
         task_vars: task_vars.clone(),
         role_defaults: role.defaults.clone(),
         role_vars: role.vars.clone(),
-        role_params: role.params.clone(),
+        role_params,
         play_hosts: live.play_hosts_left.clone(),
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
@@ -1317,7 +1429,16 @@ fn prepare(
     defaults: &ConnectionDefaults,
 ) -> Result<Prepared, TemplateError> {
     let task = &step.task;
-    let base = host_vars(host, plan, &task.vars, step.role, live, templar, store);
+    let base = host_vars(
+        host,
+        plan,
+        &task.vars,
+        step.role,
+        step.include_params.as_deref(),
+        live,
+        templar,
+        store,
+    );
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) => {
@@ -1425,10 +1546,97 @@ fn display(v: &Value) -> String {
     }
 }
 
-/// `set_fact` and `debug` never leave the controller.
+/// `include_vars`, run where every other controller-side module runs.
+///
+/// Measured on ansible-core 2.19.12: a file that is there sets each of its keys as a fact and
+/// answers `{"ansible_facts": {...}, "ansible_included_var_files": ["<abs>"], "changed": false}`,
+/// a `name:` puts the whole mapping under that one key, and a file that is nowhere fails the task
+/// with the paths it looked in spelled out one per line.
+///
+/// A deliberate divergence, recorded rather than hidden: these land as facts, which is precedence
+/// 20 here against the reference's own rank 19 for `include_vars`. The two differ only for a name
+/// a host variable also carries.
+fn run_include_vars(item: &Item, step: &Step, host: &str, store: &Mutex<VarStore>) -> TaskResult {
+    let Some(name) = item
+        .args
+        .get("file")
+        .or_else(|| item.args.get("_raw_params"))
+        .and_then(Value::as_str)
+    else {
+        return TaskResult::failed_with("Task failed: 'include_vars' takes a file name");
+    };
+    let playbook_dir = store
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    let searched = crate::vars::include_vars_paths(
+        &step.origin.file_dir,
+        step.origin.role_dir.as_deref(),
+        &playbook_dir,
+        name,
+    );
+    let Some(path) = searched.iter().find(|p| p.is_file()) else {
+        // The reference's own wording and its own shape, measured: `ansible_facts` and
+        // `ansible_included_var_files` are both present and empty, the paths are listed one per
+        // tab-indented line, and `msg` carries the sentence a task that died rather than failed
+        // gets.
+        let mut body = Map::new();
+        body.insert("ansible_facts".into(), json!({}));
+        body.insert("ansible_included_var_files".into(), json!([]));
+        body.insert("changed".into(), json!(false));
+        body.insert(
+            "message".into(),
+            json!(format!(
+                "Could not find or access '{name}'\nSearched in:\n{} on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+                searched
+                    .iter()
+                    .map(|p| format!("\t{}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )),
+        );
+        body.insert(
+            "msg".into(),
+            json!("Task failed: Action failed: Unknown error."),
+        );
+        body.insert("failed".into(), json!(true));
+        return TaskResult(body);
+    };
+    let loaded = match crate::vars::load_vars_file(path) {
+        Ok(map) => map,
+        Err(err) => return TaskResult::failed_with(format!("Task failed: {err:#}")),
+    };
+    let facts = match item.args.get("name").and_then(Value::as_str) {
+        Some(under) => {
+            let mut one = Map::new();
+            one.insert(under.to_string(), Value::Object(loaded));
+            one
+        }
+        None => loaded,
+    };
+    {
+        let mut vars = store.lock().expect("vars lock");
+        for (key, value) in &facts {
+            vars.set_fact(host, key, value.clone());
+        }
+    }
+    let mut r = Map::new();
+    r.insert("ansible_facts".into(), Value::Object(facts));
+    r.insert(
+        "ansible_included_var_files".into(),
+        json!([path.display().to_string()]),
+    );
+    r.insert("changed".into(), json!(false));
+    r.insert("failed".into(), json!(false));
+    TaskResult(r)
+}
+
+/// `set_fact`, `debug` and `include_vars` never leave the controller.
 fn run_local(
     task: &PlayTask,
     item: &Item,
+    step: &Step,
     host: &str,
     templar: &Templar,
     store: &Mutex<VarStore>,
@@ -1436,6 +1644,7 @@ fn run_local(
 ) -> TaskResult {
     let mut r = Map::new();
     match short_name(&task.module) {
+        "include_vars" => return run_include_vars(item, step, host, store),
         "set_fact" => {
             let mut facts = Map::new();
             for (k, v) in &item.args {
@@ -2241,6 +2450,15 @@ async fn drive_host(
             }
             let step = &c.steps[pos];
             let task = &step.task;
+            // A step an include spliced in for other hosts. This host reports it and shows
+            // nothing, exactly as it does for a handler it never notified: the coordinator's
+            // barriers open on hosts that have passed a step, not on hosts that had a reason to
+            // run it. Measured on ansible-core 2.19.12 with an include a `when` left out for one
+            // of two hosts - the other's tasks run with its line alone under their banners.
+            let masked_out = step
+                .hosts
+                .as_ref()
+                .is_some_and(|only| !only.iter().any(|h| h == &name));
             // A handler nothing notified is a step this host has nothing to do at: it reports
             // that it is done with it, shows nothing and moves on. Measured on ansible-core
             // 2.19.12 with two hosts and one notifying: the banner shows once, with the line of
@@ -2294,7 +2512,7 @@ async fn drive_host(
                 // Measured: an explicit `meta: flush_handlers` shows one `TASK [meta]` per live
                 // host with nothing under it, and the three the compiler adds show nothing at
                 // all. A host already out of the play shows nothing either.
-                if explicit && !handlers_only {
+                if explicit && !handlers_only && !masked_out {
                     let _ = tx
                         .send(Event::Banner {
                             host: name.clone(),
@@ -2339,11 +2557,130 @@ async fn drive_host(
                 pos = next;
                 break;
             }
+            // An include statement. Like a flush point its successors are not known yet, so the
+            // shape is the same: report, wait for the coordinator to publish the splice, and only
+            // then read the list again. The batch has to be empty to get here, which is the
+            // liveness half of the splice rule - a host blocked at an index while a step in front
+            // of it is still unreported waits for an index the coordinator can never reach.
+            if let StepKind::Include(kind) = step.kind {
+                if !batch.is_empty() {
+                    break;
+                }
+                let live = progress.borrow().clone();
+                // A host outside the mask, or one running for its handlers alone, asks for
+                // nothing and shows nothing. It still reports the step and waits: the steps go in
+                // behind this index for everyone's list.
+                let asked = if masked_out || handlers_only {
+                    Vec::new()
+                } else {
+                    let (groups, shown) = resolve_include(
+                        &c,
+                        step,
+                        kind,
+                        &name,
+                        &plan,
+                        &live,
+                        &templar,
+                        &store,
+                        &options.defaults,
+                    );
+                    let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
+                    if let Some(result) =
+                        report_include(&tx, &name, pos, task, &shown, rescuable, groups.is_empty())
+                            .await
+                    {
+                        failed |= !rescuable;
+                        failed_at = Some((pos, result));
+                    }
+                    groups
+                };
+                let _ = tx
+                    .send(Event::Include {
+                        host: name.clone(),
+                        index: pos,
+                        groups: asked,
+                    })
+                    .await;
+                let _ = tx
+                    .send(Event::TaskDone {
+                        host: name.clone(),
+                        index: pos,
+                    })
+                    .await;
+                // Waited for even by a host whose own include just failed: the splice grows every
+                // index past this one, and `rescue_target` and `after` are about to be asked for
+                // this step on the list the splice leaves behind. A host that skipped the wait
+                // would jump to a target computed against the list as it used to be.
+                if wait_for_splice(
+                    &plan,
+                    &mut progress,
+                    &mut stop,
+                    &mut stop_broken,
+                    pos,
+                    &mut cleanup,
+                )
+                .await
+                .is_none()
+                {
+                    break 'run;
+                }
+                if failed_at.is_some() {
+                    break;
+                }
+                let Some(next) = advance(
+                    &tx,
+                    &name,
+                    &plan,
+                    &mut progress,
+                    &mut stop,
+                    &mut stop_broken,
+                    pos,
+                    &mut cleanup,
+                )
+                .await
+                else {
+                    break 'run;
+                };
+                pos = next;
+                continue;
+            }
             // A host carrying on for its handlers alone runs nothing else: it reports each step
             // it walks past so the others' barriers open, and shows nothing for it. A handler
             // is the exception, and a handler it never notified has already been reported and
             // stepped over above, so one reaching here is one it asked for.
             if handlers_only && !matches!(step.kind, StepKind::Handler(_)) {
+                if !batch.is_empty() {
+                    break;
+                }
+                let _ = tx
+                    .send(Event::TaskDone {
+                        host: name.clone(),
+                        index: pos,
+                    })
+                    .await;
+                let Some(next) = advance(
+                    &tx,
+                    &name,
+                    &plan,
+                    &mut progress,
+                    &mut stop,
+                    &mut stop_broken,
+                    pos,
+                    &mut cleanup,
+                )
+                .await
+                else {
+                    break 'run;
+                };
+                pos = next;
+                continue;
+            }
+            // A step an include brought in for other hosts. Reported and shown nothing, the way
+            // a handler this host never notified is. It sits after the flush and the include arms
+            // on purpose: both of those are splice points, and a host outside the mask still has
+            // to report them and wait for the coordinator rather than walk past a list that is
+            // about to grow.
+            if masked_out {
                 if !batch.is_empty() {
                     break;
                 }
@@ -2535,7 +2872,9 @@ async fn drive_host(
                                     let mut r = finish(
                                         task,
                                         item,
-                                        run_local(task, item, &name, &templar, &store, verbosity),
+                                        run_local(
+                                            task, item, step, &name, &templar, &store, verbosity,
+                                        ),
                                         &templar,
                                     );
                                     let Some(retry) = &retry else { break r };
@@ -2659,7 +2998,9 @@ async fn drive_host(
                     // that flush until it has one. Both sides would then wait for the other.
                     // Every other blocking wait in this loop is already reached with the batch
                     // empty; this one has to be too.
-                    if rescue_target(&c, pos).is_some() || steps_over_a_flush(&c, pos, cleanup) {
+                    if rescue_target(&c, pos).is_some()
+                        || steps_over_a_splice_point(&c, pos, cleanup)
+                    {
                         undecided = Some(pos);
                         break;
                     }
@@ -3132,15 +3473,15 @@ async fn reuse_or_connect<'a>(
     Ok(links.get_mut(key).expect("connected just above"))
 }
 
-/// Whether `advance` from `pos` would walk past a flush point, and so block waiting for the
-/// splice.
+/// Whether `advance` from `pos` would walk past a splice point - a flush or an include - and so
+/// block waiting for the splice.
 ///
 /// A driver may only wait for a splice once it owes the coordinator nothing in front of it: the
 /// coordinator walks the step list in order and holds at each index until every host is done
-/// with it or gone, so a host waiting at a flush while a step behind it is still unreported waits
-/// for an index the coordinator can never reach. The batch collection loop asks this before
+/// with it or gone, so a host waiting at a splice point while a step behind it is still unreported
+/// waits for an index the coordinator can never reach. The batch collection loop asks this before
 /// moving on from a step it has queued and not yet run.
-fn steps_over_a_flush(compiled: &Compiled, pos: usize, cleanup: Option<usize>) -> bool {
+fn steps_over_a_splice_point(compiled: &Compiled, pos: usize, cleanup: Option<usize>) -> bool {
     let next = match cleanup {
         Some(end) => match after_pending(compiled, pos, end) {
             Some((next, _)) => next,
@@ -3149,7 +3490,7 @@ fn steps_over_a_flush(compiled: &Compiled, pos: usize, cleanup: Option<usize>) -
         None => after(compiled, pos),
     };
     (pos + 1..next.min(compiled.steps.len()))
-        .any(|i| matches!(compiled.steps[i].kind, StepKind::Flush { .. }))
+        .any(|i| crate::compile::is_splice_point(&compiled.steps[i].kind))
 }
 
 /// The step this host moves to after finishing `pos`, past the sections it has no reason to
@@ -3191,14 +3532,15 @@ async fn advance(
 }
 
 /// Tells the coordinator about every step of `range` this host stepped over, stopping at each
-/// flush point on the way, and answers how much longer the list is for it.
+/// splice point on the way, and answers how much longer the list is for it.
 ///
-/// A host has to stop at a flush point it steps over as surely as at one it runs. The
-/// coordinator inserts the handler steps behind a flush once every host has reported that index,
-/// and a host that read the list again before that would be holding an index into a list that
-/// has changed underneath it - the exact shape this file's barrier invariant exists to prevent.
-/// Measured on ansible-core 2.19.12: a `meta: flush_handlers` written inside a `rescue:` nobody
-/// entered runs nothing and shows nothing, which is what puts a live host in this position.
+/// A host has to stop at a splice point it steps over as surely as at one it runs. The
+/// coordinator inserts steps behind a flush or an include once every host has reported that
+/// index, and a host that read the list again before that would be holding an index into a list
+/// that has changed underneath it - the exact shape this file's barrier invariant exists to
+/// prevent. Measured on ansible-core 2.19.12: a `meta: flush_handlers` written inside a `rescue:`
+/// nobody entered runs nothing and shows nothing, and so does an `include_tasks` written there,
+/// which is what puts a live host in this position.
 async fn stepped_over(
     tx: &mpsc::Sender<Event>,
     host: &str,
@@ -3213,9 +3555,9 @@ async fn stepped_over(
     loop {
         let compiled = plan.steps();
         let end = range.end + grown;
-        let flush = (from..end.min(compiled.steps.len()))
-            .find(|&i| matches!(compiled.steps[i].kind, StepKind::Flush { .. }));
-        let Some(at) = flush else {
+        let splice = (from..end.min(compiled.steps.len()))
+            .find(|&i| crate::compile::is_splice_point(&compiled.steps[i].kind));
+        let Some(at) = splice else {
             skipped(tx, host, from..end).await;
             return Some(grown);
         };
@@ -3224,10 +3566,11 @@ async fn stepped_over(
         drop(compiled);
         wait_for_splice(plan, progress, stop, stop_broken, at, &mut None).await?;
         grown += plan.steps().steps.len() - before;
-        // Back at the flush's successor, which is now the first of the handler steps it just
-        // grew by. This host steps over those too - they sit in the section the flush sat in,
-        // and it is not in that section - but it still owes the coordinator a word about each of
-        // them, or the barrier behind them opens on a host that never said it had passed them.
+        // Back at the splice point's successor, which is now the first of the steps it just grew
+        // by. This host steps over those too - they sit in the section the flush or the include
+        // sat in, and it is not in that section - but it still owes the coordinator a word about
+        // each of them, or the barrier behind them opens on a host that never said it had passed
+        // them.
         from = at + 1;
     }
 }
@@ -3296,6 +3639,316 @@ async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<us
                 index,
             })
             .await;
+    }
+}
+
+/// What one host asks for at an include step, and the lines it has to show for the items that
+/// asked for nothing.
+///
+/// The whole of the resolution happens here, on the driver, and every way it can go wrong comes
+/// back as a `TaskResult` rather than as an error: a file that is not there, a file that is not a
+/// list of tasks, a role nobody can find and a statement nested past the ceiling all fail **this
+/// host's** task, which is what lets a `rescue` around the statement take them - measured on
+/// ansible-core 2.19.12, an `include_tasks` in a block's body whose file is missing is rescued
+/// like any other failure - and what lets the other hosts carry on.
+#[allow(clippy::too_many_arguments)]
+fn resolve_include(
+    compiled: &Compiled,
+    step: &Step,
+    kind: IncludeKind,
+    host: &str,
+    plan: &PlayPlan,
+    live: &Progress,
+    templar: &Templar,
+    store: &Mutex<VarStore>,
+    defaults: &ConnectionDefaults,
+) -> (Vec<IncludeGroup>, Vec<Shown>) {
+    let items = match prepare(step, host, plan, live, templar, store, defaults) {
+        Ok(Prepared::Skipped(items) | Prepared::Local(items) | Prepared::Remote(items, _)) => items,
+        // A `when` that cannot be evaluated or a `loop` that is not a list, reported with the
+        // reference's own prefix for a task that dies before it runs. Not deferred the way an
+        // ordinary task's is: this arm is reached with the batch empty, so there is nothing to
+        // send out first.
+        Err(err) => {
+            return (
+                Vec::new(),
+                vec![Shown {
+                    element: None,
+                    label: None,
+                    result: TaskResult::failed_with(format!("Task failed: {}", err.0)),
+                    failed: true,
+                }],
+            );
+        }
+    };
+    let mut groups = Vec::new();
+    let mut shown = Vec::new();
+    for item in items {
+        if let Some(skipped) = &item.skipped {
+            shown.push(Shown {
+                element: item.element.clone(),
+                label: item.label.clone(),
+                result: skipped.clone(),
+                failed: false,
+            });
+            continue;
+        }
+        let result = match include_request(compiled, step, kind, &item, templar) {
+            // The file is there and cannot be used: it holds a mapping rather than a list of
+            // tasks, its YAML does not parse, or something inside it names an option this
+            // release refuses. Measured on ansible-core 2.19.12 for the first of those:
+            // `fatal: [h1]: FAILED! => {"changed": false, "include": "mapping.yml", "reason":
+            // "included task files must contain a list of tasks"}`, exit 2, with a recap.
+            Ok(request) => match crate::compile::expand_include(compiled, step, &request) {
+                Ok(expanded) => {
+                    groups.push(IncludeGroup {
+                        key: request.key(),
+                        what: request.what,
+                        label: request.label,
+                        params: request.vars,
+                        expanded,
+                    });
+                    continue;
+                }
+                Err(err) => {
+                    let mut body = Map::new();
+                    body.insert("changed".into(), json!(false));
+                    body.insert("include".into(), json!(request.what));
+                    body.insert("reason".into(), json!(format!("{err:#}")));
+                    TaskResult(body)
+                }
+            },
+            Err(result) => result,
+        };
+        shown.push(Shown {
+            element: item.element,
+            label: item.label,
+            result,
+            failed: true,
+        });
+    }
+    (groups, shown)
+}
+
+/// One item of an include statement that has a line to show: a `when` left it out, or resolving
+/// what it named went wrong.
+struct Shown {
+    element: Option<Value>,
+    label: Option<String>,
+    result: TaskResult,
+    /// Whether this is a failure rather than a skip. Carried here rather than read off the
+    /// result's own `failed` key, because the reference's `fatal:` line for an include is
+    /// `{"changed": false, "include": "nosuch.yml", "reason": "..."}` - measured, with no
+    /// `failed` in it - and a key put there to be classified by would be a key on the line.
+    failed: bool,
+}
+
+/// One item's request, or the result that item fails with.
+fn include_request(
+    compiled: &Compiled,
+    step: &Step,
+    kind: IncludeKind,
+    item: &Item,
+    templar: &Templar,
+) -> Result<IncludeRequest, TaskResult> {
+    let task = &step.task;
+    // A file that includes itself, or a ring of them, otherwise grows the step list for as long
+    // as the run has memory. The reference has no ceiling here at all: measured, `a.yml`
+    // including itself runs until Python's stack is gone and exits 250 with a traceback, four
+    // thousand lines in. Refused instead, at the depth the compiler's own recursions share.
+    if step.origin.depth as usize + 1 > crate::compile::DEPTH {
+        return Err(TaskResult::failed_with(format!(
+            "includes nest deeper than {} levels: a file or a role that includes itself",
+            crate::compile::DEPTH
+        )));
+    }
+    // Only the statement's own `vars:` and the loop variable travel down. Measured on
+    // ansible-core 2.19.12: an included task reads the statement's `vars:`, and everything else
+    // written on the statement stops there - `tags` do not descend, `when` is evaluated for the
+    // statement alone, `no_log` censors the statement's own line and not the tasks behind it, and
+    // `become` and `environment` are refused on a statement at load time.
+    // Seeded with what the statement above this one handed down, so a chain of includes carries
+    // the whole chain's values rather than only the last link's.
+    let mut vars = step
+        .include_params
+        .as_deref()
+        .cloned()
+        .unwrap_or_else(Map::new);
+    // Rendered from what the statement wrote, not read back out of the host's merged scope: the
+    // scope resolves a name the host also carries a fact for to the **fact**, and the whole point
+    // of the measurement above is that an include's own value wins there.
+    for (key, raw) in &task.vars {
+        match templar.render_value(raw, &item.vars) {
+            Ok(value) => {
+                vars.insert(key.clone(), value);
+            }
+            Err(err) => {
+                return Err(TaskResult::failed_with(format!("Task failed: {}", err.0)));
+            }
+        }
+    }
+    if item.element.is_some() {
+        if let Some(value) = item.vars.get(&task.loop_var) {
+            vars.insert(task.loop_var.clone(), value.clone());
+        }
+        vars.insert(
+            "ansible_loop_var".into(),
+            Value::String(task.loop_var.clone()),
+        );
+    }
+    let (target, what) = match kind {
+        IncludeKind::Tasks => {
+            let name = item
+                .args
+                .get("file")
+                .or_else(|| item.args.get("_raw_params"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    TaskResult::failed_with("Task failed: 'include_tasks' takes a file name")
+                })?;
+            let path = crate::compile::beside_or_in_role(
+                &step.origin.file_dir,
+                step.origin.role_dir.as_deref(),
+                name,
+            );
+            if !path.is_file() {
+                // The reference's own three sentences, measured word for word, with the file
+                // named as the playbook wrote it and the path it looked in spelled out. The
+                // `errno` tail is Python's; this engine reaches the same conclusion by asking the
+                // filesystem, so the sentence is kept and the number with it.
+                let mut body = Map::new();
+                body.insert("changed".into(), json!(false));
+                body.insert("include".into(), json!(name));
+                body.insert(
+                    "reason".into(),
+                    json!(format!(
+                        "Could not find or access '{p}' on the Ansible Controller: Unable to retrieve file contents.\nCould not find or access '{p}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '{p}'",
+                        p = path.display()
+                    )),
+                );
+                return Err(TaskResult(body));
+            }
+            let what = path.display().to_string();
+            (IncludeTarget::File(path), what)
+        }
+        IncludeKind::Role => {
+            let entry = crate::compile::include_role_entry(&item.args)
+                .map_err(|err| TaskResult::failed_with(format!("Task failed: {err:#}")))?;
+            // Measured on ansible-core 2.19.12: a role an `include_role` cannot find is an
+            // ordinary task failure, `fatal: [h1]: FAILED! => {"changed": false, "reason": "the
+            // role 'nosuchrole' was not found in <paths>"}`, exit 2 and a recap - and not the
+            // exit 1 before the first banner a `roles:` entry gets, because by then the play is
+            // already running.
+            compiled.search.locate(&entry.name).map_err(|err| {
+                let mut body = Map::new();
+                body.insert("changed".into(), json!(false));
+                body.insert("reason".into(), json!(format!("{err:#}")));
+                TaskResult(body)
+            })?;
+            let what = entry.name.clone();
+            (IncludeTarget::Role(Box::new(entry)), what)
+        }
+    };
+    Ok(IncludeRequest {
+        target,
+        what,
+        vars,
+        label: item.label.clone(),
+    })
+}
+
+/// Sends the lines an include step shows and its `TaskDone`, and answers with the result a rescue
+/// would be given when it failed for good.
+///
+/// It is not [`report_task`] because of what an include **does not** count. Measured on
+/// ansible-core 2.19.12: a statement that brought something in counts one `ok` per host per item,
+/// and that one is counted by the coordinator when it prints the `included:` line - so the
+/// aggregate a looping statement would otherwise contribute has to count nothing, or a two-item
+/// loop would read three. The two aggregates that do count are the ones with no `included:` line
+/// behind them: a loop over an empty list, which shows `skipping:` and counts it, and a loop an
+/// item failed in, which counts the failure without a line of its own.
+async fn report_include(
+    tx: &mpsc::Sender<Event>,
+    host: &str,
+    index: usize,
+    task: &PlayTask,
+    shown: &[Shown],
+    rescuable: bool,
+    nothing_asked: bool,
+) -> Option<TaskResult> {
+    let is_loop = task.loop_items.is_some();
+    let censored = task.censors();
+    let ignored = task.ignores_errors();
+    let mut any_failed = false;
+    let mut failure: Option<TaskResult> = None;
+    for item in shown {
+        let outcome = match (item.failed, ignored) {
+            (false, _) => Outcome::Skipped,
+            (true, true) => Outcome::Ignored,
+            (true, false) if rescuable => Outcome::Rescued,
+            (true, false) => Outcome::Failed,
+        };
+        if item.failed {
+            if failure.is_none() {
+                failure = Some(item.result.clone());
+            }
+            any_failed = true;
+        }
+        let _ = tx
+            .send(Event::Result {
+                host: host.to_string(),
+                index,
+                label: item.label.clone(),
+                outcome,
+                result: item.result.clone(),
+                dump: false,
+                show: true,
+                counts: !is_loop,
+                censored,
+            })
+            .await;
+    }
+    if is_loop {
+        let empty = shown.is_empty() && nothing_asked;
+        if empty || any_failed {
+            let results: Vec<(Option<Value>, TaskResult)> = shown
+                .iter()
+                .map(|s| (s.element.clone(), s.result.clone()))
+                .collect();
+            let aggregate = if empty {
+                empty_loop_result()
+            } else {
+                match registered_value(task, &results) {
+                    Value::Object(mut m) => {
+                        m.remove("results");
+                        TaskResult(m)
+                    }
+                    _ => TaskResult::default(),
+                }
+            };
+            let outcome = classify(&aggregate, task.ignores_errors(), rescuable);
+            if any_failed {
+                failure = Some(aggregate.clone());
+            }
+            let _ = tx
+                .send(Event::Result {
+                    host: host.to_string(),
+                    index,
+                    label: None,
+                    outcome,
+                    result: aggregate,
+                    dump: false,
+                    show: empty,
+                    counts: true,
+                    censored,
+                })
+                .await;
+        }
+    }
+    if any_failed && !task.ignores_errors() {
+        failure.or_else(|| Some(TaskResult::default()))
+    } else {
+        None
     }
 }
 

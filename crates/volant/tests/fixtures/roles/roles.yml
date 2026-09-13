@@ -28,6 +28,10 @@
         tasks_from: extra
     - import_role:
         name: base
+    - name: include_role
+      include_role:
+        name: base
+      vars: { p: include-param }
   post_tasks:
     - name: post task
       debug:

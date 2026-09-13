@@ -50,6 +50,12 @@ ok: [localhost] => {"msg": "sibling"}
 TASK [base : base task] ********************************************************
 ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
 
+TASK [include_role] ************************************************************
+included: base for localhost
+
+TASK [base : base task] ********************************************************
+ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=include-param"}
+
 RUNNING HANDLER [base : base handler] ******************************************
 ok: [localhost] => {"msg": "base handler ran, d=role-default"}
 
@@ -57,4 +63,4 @@ TASK [post task] ***************************************************************
 ok: [localhost] => {"msg": "post v=role-var"}
 
 PLAY RECAP *********************************************************************
-localhost                  : ok=17   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+localhost                  : ok=19   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

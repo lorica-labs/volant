@@ -92,6 +92,18 @@ impl Renderer {
         self.banner(&format!("RUNNING HANDLER [{name}]"));
     }
 
+    /// The line an include prints once the coordinator knows which hosts asked for what.
+    ///
+    /// Measured on ansible-core 2.19.12: `included: /abs/inc-a.yml for h1, h2` for a file, with
+    /// the absolute path and the hosts in the play's own order; `included: base for h1` for a
+    /// role, by its bare name; and `=> (item=1)` behind either when a loop asked for it. It is
+    /// painted like an `ok:` line, which is what the reference's own callback does with it.
+    pub fn included(&mut self, what: &str, hosts: &[String], label: Option<&str>) {
+        let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
+        let line = format!("included: {what} for {}{item}", hosts.join(", "));
+        let _ = writeln!(self.out, "{}", self.paint(OK, &line));
+    }
+
     pub fn no_hosts(&mut self) {
         let _ = writeln!(
             self.out,

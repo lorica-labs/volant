@@ -49,6 +49,12 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
     if let Some(kw) = play.unsupported.first() {
         bail!("play keyword '{kw}' is not supported yet");
     }
+    // The play's own `check_mode` reaches every task through the merge, so a play carrying
+    // `true` is refused here as well as on each task: a play with no tasks at all would
+    // otherwise be accepted by a run that cannot do what it asked for.
+    if play.check_mode == Some(true) {
+        bail!("play keyword 'check_mode' is not supported yet with 'true'");
+    }
     if let Some(strategy) = &play.strategy
         && strategy != STRATEGY
     {
@@ -149,6 +155,14 @@ fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
                         block.keywords.name
                     );
                 }
+                // The block's own `check_mode`, before its tasks inherit it: a block with an
+                // empty body carries no task for the merged check to reach.
+                if block.keywords.check_mode == Some(true) {
+                    bail!(
+                        "block '{}': keyword 'check_mode' is not supported yet with 'true'",
+                        block.keywords.name
+                    );
+                }
                 check_items(&block.body)?;
                 check_items(&block.rescue)?;
                 check_items(&block.always)?;
@@ -163,6 +177,16 @@ fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
 pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     if let Some(kw) = task.unsupported.first() {
         bail!("task '{}': keyword '{kw}' is not supported yet", task.name);
+    }
+    // `check_mode: false` is what this release does, so it is honoured by doing nothing;
+    // `check_mode: true` asks for a mode that reports what a task would have changed without
+    // changing it, and running the task for real instead is the worst answer available here.
+    // Refused by naming the value, the way an unsupported `become_method` or `strategy` is.
+    if task.check_mode == Some(true) {
+        bail!(
+            "task '{}': keyword 'check_mode' is not supported yet with 'true'",
+            task.name
+        );
     }
     if is_meta(task) {
         return check_meta(task);
@@ -254,7 +278,7 @@ mod tests {
     /// dropped here, which is exactly the silent skip this module exists to stop.
     #[test]
     fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["until", "delegate_to", "no_log", "run_once", "environment"] {
+        for kw in ["async", "delegate_to", "poll", "run_once", "throttle"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
             ));
@@ -281,7 +305,7 @@ mod tests {
     ///
     #[test]
     fn a_keyword_parked_inside_any_section_of_a_block_is_refused() {
-        let parked = "- name: Deep\n          command: echo hi\n          no_log: probe";
+        let parked = "- name: Deep\n          command: echo hi\n          delegate_to: probe";
         for (section, body) in [
             ("block", format!("- block:\n        {parked}\n")),
             (
@@ -295,7 +319,7 @@ mod tests {
         ] {
             let text = refusal(&format!("- hosts: all\n  tasks:\n    {body}"));
             assert!(
-                text.contains("task 'Deep': keyword 'no_log' is not supported yet"),
+                text.contains("task 'Deep': keyword 'delegate_to' is not supported yet"),
                 "{section}: {text}"
             );
         }
@@ -422,7 +446,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            97,
+            85,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {
@@ -431,6 +455,34 @@ mod tests {
                 text.contains(&format!("keyword '{kw}' is not supported yet")),
                 "{kw} must name itself: {text}"
             );
+        }
+    }
+
+    /// `check_mode` is the one `Runs` row whose value decides: `false` is what this release
+    /// does, `true` is refused by name wherever it is written.
+    ///
+    /// What would make this red: `check_mode: true` accepted, which would run for real every
+    /// task the operator asked to have only described; or `check_mode: false` refused, which
+    /// would refuse a playbook that asked for exactly what this engine does.
+    #[test]
+    fn check_mode_runs_for_false_and_is_refused_for_true() {
+        for body in [
+            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      check_mode: true\n",
+            "- hosts: all\n  check_mode: true\n  tasks:\n    - command: echo hi\n",
+            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n",
+        ] {
+            let text = refusal(body);
+            assert!(
+                text.contains("'check_mode' is not supported yet with 'true'"),
+                "{text}"
+            );
+        }
+        for body in [
+            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      check_mode: false\n",
+            "- hosts: all\n  check_mode: false\n  tasks:\n    - command: echo hi\n",
+        ] {
+            let pb = parse(body, "x.yml").unwrap();
+            assert!(check(&pb).is_ok(), "check_mode: false is what we do");
         }
     }
 

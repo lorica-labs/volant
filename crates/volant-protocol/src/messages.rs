@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Messages exchanged over frames. Field names are part of the protocol.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// Bumped when a message changes shape. Controller and agent refuse to talk across versions.
-pub const PROTOCOL_VERSION: u32 = 2;
+///
+/// 3 added `Task.environment`: a task now carries the variables its module runs with, and an
+/// agent that does not know the field would run the command without them - which is the "accepted
+/// then ignored" shape this project refuses.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Controller to agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,6 +89,11 @@ pub struct Task {
     /// Seconds allowed for the module to run; the agent kills it past that (Ansible's `timeout`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+    /// Variables the module's process runs with, added to the ones the agent already has
+    /// (Ansible's `environment`). Resolved by the controller: the play's layer, the block's and
+    /// the task's are merged and rendered there, so the agent only sets what it is handed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub environment: BTreeMap<String, String>,
 }
 
 /// A module result, in the free-form shape Ansible modules return.
@@ -148,6 +159,8 @@ mod tests {
 
     #[test]
     fn run_batch_round_trips() {
+        let mut environment = BTreeMap::new();
+        environment.insert("PATH".into(), "/opt/bin".into());
         let msg = ToAgent::RunBatch {
             id: 7,
             tasks: vec![Task {
@@ -158,6 +171,7 @@ mod tests {
                     .clone(),
                 ignore_errors: true,
                 timeout: None,
+                environment,
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
@@ -169,6 +183,27 @@ mod tests {
         let task: Task = serde_json::from_str(r#"{"module":"raw"}"#).unwrap();
         assert!(task.args.is_empty());
         assert!(!task.ignore_errors);
+    }
+
+    /// A task with nothing to add to the environment does not carry the field at all, and one
+    /// that does carries it as a map of strings.
+    ///
+    /// What would make this red: `environment` serialised when it is empty, which would put a
+    /// key on every task of every batch; or the field dropped from the shape, which is how the
+    /// controller would send an environment the agent never sets.
+    #[test]
+    fn the_environment_is_absent_when_empty_and_round_trips_when_set() {
+        let task: Task = serde_json::from_str(r#"{"module":"raw"}"#).unwrap();
+        assert!(task.environment.is_empty());
+        assert!(
+            !serde_json::to_string(&task)
+                .unwrap()
+                .contains("environment")
+        );
+        let task: Task =
+            serde_json::from_str(r#"{"module":"raw","environment":{"A":"1"}}"#).unwrap();
+        assert_eq!(task.environment["A"], "1");
+        assert!(serde_json::to_string(&task).unwrap().contains(r#""A":"1""#));
     }
 
     #[test]

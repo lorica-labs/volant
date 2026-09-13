@@ -1,0 +1,19 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: secret ok
+      command: echo secret
+      no_log: true
+      register: s
+    - debug: var=s
+    - name: secret fails
+      command: "false"
+      no_log: true
+      ignore_errors: true
+    - name: secret loop
+      command: echo {{ item }}
+      no_log: true
+      loop: [a, b]
+    - name: secret debug
+      debug: msg=hidden
+      no_log: true

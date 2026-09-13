@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: a controller-side task retries too
+      debug:
+        msg: probe
+      register: d
+      until: false
+      retries: 2
+      delay: 0
+      ignore_errors: true
+    - name: after
+      debug:
+        msg: "{{ d.attempts }}"

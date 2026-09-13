@@ -17,3 +17,18 @@
       become: true
       register: uid
       failed_when: uid.stdout | trim != '0'
+    # The environment travels through the protocol and is set on the module's own process, so
+    # `sudo`'s `env_reset` cannot strip it: the escalated task reads the same value.
+    - name: The environment crosses the protocol
+      shell: echo "$VOLANT_E2E"
+      environment:
+        VOLANT_E2E: over-ssh
+      register: e
+      failed_when: e.stdout != 'over-ssh'
+    - name: And survives the escalation
+      shell: echo "$VOLANT_E2E"
+      become: true
+      environment:
+        VOLANT_E2E: over-sudo
+      register: se
+      failed_when: se.stdout != 'over-sudo'

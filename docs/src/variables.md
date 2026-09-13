@@ -19,11 +19,29 @@ A fixed set of magic variables is added on top of every host's view and always w
 
 ## Task keywords
 
-Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`, `become`, `become_user`, `become_method`.
+Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`, `become`, `become_user`, `become_method`, `no_log`, `environment`, `check_mode`.
 
-Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`, `become`, `become_user`, `become_method`.
+Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`, `become`, `become_user`, `become_method`, `until`, `retries`, `delay`, `no_log`, `environment`, `check_mode`.
 
-`when`, `changed_when` and `failed_when` take one Jinja2 expression or a list of them, all of which must hold. `loop` and `with_items` cannot both be given on the same task; `with_items` flattens one level of nested lists, `loop` does not. Registering a looped task collects a `results` list, one entry per item, the way `ansible-playbook` does.
+`until` runs a task again until its expression holds. `retries` says how many attempts there are
+in all, and three is what you get when only `until` is written. Between two attempts Volant waits
+`delay` seconds, five by default. The result carries the attempt count under `attempts`, and a
+task that runs out of attempts has failed even when the module itself passed. `retries` written
+without `until` runs the task again while it fails. A looping task retries each item separately.
+
+`no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on
+every line it would have shown and at every verbosity. The registered variable keeps the real
+result, so a later task can still read it.
+
+`environment` sets variables for the process the module runs in. A play, a block and a task may
+each write one, and they merge with the innermost winning. Volant skips a value that is not a
+mapping and warns about it on stderr.
+
+`check_mode: false` is accepted and changes nothing, since running the task is what this release
+does. `check_mode: true` is refused by name: there is no check mode here yet, and running a task
+for real when the playbook asked to be told what it would do is worse than stopping.
+
+`when`, `changed_when`, `failed_when` and `until` take one Jinja2 expression or a list of them, all of which must hold. `loop` and `with_items` cannot both be given on the same task; `with_items` flattens one level of nested lists, `loop` does not. Registering a looped task collects a `results` list, one entry per item, the way `ansible-playbook` does.
 
 Under `loop_control`, only `loop_var` and `label` are read. The rest are refused by name, and a
 sub-key `ansible-core` does not have refuses the playbook outright.
@@ -49,7 +67,6 @@ For the modules whose arguments these variables and templates feed, see the [nat
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
 - Collections. Roles load from the standard search paths; a collection does not.
 - `serial`, `run_once`, `delegate_to`.
-- `until`/`retries`.
 - `include_tasks` and `include_role`.
 - `gather_facts` is accepted but does nothing: Volant warns and continues without facts. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.

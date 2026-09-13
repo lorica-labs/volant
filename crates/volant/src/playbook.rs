@@ -57,6 +57,12 @@ pub struct Play {
     /// The execution strategy the play asked for, as written. Only `linear` exists here; the
     /// pre-flight refuses the others by name.
     pub strategy: Option<String>,
+    /// The play's own `no_log`, `environment` and `check_mode`. All three are task keywords a
+    /// play may also carry, so they are folded into every task at compile time rather than read
+    /// again per step - see `compile`, which uses them as the outermost layer of the merge.
+    pub no_log: Option<bool>,
+    pub environment: Vec<Value>,
+    pub check_mode: Option<bool>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The
     /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
     /// way it does in the reference; the pre-flight then refuses the run before the first
@@ -133,6 +139,24 @@ pub struct PlayTask {
     /// comes down here too, which is what makes a `notify` on a block apply to its tasks -
     /// measured on ansible-core 2.19.12.
     pub notify: Vec<String>,
+    /// `until`: the conditions that end the retry loop, all of which must hold. A list is
+    /// accepted the way `when` accepts one.
+    pub until: Vec<String>,
+    /// `retries` and `delay`, raw: both are templated against the task's own variables, so they
+    /// are kept as written and rendered when the task runs.
+    pub retries: Option<Value>,
+    pub delay: Option<Value>,
+    /// `no_log`: whether this task's results are censored on their way to the terminal. Unset
+    /// when neither the task, its block nor the play said anything, for the same reason
+    /// `ignore_errors` is three-state.
+    pub no_log: Option<bool>,
+    /// `environment`, one entry per layer that wrote one, outermost first: the play's, then each
+    /// block's, then the task's. They are rendered and merged when the task runs, the later
+    /// layer winning, because a layer is a mapping whose values may be templates.
+    pub environment: Vec<Value>,
+    /// `check_mode`. `false` is what this release does, so it is accepted and changes nothing;
+    /// `true` asks for a mode this release has not written and the pre-flight refuses it.
+    pub check_mode: Option<bool>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. A task
     /// carrying one is loaded whole and refused by the pre-flight, never run without it.
     ///
@@ -174,8 +198,19 @@ impl PlayTask {
             r#become: None,
             become_user: None,
             notify: Vec::new(),
+            until: Vec::new(),
+            retries: None,
+            delay: None,
+            no_log: None,
+            environment: Vec::new(),
+            check_mode: None,
             unsupported: Vec::new(),
         }
+    }
+
+    /// Whether this task's results are censored. Silence means no.
+    pub fn censors(&self) -> bool {
+        self.no_log.unwrap_or(false)
     }
 }
 
@@ -517,8 +552,26 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         r#become,
         become_user,
         strategy,
+        no_log: boolean(yaml, "no_log")?,
+        environment: environment(yaml, "")?,
+        check_mode: boolean(yaml, "check_mode")?,
         unsupported,
     })
+}
+
+/// `environment`, wherever it is written: at most one layer per level, kept raw because its
+/// values are templates the task renders against its own variables.
+///
+/// The value is not required to be a mapping here. Measured on ansible-core 2.19.12: a value
+/// that is not one warns and is skipped while the task still runs, so refusing the load would
+/// refuse a playbook the reference accepts.
+fn environment(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<Value>> {
+    match field(yaml, "environment") {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
+        Some(v) => Ok(vec![
+            to_json(v).with_context(|| format!("{context}'environment'"))?,
+        ]),
+    }
 }
 
 /// A play's `roles:` list, or the `dependencies:` of a `meta/main.yml`. The two are the same
@@ -609,6 +662,9 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             r#become,
             become_user,
             notify: names(yaml, "notify", &context)?,
+            no_log: boolean(yaml, "no_log")?,
+            environment: environment(yaml, &context)?,
+            check_mode: boolean(yaml, "check_mode")?,
             unsupported,
             ..PlayTask::empty()
         },
@@ -730,6 +786,9 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             r#become,
             become_user,
             notify: names(yaml, "notify", &context)?,
+            no_log: boolean(yaml, "no_log")?,
+            environment: environment(yaml, &context)?,
+            check_mode: boolean(yaml, "check_mode")?,
             unsupported,
             ..PlayTask::empty()
         },
@@ -901,6 +960,12 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         r#become,
         become_user,
         notify: names(yaml, "notify", &context)?,
+        until: conditions(yaml, "until", &context)?,
+        retries: field(yaml, "retries").map(to_json).transpose()?,
+        delay: field(yaml, "delay").map(to_json).transpose()?,
+        no_log: boolean(yaml, "no_log")?,
+        environment: environment(yaml, &context)?,
+        check_mode: boolean(yaml, "check_mode")?,
         unsupported,
     })
 }
@@ -1220,12 +1285,12 @@ mod tests {
             "{text}"
         );
         let pb = parse(
-            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      until: x\n",
+            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      delegate_to: x\n",
             "x.yml",
         )
         .expect("the reference has both, so the loader takes both");
         assert_eq!(pb.plays[0].strategy.as_deref(), Some("free"));
-        assert_eq!(first(&pb).unsupported, ["until"]);
+        assert_eq!(first(&pb).unsupported, ["delegate_to"]);
     }
 
     #[test]
@@ -1467,7 +1532,7 @@ mod tests {
     /// executor that ignores it.
     #[test]
     fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
-        for kw in ["until", "retries", "delegate_to", "become_flags", "no_log"] {
+        for kw in ["async", "poll", "delegate_to", "become_flags", "throttle"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
                 "x.yml",

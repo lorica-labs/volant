@@ -1943,8 +1943,8 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
     let probes = [
         (
-            "no_log",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      no_log: probe\n",
+            "delegate_to",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      delegate_to: probe\n",
         ),
         (
             "run_once",
@@ -2502,6 +2502,368 @@ fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
     );
 }
 
+/// `until`, `retries` and `delay`, measured on ansible-core 2.19.12 with this very fixture.
+///
+/// Every figure below is the reference's: `retries: R` is **R attempts in all**, the line after
+/// failed attempt `i` reads `(R - i + 1 retries left)` so the last one says `(1 retries left)`,
+/// `until` with no `retries` gives three attempts, `retries` with no `until` retries while the
+/// result is failed, and a loop retries **each item on its own** - one line per item, and
+/// `"attempts": 1` in each item's own result.
+///
+/// What would make this red: `attempts` counting `retries + 1`, the last retry line missing,
+/// the count starting one lower, or the loop retrying all its items together instead of one at
+/// a time.
+#[test]
+fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
+    let dir = probe_dir("until");
+    let marker = dir.join("marker");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            "-e",
+            &format!("marker={}", marker.display()),
+            &fixture("until/until.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+
+    // One line only: the second attempt created the file and succeeded.
+    assert_eq!(
+        text.matches("FAILED - RETRYING: [localhost]: retry until file (3 retries left).")
+            .count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains(r#""r.attempts": 2"#), "{text}");
+
+    let never = section(&text, "never succeeds");
+    assert!(
+        never.contains("FAILED - RETRYING: [localhost]: never succeeds (2 retries left).")
+            && never.contains("FAILED - RETRYING: [localhost]: never succeeds (1 retries left).")
+            && never.contains(r#""attempts": 2"#)
+            && never.contains("...ignoring"),
+        "{never}"
+    );
+    assert!(text.contains(r#""n.attempts": 2"#), "{text}");
+
+    let three = section(&text, "until without retries");
+    for left in [3, 2, 1] {
+        assert!(
+            three.contains(&format!(
+                "FAILED - RETRYING: [localhost]: until without retries ({left} retries left)."
+            )),
+            "{three}"
+        );
+    }
+    assert!(text.contains(r#""d.attempts": 3"#), "{text}");
+    assert!(text.contains(r#""e.attempts": 2"#), "{text}");
+
+    let looped = section(&text, "until with loop");
+    assert_eq!(
+        looped
+            .matches("FAILED - RETRYING: [localhost]: until with loop (1 retries left).")
+            .count(),
+        2,
+        "one retry line per item, not one for the loop: {looped}"
+    );
+    for item in ["a", "b"] {
+        let line = looped
+            .lines()
+            .find(|l| l.contains(&format!("(item={item})")))
+            .unwrap_or_else(|| panic!("no line for item {item}: {looped}"));
+        assert!(
+            line.starts_with("failed: [localhost]") && line.contains(r#""attempts": 1"#),
+            "{line}"
+        );
+    }
+    assert!(
+        text.contains(
+            "localhost                  : ok=9    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A task that never leaves the controller retries by the same loop as any other.
+///
+/// Measured on ansible-core 2.19.12 with this fixture: two retry lines, `fatal:` carrying the
+/// `debug`'s own cleaned body, `...ignoring`, `attempts: 2` in the registered value and a recap
+/// of `ok=2 ignored=1`. Two differences with the reference are deliberate and recorded: it
+/// appends `Result was: {...}` to each retry line for a `debug` and puts a `retries` key in the
+/// result, and this prints neither.
+///
+/// What would make this red: the retry loop skipped for `set_fact` and `debug`, which is how a
+/// task carrying `until` would quietly run once and pass.
+#[test]
+fn a_controller_side_task_retries_like_any_other() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("until/local.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let retried = section(&text, "a controller-side task retries too");
+    for left in [2, 1] {
+        assert!(
+            retried.contains(&format!(
+                "FAILED - RETRYING: [localhost]: a controller-side task retries too ({left} retries left)."
+            )),
+            "{retried}"
+        );
+    }
+    assert!(
+        retried.contains(r#"fatal: [localhost]: FAILED! => {"msg": "probe"}"#)
+            && retried.contains("...ignoring"),
+        "{retried}"
+    );
+    assert!(section(&text, "after").contains(r#""msg": 2"#), "{text}");
+    assert!(
+        text.contains(
+            "localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1"
+        ),
+        "{text}"
+    );
+}
+
+/// An `until` expression that cannot be evaluated ends the task there.
+///
+/// Measured on ansible-core 2.19.12: `fatal:` carrying
+/// `Task failed: Error while evaluating conditional: ...`, **no** retry line, no `attempts`, and
+/// the run carries on. The sentence after the colon is this engine's own - the reference names
+/// the Python type - and the prefix is the reference's, which is what a playbook testing
+/// `'Task failed' in result.msg` reads.
+///
+/// What would make this red: a condition that throws treated as false, which would retry and
+/// print the retry lines this asserts are absent.
+#[test]
+fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("until/condition-error.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let failing = section(&text, "the condition cannot be evaluated");
+    assert!(
+        failing.contains("fatal: [localhost]: FAILED!")
+            && failing.contains("Task failed: Error while evaluating conditional:")
+            && failing.contains("...ignoring"),
+        "{failing}"
+    );
+    assert!(
+        !failing.contains("FAILED - RETRYING") && !failing.contains("attempts"),
+        "a condition that throws is not a false one: {failing}"
+    );
+    assert!(
+        section(&text, "after").contains(r#""msg": "after""#),
+        "{text}"
+    );
+}
+
+/// `delay` is waited between attempts, proved from the results rather than from the clock: the
+/// task before records the epoch second it ran at, and the retried task's own `stdout` is the
+/// epoch second of its **last** attempt. Two attempts with `delay: 2` put at least two seconds
+/// between them, and the run is under `volant_within`, so a `delay` that never ends hangs the
+/// test rather than passing it.
+///
+/// What would make this red: the sleep dropped - both attempts then land in the same second, or
+/// at worst one apart, and never two.
+#[test]
+fn the_delay_is_waited_between_two_attempts() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("until/delay.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let seconds = section(&text, "seconds");
+    let shown = seconds
+        .split_once(r#""msg": ""#)
+        .unwrap_or_else(|| panic!("no message in:\n{seconds}"))
+        .1;
+    let shown = &shown[..shown.find('"').expect("a closing quote")];
+    let stamps: Vec<i64> = shown
+        .split_whitespace()
+        .map(|s| s.parse().expect("an epoch second"))
+        .collect();
+    assert_eq!(stamps.len(), 2, "{shown}");
+    assert!(
+        stamps[1] - stamps[0] >= 2,
+        "the second attempt waited {} second(s), not the two `delay` asked for",
+        stamps[1] - stamps[0]
+    );
+}
+
+/// Every path a `no_log` result can reach the operator by, measured on ansible-core 2.19.12 with
+/// this fixture at verbosity 0, `-v` and `-vvv`.
+///
+/// The one that is **not** censored is the registered variable: `debug: var=s` behind the task
+/// shows the real `stdout`, and censoring it too would look safer and be wrong - a playbook
+/// reading `s.rc` would stop working.
+///
+/// What would make this red: a secret on any line of a censored task at any verbosity, or the
+/// registered value censored along with the display.
+#[test]
+fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
+    const CENSORED: &str = "the output has been hidden due to the fact that 'no_log: true' was specified for this result";
+    let inventory = fixture("inventory.ini");
+    let nolog = fixture("nolog.yml");
+    for verbosity in ["", "-v", "-vvv"] {
+        let mut args = vec!["playbook", "-i", &inventory];
+        if !verbosity.is_empty() {
+            args.push(verbosity);
+        }
+        args.push(&nolog);
+        let out = volant_within(&args, PROBE_DEADLINE);
+        let text = String::from_utf8(out.stdout).unwrap();
+        let at = format!(
+            "at {}",
+            if verbosity.is_empty() {
+                "-v0"
+            } else {
+                verbosity
+            }
+        );
+        assert_eq!(out.status.code(), Some(0), "{at}: {text}");
+
+        let ok = section(&text, "secret ok");
+        let failed = section(&text, "secret fails");
+        let looped = section(&text, "secret loop");
+        let shown = section(&text, "secret debug");
+        for (what, body) in [
+            ("ok", ok),
+            ("failed", failed),
+            ("loop", looped),
+            ("debug", shown),
+        ] {
+            assert!(
+                !body.contains("secret\"") && !body.contains(r#""msg": "hidden""#),
+                "{at}: the {what} line leaked: {body}"
+            );
+        }
+        // The registered variable is the real result, at every verbosity.
+        assert!(
+            text.contains(r#""stdout": "secret""#),
+            "{at}: the register must keep the real value: {text}"
+        );
+        assert!(
+            failed.contains(&format!(
+                r#"fatal: [localhost]: FAILED! => {{"censored": "{CENSORED}", "changed": true}}"#
+            )) && failed.contains("...ignoring"),
+            "{at}: {failed}"
+        );
+        assert_eq!(
+            looped
+                .matches("changed: [localhost] => (item=(censored due to no_log))")
+                .count(),
+            2,
+            "{at}: {looped}"
+        );
+        // The section starts with the tail of its own banner, so the body is what follows it.
+        let body = |s: &str| {
+            s.lines()
+                .skip(1)
+                .filter(|l| !l.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                )
+        };
+        if verbosity.is_empty() {
+            assert_eq!(body(ok), "changed: [localhost]", "{ok}");
+            assert_eq!(body(shown), "ok: [localhost]", "{shown}");
+        } else {
+            assert!(
+                ok.contains(&format!(
+                    r#"changed: [localhost] => {{"censored": "{CENSORED}", "changed": true}}"#
+                )),
+                "{at}: {ok}"
+            );
+            assert!(
+                shown.contains(&format!(
+                    r#"ok: [localhost] => {{"censored": "{CENSORED}"}}"#
+                )),
+                "{at}: {shown}"
+            );
+        }
+        assert!(
+            text.contains(
+                "localhost                  : ok=5    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1"
+            ),
+            "{at}: {text}"
+        );
+    }
+}
+
+/// `environment`, measured on ansible-core 2.19.12 with this fixture: the play's layer and the
+/// task's are both in force with the task's winning, a templated value is rendered, `42` reaches
+/// the process as the string `42`, a block's layer reaches its tasks, and a value that is not a
+/// mapping warns on **stderr** and is skipped while the task still runs and the layers around it
+/// stay. The `debug` at the end shows that an `environment` on a controller-side task changes
+/// nothing for `lookup('env', ...)`.
+///
+/// The warning's text is a recorded divergence: the reference prints the whole layer stack as a
+/// Python list, this prints the value it could not read.
+///
+/// What would make this red: the play's layer lost (`" templated"`), `42` sent as a number (the
+/// agent refuses the shape), or a layer that is not a mapping failing the task.
+#[test]
+fn environment_layers_merge_with_the_task_winning() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("env.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert!(text.contains(r#""e.stdout": "play templated""#), "{text}");
+    assert!(text.contains(r#""n.stdout": "42""#), "{text}");
+    assert!(
+        errors.contains(r#"[WARNING]: could not parse environment value, skipping: "notadict""#),
+        "the warning goes to stderr: {errors}"
+    );
+    assert!(
+        section(&text, "env not a dict").contains("changed: [localhost]"),
+        "a layer we cannot read does not fail the task: {text}"
+    );
+    assert!(
+        section(&text, "a lookup is not the task's environment").contains(r#""msg": "blk ""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=7    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
+        ),
+        "{text}"
+    );
+}
+
 /// A `Runs` row and what proves it: the playbook to run, the arguments to run it with, the exit
 /// code to expect and a string the run has to print.
 struct RunsProbe {
@@ -2968,6 +3330,116 @@ const RUNS_PROBES: &[RunsProbe] = &[
     ),
     // The host fails after notifying, so the handler only runs because of the flag. Without it
     // the run still exits 2, which is why the proof is the handler's own output line.
+    // The retry keywords. `until` is proved by a task that **passes** and is retried anyway, so
+    // dropping the keyword leaves a run that succeeds instead of one that fails; `retries` by a
+    // count no default produces (three is what `until` alone gives); and `delay` by a value it
+    // cannot read, which is the only half of that keyword one process can see - that the wait
+    // actually happens is `the_delay_is_waited_between_two_attempts`, which reads two epoch
+    // seconds out of the results.
+    runs(
+        "task",
+        "until",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      until: false\n      retries: 2\n      delay: 0\n",
+        &[],
+        2,
+        "FAILED - RETRYING: [localhost]: Probe task (1 retries left).",
+    ),
+    runs(
+        "task",
+        "retries",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      until: false\n      retries: 5\n      delay: 0\n      ignore_errors: true\n",
+        &[],
+        0,
+        "(5 retries left).",
+    ),
+    runs(
+        "task",
+        "delay",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      retries: 1\n      delay: notanumber\n",
+        &[],
+        2,
+        "Error processing keyword 'delay'",
+    ),
+    // `no_log` at every level: the failing task's own line carries the censored body at
+    // verbosity 0, so dropping the keyword puts the module's real result there instead.
+    runs(
+        "task",
+        "no_log",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"false\"\n      no_log: true\n      ignore_errors: true\n",
+        &[],
+        0,
+        "the output has been hidden due to the fact",
+    ),
+    runs(
+        "play",
+        "no_log",
+        "- hosts: localhost\n  gather_facts: false\n  no_log: true\n  tasks:\n    - name: Probe task\n      command: \"false\"\n      ignore_errors: true\n",
+        &[],
+        0,
+        "the output has been hidden due to the fact",
+    ),
+    runs(
+        "block",
+        "no_log",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: \"false\"\n          ignore_errors: true\n      no_log: true\n",
+        &[],
+        0,
+        "the output has been hidden due to the fact",
+    ),
+    // `environment` at every level, each written where only that level can supply the value:
+    // dropping the layer leaves the task echoing an empty string.
+    runs(
+        "task",
+        "environment",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      shell: echo \"$PROBE_ENV\"\n      environment:\n        PROBE_ENV: task-value\n      register: e\n    - debug:\n        msg: \"{{ e.stdout }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"task-value\"",
+    ),
+    runs(
+        "play",
+        "environment",
+        "- hosts: localhost\n  gather_facts: false\n  environment:\n    PROBE_ENV: play-value\n  tasks:\n    - name: Probe task\n      shell: echo \"$PROBE_ENV\"\n      register: e\n    - debug:\n        msg: \"{{ e.stdout }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"play-value\"",
+    ),
+    runs(
+        "block",
+        "environment",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          shell: echo \"$PROBE_ENV\"\n          register: e\n        - debug:\n            msg: \"{{ e.stdout }}\"\n      environment:\n        PROBE_ENV: block-value\n",
+        &[],
+        0,
+        "\"msg\": \"block-value\"",
+    ),
+    // `check_mode` is honoured for `false` and refused by its value for `true`, the way
+    // `become_method` and `strategy` are. The row would still be `Runs` with the refusal gone,
+    // so what these three assert is the sentence that names the value: parked again, the message
+    // loses its `with 'true'` and the probe reddens.
+    runs(
+        "task",
+        "check_mode",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      check_mode: true\n",
+        &[],
+        4,
+        "'check_mode' is not supported yet with 'true'",
+    ),
+    runs(
+        "play",
+        "check_mode",
+        "- hosts: localhost\n  gather_facts: false\n  check_mode: true\n  tasks:\n    - command: echo hi\n",
+        &[],
+        4,
+        "'check_mode' is not supported yet with 'true'",
+    ),
+    runs(
+        "block",
+        "check_mode",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n",
+        &[],
+        4,
+        "'check_mode' is not supported yet with 'true'",
+    ),
     runs(
         "play",
         "force_handlers",

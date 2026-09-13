@@ -15,6 +15,7 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::bail;
 use serde_json::{Map, Value};
@@ -42,6 +43,15 @@ use crate::template::Templar;
 pub(crate) struct TagSelection {
     run: Vec<String>,
     skip: Vec<String>,
+}
+
+/// The selection a run nobody narrowed gets, built through [`TagSelection::new`] rather than from
+/// two empty lists: an empty `run` list selects **nothing**, so a derived `Default` would give a
+/// compiled play that drops every task it was handed.
+impl Default for TagSelection {
+    fn default() -> Self {
+        TagSelection::new(Vec::new(), Vec::new())
+    }
 }
 
 /// What the reference calls a task with no tags of its own.
@@ -116,6 +126,32 @@ pub(crate) enum StepKind {
     /// One handler of [`Compiled::handlers`], spliced in behind a flush point. It runs for a host
     /// that notified it and reports nothing for a host that did not.
     Handler(usize),
+    /// `include_tasks` or `include_role`: a statement naming work that is read while the play
+    /// runs, because what it names may depend on the host reaching it.
+    ///
+    /// Like a flush point it is a splice point - its successors are not known when the play is
+    /// compiled - so the two travel together everywhere [`is_splice_point`] is asked.
+    Include(IncludeKind),
+}
+
+/// Which of the two dynamic statements a [`StepKind::Include`] step came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncludeKind {
+    Tasks,
+    Role,
+}
+
+/// Whether the coordinator has to insert steps behind this one before any host may read the list
+/// again.
+///
+/// The two kinds are one rule and not two: a driver that reports such a step waits for
+/// `spliced_through` to reach it, whether it ran the step or stepped over it, and the coordinator
+/// publishes a splice at every one of them - an empty one when there was nothing to insert,
+/// because a driver waiting on it has no way to learn that on its own. Asked through this one
+/// predicate so a caller cannot honour the flush half and forget the include half, which is how a
+/// host comes to hold an index the splice has moved.
+pub(crate) fn is_splice_point(kind: &StepKind) -> bool {
+    matches!(kind, StepKind::Flush { .. } | StepKind::Include(_))
 }
 
 /// One handler, with everything a flush needs to decide whether to run it and what to call it.
@@ -139,6 +175,36 @@ pub(crate) enum Section {
     Always,
 }
 
+/// Where a step was written, which is what a statement inside it resolves its relative paths
+/// against and what bounds how deep an include may nest.
+///
+/// Shared behind an [`Arc`] because every step of one file has the same one: a role of a few
+/// hundred tasks pays one of these rather than one per step, and the per-batch clone of the whole
+/// step list copies a pointer instead of two paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Origin {
+    /// The directory a relative path written in this step is read against: the playbook's, a
+    /// role's `tasks/`, or the directory of the file an include brought in.
+    pub file_dir: PathBuf,
+    /// The root of the role this step was compiled inside, if any. `include_vars` looks in its
+    /// `vars/` before anywhere else, measured.
+    pub role_dir: Option<PathBuf>,
+    /// How many includes deep this step was spliced in. The statement at depth 32 is refused
+    /// rather than followed: the reference recurses until Python's stack is gone and reports its
+    /// own crash, with no recap and nothing to read.
+    pub depth: u32,
+}
+
+impl Default for Origin {
+    fn default() -> Self {
+        Origin {
+            file_dir: PathBuf::from("."),
+            role_dir: None,
+            depth: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Step {
     pub kind: StepKind,
@@ -152,6 +218,27 @@ pub(crate) struct Step {
     /// decides two things, both measured - the `role : task` prefix the banner carries, and
     /// which variable layers the driver puts under the play's.
     pub role: Option<usize>,
+    /// Where this step was written, for the statements inside it that read a file.
+    pub origin: Arc<Origin>,
+    /// The variables the include statement that brought this step in handed down, shared by every
+    /// step of that one expansion.
+    ///
+    /// They are a layer of their own rather than task variables because of where they sit:
+    /// measured on ansible-core 2.19.12, `include_role: {name: base}` with `vars: {p: x}` reads
+    /// `p=x` in the role even when the host carries a `set_fact` of that name, while the same
+    /// `vars:` written on a `roles:` entry loses to that fact. So they go in at the role-parameter
+    /// layer, above the facts and under `-e`, and they accumulate: an include inside an include
+    /// hands its parent's down with its own.
+    pub include_params: Option<Arc<Map<String, Value>>>,
+    /// The hosts this step runs for, when it was spliced in for some of them and not all.
+    ///
+    /// `None` is every host, which is what the compilation produces. A step an include brought in
+    /// carries the hosts whose own include asked for it: measured on ansible-core 2.19.12, an
+    /// include a `when` left out for one of two hosts inserts its tasks for the other alone, and
+    /// the host outside the list shows no line under their banners. Every host still reports the
+    /// step, because a barrier behind it opens on hosts that have passed it and not on hosts that
+    /// had a reason to run it.
+    pub hosts: Option<Arc<[String]>>,
 }
 
 /// Where one block's three sections landed in the flat list.
@@ -186,7 +273,23 @@ pub(crate) struct Compiled {
     /// roles run, then the play's own. Measured on ansible-core 2.19.12 - handlers run in
     /// **definition** order and not in notification order, and a role's run before the play's at
     /// the same flush.
+    ///
+    /// An `include_role` appends its role's handlers **behind** the play's own rather than in
+    /// front of them, measured: a play handler and an included role's handler notified in that
+    /// order run in that order, which is the opposite of what the `roles:` list and `import_role`
+    /// give. Appending is also what keeps every index already in a host's notification list
+    /// pointing at the handler it was pointing at.
     pub handlers: Vec<Handler>,
+    /// The play's own keywords, the outermost layer of every task's merge. An include reads it
+    /// again at run time: measured, a task an `include_tasks` brought in still carries the play's
+    /// tags, while the tags written on the statement itself stop there.
+    pub inherited: PlayTask,
+    /// Where a role named at run time is looked for. Kept with the compiled play because an
+    /// `include_role` resolves its role while the play runs and the search list is the play's.
+    pub search: RoleSearch,
+    /// The tag selection this run was narrowed to, for the same reason: the tasks an include
+    /// brings in are filtered by `--tags` the way the compiled ones were.
+    pub selection: TagSelection,
 }
 
 impl Compiled {
@@ -212,6 +315,27 @@ impl Compiled {
             }
         }
         self.steps.splice(at..at, steps);
+    }
+}
+
+/// The file a task statement's relative name points at: the one beside the file that wrote the
+/// statement, and failing that the one in the role's own `tasks/`.
+///
+/// Measured on ansible-core 2.19.12 with a role whose `tasks/sub/deep.yml` names `shared.yml`, in
+/// all three states - only `tasks/shared.yml`, only `tasks/sub/shared.yml`, both - and the one
+/// beside the writer wins whenever it is there. The fallback is what a role like UBUNTU22-CIS
+/// needs: `tasks/section_1/cis_1.1.1.x.yml` writes `file: warning_facts.yml` and means
+/// `tasks/warning_facts.yml`.
+///
+/// One function for `import_tasks` and `include_tasks` both: the static and the dynamic statement
+/// read the same name the same way, and two copies of this rule would be two chances to move only
+/// one of them. The path it returns is the one to report as missing when nothing is there, which
+/// is why it answers with a path rather than an `Option`.
+pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: &str) -> PathBuf {
+    let beside = file_dir.join(name);
+    match role_dir.map(|role| role.join("tasks").join(name)) {
+        Some(in_role) if !beside.is_file() && in_role.is_file() => in_role,
+        _ => beside,
     }
 }
 
@@ -254,6 +378,9 @@ pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
             block,
             section,
             role: h.role,
+            origin: Arc::clone(&c.steps[at].origin),
+            include_params: c.steps[at].include_params.clone(),
+            hosts: None,
         })
         .collect()
 }
@@ -401,7 +528,7 @@ fn serial_size(value: &Value, total: usize) -> anyhow::Result<i64> {
 /// One counter for all three recursions - a `meta/main.yml` dependency, an `import_role` inside
 /// a role's tasks, an `import_tasks` inside an imported file - because a cycle can run through
 /// any mixture of them, and a counter that only one of them increments bounds nothing.
-const DEPTH: usize = 32;
+pub(crate) const DEPTH: usize = 32;
 
 /// What the reference says when two roles import each other, measured on ansible-core 2.19.12,
 /// exit 1.
@@ -463,11 +590,15 @@ struct Builder<'a> {
     /// `tasks/main.yml` reads `<role>/tasks/sub/extra.yml`, and an `import_tasks` inside **that**
     /// file reads it beside itself.
     file_dir: PathBuf,
-    /// The `tasks/` directory of the role being compiled, if any: the first place an
-    /// `import_tasks` written inside a role looks.
-    role_tasks: Option<PathBuf>,
+    /// The root of the role being compiled, if any. Its `tasks/` is the first place an
+    /// `import_tasks` written inside a role looks, and its `vars/` the first place an
+    /// `include_vars` does.
+    role_dir: Option<PathBuf>,
     /// How many roles and imported files are open above whatever is being compiled now.
     depth: usize,
+    /// How many includes deep the statement that started this compilation was. Zero for a play;
+    /// one more than its parent for everything an include splices in.
+    include_depth: u32,
     /// Which tasks `--tags` and `--skip-tags` leave in. A task the selection drops is never
     /// pushed, rather than pushed and filtered out afterwards: a `retain` over the finished
     /// list would leave every `BlockSpan` pointing at the indices the list used to have, and a
@@ -482,6 +613,15 @@ impl Builder<'_> {
         if self.selection.selects(&step.task.tags) {
             self.steps.push(step);
         }
+    }
+
+    /// Where the steps being laid out now were written, shared by all of them.
+    fn origin(&self) -> Arc<Origin> {
+        Arc::new(Origin {
+            file_dir: self.file_dir.clone(),
+            role_dir: self.role_dir.clone(),
+            depth: self.include_depth,
+        })
     }
 
     /// One of the three flush points the compiler puts in itself, at the end of a section that
@@ -502,6 +642,9 @@ impl Builder<'_> {
             block: None,
             section: Section::Body,
             role: None,
+            origin: self.origin(),
+            include_params: None,
+            hosts: None,
         });
     }
 
@@ -565,7 +708,27 @@ impl Builder<'_> {
         let kind = match crate::playbook::is_meta(&task) {
             true if meta_action(&task) == FLUSH_HANDLERS => StepKind::Flush { explicit: true },
             true => StepKind::Meta,
-            false => StepKind::Task,
+            // The two dynamic statements become a step of their own rather than a task: nothing
+            // runs them on a host, and the arguments they carry are refused here, before the
+            // first connection, so an option this release cannot honour cannot be read and
+            // dropped while the play is already half applied.
+            false => match short_name(&task.module) {
+                "include_tasks" => {
+                    include_options("include_tasks", &task.args)?;
+                    StepKind::Include(IncludeKind::Tasks)
+                }
+                "include_role" => {
+                    include_role_options(&task.args)?;
+                    StepKind::Include(IncludeKind::Role)
+                }
+                // A module like any other, but one whose arguments name work on the controller
+                // rather than on a host, so what it can be told is checked with the statements.
+                "include_vars" => {
+                    include_vars_options(&task.args)?;
+                    StepKind::Task
+                }
+                _ => StepKind::Task,
+            },
         };
         self.push(Step {
             kind,
@@ -573,6 +736,9 @@ impl Builder<'_> {
             block,
             section,
             role,
+            origin: self.origin(),
+            include_params: None,
+            hosts: None,
         });
         Ok(())
     }
@@ -609,11 +775,7 @@ impl Builder<'_> {
         // fallback is what a role like UBUNTU22-CIS needs: `tasks/section_1/cis_1.1.1.x.yml`
         // writes `import_tasks: file: warning_facts.yml` and means `tasks/warning_facts.yml`,
         // so trying the importer's directory alone refuses a role the reference compiles.
-        let beside = self.file_dir.join(name);
-        let path = match &self.role_tasks {
-            Some(tasks) if !beside.is_file() && tasks.join(name).is_file() => tasks.join(name),
-            _ => beside,
-        };
+        let path = beside_or_in_role(&self.file_dir, self.role_dir.as_deref(), name);
         if !path.is_file() {
             // Exit 1, measured, with the reference's own two sentences. The reference adds a
             // third naming Python's own errno, which this engine has nothing to say about.
@@ -710,13 +872,16 @@ impl Builder<'_> {
                 block,
                 section,
                 role: Some(index),
+                origin: self.origin(),
+                include_params: None,
+                hosts: None,
             });
         }
         let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
-        let outer_role = self.role_tasks.replace(path.join("tasks"));
+        let outer_role = self.role_dir.replace(path.clone());
         let result = self.items(&role.tasks, &kw, block, section, Some(index));
         self.file_dir = previous;
-        self.role_tasks = outer_role;
+        self.role_dir = outer_role;
         self.depth -= 1;
         result
     }
@@ -899,8 +1064,9 @@ pub(crate) fn compile(
         handlers: Vec::new(),
         search,
         file_dir: play.dir.clone(),
-        role_tasks: None,
+        role_dir: None,
         depth: 0,
+        include_depth: 0,
         selection,
     };
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
@@ -971,7 +1137,267 @@ pub(crate) fn compile(
         roles,
         exported,
         handlers: builder.handlers,
+        inherited: empty,
+        search: search.clone(),
+        selection: selection.clone(),
     })
+}
+
+/// What one host asked for at an include step, for one item of its loop.
+#[derive(Debug, Clone)]
+pub(crate) struct IncludeRequest {
+    pub target: IncludeTarget,
+    /// What the `included:` line names: the absolute path of the file, or the role's name.
+    pub what: String,
+    /// The variables the statement hands to everything it brings in: its own `vars:`, the loop
+    /// variable of the item that asked for it and `ansible_loop_var` beside it.
+    pub vars: Map<String, Value>,
+    /// The item's display label, which the `included:` line carries as `=> (item=...)`.
+    pub label: Option<String>,
+}
+
+impl IncludeRequest {
+    /// What two hosts have to agree on to be named on one `included:` line.
+    ///
+    /// Measured on ansible-core 2.19.12: two hosts including the same file share a line
+    /// (`included: /abs/inc-a.yml for h1, h2`), two hosts whose rendered name differs get one
+    /// line each, and a loop gets one line per item with its own `=> (item=)`. The variables are
+    /// part of it because two hosts handing the same file different values are two different
+    /// expansions, whatever the line would read.
+    pub fn key(&self) -> String {
+        serde_json::json!({
+            "what": &self.what,
+            "vars": sorted(&self.vars),
+            "label": &self.label,
+        })
+        .to_string()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum IncludeTarget {
+    /// A tasks file, already resolved to an absolute path that exists.
+    File(PathBuf),
+    /// A role whose directory the driver has already found, so the message a role nobody can find
+    /// gets is the one the reference gives it rather than the compiler's.
+    Role(Box<RoleEntry>),
+}
+
+/// The steps, blocks, roles and handlers one include request brings in, compiled against the
+/// play's own keywords and the run's tag selection.
+///
+/// The indices inside it are its own: a block it lays out is numbered from zero and a role it
+/// reads is numbered from zero, because nothing here knows where the result will land. [`graft`]
+/// is what rebases them onto the running play, and it is the only caller.
+///
+/// What comes down from the statement is measured, and it is less than the plan assumed: only its
+/// `vars:`. `tags` stop at the statement (`--tags inc` runs the include and not the tasks it
+/// brought in), `when` is evaluated for the statement alone, and `become` and `environment` are
+/// not even accepted on one - ansible-core 2.19.12 refuses them at load time with `'environment'
+/// is not a valid attribute for a TaskInclude`. The play's own layer still reaches them, measured:
+/// `--tags <a play tag>` runs a task an `include_tasks` brought in.
+pub(crate) fn expand_include(
+    base: &Compiled,
+    parent: &Step,
+    request: &IncludeRequest,
+) -> anyhow::Result<Compiled> {
+    let depth = parent.origin.depth + 1;
+    // The play's own layer and nothing else. What the statement hands down does not travel in the
+    // merge: it is a variable layer of its own, laid on by `graft` at the precedence measured for
+    // it, and putting it here as well would put it under the host's facts instead of over them.
+    let inherited = base.inherited.clone();
+    let mut builder = Builder {
+        steps: Vec::new(),
+        blocks: Vec::new(),
+        roles: Vec::new(),
+        handlers: Vec::new(),
+        search: &base.search,
+        file_dir: parent.origin.file_dir.clone(),
+        role_dir: parent.origin.role_dir.clone(),
+        depth: 0,
+        include_depth: depth,
+        selection: &base.selection,
+    };
+    // `block` and `role` are seeded empty and rebased by `graft`: a sub-compilation that mixed
+    // the running play's absolute indices with its own relative ones would be a list where the
+    // reader cannot tell which it is holding, and a block index off by the wrong base is how a
+    // host walks into a section it never entered.
+    match &request.target {
+        IncludeTarget::File(path) => {
+            let tasks = crate::playbook::parse_tasks_file(path)?;
+            builder.file_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+            builder.items(&tasks, &inherited, None, parent.section, None)?;
+        }
+        IncludeTarget::Role(entry) => {
+            // A fresh `seen` list, as for `import_role`: measured, an `include_role` runs its role
+            // again even when the play's `roles:` list has already run it. Its own dependencies
+            // still deduplicate against each other.
+            builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
+        }
+    }
+    Ok(Compiled {
+        steps: builder.steps,
+        blocks: builder.blocks,
+        roles: builder.roles,
+        exported: RoleVars::default(),
+        handlers: builder.handlers,
+        inherited,
+        search: base.search.clone(),
+        selection: base.selection.clone(),
+    })
+}
+
+/// Puts the expansions of one include step into the running play, at `at`, and answers with the
+/// steps that went in.
+///
+/// Each group brings its own numbering, so three things are rebased: a step's `block` and `role`,
+/// and a span's `parent` and its three ranges. `None` means "whatever the statement itself sat
+/// in", which is what puts an included task in the block and the section the include was written
+/// in - measured, an `include_tasks` in a block's body whose included task fails is taken by that
+/// block's `rescue`.
+///
+/// The spans are appended **after** [`Compiled::splice`] has run, with their indices already
+/// absolute: `splice` grows the ranges that were there before it, and a range it has never seen
+/// must not be grown twice.
+/// One expansion on its way into the running play.
+pub(crate) struct Grafted {
+    pub expanded: Compiled,
+    /// What the statement handed down, for every step of this expansion.
+    pub params: Map<String, Value>,
+    /// The hosts whose own statement asked for it.
+    pub hosts: Arc<[String]>,
+}
+
+pub(crate) fn graft(
+    base: &mut Compiled,
+    at: usize,
+    parent: &Step,
+    groups: Vec<Grafted>,
+) -> Vec<Step> {
+    let mut steps: Vec<Step> = Vec::new();
+    let mut spans: Vec<BlockSpan> = Vec::new();
+    for Grafted {
+        expanded: sub,
+        params,
+        hosts,
+    } in groups
+    {
+        let block_offset = base.blocks.len() + spans.len();
+        let role_offset = base.roles.len();
+        let step_offset = at + steps.len();
+        let params = Arc::new(params);
+        for mut step in sub.steps {
+            step.block = step.block.map(|b| b + block_offset).or(parent.block);
+            step.role = step.role.map(|r| r + role_offset).or(parent.role);
+            step.include_params = Some(Arc::clone(&params));
+            step.hosts = Some(Arc::clone(&hosts));
+            steps.push(step);
+        }
+        for mut span in sub.blocks {
+            for range in [&mut span.body, &mut span.rescue, &mut span.always] {
+                range.start += step_offset;
+                range.end += step_offset;
+            }
+            span.parent = span.parent.map(|p| p + block_offset).or(parent.block);
+            spans.push(span);
+        }
+        base.roles.extend(sub.roles);
+        // Behind the play's own, measured: a play handler and an included role's handler notified
+        // in that order run in that order. Appending is also what keeps every index a host is
+        // already carrying in its notification list pointing at the handler it named.
+        base.handlers.extend(sub.handlers);
+    }
+    base.splice(at, steps.clone());
+    base.blocks.extend(spans);
+    steps
+}
+
+/// The role one `include_role` task names, read out of its arguments and whatever the item
+/// rendered for them.
+pub(crate) fn include_role_entry(args: &Map<String, Value>) -> anyhow::Result<RoleEntry> {
+    include_role_options(args)?;
+    let text = |key: &str| args.get(key).and_then(Value::as_str);
+    let name = text("name")
+        .or_else(|| text("role"))
+        .ok_or_else(|| anyhow::anyhow!("'include_role' takes a role name"))?;
+    let from = |key: &str, fallback: &str| text(key).unwrap_or(fallback).to_string();
+    Ok(RoleEntry {
+        name: name.to_string(),
+        from: crate::roles::RoleFrom {
+            tasks: from("tasks_from", "main"),
+            vars: from("vars_from", "main"),
+            defaults: from("defaults_from", "main"),
+            handlers: from("handlers_from", "main"),
+        },
+        // As for `import_role`: everything the statement says is an argument of the statement,
+        // and what it hands the role travels in the task's own `vars:`.
+        params: Map::new(),
+        keywords: PlayTask::empty(),
+    })
+}
+
+/// The arguments `include_role` takes, and the three it takes that this release cannot honour.
+///
+/// `public: true` is measured to export the role's `defaults` and `vars` to everything behind the
+/// include, where the default `public: false` keeps them to the role's own tasks - so honouring it
+/// would mean changing the play's variable layers while hosts stand at different steps of it.
+/// Refused by name, the way `import_role` refuses the same three, rather than accepted and
+/// dropped.
+fn include_role_options(args: &Map<String, Value>) -> anyhow::Result<()> {
+    unknown_options(
+        "include_role",
+        args,
+        &[
+            "name",
+            "role",
+            "tasks_from",
+            "vars_from",
+            "defaults_from",
+            "handlers_from",
+            "public",
+            "allow_duplicates",
+            "rolespec_validate",
+            "apply",
+        ],
+        &["public", "allow_duplicates", "rolespec_validate", "apply"],
+    )
+}
+
+/// `include_tasks` takes a file name and nothing else. `apply:` puts keywords on everything the
+/// statement brings in, which this release has no layer for, so it is refused by its own name.
+fn include_options(statement: &str, args: &Map<String, Value>) -> anyhow::Result<()> {
+    unknown_options(
+        statement,
+        args,
+        &["file", "_raw_params", "apply"],
+        &["apply"],
+    )
+}
+
+/// Everything an `include_vars` can be told, and the seven it can be told that this release
+/// cannot honour.
+///
+/// `dir:` is measured to work in the reference, reading every file of a directory in name order,
+/// and the other six narrow which of those files are read or how their values are merged. Refused
+/// by their own names rather than read and dropped: a run that silently loaded none of a
+/// directory's variables would go on to apply a playbook against defaults nobody wrote.
+///
+/// Checked here, where the statement becomes a step, rather than in the module: that puts the
+/// refusal before the first connection for a playbook's own `include_vars` and inside the failing
+/// host's own task for one an include brought in, which is where each belongs.
+pub(crate) fn include_vars_options(args: &Map<String, Value>) -> anyhow::Result<()> {
+    const SEARCHES: &[&str] = &[
+        "dir",
+        "depth",
+        "extensions",
+        "files_matching",
+        "ignore_files",
+        "ignore_unknown_extensions",
+        "hash_behaviour",
+    ];
+    let mut known = vec!["_raw_params", "file", "name"];
+    known.extend_from_slice(SEARCHES);
+    unknown_options("include_vars", args, &known, SEARCHES)
 }
 
 fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
@@ -2119,6 +2545,9 @@ mod tests {
             block: Some(0),
             section: Section::Body,
             role: None,
+            origin: Arc::default(),
+            include_params: None,
+            hosts: None,
         };
         c.splice(2, vec![step("spliced one"), step("spliced two")]);
         assert_eq!(

@@ -39,6 +39,10 @@
     "code": 0,
     "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n      TASK TAGS: [imp, inc, ir, own]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n      TASK TAGS: [sub]\n"
   },
+  "--list-tags includes.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n      TASK TAGS: [inc]\n"
+  },
   "--list-tags roles.yml": {
     "code": 0,
     "stdout": "\nplaybook: roles.yml\n\n  play #1 (h1): roles play\tTAGS: []\n      TASK TAGS: [always, rt]\n"
@@ -78,6 +82,10 @@
   "--list-tasks --tags inc imports.yml": {
     "code": 0,
     "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      the include\tTAGS: [inc]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n"
+  },
+  "--list-tasks --tags inc includes.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n    tasks:\n      the named include\tTAGS: [inc]\n"
   },
   "--list-tasks --tags inner blocks.yml": {
     "code": 0,
@@ -135,6 +143,10 @@
     "code": 0,
     "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      imported one\tTAGS: [imp, own]\n      imported two\tTAGS: [imp]\n      the include\tTAGS: [inc]\n      base : base task\tTAGS: [ir]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n      a task of the imported play\tTAGS: [sub]\n"
   },
+  "--list-tasks includes.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n    tasks:\n      the named include\tTAGS: [inc]\n      include_tasks\tTAGS: []\n      the named role include\tTAGS: []\n      include_role\tTAGS: []\n      include_vars\tTAGS: []\n"
+  },
   "--list-tasks later-modules.yml": {
     "code": 0,
     "stdout": "\nplaybook: later-modules.yml\n\n  play #1 (h1): later play\tTAGS: []\n    tasks:\n      a line in a file\tTAGS: []\n      fired and forgotten\tTAGS: []\n      run somewhere else\tTAGS: []\n"
@@ -162,6 +174,10 @@
   "--syntax-check --list-tasks tags.yml": {
     "code": 0,
     "stdout": "\nplaybook: tags.yml\n"
+  },
+  "--syntax-check includes.yml": {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n"
   },
   "--syntax-check later-modules.yml": {
     "code": 0,

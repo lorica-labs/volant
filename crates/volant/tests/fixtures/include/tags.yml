@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tags: [playtag]
+  tasks:
+    - import_tasks: inc-a.yml
+      tags: [imp]
+    - include_tasks: inc-b.yml
+      tags: [inc]
+    - name: always
+      debug: msg=al
+      tags: always

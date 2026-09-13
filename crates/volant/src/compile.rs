@@ -374,7 +374,12 @@ fn serial_size(value: &Value, total: usize) -> anyhow::Result<i64> {
         // `int(2.7)` is 2 there, and `int(True)` is 1.
         Value::Number(n) => Ok(n.as_f64().unwrap_or_default().trunc() as i64),
         Value::Bool(b) => Ok(i64::from(*b)),
-        Value::String(s) if s.trim_end().ends_with('%') => {
+        // The reference tests `value.endswith('%')` on the **raw** string, trailing whitespace
+        // included: `"50% "` (a space after the sign) fails that test there, falls to `int()`,
+        // and crashes the same way `serial: abc` does. `trim_end()` here used to accept it as a
+        // percentage instead of refusing it - measured divergence, fixed by matching the raw
+        // string like the reference does.
+        Value::String(s) if s.ends_with('%') => {
             let pct: i64 = s
                 .trim()
                 .trim_end_matches('%')
@@ -1322,7 +1327,16 @@ mod tests {
     /// run the play in a shape the operator never asked for.
     #[test]
     fn an_unreadable_serial_is_refused_by_name() {
-        for serial in [json!("abc"), json!("x%"), json!({}), json!([1, "abc"])] {
+        // `"50% "` - a percentage with trailing whitespace after the sign - is refused rather
+        // than read as 50%: the reference's own `endswith('%')` test runs on the raw string and
+        // misses it too, so it falls to `int("50% ")` and crashes the way `serial: abc` does.
+        for serial in [
+            json!("abc"),
+            json!("x%"),
+            json!({}),
+            json!([1, "abc"]),
+            json!("50% "),
+        ] {
             let err = format!("{:#}", cut(Some(serial.clone()), 3).unwrap_err());
             assert!(
                 err.contains("Error processing keyword 'serial'"),

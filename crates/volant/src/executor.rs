@@ -267,7 +267,6 @@ pub async fn run_play(
         .expect("vars lock")
         .playbook_dir()
         .to_path_buf();
-    let vars_files = load_play_vars_files(play, &hosts, &all, &playbook_dir, state, out)?;
     for batch in batches {
         // A batch that starts after the operator interrupted the run is a batch that should not
         // start: the drivers of the batch before it have already stopped for the same reason.
@@ -284,6 +283,27 @@ pub async fn run_play(
         if live.is_empty() {
             continue;
         }
+        // Read here, once per batch about to run and not once for the whole play: see
+        // `load_play_vars_files`. `play_hosts` is the play's still-live hosts computed from
+        // `state.failed_hosts` as it stands right before this batch starts (this batch and every
+        // batch still to come); `batch_hosts` is this batch's own live hosts; `all` stays the
+        // play's whole resolved list, batches and failures alike.
+        let play_hosts: Vec<String> = hosts
+            .iter()
+            .filter(|h| !state.failed_hosts.contains(&h.name))
+            .map(|h| h.name.clone())
+            .collect();
+        let batch_hosts: Vec<String> = live.iter().map(|h| h.name.clone()).collect();
+        let vars_files = load_play_vars_files(
+            play,
+            &live,
+            &play_hosts,
+            &batch_hosts,
+            &all,
+            &playbook_dir,
+            state,
+            out,
+        )?;
         run_batch(
             play,
             compiled,
@@ -999,16 +1019,27 @@ pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
 
 /// `vars_files` paths are templates over play vars and the host's own variables, and Ansible
 /// resolves them per host, so two hosts can read two different files. Each rendered path is
-/// read once.
+/// read once per call.
+///
+/// Called once per batch, not once per play: measured against ansible-core 2.19.12, a
+/// `vars_files` path templated on `ansible_play_batch` reads a different file for each batch
+/// (`serial/two.yml`'s shape, extended with a `vars_files` entry), so the reference re-renders
+/// and re-reads it per batch rather than once at the play's start. `hosts` is therefore the
+/// batch's own live hosts, and `play_hosts` / `batch_hosts` / `all_play_hosts` are the same three
+/// lists `ansible_play_hosts`, `ansible_play_batch` and `ansible_play_hosts_all` are served from
+/// everywhere else.
 ///
 /// An entry that names nothing is not an error: the reference skips a `vars_files` path that
 /// does not exist without a word and runs the play, and warns once for an entry whose template
 /// has no value. Every other template failure stops the run, as it does there. A file that is
 /// there but cannot be read stops the run too.
+#[allow(clippy::too_many_arguments)]
 fn load_play_vars_files(
     play: &Play,
     hosts: &[Host],
     play_hosts: &[String],
+    batch_hosts: &[String],
+    all_play_hosts: &[String],
     playbook_dir: &Path,
     state: &RunState,
     out: &mut Renderer,
@@ -1025,8 +1056,8 @@ fn load_play_vars_files(
         let scope = Scope {
             play_vars: play.vars.clone(),
             play_hosts: play_hosts.to_vec(),
-            batch_hosts: play_hosts.to_vec(),
-            all_play_hosts: play_hosts.to_vec(),
+            batch_hosts: batch_hosts.to_vec(),
+            all_play_hosts: all_play_hosts.to_vec(),
             ..Scope::default()
         };
         let vars = state.templar.resolve_vars(

@@ -4195,3 +4195,108 @@ fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
         "the play behind the emptied batch runs: {text}"
     );
 }
+
+/// `vars_files` is read once per batch, not once for the whole play: a path templated on
+/// `ansible_play_batch` must read a different file for each batch of a `serial` play, and must
+/// not see a host that already failed in the play before it.
+///
+/// Measured on ansible-core 2.19.12: after `h1` fails, a second play with `serial: 1` over `all`
+/// reads `vars_h1.yml` for `h1`'s own (never-run) batch, `vars_h2.yml` when `h2`'s batch runs and
+/// `vars_h3.yml` when `h3`'s batch runs - three separate renders and reads, one per batch, each
+/// seeing that batch's own `ansible_play_batch`.
+///
+/// What would make this red: `vars_files` rendered once before the batches are cut, from the
+/// play's unfiltered host list - `ansible_play_batch` would then read `h1,h2,h3` for every host,
+/// `vars_h1_h2_h3.yml` does not exist among the fixtures, so the entry is silently skipped and
+/// `marker` stays undefined for both `h2` and `h3`.
+#[test]
+fn vars_files_is_read_per_batch_not_per_play() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("serial/inv.ini"),
+            &fixture("serial/vars_files.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains(r#"ok: [h2] => {"msg": "batch=h2 marker=from-h2"}"#),
+        "h2's own batch reads h2's own vars_files: {text}"
+    );
+    assert!(
+        text.contains(r#"ok: [h3] => {"msg": "batch=h3 marker=from-h3"}"#),
+        "h3's own batch reads h3's own vars_files, not h2's: {text}"
+    );
+}
+
+/// A batch that goes unreachable ends the run exactly as a batch that fails does, but at exit 4
+/// rather than 2: `PlayEnd::stop_run`'s doc names this shape, and this pins it. `serial: 1` cuts
+/// `h1` into its own batch; `h1`'s connection plugin does not exist, so the batch is unreachable
+/// rather than failed - the run still stops there, no `h2`, no `h3`, no second play.
+///
+/// What would make this red: the run treating an unreachable batch as one that merely lost a
+/// host rather than one that ends the run, which would let `h2`'s batch start, or exit 2 instead
+/// of 4 where the unknown-connection tests above pin 4 for the same trigger outside `serial`.
+#[test]
+fn a_batch_that_goes_unreachable_ends_the_run_at_exit_4() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("serial/unreachable_batch.ini"),
+            &fixture("serial/unreachable_batch.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
+    assert_eq!(
+        text.matches("PLAY [all]").count(),
+        1,
+        "the batch that went unreachable is the last one: {text}"
+    );
+    assert!(
+        !text.contains("[h2]") && !text.contains("[h3]"),
+        "no later batch and no second play ran: {text}"
+    );
+}
+
+/// `--limit` narrows the resolved hosts **before** `serial` cuts the batches, not after: measured
+/// on ansible-core 2.19.12, `--limit h2,h3` with `serial: 2` over a three-host inventory leaves
+/// one batch of two rather than cutting the original three-host list and then dropping `h1`
+/// (which would still show a two-batch shape for a two-host play). `ansible_play_hosts_all` is
+/// `h2,h3`, not `h1,h2,h3`.
+///
+/// What would make this red: cutting from the inventory's full resolved set and filtering `h1` out
+/// afterwards, which for this fixture is invisible in the batch count (both give one batch, since
+/// `serial: 2` covers two hosts either way) but would leak `h1` into `ansible_play_hosts_all`.
+#[test]
+fn limit_narrows_before_the_batches_are_cut() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("serial/inv.ini"),
+            "-l",
+            "h2,h3",
+            &fixture("serial/two.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("[h1]"), "h1 is limited out entirely: {text}");
+    assert_eq!(
+        text.matches("PLAY [all]").count(),
+        1,
+        "one batch, not two: {text}"
+    );
+    assert!(
+        text.contains(r#"ok: [h2] => {"msg": "h2,h3 / h2,h3 / h2,h3"}"#),
+        "ansible_play_hosts_all is the limited set, not the inventory's full one: {text}"
+    );
+}

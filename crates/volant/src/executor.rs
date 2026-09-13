@@ -44,15 +44,22 @@ pub struct RunOptions {
     pub stop: watch::Receiver<bool>,
 }
 
-/// What the coordinator knows about the play's shared progress and every host driver may wait
+/// What the coordinator knows about the batch's shared progress and every host driver may wait
 /// on. Republished after every event that can change the live set, so a driver blocked on it is
-/// never blocked on a host that has left the play.
+/// never blocked on a host that has left the batch.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Progress {
-    /// Highest task index every live host has finished, if any.
+    /// Highest task index every live host of the batch has finished, if any.
     pub completed_through: Option<usize>,
-    /// Hosts still in the play, in inventory order.
+    /// Hosts of **this batch** still in the play, in inventory order. Every wait in this file
+    /// opens on this list and on no other: the hosts of another batch have no driver running
+    /// here - the batch before this one has joined, the batch after it has not started - so a
+    /// barrier that counted them would wait for a report nobody is going to send.
     pub live_hosts: Vec<String>,
+    /// Hosts of the **whole play** that have not failed, the batches still to come included.
+    /// This is what `ansible_play_hosts` reports, and it is read for that and for nothing else:
+    /// no barrier, no splice and no frontier may open on it.
+    pub play_hosts_left: Vec<String>,
     /// The last flush point the coordinator has spliced the handler steps in behind. A driver
     /// that has reported a flush point waits for this to reach it before it reads the step list
     /// again: until then the list still ends that flush where the compilation ended it, and the
@@ -196,7 +203,9 @@ struct PlayPlan {
     play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
     vars_files: HashMap<String, Vec<Map<String, Value>>>,
-    play_hosts: Vec<String>,
+    /// Every host the play resolved, whatever batch it belongs to and whether it has failed or
+    /// not: `ansible_play_hosts_all`. Fixed for the whole play, batches included.
+    all_play_hosts: Vec<String>,
     r#become: Option<bool>,
     become_user: Option<String>,
 }
@@ -208,6 +217,22 @@ impl PlayPlan {
     }
 }
 
+/// How a play ended, for the run that contains it.
+pub struct PlayEnd {
+    /// Every live host of a batch failed, so the run is over: no further batch of this play, no
+    /// further play, and the recap prints where it stands. Measured on ansible-core 2.19.12,
+    /// three shapes of the same rule - two hosts failing in a one-batch play, one host failing
+    /// in a `serial: 1` batch, and a whole batch going unreachable - and the run stops at all
+    /// three, at exit 2 for the failures and 4 for the unreachable batch.
+    pub stop_run: bool,
+}
+
+/// Runs one play, batch by batch.
+///
+/// `hosts` is the play's pattern resolved and narrowed by `--limit`, with **nothing filtered
+/// out**: the hosts that failed in an earlier play are still in it, because the reference cuts
+/// its batches from that list and only then drops the failures from each batch. Cutting the
+/// filtered list instead merges two batches into one whenever an earlier play lost a host.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_play(
     play: &Play,
@@ -218,47 +243,132 @@ pub async fn run_play(
     state: &mut RunState,
     out: &mut Renderer,
     stats: &mut Stats,
-) -> anyhow::Result<()> {
-    out.play(&play.name);
-    let hosts: Vec<Host> = hosts
-        .into_iter()
-        .filter(|h| !state.failed_hosts.contains(&h.name))
-        .collect();
+) -> anyhow::Result<PlayEnd> {
+    // A pattern that matched nothing is the one case with no batch at all: the reference prints
+    // the banner and says so, and the play keyword that would have cut the batches is never read.
     if hosts.is_empty() {
+        out.play(&play.name);
         out.no_hosts();
-        return Ok(());
+        return Ok(PlayEnd { stop_run: false });
     }
+    let play_vars = {
+        let store = state.vars.lock().expect("vars lock");
+        store.play_scope(&play.vars)
+    };
+    let batches =
+        crate::compile::batches(&hosts, play.serial.as_ref(), &state.templar, &play_vars)?;
     if play.gather_facts {
         out.warning("gather_facts is not available in this release; continuing without facts");
     }
-    let play_hosts: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
+    let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let playbook_dir = state
         .vars
         .lock()
         .expect("vars lock")
         .playbook_dir()
         .to_path_buf();
-    let vars_files = load_play_vars_files(play, &hosts, &play_hosts, &playbook_dir, state, out)?;
+    for batch in batches {
+        // A batch that starts after the operator interrupted the run is a batch that should not
+        // start: the drivers of the batch before it have already stopped for the same reason.
+        if *options.stop.borrow() {
+            break;
+        }
+        // One banner per batch, measured - and it prints even when the batch has nothing left to
+        // run, which is the shape a play gets when every host it resolved has already failed.
+        out.play(&play.name);
+        let live: Vec<Host> = batch
+            .into_iter()
+            .filter(|h| !state.failed_hosts.contains(&h.name))
+            .collect();
+        if live.is_empty() {
+            continue;
+        }
+        // Read here, once per batch about to run and not once for the whole play: see
+        // `load_play_vars_files`. `play_hosts` is the play's still-live hosts computed from
+        // `state.failed_hosts` as it stands right before this batch starts (this batch and every
+        // batch still to come); `batch_hosts` is this batch's own live hosts; `all` stays the
+        // play's whole resolved list, batches and failures alike.
+        let play_hosts: Vec<String> = hosts
+            .iter()
+            .filter(|h| !state.failed_hosts.contains(&h.name))
+            .map(|h| h.name.clone())
+            .collect();
+        let batch_hosts: Vec<String> = live.iter().map(|h| h.name.clone()).collect();
+        let vars_files = load_play_vars_files(
+            play,
+            &live,
+            &play_hosts,
+            &batch_hosts,
+            &all,
+            &playbook_dir,
+            state,
+            out,
+        )?;
+        run_batch(
+            play,
+            compiled,
+            &live,
+            &all,
+            &vars_files,
+            agents,
+            options,
+            state,
+            out,
+            stats,
+        )
+        .await?;
+        // The run ends where the reference ends it: a batch that had hosts to run and lost every
+        // one of them. A batch that had none to begin with is not that - measured, `serial: 1`
+        // over a host that failed in an earlier play prints its banner and the next batch runs.
+        if live.iter().all(|h| state.failed_hosts.contains(&h.name)) {
+            return Ok(PlayEnd { stop_run: true });
+        }
+    }
+    Ok(PlayEnd { stop_run: false })
+}
+
+/// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
+/// does between them. Without `serial` a play is one batch and this is the whole of it.
+#[allow(clippy::too_many_arguments)]
+async fn run_batch(
+    play: &Play,
+    compiled: &Compiled,
+    hosts: &[Host],
+    all: &[String],
+    vars_files: &HashMap<String, Vec<Map<String, Value>>>,
+    agents: &AgentSource,
+    options: &RunOptions,
+    state: &mut RunState,
+    out: &mut Renderer,
+    stats: &mut Stats,
+) -> anyhow::Result<()> {
+    let play_hosts: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     // The step list, and the only thing in the play that changes while it runs. This loop owns
-    // the sender; every driver reads through its own receiver.
+    // the sender; every driver reads through its own receiver. One copy per batch: the handlers
+    // a batch splices in behind a flush point belong to that batch alone, and the next one starts
+    // from the list the compiler produced.
     let (plan_tx, plan_rx) = watch::channel(Arc::new(compiled.clone()));
     let plan = Arc::new(PlayPlan {
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
         play_vars: play.vars.clone(),
-        vars_files,
-        play_hosts: play_hosts.clone(),
+        vars_files: vars_files.clone(),
+        all_play_hosts: all.to_vec(),
         r#become: play.r#become,
         become_user: play.become_user.clone(),
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
-    // The play's shared progress. Every driver reads it; only this loop writes it.
-    let (progress_tx, progress_rx) = watch::channel(Progress {
-        completed_through: None,
-        live_hosts: play_hosts.clone(),
-        spliced_through: None,
-    });
+    // The batch's shared progress. Every driver reads it; only this loop writes it.
+    let (progress_tx, progress_rx) = watch::channel(Progress::default());
+    publish(
+        &progress_tx,
+        &play_hosts,
+        all,
+        &state.failed_hosts,
+        &HashMap::new(),
+        None,
+    );
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
     // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
     // as `min` then `max` rather than `clamp(1, hosts.len())`: `clamp` panics whenever its
@@ -266,7 +376,7 @@ pub async fn run_play(
     // preventing that today is the `is_empty` return above, invisible from this line.
     let forks = Arc::new(Semaphore::new(options.forks.min(hosts.len()).max(1)));
     let mut workers = Vec::new();
-    for host in &hosts {
+    for host in hosts {
         let tx = tx.clone();
         let watchdog_tx = tx.clone();
         // Connections kept from an earlier play. Taken out of the map for the duration of the
@@ -347,7 +457,7 @@ pub async fn run_play(
                     for event in pending.remove(&key).unwrap_or_default() {
                         let banner = matches!(event, Event::Banner { .. });
                         if banner || (!header_shown && shows_a_line(&event)) {
-                            let live = progress_tx.borrow().live_hosts.clone();
+                            let live = progress_tx.borrow().clone();
                             header(&step, &task_name(&step, host, &plan, &live, state), out);
                             header_shown = true;
                         }
@@ -380,6 +490,7 @@ pub async fn run_play(
                             publish(
                                 &progress_tx,
                                 &play_hosts,
+                                all,
                                 &state.failed_hosts,
                                 &frontier,
                                 spliced,
@@ -403,6 +514,7 @@ pub async fn run_play(
                         publish(
                             &progress_tx,
                             &play_hosts,
+                            all,
                             &state.failed_hosts,
                             &frontier,
                             spliced,
@@ -423,6 +535,7 @@ pub async fn run_play(
                         publish(
                             &progress_tx,
                             &play_hosts,
+                            all,
                             &state.failed_hosts,
                             &frontier,
                             spliced,
@@ -434,7 +547,7 @@ pub async fn run_play(
                         censored,
                     }) => {
                         if !header_shown {
-                            let live = progress_tx.borrow().live_hosts.clone();
+                            let live = progress_tx.borrow().clone();
                             header(&step, &task_name(&step, &host, &plan, &live, state), out);
                             header_shown = true;
                         }
@@ -445,6 +558,7 @@ pub async fn run_play(
                         publish(
                             &progress_tx,
                             &play_hosts,
+                            all,
                             &state.failed_hosts,
                             &frontier,
                             spliced,
@@ -470,6 +584,7 @@ pub async fn run_play(
             publish(
                 &progress_tx,
                 &play_hosts,
+                all,
                 &state.failed_hosts,
                 &frontier,
                 spliced,
@@ -503,6 +618,7 @@ pub async fn run_play(
                 publish(
                     &progress_tx,
                     &play_hosts,
+                    all,
                     &state.failed_hosts,
                     &frontier,
                     spliced,
@@ -520,6 +636,7 @@ pub async fn run_play(
                 publish(
                     &progress_tx,
                     &play_hosts,
+                    all,
                     &state.failed_hosts,
                     &frontier,
                     spliced,
@@ -530,6 +647,7 @@ pub async fn run_play(
                 publish(
                     &progress_tx,
                     &play_hosts,
+                    all,
                     &state.failed_hosts,
                     &frontier,
                     spliced,
@@ -588,8 +706,9 @@ fn shows_a_line(event: &Event) -> bool {
 }
 
 /// The header of step `index`, for the drain paths that reach a banner after the step loop has
-/// moved on. The step's name is rendered against the first host of the play, which is the same
-/// choice the step loop makes for a header a later host would have printed.
+/// moved on. The step's name is rendered against the first host of the batch, which is the same
+/// choice the step loop makes for a header a later host would have printed - and a host of this
+/// batch rather than of the play, so a name naming its own host names one that ran.
 fn header_for(
     index: usize,
     plan: &PlayPlan,
@@ -605,7 +724,7 @@ fn header_for(
     let Some(host) = play_hosts.first() else {
         return;
     };
-    let live = progress_tx.borrow().live_hosts.clone();
+    let live = progress_tx.borrow().clone();
     header(step, &task_name(step, host, plan, &live, state), out);
 }
 
@@ -678,18 +797,27 @@ fn finished(
     }
 }
 
-/// Republishes the play's progress. `live_hosts` is the play's starting list minus the hosts
-/// that have failed or gone unreachable, which is what `ansible_play_hosts` reports;
-/// `completed_through` is the lowest frontier among them, so a driver waiting for it to reach
-/// `i - 1` is waiting only on hosts that are still expected to report.
+/// Republishes the batch's progress. `live_hosts` is the batch's own list minus the hosts that
+/// have failed or gone unreachable, which is what `ansible_play_batch` reports and the only list
+/// a wait may open on; `play_hosts_left` is the same subtraction over the whole play, which is
+/// what `ansible_play_hosts` reports. `completed_through` is the lowest frontier among the live
+/// hosts of the batch, so a driver waiting for it to reach `i - 1` is waiting only on hosts that
+/// are still expected to report - and never on a host of another batch, which has no driver here
+/// to report at all.
 fn publish(
     tx: &watch::Sender<Progress>,
-    play_hosts: &[String],
+    batch_hosts: &[String],
+    all_hosts: &[String],
     lost: &HashSet<String>,
     frontier: &HashMap<String, usize>,
     spliced_through: Option<usize>,
 ) {
-    let live_hosts: Vec<String> = play_hosts
+    let live_hosts: Vec<String> = batch_hosts
+        .iter()
+        .filter(|h| !lost.contains(*h))
+        .cloned()
+        .collect();
+    let play_hosts_left: Vec<String> = all_hosts
         .iter()
         .filter(|h| !lost.contains(*h))
         .cloned()
@@ -704,6 +832,7 @@ fn publish(
     tx.send_replace(Progress {
         completed_through,
         live_hosts,
+        play_hosts_left,
         spliced_through,
     });
 }
@@ -890,16 +1019,27 @@ pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
 
 /// `vars_files` paths are templates over play vars and the host's own variables, and Ansible
 /// resolves them per host, so two hosts can read two different files. Each rendered path is
-/// read once.
+/// read once per call.
+///
+/// Called once per batch, not once per play: measured against ansible-core 2.19.12, a
+/// `vars_files` path templated on `ansible_play_batch` reads a different file for each batch
+/// (`serial/two.yml`'s shape, extended with a `vars_files` entry), so the reference re-renders
+/// and re-reads it per batch rather than once at the play's start. `hosts` is therefore the
+/// batch's own live hosts, and `play_hosts` / `batch_hosts` / `all_play_hosts` are the same three
+/// lists `ansible_play_hosts`, `ansible_play_batch` and `ansible_play_hosts_all` are served from
+/// everywhere else.
 ///
 /// An entry that names nothing is not an error: the reference skips a `vars_files` path that
 /// does not exist without a word and runs the play, and warns once for an entry whose template
 /// has no value. Every other template failure stops the run, as it does there. A file that is
 /// there but cannot be read stops the run too.
+#[allow(clippy::too_many_arguments)]
 fn load_play_vars_files(
     play: &Play,
     hosts: &[Host],
     play_hosts: &[String],
+    batch_hosts: &[String],
+    all_play_hosts: &[String],
     playbook_dir: &Path,
     state: &RunState,
     out: &mut Renderer,
@@ -916,7 +1056,8 @@ fn load_play_vars_files(
         let scope = Scope {
             play_vars: play.vars.clone(),
             play_hosts: play_hosts.to_vec(),
-            all_play_hosts: play_hosts.to_vec(),
+            batch_hosts: batch_hosts.to_vec(),
+            all_play_hosts: all_play_hosts.to_vec(),
             ..Scope::default()
         };
         let vars = state.templar.resolve_vars(
@@ -1005,7 +1146,7 @@ fn task_name(
     step: &Step,
     host: &str,
     plan: &PlayPlan,
-    live: &[String],
+    live: &Progress,
     state: &RunState,
 ) -> String {
     let task = &step.task;
@@ -1049,8 +1190,9 @@ fn retry_name(task: &PlayTask, vars: &Map<String, Value>, templar: &Templar) -> 
     }
 }
 
-/// The merged, self-resolved variables of a host for one task. `live` is the play's host list as
-/// the coordinator last published it, which is what `ansible_play_hosts` reports.
+/// The merged, self-resolved variables of a host for one task. `live` is the progress the
+/// coordinator last published: its batch list feeds `ansible_play_batch` and its play-wide list
+/// `ansible_play_hosts`, the two being the same list until `serial` parts them.
 ///
 /// `role` decides which of the two role layers the step sits on: its own role's, which carry the
 /// whole play's exported values with that role's own laid over them, or the play-wide export for
@@ -1062,7 +1204,7 @@ fn host_vars(
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
     role: Option<usize>,
-    live: &[String],
+    live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
 ) -> Map<String, Value> {
@@ -1077,8 +1219,9 @@ fn host_vars(
         role_defaults: role.defaults.clone(),
         role_vars: role.vars.clone(),
         role_params: role.params.clone(),
-        play_hosts: live.to_vec(),
-        all_play_hosts: plan.play_hosts.clone(),
+        play_hosts: live.play_hosts_left.clone(),
+        batch_hosts: live.live_hosts.clone(),
+        all_play_hosts: plan.all_play_hosts.clone(),
     };
     let raw = store.lock().expect("vars lock").for_host(host, &scope);
     templar.resolve_vars(&raw)
@@ -1168,7 +1311,7 @@ fn prepare(
     step: &Step,
     host: &str,
     plan: &PlayPlan,
-    live: &[String],
+    live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
@@ -2268,7 +2411,7 @@ async fn drive_host(
                     }
                 }
             }
-            let live = progress.borrow().live_hosts.clone();
+            let live = progress.borrow().clone();
             match prepare(
                 step,
                 &name,
@@ -3346,7 +3489,7 @@ mod tests {
             force_handlers: false,
             play_vars: Map::new(),
             vars_files: HashMap::new(),
-            play_hosts: Vec::new(),
+            all_play_hosts: Vec::new(),
             r#become: None,
             become_user: None,
         }
@@ -3818,12 +3961,12 @@ mod tests {
         let mut last_done = HashMap::new();
         let mut lost = HashSet::new();
 
-        publish(&tx, &hosts, &lost, &last_done, None);
+        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
         assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
         assert_eq!(rx.borrow().live_hosts, hosts);
 
         last_done.insert("beta".to_string(), 3);
-        publish(&tx, &hosts, &lost, &last_done, None);
+        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
         assert_eq!(
             rx.borrow().completed_through,
             None,
@@ -3831,11 +3974,11 @@ mod tests {
         );
 
         last_done.insert("alpha".to_string(), 1);
-        publish(&tx, &hosts, &lost, &last_done, None);
+        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
         assert_eq!(rx.borrow().completed_through, Some(1));
 
         lost.insert("alpha".to_string());
-        publish(&tx, &hosts, &lost, &last_done, None);
+        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
         assert_eq!(
             rx.borrow().completed_through,
             Some(3),
@@ -3844,7 +3987,7 @@ mod tests {
         assert_eq!(rx.borrow().live_hosts, vec!["beta".to_string()]);
 
         lost.insert("beta".to_string());
-        publish(&tx, &hosts, &lost, &last_done, None);
+        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
         assert!(rx.borrow().live_hosts.is_empty());
         assert_eq!(rx.borrow().completed_through, None);
     }
@@ -3872,7 +4015,7 @@ mod tests {
         for index in [4, 5] {
             finished(&mut done, &mut frontier, "alpha", index);
         }
-        publish(&tx, &hosts, &lost, &frontier, None);
+        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
         assert_eq!(
             rx.borrow().completed_through,
             Some(1),
@@ -3880,11 +4023,11 @@ mod tests {
         );
 
         finished(&mut done, &mut frontier, "alpha", 2);
-        publish(&tx, &hosts, &lost, &frontier, None);
+        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
         assert_eq!(rx.borrow().completed_through, Some(2), "the gap is smaller");
 
         finished(&mut done, &mut frontier, "alpha", 3);
-        publish(&tx, &hosts, &lost, &frontier, None);
+        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
         assert_eq!(
             rx.borrow().completed_through,
             Some(5),

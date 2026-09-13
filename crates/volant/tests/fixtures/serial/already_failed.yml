@@ -1,0 +1,17 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: fail h1
+      command: "false"
+      when: inventory_hostname == 'h1'
+- hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: batch
+      debug: msg="{{ ansible_play_batch | join(',') }} / {{ ansible_play_hosts | join(',') }} / {{ ansible_play_hosts_all | join(',') }}"
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: third play
+      debug: msg=third

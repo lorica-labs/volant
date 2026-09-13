@@ -1,0 +1,11 @@
+- hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: task
+      command: "true"
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: second play
+      debug: msg=second

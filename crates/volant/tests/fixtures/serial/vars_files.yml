@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: fail h1
+      command: "false"
+      when: inventory_hostname == 'h1'
+- hosts: all
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - "vars_{{ ansible_play_batch | join('_') }}.yml"
+  tasks:
+    - name: show
+      debug: msg="batch={{ ansible_play_batch | join(',') }} marker={{ marker | default('MISSING') }}"

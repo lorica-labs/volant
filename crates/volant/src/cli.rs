@@ -318,6 +318,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // that play starts beats one `UNREACHABLE` per local host.
     let mut local_agent_checked = false;
     let mut current_dir = playbook_dir;
+    // Set when a batch ended the run by losing every live host it had. The recap still prints,
+    // measured, so it is printed once past the loop rather than inside it.
+    let mut stopped = false;
     // Every way out of the loop below runs `shutdown_links` once, which is why the loop is a
     // block whose result is read afterwards rather than a stretch of `?`. `AgentLink::drop`
     // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
@@ -348,10 +351,17 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     agents.local()?;
                     local_agent_checked = true;
                 }
-                executor::run_play(
+                let end = executor::run_play(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
+                // A batch that lost every live host it had ends the whole run, measured: no
+                // further play, and the recap prints straight away. The recap below belongs to
+                // the playbook loop this leaves, so `stopped` carries it past the `break`.
+                if end.stop_run {
+                    stopped = true;
+                    break 'plays;
+                }
             }
             // One recap per playbook argument, as the reference prints it, and the counters carry
             // over: the second playbook's recap shows the whole run so far. An interrupted run
@@ -372,6 +382,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         eprintln!("[ERROR]: User interrupted execution");
         out.recap(&stats);
         return Ok(99);
+    }
+    if stopped {
+        out.recap(&stats);
     }
     // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))

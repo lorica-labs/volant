@@ -57,6 +57,10 @@ pub struct Play {
     /// The execution strategy the play asked for, as written. Only `linear` exists here; the
     /// pre-flight refuses the others by name.
     pub strategy: Option<String>,
+    /// `serial`, as written: a number, a percentage string, a list of either, or a template over
+    /// the play's variables. Kept raw because it is rendered when the play starts, which is where
+    /// the reference renders it - see `compile::batches`.
+    pub serial: Option<Value>,
     /// The play's own `no_log`, `environment` and `check_mode`. All three are task keywords a
     /// play may also carry, so they are folded into every task at compile time rather than read
     /// again per step - see `compile`, which uses them as the outermost layer of the merge.
@@ -533,6 +537,12 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
         Some(other) => bail!("'strategy' must be a name, found {other:?}"),
     };
+    // Kept as it was written, template included: the reference renders it when the play starts,
+    // against the play's own variables and the run's extra variables.
+    let serial = match field(yaml, "serial") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(v) => Some(to_json(v).context("'serial'")?),
+    };
     let (r#become, become_user) = escalation(yaml, "")?;
     Ok(Play {
         name,
@@ -552,6 +562,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         r#become,
         become_user,
         strategy,
+        serial,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,

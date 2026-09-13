@@ -1,0 +1,18 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: before
+      shell: date +%s
+      register: before
+    - name: waits between attempts
+      shell: "date +%s; exit 1"
+      register: after
+      retries: 2
+      delay: 2
+      ignore_errors: true
+    - name: following
+      shell: date +%s
+      register: following
+    - name: seconds
+      debug:
+        msg: "{{ before.stdout }} {{ after.stdout }} {{ following.stdout }}"

@@ -1,0 +1,13 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: the condition cannot be evaluated
+      command: "true"
+      register: c
+      until: c.nosuchkey == 1
+      retries: 2
+      delay: 0
+      ignore_errors: true
+    - name: after
+      debug:
+        msg: after

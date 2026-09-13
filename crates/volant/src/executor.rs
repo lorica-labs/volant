@@ -3,7 +3,7 @@
 //! groups consecutive remote tasks into batches, and runs `set_fact` and `debug` locally.
 //! Output is shown task by task, once every live host has reported that task.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -141,20 +141,28 @@ enum Event {
         dump: bool,
         show: bool,
         counts: bool,
+        /// The task's `no_log`. Carried on the event rather than applied to `result`, because
+        /// the recap and the registered variable read the real result and only the terminal
+        /// line is censored.
+        censored: bool,
     },
-    /// Every result of task `index` on `host` has been sent.
-    TaskDone {
+    /// One attempt of a task with `until` or `retries` failed and another one is coming, or this
+    /// was the last: the reference prints this line after every failed attempt, the last
+    /// included. It is queued behind the same key as the results of the item it belongs to, so
+    /// it reads where the reference prints it - in front of that item's own line.
+    Retrying {
         host: String,
         index: usize,
+        name: String,
+        left: u32,
     },
+    /// Every result of task `index` on `host` has been sent.
+    TaskDone { host: String, index: usize },
     /// This host reached step `index` and has no result to show for it. It is the one event
     /// that prints a header of its own every time: measured on ansible-core 2.19.12, a `meta`
     /// shows one `TASK [meta]` banner per live host with nothing underneath, two banners in a
     /// row for two hosts, and none at all for a host that has already left the play.
-    Banner {
-        host: String,
-        index: usize,
-    },
+    Banner { host: String, index: usize },
     /// A host is done with this play and hands back the connections it wants kept open.
     Finished {
         host: String,
@@ -164,6 +172,9 @@ enum Event {
     Unreachable {
         host: String,
         msg: String,
+        /// The `no_log` of the task whose batch could not run. Measured on ansible-core
+        /// 2.19.12: the reference censors the `UNREACHABLE!` line too, reason and all.
+        censored: bool,
     },
 }
 
@@ -292,6 +303,7 @@ pub async fn run_play(
                         .send(Event::Unreachable {
                             host: reported.clone(),
                             msg: format!("driver panicked: {err}"),
+                            censored: false,
                         })
                         .await;
                     let _ = watchdog_tx
@@ -377,14 +389,14 @@ pub async fn run_play(
                     }
                     // Queued behind the same key as a result, rather than printed on arrival,
                     // so a host racing ahead cannot put its banner above the step before it.
-                    Some(event @ Event::Banner { .. }) => {
-                        let Event::Banner { host, index } = &event else {
-                            unreachable!()
+                    Some(event @ (Event::Banner { .. } | Event::Retrying { .. })) => {
+                        let (host, index) = match &event {
+                            Event::Banner { host, index } | Event::Retrying { host, index, .. } => {
+                                (host.clone(), *index)
+                            }
+                            _ => unreachable!(),
                         };
-                        pending
-                            .entry((host.clone(), *index))
-                            .or_default()
-                            .push(event);
+                        pending.entry((host, index)).or_default().push(event);
                     }
                     Some(Event::TaskDone { host, index }) => {
                         finished(&mut done, &mut frontier, &host, index);
@@ -416,14 +428,18 @@ pub async fn run_play(
                             spliced,
                         );
                     }
-                    Some(Event::Unreachable { host, msg }) => {
+                    Some(Event::Unreachable {
+                        host,
+                        msg,
+                        censored,
+                    }) => {
                         if !header_shown {
                             let live = progress_tx.borrow().live_hosts.clone();
                             header(&step, &task_name(&step, &host, &plan, &live, state), out);
                             header_shown = true;
                         }
                         stats.unreachable(&host);
-                        out.unreachable(&host, &msg);
+                        out.unreachable(&host, &msg, censored);
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
                         publish(
@@ -471,9 +487,13 @@ pub async fn run_play(
     // dropped its sender.
     while let Some(event) = rx.recv().await {
         match event {
-            Event::Unreachable { host, msg } => {
+            Event::Unreachable {
+                host,
+                msg,
+                censored,
+            } => {
                 stats.unreachable(&host);
-                out.unreachable(&host, &msg);
+                out.unreachable(&host, &msg, censored);
                 // Into `gone` here as well as in the loop above, because the last thing this
                 // function does is count an `unreachable` for every worker that failed and is
                 // not in that set. A host reported here and left out of it would be counted
@@ -522,7 +542,9 @@ pub async fn run_play(
             Event::Banner { index, .. } => {
                 header_for(index, &plan, &play_hosts, &progress_tx, state, out);
             }
-            event @ Event::Result { .. } => report_result(event, stats, out),
+            event @ (Event::Result { .. } | Event::Retrying { .. }) => {
+                report_result(event, stats, out)
+            }
         }
     }
     // Results the task loop left behind for the same reason: a host that entered `gone` between
@@ -545,7 +567,7 @@ pub async fn run_play(
             && !gone.contains(&host)
         {
             stats.unreachable(&host);
-            out.unreachable(&host, &format!("driver panicked: {err}"));
+            out.unreachable(&host, &format!("driver panicked: {err}"), false);
             state.failed_hosts.insert(host);
         }
     }
@@ -558,7 +580,9 @@ pub async fn run_play(
 fn shows_a_line(event: &Event) -> bool {
     match event {
         Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
-        Event::Banner { .. } => true,
+        // A retry line is the first thing a retried task prints, and the reference shows the
+        // task's banner above it: a task whose every attempt is still to come has no result yet.
+        Event::Banner { .. } | Event::Retrying { .. } => true,
         _ => false,
     }
 }
@@ -597,6 +621,13 @@ fn header(step: &Step, name: &str, out: &mut Renderer) {
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
 /// ignored, so both event loops can hand it whatever they hold.
 fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
+    if let Event::Retrying {
+        host, name, left, ..
+    } = &event
+    {
+        out.retrying(host, name, *left);
+        return;
+    }
     let Event::Result {
         host,
         outcome,
@@ -605,6 +636,7 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         dump,
         show,
         counts,
+        censored,
         ..
     } = event
     else {
@@ -614,7 +646,7 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         stats.record(&host, outcome, result.changed());
     }
     if show {
-        out.result(&host, outcome, &result, label.as_deref(), dump);
+        out.result(&host, outcome, &result, label.as_deref(), dump, censored);
     } else if outcome == Outcome::Ignored {
         // A loop's aggregate prints no line of its own, but the failure it swallowed still has
         // to say so.
@@ -1002,6 +1034,21 @@ fn task_name(
     }
 }
 
+/// The task's own name for the `FAILED - RETRYING` line: templated against `vars`, and never
+/// role-prefixed the way `task_name`'s banner is - measured, the retry line of a task inside a
+/// role carries the task's own name rather than the `role : name` the banner shows.
+fn retry_name(task: &PlayTask, vars: &Map<String, Value>, templar: &Templar) -> String {
+    if Templar::is_template(&task.name) {
+        templar
+            .render(&task.name, vars)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| task.name.clone())
+    } else {
+        task.name.clone()
+    }
+}
+
 /// The merged, self-resolved variables of a host for one task. `live` is the play's host list as
 /// the coordinator last published it, which is what `ansible_play_hosts` reports.
 ///
@@ -1057,8 +1104,64 @@ struct Item {
     args: Map<String, Value>,
     /// Variables in force for this item, for `changed_when`, `failed_when` and local modules.
     vars: Map<String, Value>,
+    /// The variables the module runs with, this item's layers merged and rendered. Per item
+    /// rather than per task because a layer's values are templates and may name the loop
+    /// variable.
+    environment: BTreeMap<String, String>,
     /// Set when `when` was false: the skip result to report.
     skipped: Option<TaskResult>,
+}
+
+/// One task's `environment`, layer by layer: the play's, then each block's, then the task's,
+/// each rendered against this item's variables and merged over the ones before it.
+///
+/// Measured on ansible-core 2.19.12: a layer that does not render to a mapping warns on stderr
+/// and is skipped while the task still runs, and the layers around it stay in force. Values are
+/// what Python's `str()` makes of them - `42` is `"42"`, `true` is `"True"`, `null` is `"None"`.
+fn environment_for(
+    task: &PlayTask,
+    vars: &Map<String, Value>,
+    templar: &Templar,
+) -> Result<BTreeMap<String, String>, TemplateError> {
+    let mut out = BTreeMap::new();
+    for layer in &task.environment {
+        // The reference's own prefix for a keyword that cannot be rendered, measured: an
+        // undefined variable in an `environment:` fails the task with
+        // `Task failed: Error processing keyword 'environment': ...`.
+        let rendered = templar.render_value(layer, vars).map_err(|e| {
+            TemplateError(format!("Error processing keyword 'environment': {}", e.0))
+        })?;
+        let Value::Object(map) = rendered else {
+            // Straight to stderr rather than through the renderer: `prepare` runs inside a host
+            // driver, which has no renderer of its own, and every `[WARNING]` this engine prints
+            // goes to stderr anyway.
+            eprintln!(
+                "[WARNING]: could not parse environment value, skipping: {}",
+                ansible_json(&rendered)
+            );
+            continue;
+        };
+        for (k, v) in map {
+            out.insert(k, environment_value(&v));
+        }
+    }
+    Ok(out)
+}
+
+/// One environment value as the process sees it, which is what `str()` makes of the Python
+/// object the reference hands to `os.environ`. Measured: `{B: true, N: null, S: plain}` reaches
+/// the shell as `True`, `None` and `plain`, and `{N: 42}` as `42`.
+///
+/// A list or a mapping is not measured and is written as JSON here rather than as Python's own
+/// repr; nothing in ansible's documentation suggests writing one.
+fn environment_value(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Null => "None".to_string(),
+        other => ansible_json(other),
+    }
 }
 
 fn prepare(
@@ -1132,11 +1235,19 @@ fn prepare(
             };
             map
         };
+        // A skipped item runs nothing, so a layer it could not render is not its problem: the
+        // reference does not evaluate `environment` for a task a `when` left out.
+        let environment = if skipped.is_some() {
+            BTreeMap::new()
+        } else {
+            environment_for(task, &vars, templar)?
+        };
         items.push(Item {
             element,
             label,
             args,
             vars,
+            environment,
             skipped,
         });
     }
@@ -1583,6 +1694,186 @@ fn notify(
     }
 }
 
+/// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.
+///
+/// Measured on ansible-core 2.19.12, and every line of it is a measurement: `until` with no
+/// `retries` gives three attempts; `retries` with no `until` retries while the result is failed;
+/// `retries` under 1 (0 and -1 were both measured) turns the whole machinery off, so the task
+/// runs once, prints no retry line, carries no `attempts` and is not failed by a condition that
+/// never held; the default `delay` is five seconds; and the sleep happens after **every** failed
+/// attempt, the last one included - measured by timing, 2 attempts cost 10 seconds and 3 cost 15.
+#[derive(Clone)]
+struct Retry {
+    /// Attempts in all, never zero.
+    attempts: u32,
+    delay: Duration,
+    /// The conditions that end the loop. Empty means "the result did not fail".
+    until: Vec<String>,
+}
+
+/// `item` is the task's first one, whose variables `retries` and `delay` are rendered against.
+/// It is an `Option` because nothing here promises a task has items; one that has none is
+/// `Prepared::Skipped` and never reaches this.
+fn retry_plan(
+    task: &PlayTask,
+    item: Option<&Item>,
+    templar: &Templar,
+) -> Result<Option<Retry>, TemplateError> {
+    let empty = Map::new();
+    let vars = item.map(|i| &i.vars).unwrap_or(&empty);
+    let number = |raw: &Value, keyword: &str| -> Result<f64, TemplateError> {
+        let rendered = templar.render_value(raw, vars)?;
+        match &rendered {
+            Value::Number(n) => n.as_f64().ok_or_else(|| TemplateError(String::new())),
+            Value::String(s) => s.trim().parse::<f64>().map_err(|_| TemplateError(String::new())),
+            _ => Err(TemplateError(String::new())),
+        }
+        .map_err(|_| {
+            TemplateError(format!(
+                "Error processing keyword '{keyword}': The value {rendered} could not be converted to 'int'."
+            ))
+        })
+    };
+    let attempts = match &task.retries {
+        Some(raw) => {
+            let n = number(raw, "retries")?;
+            if n < 1.0 {
+                return Ok(None);
+            }
+            n as u32
+        }
+        None if task.until.is_empty() => return Ok(None),
+        None => 3,
+    };
+    let delay = match &task.delay {
+        Some(raw) => Duration::from_secs_f64(number(raw, "delay")?.max(0.0)),
+        None => Duration::from_secs(5),
+    };
+    Ok(Some(Retry {
+        attempts,
+        delay,
+        until: task.until.clone(),
+    }))
+}
+
+/// Whether the attempt loop stops here: the `until` conditions all hold, or - when the task gave
+/// none - the result did not fail.
+///
+/// Measured on ansible-core 2.19.12, both halves: a task whose `failed_when` makes it fail while
+/// its `until` holds stops at once (`attempts: 1`, no retry line), and a task whose
+/// `changed_when` makes `until: r.changed` false retries although the module itself succeeded.
+/// So the conditions decide the result first and `until` reads what they decided, with the
+/// registered name bound to it.
+fn until_holds(
+    task: &PlayTask,
+    item: &Item,
+    result: &TaskResult,
+    retry: &Retry,
+    templar: &Templar,
+) -> Result<bool, TemplateError> {
+    if retry.until.is_empty() {
+        return Ok(!result.failed());
+    }
+    let mut vars = item.vars.clone();
+    if let Some(reg) = &task.register {
+        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+    }
+    vars.insert("result".into(), Value::Object(result.0.clone()));
+    all_hold(&retry.until, &vars, templar)
+}
+
+/// What an `until` that cannot be evaluated reports.
+///
+/// Measured on ansible-core 2.19.12: `Task failed: Error while evaluating conditional: object of
+/// type 'dict' has no attribute 'nosuchkey'`, with no further attempt and no `attempts`. The
+/// prefix is the reference's, which is what a playbook testing `'Task failed' in result.msg`
+/// reads; the sentence behind it is this engine's own wording for the same fault.
+fn conditional_error(err: &TemplateError) -> String {
+    format!("Task failed: Error while evaluating conditional: {}", err.0)
+}
+
+/// Waits `delay`, or gives up when the run is interrupted.
+async fn sleep_between(
+    delay: Duration,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+) -> Option<()> {
+    if delay.is_zero() {
+        return Some(());
+    }
+    let deadline = tokio::time::Instant::now() + delay;
+    loop {
+        if *stop.borrow() {
+            return None;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return Some(()),
+            res = stop.changed(), if !*stop_broken => {
+                if res.is_err() {
+                    *stop_broken = true;
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+/// One item of one task, as the agent is asked to run it.
+fn protocol_task(task: &PlayTask, item: &Item) -> Task {
+    Task {
+        module: task.module.clone(),
+        args: item.args.clone(),
+        // An item is not the task: a failing item never stops the ones behind it, exactly as in
+        // Ansible. The task's own failure is decided later, by `report_task`, from every item's
+        // result.
+        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
+        timeout: task.timeout,
+        environment: item.environment.clone(),
+    }
+}
+
+/// Sends one batch to the agent and collects what comes back, by position in `tasks`.
+async fn run_agent_batch(
+    link: &mut AgentLink,
+    host: &str,
+    id: u64,
+    tasks: Vec<Task>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+    let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
+    if let Err(err) = link.send(&ToAgent::RunBatch { id, tasks }).await {
+        return (received, Err(format!("sending batch: {err}")));
+    }
+    let ended = loop {
+        let msg = tokio::select! {
+            msg = link.recv() => msg,
+            res = stop.changed(), if !*stop_broken => {
+                if res.is_err() {
+                    *stop_broken = true;
+                    continue;
+                }
+                link.cancel(id, CANCEL_GRACE).await;
+                break Ok(BatchOutcome::Cancelled { at: 0 });
+            }
+        };
+        match msg {
+            Ok(Some(FromAgent::TaskResult { index, result, .. })) => {
+                if let Some(slot) = received.get_mut(index) {
+                    *slot = Some(result);
+                }
+            }
+            Ok(Some(FromAgent::BatchDone { outcome, .. })) => break Ok(outcome),
+            Ok(Some(FromAgent::Log { message, .. })) => eprintln!("[{host}] {message}"),
+            Ok(Some(FromAgent::Ready { .. })) => {}
+            Ok(None) => break Err("agent stopped before the batch finished".to_string()),
+            Err(err) => break Err(format!("reading from the agent: {err}")),
+        }
+    };
+    (received, ended)
+}
+
 fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool) -> Outcome {
     if result.failed() {
         if ignore_errors {
@@ -1632,8 +1923,10 @@ async fn drive_host(
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
     let mut permit: Option<OwnedSemaphorePermit> = None;
-    // Set when the host leaves the run without finishing: the message the recap shows.
+    // Set when the host leaves the run without finishing: the message the recap shows, and
+    // whether the task it happened under censors its output.
     let mut unreachable: Option<String> = None;
+    let mut unreachable_censored = false;
     let mut failed = false;
     // Not always step 0: a block with an empty `block:` list lays its rescue out there, and
     // nothing has failed. The steps in front of the first one are stepped over like any other.
@@ -1786,6 +2079,10 @@ async fn drive_host(
         // The escalation every task of the batch shares. A batch is one message to one agent,
         // so it cannot span two target users.
         let mut batch_escalation: Option<Escalation> = None;
+        // Set when the batch's one task retries. A retried task is alone in its batch, so this
+        // says how the whole batch runs: item by item, attempt by attempt, rather than in one
+        // trip to the agent.
+        let mut batch_retry: Option<Retry> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         // The last step of the batch, when where the host goes after it is not yet decided.
         // See the `Prepared::Remote` arm: a step a rescue would catch cannot say what it steps
@@ -1995,8 +2292,21 @@ async fn drive_host(
                         .into_iter()
                         .map(|i| (i.element, i.skipped.unwrap_or_default()))
                         .collect();
-                    // A skipped task fails nothing, so no rescue is in question for it.
-                    report_task(&tx, &name, pos, task, &results, &labels, false, false).await;
+                    // A skipped task fails nothing, so no rescue is in question for it, and it
+                    // made no attempt to retry.
+                    report_task(
+                        &tx,
+                        &name,
+                        pos,
+                        task,
+                        &results,
+                        &labels,
+                        &[],
+                        &[],
+                        false,
+                        false,
+                    )
+                    .await;
                     if let Some(reg) = &task.register {
                         store.lock().expect("vars lock").set_fact(
                             &name,
@@ -2059,20 +2369,69 @@ async fn drive_host(
                     if !batch.is_empty() {
                         break;
                     }
+                    let retry = match retry_plan(task, items.first(), &templar) {
+                        Ok(retry) => retry,
+                        Err(err) => {
+                            deferred_error = Some((pos, err));
+                            break;
+                        }
+                    };
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
+                    let mut lefts: Vec<Vec<u32>> = Vec::new();
+                    let mut names: Vec<String> = Vec::new();
                     for item in &items {
+                        names.push(retry_name(task, &item.vars, &templar));
+                        let mut mine = Vec::new();
                         let r = match &item.skipped {
                             Some(s) => s.clone(),
-                            None => finish(
-                                task,
-                                item,
-                                run_local(task, item, &name, &templar, &store, verbosity),
-                                &templar,
-                            ),
+                            None => {
+                                let mut attempt = 0;
+                                loop {
+                                    attempt += 1;
+                                    let mut r = finish(
+                                        task,
+                                        item,
+                                        run_local(task, item, &name, &templar, &store, verbosity),
+                                        &templar,
+                                    );
+                                    let Some(retry) = &retry else { break r };
+                                    r.0.insert("attempts".into(), json!(attempt));
+                                    match until_holds(task, item, &r, retry, &templar) {
+                                        // A condition that cannot be evaluated ends the task
+                                        // there, with no further attempt and no `attempts` -
+                                        // measured, and the reference's own prefix for a task
+                                        // that dies rather than fails.
+                                        Err(e) => {
+                                            break TaskResult::failed_with(conditional_error(&e));
+                                        }
+                                        Ok(true) => break r,
+                                        Ok(false) => {}
+                                    }
+                                    mine.push(retry.attempts - attempt + 1);
+                                    let last = attempt >= retry.attempts;
+                                    if last {
+                                        // The loop ran out with the condition still false, which
+                                        // is a failed task even when the module itself passed:
+                                        // measured with a `changed_when: false` under
+                                        // `until: r.changed`.
+                                        r.0.insert("failed".into(), json!(true));
+                                    }
+                                    if sleep_between(retry.delay, &mut stop, &mut stop_broken)
+                                        .await
+                                        .is_none()
+                                    {
+                                        break 'run;
+                                    }
+                                    if last {
+                                        break r;
+                                    }
+                                }
+                            }
                         };
                         results.push((item.element.clone(), r));
                         labels.push(item.label.clone());
+                        lefts.push(mine);
                     }
                     if let Some(reg) = &task.register {
                         store.lock().expect("vars lock").set_fact(
@@ -2082,15 +2441,13 @@ async fn drive_host(
                         );
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
+                    // A censored `debug` shows nothing at all at verbosity 0 and its censored
+                    // body from `-v` on, measured: the dump is what puts the body on the line,
+                    // so it is the dump that goes.
+                    let dump =
+                        short_name(&task.module) == "debug" && !(task.censors() && verbosity == 0);
                     if let Some(result) = report_task(
-                        &tx,
-                        &name,
-                        pos,
-                        task,
-                        &results,
-                        &labels,
-                        short_name(&task.module) == "debug",
-                        rescuable,
+                        &tx, &name, pos, task, &results, &labels, &lefts, &names, dump, rescuable,
                     )
                     .await
                     {
@@ -2122,7 +2479,21 @@ async fn drive_host(
                     if !batch.is_empty() && escalation != batch_escalation {
                         break;
                     }
+                    let retry = match retry_plan(task, items.first(), &templar) {
+                        Ok(retry) => retry,
+                        Err(err) => {
+                            deferred_error = Some((pos, err));
+                            break;
+                        }
+                    };
+                    // A retried task runs its items one at a time, each on its own trip to the
+                    // agent, so it is alone in its batch: the tasks in hand go out first and
+                    // this one opens the next batch. It ends that batch too, through `boundary`.
+                    if retry.is_some() && !batch.is_empty() {
+                        break;
+                    }
                     batch_escalation = escalation;
+                    batch_retry = retry;
                     // A looping task ends the batch because its items travel with
                     // `ignore_errors` set, so the agent runs all of them the way Ansible does.
                     // Only `report_task` may decide the task failed, from the aggregate, and
@@ -2130,7 +2501,8 @@ async fn drive_host(
                     let boundary = task.register.is_some()
                         || task.loop_items.is_some()
                         || !task.changed_when.is_empty()
-                        || !task.failed_when.is_empty();
+                        || !task.failed_when.is_empty()
+                        || batch_retry.is_some();
                     batch.push((pos, items));
                     // Where this host goes after a step a `rescue` would catch depends on how
                     // that step ends, so the batch stops here and `pos` waits for the result.
@@ -2171,6 +2543,11 @@ async fn drive_host(
         }
 
         if !batch.is_empty() {
+            // Every way this batch can end the host's run reports the batch's first task's
+            // `no_log`: the connection is opened for that task, and each of the four failures
+            // below happens with it still unreported. Measured on ansible-core 2.19.12, the
+            // reference censors the `UNREACHABLE!` line of a `no_log` task, reason and all.
+            unreachable_censored = c.steps[batch[0].0].task.censors();
             if permit.is_none() {
                 match Arc::clone(&forks).acquire_owned().await {
                     Ok(p) => permit = Some(p),
@@ -2217,6 +2594,8 @@ async fn drive_host(
                         &task,
                         &results,
                         &[None],
+                        &[],
+                        &[],
                         false,
                         rescuable,
                     )
@@ -2236,66 +2615,118 @@ async fn drive_host(
                     break 'run;
                 }
             };
-            batch_id += 1;
-            // Flat list for the agent, with a map back to (task, item).
-            let mut tasks = Vec::new();
-            let mut origin = Vec::new();
-            for (bi, (index, items)) in batch.iter().enumerate() {
-                let task = &c.steps[*index].task;
-                for (ii, item) in items.iter().enumerate() {
-                    if item.skipped.is_some() {
-                        continue;
-                    }
-                    tasks.push(Task {
-                        module: task.module.clone(),
-                        args: item.args.clone(),
-                        // An item is not the task: a failing item never stops the ones behind
-                        // it, exactly as in Ansible. The task's own failure is decided later,
-                        // by `report_task`, from every item's result.
-                        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
-                        timeout: task.timeout,
-                    });
-                    origin.push((bi, ii));
-                }
-            }
-            if let Err(err) = link
-                .send(&ToAgent::RunBatch {
-                    id: batch_id,
-                    tasks,
-                })
-                .await
-            {
-                unreachable = Some(format!("sending batch: {err}"));
-                break 'run;
-            }
             let mut received: Vec<Vec<Option<TaskResult>>> = batch
                 .iter()
                 .map(|(_, items)| vec![None; items.len()])
                 .collect();
-            let ended = loop {
-                let msg = tokio::select! {
-                    msg = link.recv() => msg,
-                    res = stop.changed(), if !stop_broken => {
-                        if res.is_err() {
-                            stop_broken = true;
+            // The retry counts of each item of the retried task, empty for every other batch.
+            let mut lefts: Vec<Vec<u32>> = batch
+                .first()
+                .map(|(_, items)| vec![Vec::new(); items.len()])
+                .unwrap_or_default();
+            // Each item's templated task name, parallel to `lefts` and empty the same way: the
+            // retry loop below is the only place with the item's own vars in hand.
+            let mut names: Vec<String> = Vec::new();
+            // Whether `received` already holds results the conditions have been applied to. The
+            // retry loop has to apply them itself, since `until` reads what they decided.
+            let mut decided = false;
+            let ended = if let Some(retry) = batch_retry.clone() {
+                decided = true;
+                let (index, items) = &batch[0];
+                let task = &c.steps[*index].task;
+                names = items
+                    .iter()
+                    .map(|item| retry_name(task, &item.vars, &templar))
+                    .collect();
+                let mut outcome = Ok(BatchOutcome::Completed);
+                // Item by item, in order, each one's attempts finished before the next one
+                // starts: measured on ansible-core 2.19.12 with a two-item loop whose first item
+                // passed and whose second needed two attempts - the retry lines of the second
+                // sit between the two result lines, so the items do not retry together.
+                'items: for (ii, item) in items.iter().enumerate() {
+                    if item.skipped.is_some() {
+                        continue;
+                    }
+                    let mut attempt = 0;
+                    loop {
+                        attempt += 1;
+                        batch_id += 1;
+                        let (mut flat, ended_one) = run_agent_batch(
+                            link,
+                            &name,
+                            batch_id,
+                            vec![protocol_task(task, item)],
+                            &mut stop,
+                            &mut stop_broken,
+                        )
+                        .await;
+                        let raw = flat.pop().flatten();
+                        if !matches!(
+                            ended_one,
+                            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
+                        ) {
+                            outcome = ended_one;
+                            break 'items;
+                        }
+                        // The agent ended without a result for this item. Left unreported, the
+                        // way the loop below leaves a task the agent never reached.
+                        let Some(raw) = raw else { continue 'items };
+                        let mut r = finish(task, item, raw, &templar);
+                        r.0.insert("attempts".into(), json!(attempt));
+                        match until_holds(task, item, &r, &retry, &templar) {
+                            Err(e) => {
+                                received[0][ii] =
+                                    Some(TaskResult::failed_with(conditional_error(&e)));
+                                continue 'items;
+                            }
+                            Ok(true) => {
+                                received[0][ii] = Some(r);
+                                continue 'items;
+                            }
+                            Ok(false) => {}
+                        }
+                        lefts[ii].push(retry.attempts - attempt + 1);
+                        let last = attempt >= retry.attempts;
+                        if last {
+                            r.0.insert("failed".into(), json!(true));
+                            received[0][ii] = Some(r);
+                        }
+                        if sleep_between(retry.delay, &mut stop, &mut stop_broken)
+                            .await
+                            .is_none()
+                        {
+                            break 'run;
+                        }
+                        if last {
+                            continue 'items;
+                        }
+                    }
+                }
+                outcome
+            } else {
+                batch_id += 1;
+                // Flat list for the agent, with a map back to (task, item).
+                let mut tasks = Vec::new();
+                let mut origin = Vec::new();
+                for (bi, (index, items)) in batch.iter().enumerate() {
+                    let task = &c.steps[*index].task;
+                    for (ii, item) in items.iter().enumerate() {
+                        if item.skipped.is_some() {
                             continue;
                         }
-                        link.cancel(batch_id, CANCEL_GRACE).await;
-                        break Ok(BatchOutcome::Cancelled { at: 0 });
+                        tasks.push(protocol_task(task, item));
+                        origin.push((bi, ii));
                     }
-                };
-                match msg {
-                    Ok(Some(FromAgent::TaskResult { index, result, .. })) => {
-                        if let Some(&(bi, ii)) = origin.get(index) {
-                            received[bi][ii] = Some(result);
-                        }
-                    }
-                    Ok(Some(FromAgent::BatchDone { outcome, .. })) => break Ok(outcome),
-                    Ok(Some(FromAgent::Log { message, .. })) => eprintln!("[{name}] {message}"),
-                    Ok(Some(FromAgent::Ready { .. })) => {}
-                    Ok(None) => break Err("agent stopped before the batch finished".to_string()),
-                    Err(err) => break Err(format!("reading from the agent: {err}")),
                 }
+                let (flat, ended) =
+                    run_agent_batch(link, &name, batch_id, tasks, &mut stop, &mut stop_broken)
+                        .await;
+                for (k, result) in flat.into_iter().enumerate() {
+                    if let Some(&(bi, ii)) = origin.get(k) {
+                        received[bi][ii] = result;
+                    }
+                }
+                ended
             };
             // Report every task of the batch in order; tasks the agent never reached (after a
             // failure) are not reported at all, as in Ansible.
@@ -2315,6 +2746,10 @@ async fn drive_host(
                 for (ii, item) in items.iter().enumerate() {
                     let r = match (&item.skipped, received[bi][ii].take()) {
                         (Some(s), _) => s.clone(),
+                        // The retry loop has already applied `changed_when` and `failed_when`:
+                        // `until` reads what they decided, so applying them twice would judge a
+                        // result that is not the module's any more.
+                        (None, Some(r)) if decided => r,
                         (None, Some(r)) => finish(task, item, r, &templar),
                         (None, None) => {
                             reached = false;
@@ -2335,8 +2770,19 @@ async fn drive_host(
                     );
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
+                let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
+                let retried_names: &[String] = if bi == 0 { &names } else { &[] };
                 if let Some(result) = report_task(
-                    &tx, &name, *index, task, &results, &labels, false, rescuable,
+                    &tx,
+                    &name,
+                    *index,
+                    task,
+                    &results,
+                    &labels,
+                    retried,
+                    retried_names,
+                    false,
+                    rescuable,
                 )
                 .await
                 {
@@ -2425,8 +2871,19 @@ async fn drive_host(
             // fails that task, and a rescue around it takes the failure with the error's own
             // sentence in `ansible_failed_result.msg`.
             let rescuable = !handlers_only && rescue_target(&c, index).is_some();
-            if let Some(result) =
-                report_task(&tx, &name, index, task, &results, &[None], false, rescuable).await
+            if let Some(result) = report_task(
+                &tx,
+                &name,
+                index,
+                task,
+                &results,
+                &[None],
+                &[],
+                &[],
+                false,
+                rescuable,
+            )
+            .await
             {
                 failed |= !rescuable;
                 failed_at = Some((index, result));
@@ -2460,6 +2917,7 @@ async fn drive_host(
             .send(Event::Unreachable {
                 host: name.clone(),
                 msg,
+                censored: unreachable_censored,
             })
             .await;
     }
@@ -2706,6 +3164,15 @@ async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<us
 /// `loop_control.label` template where the playbook gave one. `rescuable` says whether a
 /// `rescue` around this step takes a failure here, which is what tells a `fatal:` line that
 /// counts `failed` from one that counts `rescued`.
+///
+/// `retries` is parallel to `results` too: the `retries left` counts of the attempts that item
+/// needed, in order. They are sent from here rather than as they happen because the reference
+/// prints each item's retry lines directly in front of that item's own result line - measured
+/// with a loop whose first item passed and whose second needed two attempts.
+///
+/// `names` is parallel to `results` as well: each item's task name, already templated. The
+/// `FAILED - RETRYING` line shows it rather than the raw `task.name` - measured, a templated name
+/// like `probe {{ n }}` renders there the way it does everywhere else.
 #[allow(clippy::too_many_arguments)]
 async fn report_task(
     tx: &mpsc::Sender<Event>,
@@ -2714,13 +3181,26 @@ async fn report_task(
     task: &PlayTask,
     results: &[(Option<Value>, TaskResult)],
     labels: &[Option<String>],
+    retries: &[Vec<u32>],
+    names: &[String],
     dump: bool,
     rescuable: bool,
 ) -> Option<TaskResult> {
     let is_loop = task.loop_items.is_some();
+    let censored = task.censors();
     let mut any_failed = false;
     let mut first_failure: Option<TaskResult> = None;
     for (i, (_element, r)) in results.iter().enumerate() {
+        for left in retries.get(i).into_iter().flatten() {
+            let _ = tx
+                .send(Event::Retrying {
+                    host: host.to_string(),
+                    index,
+                    name: names.get(i).cloned().unwrap_or_else(|| task.name.clone()),
+                    left: *left,
+                })
+                .await;
+        }
         let outcome = classify(r, task.ignores_errors(), rescuable);
         if r.failed() && first_failure.is_none() {
             first_failure = Some(r.clone());
@@ -2737,6 +3217,7 @@ async fn report_task(
                 dump,
                 show: true,
                 counts: !is_loop,
+                censored,
             })
             .await;
     }
@@ -2776,6 +3257,7 @@ async fn report_task(
                 dump: false,
                 show,
                 counts: true,
+                censored,
             })
             .await;
     }
@@ -2920,6 +3402,7 @@ mod tests {
                     "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
                 })),
                 vars: vars(host),
+                environment: BTreeMap::new(),
                 skipped: None,
             };
             validate_argument_spec(&item)
@@ -3244,6 +3727,7 @@ mod tests {
             label: None,
             args: Map::new(),
             vars: Map::new(),
+            environment: BTreeMap::new(),
             skipped: None,
         };
         let r = apply_conditions(

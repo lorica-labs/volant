@@ -6,6 +6,7 @@ pub mod command;
 pub mod raw;
 pub mod shell;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -19,8 +20,22 @@ pub enum Run {
     Cancelled,
 }
 
+/// What a module is given besides its own arguments: everything the task keywords decided and
+/// the module itself never reads out of `args`.
+///
+/// One struct rather than a growing argument list, so a keyword added to it reaches every module
+/// through one signature instead of touching each of them again.
+#[derive(Debug, Default, Clone)]
+pub struct Context {
+    /// Seconds the module gets before it is killed (Ansible's `timeout`).
+    pub timeout: Option<Duration>,
+    /// Variables the module's process runs with, added to the ones the agent inherited
+    /// (Ansible's `environment`).
+    pub environment: BTreeMap<String, String>,
+}
+
 /// The function signature every native module implements.
-type ModuleFn = fn(&Map<String, Value>, Option<Duration>, &dyn Fn() -> bool) -> Run;
+type ModuleFn = fn(&Map<String, Value>, &Context, &dyn Fn() -> bool) -> Run;
 
 /// A native module: its shared spec and the function that runs it.
 pub struct Module {
@@ -33,9 +48,12 @@ pub const MODULES: &[Module] = &[command::MODULE, raw::MODULE, shell::MODULE];
 /// Runs a task with the native module that matches its name.
 pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
     let name = short_name(&task.module);
-    let timeout = task.timeout.map(Duration::from_secs);
+    let context = Context {
+        timeout: task.timeout.map(Duration::from_secs),
+        environment: task.environment.clone(),
+    };
     match MODULES.iter().find(|m| m.spec.name == name) {
-        Some(module) => (module.run)(&task.args, timeout, cancelled),
+        Some(module) => (module.run)(&task.args, &context, cancelled),
         None => Run::Done(TaskResult::failed_with(format!(
             "The module {name} is not available on the agent yet"
         ))),

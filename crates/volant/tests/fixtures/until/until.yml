@@ -1,0 +1,40 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: retry until file
+      shell: "test -f {{ marker }} || ( touch {{ marker }}; exit 1 )"
+      register: r
+      until: r.rc == 0
+      retries: 3
+      delay: 0
+    - debug: var=r.attempts
+    - name: never succeeds
+      command: "false"
+      register: n
+      until: n.rc == 0
+      retries: 2
+      delay: 0
+      ignore_errors: true
+    - debug: var=n.attempts
+    - name: until without retries
+      command: "false"
+      register: d
+      until: d.rc == 0
+      delay: 0
+      ignore_errors: true
+    - debug: var=d.attempts
+    - name: retries without until
+      command: "false"
+      register: e
+      retries: 2
+      delay: 0
+      ignore_errors: true
+    - debug: var=e.attempts
+    - name: until with loop
+      command: "false"
+      register: l
+      until: l.rc == 0
+      retries: 1
+      delay: 0
+      ignore_errors: true
+      loop: [a, b]

@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::COMMAND;
 
-use super::{Module, Run};
+use super::{Context, Module, Run};
 use crate::clock;
 
 pub const MODULE: Module = Module {
@@ -19,21 +19,18 @@ pub const MODULE: Module = Module {
     run: run_command,
 };
 
-fn run_command(
-    args: &Map<String, Value>,
-    timeout: Option<Duration>,
-    cancelled: &dyn Fn() -> bool,
-) -> Run {
-    execute(args, false, timeout, cancelled)
+fn run_command(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> bool) -> Run {
+    execute(args, false, ctx, cancelled)
 }
 
 /// Runs one command. `uses_shell` selects `shell` semantics (`sh -c`) over `command`.
 pub(crate) fn execute(
     args: &Map<String, Value>,
     uses_shell: bool,
-    timeout: Option<Duration>,
+    ctx: &Context,
     cancelled: &dyn Fn() -> bool,
 ) -> Run {
+    let timeout = ctx.timeout;
     let uses_shell = uses_shell
         || args
             .get("_uses_shell")
@@ -103,6 +100,10 @@ pub(crate) fn execute(
     if let Some(dir) = chdir {
         command.current_dir(dir);
     }
+    // Added to what the agent inherited rather than replacing it, which is what Ansible's
+    // `environment` does: a task setting `PATH` keeps `HOME`, and `sudo`'s own `env_reset` is
+    // already behind us - the escalated agent is the process this one is forked from.
+    command.envs(&ctx.environment);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -316,7 +317,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "echo hello world"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -335,7 +336,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "false"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 1);
@@ -348,7 +349,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "echo $((6 * 7))"})),
             true,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "42");
@@ -360,14 +361,14 @@ mod tests {
         let r = done(execute(
             &args(json!({"argv": ["printf", "%s-%s", "a", "b"]})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "a-b");
         let r = done(execute(
             &args(json!({"cmd": "echo cmd-form"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "cmd-form");
@@ -378,7 +379,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "echo never", "creates": "/"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -393,7 +394,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "echo never", "removes": "/definitely/not/here"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(
@@ -412,7 +413,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "ls", "chdir": dir.to_str().unwrap()})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "marker");
@@ -424,7 +425,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": "from stdin"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "from stdin");
@@ -440,7 +441,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),
             true,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 0);
@@ -452,7 +453,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "volant-no-such-program"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 2);
@@ -473,7 +474,7 @@ mod tests {
                 "chdir": "/definitely/not/here",
             })),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], 2);
@@ -490,7 +491,7 @@ mod tests {
         let run = execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
-            None,
+            &Context::default(),
             &|| true,
         );
         assert!(matches!(run, Run::Cancelled));
@@ -502,7 +503,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "   "})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert!(r.failed());
@@ -515,7 +516,10 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
-            Some(std::time::Duration::from_secs(1)),
+            &Context {
+                timeout: Some(std::time::Duration::from_secs(1)),
+                ..Context::default()
+            },
             &|| false,
         ));
         assert!(started.elapsed().as_secs() < 5);
@@ -547,7 +551,7 @@ mod tests {
         let run = execute(
             &args(json!({"_raw_params": format!("sleep {marker} & wait")})),
             true,
-            None,
+            &Context::default(),
             &|| alive(&marker) || std::time::Instant::now() > deadline,
         );
         assert!(matches!(run, Run::Cancelled));
@@ -568,7 +572,7 @@ mod tests {
         let r = done(execute(
             &args(json!({"_raw_params": "sh -c 'kill -TERM $$'"})),
             false,
-            None,
+            &Context::default(),
             &|| false,
         ));
         assert_eq!(r.0["rc"], -15);

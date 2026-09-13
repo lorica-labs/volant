@@ -795,8 +795,15 @@ pub(crate) fn compile(
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for
     // the listing. Measured: `--skip-tags <play tag>` leaves a play with nothing to do.
+    // `no_log`, `environment` and `check_mode` join the play's tags here: all three are task
+    // keywords a play may also carry, so putting them in the outermost layer of the merge is what
+    // makes a play-wide `environment` reach a task inside a role inside a block, with no second
+    // path to keep in step with this one.
     let empty = PlayTask {
         tags: play.tags.clone(),
+        no_log: play.no_log,
+        environment: play.environment.clone(),
+        check_mode: play.check_mode,
         ..PlayTask::empty()
     };
     // A flush point closes each of the three sections. Measured on ansible-core 2.19.12: the
@@ -884,6 +891,19 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     // false` inside it, which is why the keyword is three-state all the way down here.
     task.ignore_errors = inner.ignore_errors.or(outer.ignore_errors);
     task.timeout = inner.timeout.or(outer.timeout);
+    // Both three-state for the same reason `ignore_errors` is: a play or a block that says one
+    // thing and a task that says the other have to be told apart from a task that says nothing.
+    task.no_log = inner.no_log.or(outer.no_log);
+    task.check_mode = inner.check_mode.or(outer.check_mode);
+    // `environment` is the one keyword here that does not have a winner: measured on
+    // ansible-core 2.19.12, a play's layer and a task's layer are both in force and the task's
+    // wins name by name, so the layers are stacked outermost first and merged when the task runs.
+    task.environment = outer
+        .environment
+        .iter()
+        .chain(&inner.environment)
+        .cloned()
+        .collect();
     task.r#become = inner.r#become.or(outer.r#become);
     task.become_user = inner
         .become_user

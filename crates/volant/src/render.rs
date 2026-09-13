@@ -18,6 +18,15 @@ pub struct Renderer {
 
 const HOST_COLUMN: usize = 26;
 
+/// What a `no_log` result shows instead of itself, measured on ansible-core 2.19.12 - the body
+/// of every censored line is `{"censored": CENSORED, "changed": <changed>}`.
+pub const CENSORED: &str =
+    "the output has been hidden due to the fact that 'no_log: true' was specified for this result";
+
+/// What a `no_log` loop item shows instead of its label, measured on the same release:
+/// `changed: [h1] => (item=(censored due to no_log))`.
+pub const CENSORED_ITEM: &str = "(censored due to no_log)";
+
 const OK: Style = AnsiColor::Green.on_default();
 const CHANGED: Style = AnsiColor::Yellow.on_default();
 const FAILED: Style = AnsiColor::Red.on_default();
@@ -104,8 +113,24 @@ impl Renderer {
         );
     }
 
+    /// The line a failed attempt prints before the task is reported, measured on ansible-core
+    /// 2.19.12: it goes to stdout from verbosity 0, it names the task rather than the module,
+    /// and it is printed after **every** failed attempt, the last one included.
+    pub fn retrying(&mut self, host: &str, name: &str, left: u32) {
+        let _ = writeln!(
+            self.out,
+            "FAILED - RETRYING: [{host}]: {name} ({left} retries left)."
+        );
+    }
+
     /// `label` is the loop item's display text, present only for a loop item result. `dump`
     /// forces the JSON tail (used for `debug`) even for an `ok` result at verbosity 0.
+    ///
+    /// `censored` is the task's `no_log`: the body becomes `{"censored": CENSORED, "changed":
+    /// ...}` and the item label becomes [`CENSORED_ITEM`], which is what keeps a secret out of
+    /// every line this function can print - the ordinary one, the `fatal:`, the loop item and
+    /// the `debug`, at every verbosity. What it does **not** touch is the result itself: the
+    /// registered variable and the recap read the real one, measured.
     pub fn result(
         &mut self,
         host: &str,
@@ -113,21 +138,48 @@ impl Renderer {
         result: &TaskResult,
         label: Option<&str>,
         dump: bool,
+        censored: bool,
     ) {
-        let mut body = result.0.clone();
+        let censored_body = || {
+            let mut body = serde_json::Map::new();
+            body.insert("censored".into(), serde_json::json!(CENSORED));
+            body.insert("changed".into(), serde_json::json!(result.changed()));
+            body
+        };
+        let label = if censored {
+            label.map(|_| CENSORED_ITEM)
+        } else {
+            label
+        };
+        let mut body = if censored {
+            censored_body()
+        } else {
+            result.0.clone()
+        };
         if dump {
             // Ansible cleans a `debug` result before showing it, so the message stands alone:
-            // whatever `changed_when` and `failed_when` decided is counted, never printed.
+            // whatever `changed_when` and `failed_when` decided is counted, never printed, and
+            // neither is the attempt count - measured on ansible-core 2.19.12, a `debug` retried
+            // twice shows `fatal: [localhost]: FAILED! => {"msg": "probe"}` while its registered
+            // value keeps `attempts: 2`.
             body.retain(|k, _| {
                 !matches!(
                     k.as_str(),
-                    "changed" | "failed" | "skipped" | "failed_when_result" | "invocation"
+                    "changed"
+                        | "failed"
+                        | "skipped"
+                        | "failed_when_result"
+                        | "invocation"
+                        | "attempts"
                 )
             });
         }
         let json = ansible_json(&serde_json::Value::Object(body));
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
-        let show = dump || self.verbosity > 0;
+        // A censored `debug` still goes through the cleanup above - which is what leaves its
+        // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
+        // measured, `ok: [h1]` alone there and the censored body from `-v` on.
+        let show = (dump && !censored) || self.verbosity > 0;
         let tail = if show {
             format!(" => {json}")
         } else {
@@ -165,8 +217,15 @@ impl Renderer {
         let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
     }
 
-    pub fn unreachable(&mut self, host: &str, msg: &str) {
-        let body = serde_json::json!({"changed": false, "msg": msg, "unreachable": true});
+    /// `censored` is the `no_log` of the task whose batch could not be sent. Measured on
+    /// ansible-core 2.19.12: the reference censors this line too, so the reason the host could
+    /// not be reached is hidden along with everything else the task would have printed.
+    pub fn unreachable(&mut self, host: &str, msg: &str, censored: bool) {
+        let body = if censored {
+            serde_json::json!({"censored": CENSORED, "changed": false})
+        } else {
+            serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
+        };
         let line = format!("fatal: [{host}]: UNREACHABLE! => {}", ansible_json(&body));
         let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
     }
@@ -326,12 +385,14 @@ mod tests {
                 &result(json!({"changed": true, "stdout": "hi"})),
                 None,
                 false,
+                false,
             );
             r.result(
                 "web2",
                 Outcome::Ok,
                 &result(json!({"changed": false})),
                 None,
+                false,
                 false,
             );
             r.result(
@@ -340,6 +401,7 @@ mod tests {
                 &result(json!({"skipped": true})),
                 None,
                 false,
+                false,
             );
             r.result(
                 "web4",
@@ -347,12 +409,14 @@ mod tests {
                 &result(json!({"failed": true, "rc": 1, "msg": "non-zero return code"})),
                 None,
                 false,
+                false,
             );
             r.result(
                 "web5",
                 Outcome::Ignored,
                 &result(json!({"failed": true, "rc": 1})),
                 None,
+                false,
                 false,
             );
         });
@@ -375,7 +439,7 @@ mod tests {
     #[test]
     fn unreachable_and_no_hosts_have_their_lines() {
         let out = capture(|r| {
-            r.unreachable("db1", "agent binary not found");
+            r.unreachable("db1", "agent binary not found", false);
             r.no_hosts();
         });
         assert_eq!(
@@ -409,6 +473,7 @@ mod tests {
             Outcome::Ok,
             &result(json!({"changed": false, "stdout": "x"})),
             None,
+            false,
             false,
         );
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
@@ -444,9 +509,10 @@ mod tests {
             (Outcome::Ignored, result(json!({"failed": true, "rc": 1}))),
         ];
         for (outcome, task_result) in cases {
-            let plain = capture(|r| r.result("h", outcome, &task_result, None, false));
-            let coloured =
-                capture_with_color(true, |r| r.result("h", outcome, &task_result, None, false));
+            let plain = capture(|r| r.result("h", outcome, &task_result, None, false, false));
+            let coloured = capture_with_color(true, |r| {
+                r.result("h", outcome, &task_result, None, false, false)
+            });
             assert_ne!(
                 coloured, plain,
                 "{outcome:?}: colour should change the output at all"
@@ -465,6 +531,89 @@ mod tests {
         }
     }
 
+    /// Every line a `no_log` result can put on the terminal, at verbosity 0 and at `-v`, in the
+    /// reference's own words - measured on ansible-core 2.19.12 with `nolog.yml`.
+    ///
+    /// What would make this red: a secret reaching any of these lines, which is the whole point
+    /// of the keyword; or the censored `debug` printing its body at verbosity 0, where the
+    /// reference prints `ok: [h1]` alone.
+    #[test]
+    fn a_censored_result_shows_the_same_body_on_every_line_it_can_print() {
+        let secret = result(json!({"changed": true, "stdout": "secret"}));
+        let failed = result(json!({"changed": true, "failed": true, "stdout": "secret"}));
+        let out = capture(|r| {
+            r.result("h1", Outcome::Changed, &secret, None, false, true);
+            r.result("h1", Outcome::Ignored, &failed, None, false, true);
+            r.result("h1", Outcome::Changed, &secret, Some("a"), false, true);
+            r.result(
+                "h1",
+                Outcome::Ok,
+                &result(json!({"changed": false, "msg": "hush"})),
+                None,
+                true,
+                true,
+            );
+        });
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "changed: [h1]");
+        assert_eq!(
+            lines[1],
+            format!(r#"fatal: [h1]: FAILED! => {{"censored": "{CENSORED}", "changed": true}}"#)
+        );
+        assert_eq!(lines[2], "...ignoring");
+        assert_eq!(lines[3], "changed: [h1] => (item=(censored due to no_log))");
+        assert_eq!(lines[4], "ok: [h1]");
+        assert!(!out.contains("secret"), "{out}");
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
+        r.result("h1", Outcome::Changed, &secret, None, false, true);
+        r.result(
+            "h1",
+            Outcome::Ok,
+            &result(json!({"changed": false, "msg": "hush"})),
+            None,
+            true,
+            true,
+        );
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines[0],
+            format!(r#"changed: [h1] => {{"censored": "{CENSORED}", "changed": true}}"#)
+        );
+        assert_eq!(
+            lines[1],
+            format!(r#"ok: [h1] => {{"censored": "{CENSORED}"}}"#)
+        );
+        assert!(!out.contains("secret") && !out.contains("hush"), "{out}");
+    }
+
+    /// The retry line, in the reference's own words and on stdout.
+    ///
+    /// What would make this red: the count, the punctuation or the stream changed - the line is
+    /// what an operator greps for while a playbook waits on a host that is not ready yet.
+    #[test]
+    fn the_retry_line_is_the_reference_s_own() {
+        let out = capture(|r| r.retrying("h1", "retry until file", 3));
+        assert_eq!(
+            out,
+            "FAILED - RETRYING: [h1]: retry until file (3 retries left).\n"
+        );
+    }
+
+    /// An unreachable host under `no_log` says no more than any other censored line, measured.
+    #[test]
+    fn a_censored_unreachable_hides_its_reason_too() {
+        let out = capture(|r| r.unreachable("h1", "starting ssh: secret-host", true));
+        assert_eq!(
+            out.trim_end(),
+            format!(
+                r#"fatal: [h1]: UNREACHABLE! => {{"censored": "{CENSORED}", "changed": false}}"#
+            )
+        );
+    }
+
     #[test]
     fn loop_items_and_forced_dumps_follow_ansible_shapes() {
         let out = capture(|r| {
@@ -474,12 +623,14 @@ mod tests {
                 &result(json!({"changed": true})),
                 Some("one"),
                 false,
+                false,
             );
             r.result(
                 "h",
                 Outcome::Skipped,
                 &result(json!({"skipped": true})),
                 Some("two"),
+                false,
                 false,
             );
             r.result(
@@ -488,6 +639,7 @@ mod tests {
                 &result(json!({"failed": true, "rc": 1})),
                 Some("three"),
                 false,
+                false,
             );
             r.result(
                 "h",
@@ -495,6 +647,7 @@ mod tests {
                 &result(json!({"msg": "shown"})),
                 None,
                 true,
+                false,
             );
         });
         let lines: Vec<&str> = out.lines().collect();

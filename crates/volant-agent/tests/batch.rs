@@ -12,6 +12,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         args: json!({"_raw_params": cmd}).as_object().unwrap().clone(),
         ignore_errors,
         timeout: None,
+        environment: Default::default(),
     }
 }
 

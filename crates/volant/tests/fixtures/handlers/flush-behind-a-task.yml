@@ -1,0 +1,17 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: the handler
+      debug: msg=handler-ran
+  tasks:
+    - name: notifies the handler
+      command: "true"
+      notify: the handler
+    - block:
+        - name: tagged out of the run
+          command: "true"
+          tags: [dropped]
+      rescue:
+        - meta: flush_handlers
+    - name: after the block
+      debug: msg=after

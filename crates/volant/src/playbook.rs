@@ -1010,10 +1010,10 @@ fn parse_handlers(node: Option<&Yaml>) -> anyhow::Result<Vec<HandlerTask>> {
         let map = item
             .as_mapping()
             .ok_or_else(|| anyhow!("{context}a handler must be a mapping"))?;
-        if map.keys().any(|k| {
-            k.as_str()
-                .is_some_and(|k| BLOCK_SECTIONS.contains(&k) || k == "rescue")
-        }) {
+        if map
+            .keys()
+            .any(|k| k.as_str().is_some_and(|k| BLOCK_SECTIONS.contains(&k)))
+        {
             bail!("{context}a block in a handlers list is not supported yet");
         }
         let listen = names(item, "listen", &context)?;

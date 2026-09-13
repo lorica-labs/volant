@@ -2137,7 +2137,14 @@ async fn drive_host(
                     // Moving it now would step over that very rescue and tell the coordinator
                     // so - the host would then enter a section already reported as passed, and
                     // its `fatal:` line would print under the banner of a later task.
-                    if rescue_target(&c, pos).is_some() {
+                    //
+                    // A flush point between here and where this step leads ends the batch for
+                    // its own reason: `advance` would stop at it and wait for the splice while
+                    // this step has no `TaskDone` behind it, and the coordinator cannot reach
+                    // that flush until it has one. Both sides would then wait for the other.
+                    // Every other blocking wait in this loop is already reached with the batch
+                    // empty; this one has to be too.
+                    if rescue_target(&c, pos).is_some() || steps_over_a_flush(&c, pos, cleanup) {
                         undecided = Some(pos);
                         break;
                     }
@@ -2216,6 +2223,12 @@ async fn drive_host(
                     .await;
                     failed |= !rescuable;
                     failed_at = Some((index, result.unwrap_or_default()));
+                    // Nothing ran, so the fork this host holds goes back before it carries on:
+                    // the next round can block at a barrier or at a flush point, and a permit
+                    // held across a wait is one the hosts that have to reach that same point
+                    // cannot have. With `-f` under the number of live hosts, none of them ever
+                    // would.
+                    permit = None;
                     continue 'run;
                 }
                 Err(err) => {
@@ -2516,6 +2529,26 @@ async fn reuse_or_connect<'a>(
         links.insert(key.clone(), link);
     }
     Ok(links.get_mut(key).expect("connected just above"))
+}
+
+/// Whether `advance` from `pos` would walk past a flush point, and so block waiting for the
+/// splice.
+///
+/// A driver may only wait for a splice once it owes the coordinator nothing in front of it: the
+/// coordinator walks the step list in order and holds at each index until every host is done
+/// with it or gone, so a host waiting at a flush while a step behind it is still unreported waits
+/// for an index the coordinator can never reach. The batch collection loop asks this before
+/// moving on from a step it has queued and not yet run.
+fn steps_over_a_flush(compiled: &Compiled, pos: usize, cleanup: Option<usize>) -> bool {
+    let next = match cleanup {
+        Some(end) => match after_pending(compiled, pos, end) {
+            Some((next, _)) => next,
+            None => return false,
+        },
+        None => after(compiled, pos),
+    };
+    (pos + 1..next.min(compiled.steps.len()))
+        .any(|i| matches!(compiled.steps[i].kind, StepKind::Flush { .. }))
 }
 
 /// The step this host moves to after finishing `pos`, past the sections it has no reason to

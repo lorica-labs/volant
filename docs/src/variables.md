@@ -47,10 +47,10 @@ For the modules whose arguments these variables and templates feed, see the [nat
 ## Not there yet
 
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
-- Roles and collections beyond native modules.
+- Collections. Roles load from the standard search paths; a collection does not.
 - `serial`, `run_once`, `delegate_to`.
-- `until`/`retries`, `block`/`rescue`.
-- `include_*` and `import_*`.
+- `until`/`retries`.
+- `include_tasks` and `include_role`.
 - `gather_facts` is accepted but does nothing: Volant warns and continues without facts. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
 - `hostvars` is copied into every host's variables on every task, so the cost of resolving variables grows with the square of the inventory size. The map is cached between facts, which is enough for a few hundred hosts: on a debug build over twenty local tasks, 50 hosts take 0.25 s, 100 hosts 0.76 s and 200 hosts 2.66 s.

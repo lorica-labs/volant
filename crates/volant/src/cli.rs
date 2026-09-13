@@ -85,6 +85,7 @@ pub struct PlaybookArgs {
     #[arg(short = 'K', long = "ask-become-pass")]
     pub ask_become_pass: bool,
 
+    /// Run handlers even if a task fails.
     #[arg(long = "force-handlers")]
     pub force_handlers: bool,
 }

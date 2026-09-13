@@ -81,13 +81,11 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
 pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
     for step in &compiled.steps {
         // A flush point the compiler put in itself carries no task at all, so there is no module
-        // and no `meta` action to judge; a handler step does not exist yet, and the handlers
-        // themselves are checked below. Everything else goes through, `meta` included - a role's
+        // and no `meta` action to judge. No handler step exists yet - the coordinator splices
+        // those in as the run reaches each flush - so the handlers themselves are checked below,
+        // off `compiled.handlers`. Everything else goes through, `meta` included: a role's
         // `meta: end_play` has to be refused here, since the first pass never saw that file.
-        if !matches!(
-            step.kind,
-            crate::compile::StepKind::Flush { .. } | crate::compile::StepKind::Handler(_)
-        ) {
+        if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
         }
         check_notify(compiled, &step.task)?;

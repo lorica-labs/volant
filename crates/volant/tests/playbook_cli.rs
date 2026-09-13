@@ -28,7 +28,17 @@ fn volant(args: &[&str]) -> Output {
 /// hangs instead of returning, and a hung run only ends at the harness's own timeout, so the
 /// tests that prove a wait ends say so with a deadline rather than with elapsed time alone.
 fn volant_within(args: &[&str], deadline: std::time::Duration) -> Output {
-    volant_within_with_path(args, deadline, None)
+    volant_within_with_path(args, deadline, None, &[])
+}
+
+/// `volant_within`, with extra environment variables -- the form the configuration tests need,
+/// since a setting read from the environment can only be given to the process before it starts.
+fn volant_within_env(
+    args: &[&str],
+    deadline: std::time::Duration,
+    envs: &[(&str, &str)],
+) -> Output {
+    volant_within_with_path(args, deadline, None, envs)
 }
 
 /// `volant_within`, with an optional directory prepended to `PATH` -- the form `run_probe` needs
@@ -38,6 +48,7 @@ fn volant_within_with_path(
     args: &[&str],
     deadline: std::time::Duration,
     path: Option<&Path>,
+    envs: &[(&str, &str)],
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
     command
@@ -45,6 +56,9 @@ fn volant_within_with_path(
         .env("NO_COLOR", "1")
         .env_remove("COLUMNS")
         .env_remove("ANSIBLE_ROLES_PATH");
+    for (name, value) in envs {
+        command.env(name, value);
+    }
     if let Some(dir) = path {
         command.env(
             "PATH",
@@ -1904,7 +1918,7 @@ fn run_probe(
     args.extend_from_slice(extra);
     let shown = file.display().to_string();
     args.push(&shown);
-    let out = volant_within_with_path(&args, PROBE_DEADLINE, path);
+    let out = volant_within_with_path(&args, PROBE_DEADLINE, path, &[]);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -2092,6 +2106,152 @@ fn force_handlers_runs_them_on_a_failed_host() {
             "h2                         : ok=7    changed=3    unreachable=0    failed=1    skipped=1"
         ),
         "the failed host ran the handler it notified and is still counted failed: {text}"
+    );
+}
+
+/// An escalation the host refuses hands its fork back before the driver carries on.
+///
+/// The refusal is a task failure, so the host stays in the run and walks to the block's
+/// `rescue`, stepping over a flush point on the way and waiting there for the splice. With
+/// `-f 1` the fork it still held would be the only one, and the other host could never reach
+/// that same flush to open it.
+///
+/// Measured on ansible-core 2.19.12 on this fixture, with a `sudo` that refuses and `-f 1`:
+/// `fatal:` for both hosts under `escalates`, then `recovered` for both, then
+/// `RUNNING HANDLER [the handler]` for both at the flush that closes `tasks`; recap
+/// `ok=3 changed=1 rescued=1` each, exit 0. The flush written in the body shows no banner: both
+/// hosts stepped over it.
+///
+/// What would make this red: a permit held across the wait that follows the refusal. Only
+/// `volant_within` can see it, since the run hangs rather than printing anything wrong.
+#[test]
+fn a_refused_escalation_hands_its_fork_back_before_waiting() {
+    let dir = fake_sudo(
+        "forkflush",
+        "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-f",
+            "1",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/flush-past-a-refused-become.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+        Some(&dir),
+        &[],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        section(&text, "recovered").contains("[h1]")
+            && section(&text, "recovered").contains("[h2]"),
+        "the refused escalation is a task failure the block's rescue takes: {text}"
+    );
+    for host in ["h1", "h2"] {
+        assert!(
+            text.contains(&format!(
+                "{host}                         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
+            )),
+            "{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A handler notifying a handler defined **after** it: the second one runs, in the same flush.
+///
+/// Measured on ansible-core 2.19.12 on this fixture: `notifies the first handler` changed, then
+/// `RUNNING HANDLER [the first handler]` changed, then `RUNNING HANDLER [the second handler]`
+/// with `second-ran`; recap `ok=3 changed=2`, exit 0. The other direction is the one that runs
+/// nothing - a handler notified by a handler defined before it runs in neither flush - which is
+/// what makes a flush's notifications die with it.
+///
+/// What would make this red: a notification raised while the host is walking the handler steps
+/// being dropped, which is the same mechanism read one step too far.
+#[test]
+fn a_handler_notifies_a_handler_defined_behind_it() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/chained.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        handler_section(&text, "the second handler").contains("second-ran"),
+        "the handler a handler notified runs in that same flush: {text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0"
+        ),
+        "{text}"
+    );
+}
+
+/// `ANSIBLE_FORCE_HANDLERS` in the environment does what `--force-handlers` does, and an
+/// unrecognised value leaves it off.
+///
+/// Measured on ansible-core 2.19.12 with this fixture: `ansible-config list` gives the setting
+/// one environment name, `ANSIBLE_FORCE_HANDLERS`, and it is typed `boolean`. Run end to end,
+/// `True`, `yes` and `1` each give `h2 ok=7`, while `0` and `maybe` give `ok=6` - the same two
+/// recap lines as the flag and its absence.
+///
+/// What would make this red: the environment arm deleted, or reading a name the reference does
+/// not answer to. Both are the accepted-then-ignored shape, and neither reddens anything else.
+#[test]
+fn the_environment_forces_handlers_the_way_the_flag_does() {
+    for (value, recap) in [("yes", "ok=7"), ("maybe", "ok=6")] {
+        let out = volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                &fixture("handlers/inv.ini"),
+                &fixture("handlers/handlers.yml"),
+            ],
+            std::time::Duration::from_secs(20),
+            &[("ANSIBLE_FORCE_HANDLERS", value)],
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!(
+                "h2                         : {recap}    changed=3    unreachable=0    failed=1    skipped=1"
+            )),
+            "ANSIBLE_FORCE_HANDLERS={value} should give {recap}: {text}"
+        );
+    }
+}
+
+/// `[defaults] force_handlers` in `ansible.cfg` does the same.
+///
+/// Measured on ansible-core 2.19.12 with this fixture: `force_handlers = True` gives
+/// `h2 ok=7`, `False` gives `ok=6`. `ansible-config list` puts the key in the `defaults`
+/// section.
+///
+/// What would make this red: the file arm deleted, which leaves a setting the file is allowed to
+/// carry and nothing reads.
+#[test]
+fn ansible_cfg_forces_handlers_the_way_the_flag_does() {
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/handlers.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+        &[("ANSIBLE_CONFIG", &fixture("handlers/force.cfg"))],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains(
+            "h2                         : ok=7    changed=3    unreachable=0    failed=1    skipped=1"
+        ),
+        "{text}"
     );
 }
 
@@ -2294,6 +2454,49 @@ fn a_host_that_steps_over_a_flush_point_waits_for_it_too() {
             "h1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
         ) && text.contains(
             "h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
+        ),
+        "{text}"
+    );
+}
+
+/// A flush point stepped over from the step immediately in front of it, with that step still in
+/// the batch.
+///
+/// The block's body is emptied by `--skip-tags`, so the rescue's `meta: flush_handlers` is the
+/// very next step in the list behind the task that notifies. Measured on ansible-core 2.19.12
+/// with `--skip-tags dropped`: `notifies the handler` changed, `after the block`, then
+/// `RUNNING HANDLER [the handler]`; recap `ok=3 changed=1`, exit 0. The rescue is never entered,
+/// so its flush never runs and the handler goes at the one that closes `tasks`.
+///
+/// What would make this red: a host that reaches a flush point it steps over while it still owes
+/// the coordinator a `TaskDone` for a step in front of it. It would then wait for a splice at an
+/// index the coordinator cannot walk to, because the coordinator is itself waiting for that very
+/// `TaskDone` - a deadlock neither side can leave. Only `volant_within` can see it; no assertion
+/// on printed output can fail on a hang.
+#[test]
+fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "--skip-tags",
+            "dropped",
+            &fixture("handlers/flush-behind-a-task.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        handler_section(&text, "the handler").contains("handler-ran"),
+        "the notification survives the flush nobody entered: {text}"
+    );
+    assert!(
+        section(&text, "after the block").contains("\"msg\": \"after\""),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "localhost                  : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
         ),
         "{text}"
     );

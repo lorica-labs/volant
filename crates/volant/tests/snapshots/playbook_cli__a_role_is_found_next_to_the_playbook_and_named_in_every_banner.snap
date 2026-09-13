@@ -35,6 +35,9 @@ ok: [localhost] => {"msg": "needed=given"}
 TASK [play task after roles] ***************************************************
 ok: [localhost] => {"msg": "shared=role-var d=role-default p=fact"}
 
+TASK [notifies the role's handler] *********************************************
+changed: [localhost]
+
 TASK [base : extra task] *******************************************************
 ok: [localhost] => {"msg": "extra"}
 
@@ -47,8 +50,11 @@ ok: [localhost] => {"msg": "sibling"}
 TASK [base : base task] ********************************************************
 ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
 
+RUNNING HANDLER [base : base handler] ******************************************
+ok: [localhost] => {"msg": "base handler ran, d=role-default"}
+
 TASK [post task] ***************************************************************
 ok: [localhost] => {"msg": "post v=role-var"}
 
 PLAY RECAP *********************************************************************
-localhost                  : ok=15   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+localhost                  : ok=17   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

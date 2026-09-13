@@ -76,6 +76,13 @@ impl Renderer {
         self.banner(&format!("TASK [{name}]"));
     }
 
+    /// The banner a handler gets instead of a task's, measured on ansible-core 2.19.12:
+    /// `RUNNING HANDLER [second handler]`, and `RUNNING HANDLER [base : base handler]` for one
+    /// that came out of a role.
+    pub fn handler(&mut self, name: &str) {
+        self.banner(&format!("RUNNING HANDLER [{name}]"));
+    }
+
     pub fn no_hosts(&mut self) {
         let _ = writeln!(
             self.out,

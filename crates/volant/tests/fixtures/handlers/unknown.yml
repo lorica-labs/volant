@@ -1,0 +1,6 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: notifies nobody at all
+      command: "true"
+      notify: nobody

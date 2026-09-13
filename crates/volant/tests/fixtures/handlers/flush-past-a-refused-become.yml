@@ -1,0 +1,17 @@
+- hosts: h1,h2
+  gather_facts: false
+  handlers:
+    - name: the handler
+      debug: msg=handler-ran
+  tasks:
+    - name: notifies the handler
+      command: "true"
+      notify: the handler
+    - block:
+        - name: escalates
+          command: "true"
+          become: true
+        - meta: flush_handlers
+      rescue:
+        - name: recovered
+          debug: msg=recovered

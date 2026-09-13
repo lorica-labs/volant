@@ -288,7 +288,12 @@ mod tests {
             );
             assert!(text.contains("play 1") && text.contains("'T'"), "{text}");
         }
-        for kw in ["serial", "vars_prompt", "max_fail_percentage", "order"] {
+        for kw in [
+            "any_errors_fatal",
+            "vars_prompt",
+            "max_fail_percentage",
+            "order",
+        ] {
             let text = refusal(&format!(
                 "- hosts: all\n  {kw}: 1\n  tasks:\n    - command: echo hi\n"
             ));
@@ -446,7 +451,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            85,
+            84,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

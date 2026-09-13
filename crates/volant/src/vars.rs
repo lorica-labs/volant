@@ -26,9 +26,14 @@ pub struct Scope {
     /// The free keys written on a role entry: measured, they beat a `set_fact` and lose to `-e`,
     /// and they are gone again once the role is over.
     pub role_params: Map<String, Value>,
-    /// Hosts still in the current play, in inventory order.
+    /// Hosts of the whole play that have not failed, in inventory order - the hosts of the
+    /// batches still to come included. This is `ansible_play_hosts`.
     pub play_hosts: Vec<String>,
-    /// Every host the play started with, whether it is still in it or not.
+    /// Hosts of the batch being played that have not failed. Without `serial` a play is one
+    /// batch and this is the same list as `play_hosts`; with it, the two part company as soon as
+    /// the first batch ends. This is `ansible_play_batch`.
+    pub batch_hosts: Vec<String>,
+    /// Every host the play resolved, whether it is still in it or not.
     pub all_play_hosts: Vec<String>,
 }
 
@@ -180,6 +185,19 @@ impl VarStore {
         vars
     }
 
+    /// What a play-level keyword renders against: the play's own `vars:` under the run's extra
+    /// variables, and nothing belonging to a host.
+    ///
+    /// Measured on ansible-core 2.19.12: `serial: "{{ n }}"` reads `-e n=2` and does not see an
+    /// inventory variable of that name - with `n=2` set on every host of the inventory it still
+    /// stops the run with `Error processing keyword 'serial': 'n' is undefined`. The play is cut
+    /// into batches before any host is chosen, so there is no host whose value it could take.
+    pub fn play_scope(&self, play_vars: &Map<String, Value>) -> Map<String, Value> {
+        let mut vars = play_vars.clone();
+        extend(&mut vars, &self.extra);
+        vars
+    }
+
     /// Inventory-level sources for one host, without play, facts, extra or magic variables.
     /// This is what other hosts see through `hostvars`.
     fn host_base(&self, host: &str) -> Map<String, Value> {
@@ -279,11 +297,14 @@ impl VarStore {
         );
         vars.insert(
             "ansible_play_batch".to_string(),
-            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
+            serde_json::to_value(&scope.batch_hosts).unwrap_or_default(),
         );
+        // The deprecated `play_hosts` is the batch, not the play: measured on ansible-core
+        // 2.19.12, `h2` in the first batch of a `serial: 2` run over three hosts reads `['h2']`
+        // from it where `ansible_play_hosts` says `['h2', 'h3']`.
         vars.insert(
             "play_hosts".to_string(),
-            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
+            serde_json::to_value(&scope.batch_hosts).unwrap_or_default(),
         );
         vars.insert(
             "playbook_dir".to_string(),
@@ -498,9 +519,11 @@ mod tests {
     }
 
     fn scope(hosts: &[&str]) -> Scope {
+        let names: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
         Scope {
-            play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
-            all_play_hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            play_hosts: names.clone(),
+            batch_hosts: names.clone(),
+            all_play_hosts: names,
             ..Scope::default()
         }
     }
@@ -672,24 +695,34 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// `ansible_play_hosts_all` keeps the list the play started with while the other three
-    /// follow the hosts still in it.
+    /// The four host lists are three different answers: the play's resolved hosts never move,
+    /// the play's live hosts lose whoever failed, and the batch's live hosts are narrower still.
+    ///
+    /// Measured on ansible-core 2.19.12 with `serial: 2` over `h1, h2, h3`, `h1` failing in the
+    /// first batch: `h2` then reads `ansible_play_batch` as `['h2']`, `ansible_play_hosts` as
+    /// `['h2', 'h3']` and `ansible_play_hosts_all` as all three, and the deprecated `play_hosts`
+    /// answers with the batch.
+    ///
+    /// What would make this red: `ansible_play_batch` or `play_hosts` served from the play's
+    /// live list, which is what they were before `serial` existed - a task counting the hosts of
+    /// its own batch would then count the ones waiting for the next one.
     #[test]
-    fn the_live_host_list_and_the_starting_one_are_separate() {
-        let inv = Inventory::parse_ini("[web]\nalpha\nbeta\n").unwrap();
+    fn the_batch_the_live_play_and_the_resolved_play_are_three_lists() {
+        let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
         let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
         let v = store.for_host(
-            "beta",
+            "h2",
             &Scope {
-                play_hosts: vec!["beta".into()],
-                all_play_hosts: vec!["alpha".into(), "beta".into()],
+                play_hosts: vec!["h2".into(), "h3".into()],
+                batch_hosts: vec!["h2".into()],
+                all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
                 ..Scope::default()
             },
         );
-        assert_eq!(v["ansible_play_hosts"], json!(["beta"]));
-        assert_eq!(v["ansible_play_batch"], json!(["beta"]));
-        assert_eq!(v["play_hosts"], json!(["beta"]));
-        assert_eq!(v["ansible_play_hosts_all"], json!(["alpha", "beta"]));
+        assert_eq!(v["ansible_play_hosts"], json!(["h2", "h3"]));
+        assert_eq!(v["ansible_play_batch"], json!(["h2"]));
+        assert_eq!(v["play_hosts"], json!(["h2"]));
+        assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
     }
 
     #[test]

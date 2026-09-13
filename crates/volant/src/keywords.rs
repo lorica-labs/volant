@@ -140,6 +140,10 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 /// task. The compiler folds the outer tags into every task under them and drops the tasks
 /// `--tags` and `--skip-tags` leave out, so a tag decides what runs and what the four listing
 /// commands show.
+///
+/// `serial` runs: the play is cut into batches of hosts and the coordinator plays each of them
+/// in turn, banner and handlers included, and the run ends where the reference ends it - at the
+/// batch whose live hosts all failed.
 pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("any_errors_fatal", Preflight),
     kw("become", Runs),
@@ -173,7 +177,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("remote_user", Preflight),
     kw("roles", Runs),
     kw("run_once", Preflight),
-    kw("serial", Preflight),
+    kw("serial", Runs),
     kw("strategy", Runs),
     kw("tags", Runs),
     kw("tasks", Runs),

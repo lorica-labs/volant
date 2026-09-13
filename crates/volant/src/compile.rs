@@ -20,9 +20,11 @@ use anyhow::bail;
 use serde_json::{Map, Value};
 use volant_protocol::modules::short_name;
 
+use crate::inventory::Host;
 use crate::playbook::{Block, Play, PlayTask, TaskOrBlock};
 use crate::roles::{RoleEntry, RoleSearch, RoleVars};
 use crate::stats::Refusal;
+use crate::template::Templar;
 
 /// Which tasks `--tags` and `--skip-tags` leave in.
 ///
@@ -281,6 +283,110 @@ pub(crate) fn meta_action(task: &PlayTask) -> &str {
         .get("_raw_params")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
+}
+
+/// The play's hosts cut into the batches `serial` asks for, in inventory order.
+///
+/// This is `PlaybookExecutor._get_serialized_batches` as ansible-core 2.19.12 writes it, and
+/// three of its properties were measured rather than derived. A percentage is taken of the
+/// **whole** host list and never of what is left, so `[1, "50%"]` on three hosts gives three
+/// batches of one rather than one and then two. A size that comes out at or below zero means
+/// every remaining host in one batch and ends the cutting there, which is how `serial: 0`,
+/// `serial: -1`, `serial: []` and a `serial` larger than the inventory all end up as the single
+/// batch this engine ran before this keyword existed. And a percentage that truncates to zero is
+/// one host, not none: `"10%"` of three hosts is one, so a small percentage cannot silently ask
+/// for a batch of nobody.
+///
+/// The hosts handed in are the play's **resolved** hosts, failures of earlier plays included.
+/// Measured: after `h1` fails, a second play over `all` with `serial: 2` still cuts `[h1, h2]`
+/// and `[h3]`, and prints a banner for each - filtering the failed host out first would merge
+/// the two batches into one and run `h2` and `h3` together, which is not what the reference does.
+pub(crate) fn batches(
+    hosts: &[Host],
+    serial: Option<&Value>,
+    templar: &Templar,
+    vars: &Map<String, Value>,
+) -> anyhow::Result<Vec<Vec<Host>>> {
+    // The reference stores `serial` as a list, so a scalar is a one-element list and an empty
+    // list is `[-1]`, which is "every host at once". An absent `serial` reaches the same place.
+    let rendered = match serial {
+        None => Value::Null,
+        // Measured, exit 4: `serial: "{{ n }}"` with no `n` says `Error processing keyword
+        // 'serial': 'n' is undefined` and stops the run there, before the play's banner.
+        Some(raw) => templar.render_value(raw, vars).map_err(|err| {
+            Refusal::at(4, format!("Error processing keyword 'serial': {}", err.0))
+        })?,
+    };
+    let sizes: Vec<Value> = match rendered {
+        Value::Null => Vec::new(),
+        Value::Array(values) => values,
+        other => vec![other],
+    };
+    let total = hosts.len();
+    let mut out: Vec<Vec<Host>> = Vec::new();
+    let mut rest = hosts;
+    let mut item = 0;
+    while !rest.is_empty() {
+        // Past the end of the list the last element repeats, which is what makes `serial: [1]`
+        // and `serial: 1` the same request.
+        let size = match sizes.get(item.min(sizes.len().saturating_sub(1))) {
+            None => -1,
+            Some(value) => serial_size(value, total)?,
+        };
+        if size <= 0 {
+            out.push(rest.to_vec());
+            break;
+        }
+        let size = (size as usize).min(rest.len());
+        out.push(rest[..size].to_vec());
+        rest = &rest[size..];
+        item += 1;
+    }
+    Ok(out)
+}
+
+/// One `serial` element as a number of hosts, following `ansible.utils.helpers.pct_to_int`:
+/// `int(value)` for anything but a percentage, and `int(pct / 100 * total) or 1` for one.
+///
+/// `int()` truncates towards zero rather than rounding, and its `or` turns a zero into one; a
+/// negative stays negative and the caller reads it as "all of them". Returned signed for that
+/// reason: clamping to zero here would lose the difference between `serial: 0`, which is every
+/// host, and a batch of none, which would spin this loop for ever.
+fn serial_size(value: &Value, total: usize) -> anyhow::Result<i64> {
+    // The reference lets Python's own `ValueError` out here: it prints `Unexpected Exception,
+    // this is probably a bug: invalid literal for int() with base 10: 'abc'` with a traceback and
+    // exits 250. Measured, and a deliberate divergence: the sentence is kept, the crash is not,
+    // so a `serial` nobody can read is refused at exit 4 like the rest of an unusable play.
+    let refused = |value: &Value| -> anyhow::Error {
+        let shown = value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| crate::render::ansible_json(value));
+        Refusal::at(
+            4,
+            format!(
+                "Error processing keyword 'serial': invalid literal for int() with base 10: \
+                 '{shown}'"
+            ),
+        )
+    };
+    match value {
+        // `int(2.7)` is 2 there, and `int(True)` is 1.
+        Value::Number(n) => Ok(n.as_f64().unwrap_or_default().trunc() as i64),
+        Value::Bool(b) => Ok(i64::from(*b)),
+        Value::String(s) if s.trim_end().ends_with('%') => {
+            let pct: i64 = s
+                .trim()
+                .trim_end_matches('%')
+                .trim()
+                .parse()
+                .map_err(|_| refused(value))?;
+            let size = (pct as f64 / 100.0 * total as f64).trunc() as i64;
+            Ok(if size == 0 { 1 } else { size })
+        }
+        Value::String(s) => s.trim().parse::<i64>().map_err(|_| refused(value)),
+        other => Err(refused(other)),
+    }
 }
 
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
@@ -1104,6 +1210,8 @@ pub(crate) fn after_pending(c: &Compiled, pos: usize, cleanup: usize) -> Option<
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::playbook::parse;
 
@@ -1121,6 +1229,106 @@ mod tests {
             run.iter().map(|s| s.to_string()).collect(),
             skip.iter().map(|s| s.to_string()).collect(),
         )
+    }
+
+    /// The sizes of the batches `serial` cuts, which is what the tests below compare.
+    fn cut(serial: Option<Value>, hosts: usize) -> anyhow::Result<Vec<usize>> {
+        let hosts: Vec<Host> = (1..=hosts)
+            .map(|i| Host {
+                name: format!("h{i}"),
+                ..Host::default()
+            })
+            .collect();
+        let templar = Templar::new(PathBuf::from("."));
+        Ok(batches(&hosts, serial.as_ref(), &templar, &Map::new())?
+            .iter()
+            .map(Vec::len)
+            .collect())
+    }
+
+    /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same
+    /// way it cuts them.
+    ///
+    /// The percentages are the half to get wrong: `int()` truncates rather than rounds, so both
+    /// `"34%"` and `"50%"` of three hosts are one, and a percentage is always taken of the whole
+    /// host list, so `[1, "50%"]` is three batches of one rather than one and then two. A
+    /// percentage that truncates to zero is one host and never none.
+    ///
+    /// What would make this red: rounding a percentage up, taking it of what is left rather than
+    /// of the whole, or letting a zero through - which would ask for a batch of nobody and cut
+    /// batches for ever.
+    #[test]
+    fn serial_cuts_the_batches_the_reference_cuts() {
+        for (serial, sizes) in [
+            (json!(2), vec![2, 1]),
+            (json!(1), vec![1, 1, 1]),
+            (json!(0), vec![3]),
+            (json!(-1), vec![3]),
+            (json!(10), vec![3]),
+            (json!(true), vec![1, 1, 1]),
+            (json!("2"), vec![2, 1]),
+            (json!("10%"), vec![1, 1, 1]),
+            (json!("0%"), vec![1, 1, 1]),
+            (json!("34%"), vec![1, 1, 1]),
+            (json!("50%"), vec![1, 1, 1]),
+            (json!("100%"), vec![3]),
+            (json!([1, 5]), vec![1, 2]),
+            (json!([1, "50%"]), vec![1, 1, 1]),
+            (json!([]), vec![3]),
+        ] {
+            assert_eq!(
+                cut(Some(serial.clone()), 3).unwrap_or_else(|e| panic!("{serial}: {e:#}")),
+                sizes,
+                "serial: {serial}"
+            );
+        }
+        assert_eq!(cut(None, 3).unwrap(), vec![3], "no serial is one batch");
+    }
+
+    /// `serial` is rendered before it is read, against the variables the play was given, and a
+    /// name with no value stops the run the way the reference's does - measured, exit 4 and
+    /// `Error processing keyword 'serial': 'n' is undefined`, with no banner in front of it.
+    ///
+    /// What would make this red: a template taken literally, which would refuse `"{{ n }}"` as a
+    /// number it cannot read even when `-e n=2` gave it one.
+    #[test]
+    fn a_templated_serial_is_rendered_first() {
+        let hosts: Vec<Host> = ["h1", "h2", "h3"]
+            .iter()
+            .map(|name| Host {
+                name: (*name).to_string(),
+                ..Host::default()
+            })
+            .collect();
+        let templar = Templar::new(PathBuf::from("."));
+        let vars: Map<String, Value> = json!({ "n": 2 }).as_object().cloned().unwrap();
+        let sizes: Vec<usize> = batches(&hosts, Some(&json!("{{ n }}")), &templar, &vars)
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .collect();
+        assert_eq!(sizes, vec![2, 1]);
+        let err = format!(
+            "{:#}",
+            batches(&hosts, Some(&json!("{{ n }}")), &templar, &Map::new()).unwrap_err()
+        );
+        assert!(err.contains("Error processing keyword 'serial'"), "{err}");
+    }
+
+    /// A `serial` nobody can read stops the run rather than running on a guess, and says which
+    /// keyword and which value it could not read.
+    ///
+    /// What would make this red: a value that falls through to a default batch size, which would
+    /// run the play in a shape the operator never asked for.
+    #[test]
+    fn an_unreadable_serial_is_refused_by_name() {
+        for serial in [json!("abc"), json!("x%"), json!({}), json!([1, "abc"])] {
+            let err = format!("{:#}", cut(Some(serial.clone()), 3).unwrap_err());
+            assert!(
+                err.contains("Error processing keyword 'serial'"),
+                "{serial}: {err}"
+            );
+        }
     }
 
     /// Whether a step is one of the flush points the compiler puts in itself. They carry no task

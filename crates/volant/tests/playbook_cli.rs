@@ -2589,6 +2589,34 @@ fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// A templated task name renders in the `FAILED - RETRYING` line the way it renders everywhere
+/// else, rather than showing its own template braces.
+///
+/// What would make this red: the retry line sending `task.name` raw instead of the rendered
+/// form - `probe {{ n }}` in the line instead of `probe 3`.
+#[test]
+fn a_templated_task_name_renders_in_the_retry_line() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("until/templated-name.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("FAILED - RETRYING: [localhost]: probe 3 (1 retries left)."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("{{"),
+        "the retry line must not show the template's braces: {text}"
+    );
+}
+
 /// A task that never leaves the controller retries by the same loop as any other.
 ///
 /// Measured on ansible-core 2.19.12 with this fixture: two retry lines, `fatal:` carrying the
@@ -2675,14 +2703,22 @@ fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     );
 }
 
-/// `delay` is waited between attempts, proved from the results rather than from the clock: the
-/// task before records the epoch second it ran at, and the retried task's own `stdout` is the
-/// epoch second of its **last** attempt. Two attempts with `delay: 2` put at least two seconds
-/// between them, and the run is under `volant_within`, so a `delay` that never ends hangs the
-/// test rather than passing it.
+/// `delay` is waited after every failed attempt, the last one included - not only between
+/// attempts - proved from the results rather than from the clock: the task before records the
+/// epoch second it ran at, the retried task's own `stdout` is the epoch second of its **last**
+/// attempt, and the task right after it records its own epoch second in turn. Two attempts with
+/// `delay: 2` put at least two seconds both between the two attempts and between the last
+/// attempt and the next task, and the run is under `volant_within`, so a `delay` that never ends
+/// hangs the test rather than passing it.
 ///
-/// What would make this red: the sleep dropped - both attempts then land in the same second, or
-/// at worst one apart, and never two.
+/// This is the highest-blast-radius fact `until`/`retries`/`delay` measured: a failing playbook
+/// costs `retries * delay`, not `(retries - 1) * delay`. A test with only the first gap would
+/// stay green if the trailing sleep were dropped - proving only that a sleep happens somewhere,
+/// not that the last attempt costs one too.
+///
+/// What would make this red: either sleep dropped - the two attempts landing in the same second
+/// or at worst one apart and never two, or the task after the last attempt starting in the same
+/// second as that attempt instead of at least two seconds later.
 #[test]
 fn the_delay_is_waited_between_two_attempts() {
     let out = volant_within(
@@ -2706,11 +2742,17 @@ fn the_delay_is_waited_between_two_attempts() {
         .split_whitespace()
         .map(|s| s.parse().expect("an epoch second"))
         .collect();
-    assert_eq!(stamps.len(), 2, "{shown}");
+    assert_eq!(stamps.len(), 3, "{shown}");
     assert!(
         stamps[1] - stamps[0] >= 2,
         "the second attempt waited {} second(s), not the two `delay` asked for",
         stamps[1] - stamps[0]
+    );
+    assert!(
+        stamps[2] - stamps[1] >= 2,
+        "the task after the last attempt started {} second(s) later, not the two `delay` asked \
+         for a failing attempt to cost even when it is the last one",
+        stamps[2] - stamps[1]
     );
 }
 
@@ -3334,8 +3376,8 @@ const RUNS_PROBES: &[RunsProbe] = &[
     // dropping the keyword leaves a run that succeeds instead of one that fails; `retries` by a
     // count no default produces (three is what `until` alone gives); and `delay` by a value it
     // cannot read, which is the only half of that keyword one process can see - that the wait
-    // actually happens is `the_delay_is_waited_between_two_attempts`, which reads two epoch
-    // seconds out of the results.
+    // actually happens is `the_delay_is_waited_between_two_attempts`, which reads three epoch
+    // seconds out of the results, the last pair proving the wait after the last attempt too.
     runs(
         "task",
         "until",
@@ -3416,6 +3458,12 @@ const RUNS_PROBES: &[RunsProbe] = &[
     // `become_method` and `strategy` are. The row would still be `Runs` with the refusal gone,
     // so what these three assert is the sentence that names the value: parked again, the message
     // loses its `with 'true'` and the probe reddens.
+    //
+    // The play and block bodies carry no task at all. A task would inherit the merged
+    // `check_mode` and get caught by the task-level guard in the second pre-flight pass
+    // (`check_steps`, over the compiled steps) regardless of whether the play's or block's own
+    // guard still runs - which is exactly why an empty body is the shape that isolates each one:
+    // with nothing to merge into, only the guard being probed can refuse the run.
     runs(
         "task",
         "check_mode",
@@ -3427,7 +3475,7 @@ const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "play",
         "check_mode",
-        "- hosts: localhost\n  gather_facts: false\n  check_mode: true\n  tasks:\n    - command: echo hi\n",
+        "- hosts: localhost\n  gather_facts: false\n  check_mode: true\n  tasks: []\n",
         &[],
         4,
         "'check_mode' is not supported yet with 'true'",
@@ -3435,7 +3483,7 @@ const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "block",
         "check_mode",
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block: []\n      check_mode: true\n",
         &[],
         4,
         "'check_mode' is not supported yet with 'true'",

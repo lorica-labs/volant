@@ -10,6 +10,9 @@
       retries: 2
       delay: 2
       ignore_errors: true
+    - name: following
+      shell: date +%s
+      register: following
     - name: seconds
       debug:
-        msg: "{{ before.stdout }} {{ after.stdout }}"
+        msg: "{{ before.stdout }} {{ after.stdout }} {{ following.stdout }}"

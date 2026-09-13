@@ -24,10 +24,11 @@ Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`, `become`, 
 Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`, `become`, `become_user`, `become_method`, `until`, `retries`, `delay`, `no_log`, `environment`, `check_mode`.
 
 `until` runs a task again until its expression holds. `retries` says how many attempts there are
-in all, and three is what you get when only `until` is written. Between two attempts Volant waits
-`delay` seconds, five by default. The result carries the attempt count under `attempts`, and a
-task that runs out of attempts has failed even when the module itself passed. `retries` written
-without `until` runs the task again while it fails. A looping task retries each item separately.
+in all, and three is what you get when only `until` is written. Volant waits `delay` seconds,
+five by default, after every failed attempt, including the last one. The result carries the
+attempt count under `attempts`, and a task that runs out of attempts has failed even when the
+module itself passed. `retries` written without `until` runs the task again while it fails. A
+looping task retries each item separately.
 
 `no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on
 every line it would have shown and at every verbosity. The registered variable keeps the real

@@ -1034,6 +1034,21 @@ fn task_name(
     }
 }
 
+/// The task's own name for the `FAILED - RETRYING` line: templated against `vars`, and never
+/// role-prefixed the way `task_name`'s banner is - measured, the retry line of a task inside a
+/// role carries the task's own name rather than the `role : name` the banner shows.
+fn retry_name(task: &PlayTask, vars: &Map<String, Value>, templar: &Templar) -> String {
+    if Templar::is_template(&task.name) {
+        templar
+            .render(&task.name, vars)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| task.name.clone())
+    } else {
+        task.name.clone()
+    }
+}
+
 /// The merged, self-resolved variables of a host for one task. `live` is the play's host list as
 /// the coordinator last published it, which is what `ansible_play_hosts` reports.
 ///
@@ -2279,7 +2294,19 @@ async fn drive_host(
                         .collect();
                     // A skipped task fails nothing, so no rescue is in question for it, and it
                     // made no attempt to retry.
-                    report_task(&tx, &name, pos, task, &results, &labels, &[], false, false).await;
+                    report_task(
+                        &tx,
+                        &name,
+                        pos,
+                        task,
+                        &results,
+                        &labels,
+                        &[],
+                        &[],
+                        false,
+                        false,
+                    )
+                    .await;
                     if let Some(reg) = &task.register {
                         store.lock().expect("vars lock").set_fact(
                             &name,
@@ -2352,7 +2379,9 @@ async fn drive_host(
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
                     let mut lefts: Vec<Vec<u32>> = Vec::new();
+                    let mut names: Vec<String> = Vec::new();
                     for item in &items {
+                        names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
                         let r = match &item.skipped {
                             Some(s) => s.clone(),
@@ -2418,7 +2447,7 @@ async fn drive_host(
                     let dump =
                         short_name(&task.module) == "debug" && !(task.censors() && verbosity == 0);
                     if let Some(result) = report_task(
-                        &tx, &name, pos, task, &results, &labels, &lefts, dump, rescuable,
+                        &tx, &name, pos, task, &results, &labels, &lefts, &names, dump, rescuable,
                     )
                     .await
                     {
@@ -2566,6 +2595,7 @@ async fn drive_host(
                         &results,
                         &[None],
                         &[],
+                        &[],
                         false,
                         rescuable,
                     )
@@ -2594,6 +2624,9 @@ async fn drive_host(
                 .first()
                 .map(|(_, items)| vec![Vec::new(); items.len()])
                 .unwrap_or_default();
+            // Each item's templated task name, parallel to `lefts` and empty the same way: the
+            // retry loop below is the only place with the item's own vars in hand.
+            let mut names: Vec<String> = Vec::new();
             // Whether `received` already holds results the conditions have been applied to. The
             // retry loop has to apply them itself, since `until` reads what they decided.
             let mut decided = false;
@@ -2601,6 +2634,10 @@ async fn drive_host(
                 decided = true;
                 let (index, items) = &batch[0];
                 let task = &c.steps[*index].task;
+                names = items
+                    .iter()
+                    .map(|item| retry_name(task, &item.vars, &templar))
+                    .collect();
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Item by item, in order, each one's attempts finished before the next one
                 // starts: measured on ansible-core 2.19.12 with a two-item loop whose first item
@@ -2734,8 +2771,18 @@ async fn drive_host(
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
                 let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
+                let retried_names: &[String] = if bi == 0 { &names } else { &[] };
                 if let Some(result) = report_task(
-                    &tx, &name, *index, task, &results, &labels, retried, false, rescuable,
+                    &tx,
+                    &name,
+                    *index,
+                    task,
+                    &results,
+                    &labels,
+                    retried,
+                    retried_names,
+                    false,
+                    rescuable,
                 )
                 .await
                 {
@@ -2831,6 +2878,7 @@ async fn drive_host(
                 task,
                 &results,
                 &[None],
+                &[],
                 &[],
                 false,
                 rescuable,
@@ -3121,6 +3169,10 @@ async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<us
 /// needed, in order. They are sent from here rather than as they happen because the reference
 /// prints each item's retry lines directly in front of that item's own result line - measured
 /// with a loop whose first item passed and whose second needed two attempts.
+///
+/// `names` is parallel to `results` as well: each item's task name, already templated. The
+/// `FAILED - RETRYING` line shows it rather than the raw `task.name` - measured, a templated name
+/// like `probe {{ n }}` renders there the way it does everywhere else.
 #[allow(clippy::too_many_arguments)]
 async fn report_task(
     tx: &mpsc::Sender<Event>,
@@ -3130,6 +3182,7 @@ async fn report_task(
     results: &[(Option<Value>, TaskResult)],
     labels: &[Option<String>],
     retries: &[Vec<u32>],
+    names: &[String],
     dump: bool,
     rescuable: bool,
 ) -> Option<TaskResult> {
@@ -3143,7 +3196,7 @@ async fn report_task(
                 .send(Event::Retrying {
                     host: host.to_string(),
                     index,
-                    name: task.name.clone(),
+                    name: names.get(i).cloned().unwrap_or_else(|| task.name.clone()),
                     left: *left,
                 })
                 .await;

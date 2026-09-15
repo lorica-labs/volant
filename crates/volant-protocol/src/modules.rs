@@ -45,6 +45,12 @@ pub const SET_FACT: ModuleSpec = ModuleSpec {
     summary: "Set facts for a host, for the rest of the run.",
 };
 
+pub const INCLUDE_VARS: ModuleSpec = ModuleSpec {
+    name: "include_vars",
+    free_form: true,
+    summary: "Read a file of variables and set them on the host, for the rest of the run.",
+};
+
 pub const VALIDATE_ARGUMENT_SPEC: ModuleSpec = ModuleSpec {
     name: "validate_argument_spec",
     free_form: false,
@@ -52,7 +58,7 @@ pub const VALIDATE_ARGUMENT_SPEC: ModuleSpec = ModuleSpec {
 };
 
 /// Modules the controller runs itself and never sends to a host, sorted by name.
-pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, SET_FACT, VALIDATE_ARGUMENT_SPEC];
+pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, INCLUDE_VARS, SET_FACT, VALIDATE_ARGUMENT_SPEC];
 
 /// The three statements that read a file while the play is being compiled instead of naming
 /// work for a host, with whether their string form is one raw argument.
@@ -71,6 +77,27 @@ pub const IMPORT_MODULES: &[(&str, bool)] = &[
 pub fn import_module(module: &str) -> Option<bool> {
     let short = short_name(module);
     IMPORT_MODULES
+        .iter()
+        .find(|(name, _)| *name == short)
+        .map(|(_, free_form)| *free_form)
+}
+
+/// The two statements that name work read while the play is **running** rather than while it is
+/// being compiled, with whether their string form is one raw argument.
+///
+/// They are the imports' dynamic twins: what they name is not known until the host that reaches
+/// them has rendered its own variables, so the coordinator reads it then and splices the steps in
+/// behind the statement. `include_role` refuses a raw parameter and wants `name=`, the way
+/// `import_role` does - measured on ansible-core 2.19.12.
+///
+/// `include_vars` is not here: it is an ordinary controller-side module in [`LOCAL_MODULES`],
+/// because what it produces is variables rather than steps.
+pub const INCLUDE_MODULES: &[(&str, bool)] = &[("include_role", false), ("include_tasks", true)];
+
+/// Whether the module is one of the two include statements, and whether its string form is raw.
+pub fn include_module(module: &str) -> Option<bool> {
+    let short = short_name(module);
+    INCLUDE_MODULES
         .iter()
         .find(|(name, _)| *name == short)
         .map(|(_, free_form)| *free_form)
@@ -266,6 +293,30 @@ mod tests {
         assert!(!is_known("community.general.debug"));
     }
 
+    /// The three dynamic statements, each in the table that answers for it.
+    ///
+    /// `include_vars` is a controller-side module - it produces variables, and a result line with
+    /// them - while `include_tasks` and `include_role` produce steps and never run as modules at
+    /// all. Told apart here because the pre-flight reads exactly this: a name in neither table is
+    /// refused as "not available in this release", which is what all three were before the
+    /// coordinator could splice.
+    ///
+    /// What would make this red: `include_vars` left out of the controller-side table, which
+    /// refuses a playbook this release now runs; or either statement added to it, which would
+    /// send a step naming work to `run_local` and fail it as "not a controller-side module".
+    #[test]
+    fn the_three_dynamic_statements_are_each_in_one_table() {
+        assert!(is_known("include_vars"));
+        assert!(is_known("ansible.builtin.include_vars"));
+        assert!(include_module("include_vars").is_none());
+        for statement in ["include_tasks", "include_role"] {
+            assert!(include_module(statement).is_some(), "{statement}");
+            assert!(!is_known(statement), "{statement}");
+        }
+        assert_eq!(include_module("include_tasks"), Some(true));
+        assert_eq!(include_module("ansible.builtin.include_role"), Some(false));
+    }
+
     /// The three states a module name can be in have to stay three. Collapsing them - which an
     /// `&&`/`||` precedence slip does in one character - would tell an operator with a typo to
     /// wait for a release, or an operator waiting for `lineinfile` that they misspelled it.
@@ -312,17 +363,19 @@ mod tests {
                 m.name
             );
         }
-        let imports: Vec<&str> = IMPORT_MODULES.iter().map(|(n, _)| *n).collect();
-        let mut sorted = imports.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(imports, sorted);
-        for name in imports {
-            assert!(BUILTIN_MODULES.contains(&name), "{name}");
-            assert!(
-                !is_known(name),
-                "{name} is spliced by the compiler and never run"
-            );
+        for table in [IMPORT_MODULES, INCLUDE_MODULES] {
+            let names: Vec<&str> = table.iter().map(|(n, _)| *n).collect();
+            let mut sorted = names.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(names, sorted);
+            for name in names {
+                assert!(BUILTIN_MODULES.contains(&name), "{name}");
+                assert!(
+                    !is_known(name),
+                    "{name} names work rather than being it, so nothing runs it as a module"
+                );
+            }
         }
     }
 

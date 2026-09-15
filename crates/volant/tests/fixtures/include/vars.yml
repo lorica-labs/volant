@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  vars: { iv: play }
+  tasks:
+    - include_vars: vars-inc.yml
+    - debug: var=iv
+    - include_vars:
+        file: vars-inc.yml
+        name: ns
+    - debug: var=ns.iv
+    - include_vars: nosuch.yml
+      ignore_errors: true

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
-use volant_protocol::modules::{import_module, is_known, native, short_name};
+use volant_protocol::modules::{
+    import_module, include_module, is_known, local, native, short_name,
+};
 
 use crate::keywords::{
     BLOCK_SECTIONS, Support, block_keyword, handler_keyword, loop_control_keyword, play_keyword,
@@ -102,6 +104,15 @@ pub struct Block {
     pub rescue: Vec<TaskOrBlock>,
     pub always: Vec<TaskOrBlock>,
     pub keywords: PlayTask,
+}
+
+/// The task with nothing written on it, which is the outermost layer of every merge. It is
+/// `PlayTask::empty` and not a derived zero: `loop_var` defaults to `item` and a derived
+/// `Default` would leave it empty, which is a loop whose variable answers to no name.
+impl Default for PlayTask {
+    fn default() -> Self {
+        PlayTask::empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -338,8 +349,15 @@ pub fn is_meta(task: &PlayTask) -> bool {
 }
 
 /// Whether the module's string form is one command line rather than `key=value` pairs.
+///
+/// The three registries answer for their own rows, so a module moving between them keeps the
+/// form its table gives it. `include_tasks: sub.yml` and `include_vars: v.yml` name a file the
+/// way `import_tasks: sub.yml` does, and `include_role` wants `name=` like `import_role`.
 fn is_free_form(module: &str) -> bool {
-    native(module).is_some_and(|m| m.free_form) || import_module(module) == Some(true)
+    native(module).is_some_and(|m| m.free_form)
+        || local(module).is_some_and(|m| m.free_form)
+        || import_module(module) == Some(true)
+        || include_module(module) == Some(true)
 }
 
 /// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
@@ -911,9 +929,13 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         let mut args = Map::new();
         args.insert("_raw_params".into(), Value::String(action.to_string()));
         args
-    } else if is_known(&module) || import_module(&module).is_some() {
-        // The three import statements are read here for the same reason `meta` is: the compiler
-        // needs what they name, and nothing else ever will, because no step is left for a host.
+    } else if is_known(&module)
+        || import_module(&module).is_some()
+        || include_module(&module).is_some()
+    {
+        // The import and include statements are read here for the same reason `meta` is: the
+        // compiler needs what they name, or the coordinator does once the play is running, and
+        // nothing else ever will, because no step is left for a host.
         module_args(&module, value).with_context(|| format!("task '{label}'"))?
     } else {
         Map::new()

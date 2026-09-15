@@ -32,6 +32,10 @@
 --list-tasks --tags inc imports.yml
 --list-tags imports.yml
 --list-hosts imports.yml
+--list-tasks includes.yml
+--list-tasks --tags inc includes.yml
+--list-tags includes.yml
+--syntax-check includes.yml
 --list-tasks meta.yml
 --list-tasks --tags m meta.yml
 --list-tasks later-modules.yml

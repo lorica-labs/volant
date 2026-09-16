@@ -2,52 +2,39 @@
 
 ## Sources, lowest precedence first
 
-1. `group_vars/all` (inventory directory, then playbook directory)
-2. Inventory group variables, applied by group depth and name
-3. `group_vars/<group>` (inventory directory, then playbook directory)
-4. Inventory host variables
-5. `host_vars/<host>` (inventory directory, then playbook directory)
-6. Play `vars`
-7. Play `vars_files`
-8. Task `vars`
-9. Facts set by `register` and `set_fact`
-10. `--extra-vars`
+1. A role's `defaults/main.yml`
+2. `group_vars/all` (inventory directory, then playbook directory)
+3. Inventory group variables, applied by group depth and name
+4. `group_vars/<group>` (inventory directory, then playbook directory)
+5. Inventory host variables
+6. `host_vars/<host>` (inventory directory, then playbook directory)
+7. Play `vars`
+8. Play `vars_files`
+9. A role's `vars/main.yml`
+10. Task `vars`
+11. Facts set by `register` and `set_fact`
+12. A role's parameters (a free key on a role entry)
+13. `--extra-vars`
 
-A fixed set of magic variables is added on top of every host's view and always wins: `inventory_hostname`, `inventory_hostname_short`, `group_names`, `groups`, `hostvars`, `play_hosts` and its aliases, `playbook_dir`, `inventory_dir`, `inventory_file`, `omit`, `ansible_check_mode`, `ansible_diff_mode`, `ansible_forks`, `ansible_version` and `volant_version` (see [ADR 0003](https://github.com/lorica-labs/volant/blob/main/docs/adr/0003-ansible-version-reports-the-reference-release.md)).
+See [Roles](playbooks.md#roles) for where the three role layers come from and how they differ
+from each other.
 
-`hostvars` holds what the inventory and `set_fact` produced for each host, without the other host's own play or task variables, and it is rebuilt whenever a fact changes. No facts are gathered from remote hosts yet, so that is all a cross-host lookup can see.
+A fixed set of magic variables is added on top of every host's view and always wins: `inventory_hostname`, `inventory_hostname_short`, `group_names`, `groups`, `hostvars`, `ansible_play_hosts`, `ansible_play_hosts_all`, `ansible_play_batch`, the deprecated `play_hosts`, `playbook_dir`, `inventory_dir`, `inventory_file`, `omit`, `ansible_check_mode`, `ansible_diff_mode`, `ansible_forks`, `ansible_version` and `volant_version` (see [ADR 0003](https://github.com/lorica-labs/volant/blob/main/docs/adr/0003-ansible-version-reports-the-reference-release.md)).
 
-## Task keywords
+`ansible_play_hosts` and `ansible_play_hosts_all` name the play, while `ansible_play_batch` and `play_hosts` name the current [`serial` batch](playbooks.md#serial), which is what the reference reports there. Inside a `rescue`, `ansible_failed_task` and `ansible_failed_result` are set as facts on the host that failed.
 
-Play: `name`, `hosts`, `gather_facts`, `vars`, `vars_files`, `tasks`, `become`, `become_user`, `become_method`, `no_log`, `environment`, `check_mode`.
+`hostvars` holds what the inventory, `--extra-vars` and `set_fact` produced for each host, without the other host's own play or task variables, and it is rebuilt whenever a fact changes. No facts are gathered from remote hosts yet, so that is all a cross-host lookup can see. Every host of a run reads one shared map rather than a copy of its own, so a task naming `hostvars` costs a lookup and not a copy of the inventory.
 
-Task: `name`, `args`, `vars`, `when`, `loop`, `with_items`, `loop_control`, `register`, `changed_when`, `failed_when`, `timeout`, `ignore_errors`, `become`, `become_user`, `become_method`, `until`, `retries`, `delay`, `no_log`, `environment`, `check_mode`.
-
-`until` runs a task again until its expression holds. `retries` says how many attempts there are
-in all, and three is what you get when only `until` is written. Volant waits `delay` seconds,
-five by default, after every failed attempt, including the last one. The result carries the
-attempt count under `attempts`, and a task that runs out of attempts has failed even when the
-module itself passed. `retries` written without `until` runs the task again while it fails. A
-looping task retries each item separately.
-
-`no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on
-every line it would have shown and at every verbosity. The registered variable keeps the real
-result, so a later task can still read it.
-
-`environment` sets variables for the process the module runs in. A play, a block and a task may
-each write one, and they merge with the innermost winning. Volant skips a value that is not a
-mapping and warns about it on stderr.
-
-`check_mode: false` is accepted and changes nothing, since running the task is what this release
-does. `check_mode: true` is refused by name: there is no check mode here yet, and running a task
-for real when the playbook asked to be told what it would do is worse than stopping.
+## Conditions and loops
 
 `when`, `changed_when`, `failed_when` and `until` take one Jinja2 expression or a list of them, all of which must hold. `loop` and `with_items` cannot both be given on the same task; `with_items` flattens one level of nested lists, `loop` does not. Registering a looped task collects a `results` list, one entry per item, the way `ansible-playbook` does.
 
 Under `loop_control`, only `loop_var` and `label` are read. The rest are refused by name, and a
 sub-key `ansible-core` does not have refuses the playbook outright.
 
-Any other keyword is refused by name rather than ignored.
+Which keywords this release runs and which it refuses is in [Keywords](keywords.md), a page
+generated from the tables the loader and the pre-flight read, so it cannot describe a release
+other than this one. What each of them does is in [Playbooks](playbooks.md).
 
 ## Templating
 
@@ -69,6 +56,7 @@ For the modules whose arguments these variables and templates feed, see the [nat
 - Collections. Roles load from the standard search paths; a collection does not.
 - `gather_facts` is accepted but does nothing: Volant warns and continues without facts. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
+- Methods on a mapping. `{{ hostvars.keys() }}` renders in Ansible and fails here, because the templating engine underneath has no `keys` on a map yet. `dict2items` is the way round it.
 - Resolving variables costs more than linearly in the size of the inventory. `hostvars` is not the cause: a task reads one host's entry out of a shared map rather than a copy of every host's variables. What is left of the cost is the magic variables that name the whole inventory, `groups` and the play's live host lists, each of them written into every host's variables for every task. On a debug build over twenty local tasks, 50 hosts take 0.26 s, 100 hosts 0.71 s and 200 hosts 2.19 s.
 
 For the connection settings, the agent cache, `become` and the host-pattern grammar, see [Connections and privilege escalation](connections.md).

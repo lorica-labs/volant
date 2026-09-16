@@ -34,11 +34,15 @@ lint:
     zizmor .github/workflows
 
 test:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --no-fail-fast
 
 # Regenerate docs/src/modules.md from the module registry
 docs-modules:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant-protocol the_documentation_table_matches_the_registry
+
+# Regenerate docs/src/keywords.md from the keyword tables
+docs-keywords:
+    VOLANT_UPDATE_DOCS=1 cargo test -p volant the_keyword_page_matches_the_tables
 
 # Run the CI workflow locally (needs Docker)
 ci-local:

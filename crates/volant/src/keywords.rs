@@ -321,6 +321,75 @@ pub fn handler_keyword(name: &str) -> Option<&'static Keyword> {
     HANDLER_KEYWORDS.iter().find(|k| k.name == name)
 }
 
+/// What one table says about `name`, as the published page spells it.
+fn status(table: &[Keyword], name: &str) -> &'static str {
+    match table.iter().find(|k| k.name == name) {
+        Some(k) if k.support == Runs => "runs",
+        Some(_) => "refused",
+        None => "not accepted",
+    }
+}
+
+/// The Markdown page published in the documentation, generated from the tables above so it
+/// cannot say something the loader and the pre-flight do not do.
+///
+/// The status is per place a keyword can be written rather than per keyword, because the two
+/// differ: `ignore_errors` runs on a block and on a task and is refused on a play, and a single
+/// column would have to pick one of the two and be wrong about the other.
+pub fn documentation() -> String {
+    let mut out = String::from(
+        "# Keywords\n\nEvery play, block and task keyword ansible-core 2.19 knows, and what this \
+         release does with each one.\n\nA playbook is loaded against the whole grammar, so it \
+         parses here as it parses there. What this release cannot execute is refused by name \
+         before the first connection, rather than accepted and then ignored. A keyword therefore \
+         carries a status per place it can be written:\n\n- `runs`: this release honours it, or \
+         refuses by name the one value it cannot do.\n- `refused`: it loads, and the run stops \
+         before anything connects.\n- `not accepted`: it cannot be written there, and a playbook \
+         that writes it there is refused when it is read, as the reference refuses it.\n\nThis \
+         page is generated from the tables in the source, so it cannot drift from them. Run `just \
+         docs-keywords` after changing a table.\n\n| Keyword | Play | Block | Task |\n|---|---|---|\
+         ---|\n",
+    );
+    let mut names: Vec<&str> = [TASK_KEYWORDS, PLAY_KEYWORDS, BLOCK_KEYWORDS]
+        .iter()
+        .flat_map(|table| table.iter())
+        .map(|k| k.name)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        out.push_str(&format!(
+            "| `{name}` | {} | {} | {} |\n",
+            status(PLAY_KEYWORDS, name),
+            status(BLOCK_KEYWORDS, name),
+            status(TASK_KEYWORDS, name)
+        ));
+    }
+    out.push_str(
+        "\n## Handlers\n\nA handler takes every task keyword above, and one of its own.\n\n\
+         | Keyword | Status |\n|---|---|\n",
+    );
+    for k in HANDLER_KEYWORDS {
+        out.push_str(&format!(
+            "| `{}` | {} |\n",
+            k.name,
+            status(HANDLER_KEYWORDS, k.name)
+        ));
+    }
+    out.push_str(
+        "\n## Under `loop_control`\n\nA sub-key ansible-core does not have is refused when the \
+         playbook is read.\n\n| Sub-key | Status |\n|---|---|\n",
+    );
+    for k in LOOP_CONTROL_KEYWORDS {
+        out.push_str(&format!(
+            "| `{}` | {} |\n",
+            k.name,
+            status(LOOP_CONTROL_KEYWORDS, k.name)
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,6 +655,24 @@ mod tests {
         assert!(
             declared.iter().all(|name| *name == "run_once"),
             "{declared:?}"
+        );
+    }
+
+    /// What would make this red: a keyword added, removed or flipped between `Runs` and
+    /// `Preflight` without regenerating the page, which would leave the site telling operators
+    /// that something works when the pre-flight refuses it, or the other way round.
+    #[test]
+    fn the_keyword_page_matches_the_tables() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/keywords.md");
+        let expected = documentation();
+        if std::env::var_os("VOLANT_UPDATE_DOCS").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        let actual = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(
+            actual, expected,
+            "run `just docs-keywords` to regenerate docs/src/keywords.md"
         );
     }
 }

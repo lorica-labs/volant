@@ -356,7 +356,8 @@ fn delegation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
 /// A scalar the way that refusal shows it: a string in quotes, a number bare, a sequence or
 /// mapping the way ansible-core's own Python repr prints it.
 ///
-/// Measured on ansible-core 2.19.12 (`docs/superpowers/architecture.md`): a float is bare with
+/// Measured on ansible-core 2.19.12, values checked in
+/// `tests::hosts_may_be_a_list_and_gather_facts_defaults_to_true` below: a float is bare with
 /// its decimal kept (`1.0`, `3.5`, never a Rust `OrderedFloat` wrapper), a sequence reads
 /// `[1, 2]`, a mapping reads `{'a': 1}`, and `null` reads `None`. Ansible's own message for a
 /// `null` host entry is a different sentence entirely ("Hosts list cannot contain values of

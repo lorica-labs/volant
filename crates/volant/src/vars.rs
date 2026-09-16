@@ -4,12 +4,46 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
 use crate::inventory::Inventory;
+use crate::template::Vars;
 use crate::yaml;
+
+/// One host's merged variables, with the inventory-wide view its templates read `hostvars`
+/// from. The two travel together because every render a host does needs both, and the view is
+/// shared rather than copied into the map: see `crate::template::Vars`.
+#[derive(Debug, Clone, Default)]
+pub struct HostVars {
+    pub map: Map<String, Value>,
+    pub hostvars: Arc<Map<String, Value>>,
+}
+
+impl std::ops::Deref for HostVars {
+    type Target = Map<String, Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl std::ops::DerefMut for HostVars {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.map
+    }
+}
+
+impl<'a> From<&'a HostVars> for Vars<'a> {
+    fn from(vars: &'a HostVars) -> Self {
+        Vars {
+            map: &vars.map,
+            hostvars: Some(&vars.hostvars),
+        }
+    }
+}
 
 /// What a play and a task contribute on top of inventory-level sources.
 #[derive(Debug, Default, Clone)]
@@ -58,7 +92,10 @@ pub struct VarStore {
     forks: usize,
     /// Every inventory host's view, as `hostvars` shows it. Built on demand and dropped
     /// whenever something below it changes, which only a fact or a rebase does.
-    hostvars: Option<Map<String, Value>>,
+    hostvars: Option<Arc<Map<String, Value>>>,
+    /// The same view completed with a host the inventory does not carry - an implicit
+    /// `localhost` - one map per such host. There is normally at most one of them in a run.
+    hostvars_with: BTreeMap<String, Arc<Map<String, Value>>>,
 }
 
 /// The value Ansible substitutes for `omit`: a parameter equal to it is dropped from the task.
@@ -126,13 +163,14 @@ impl VarStore {
             extra,
             forks: crate::config::DEFAULT_FORKS,
             hostvars: None,
+            hostvars_with: BTreeMap::new(),
         })
     }
 
     /// What `ansible_forks` reports for this run.
     pub fn set_forks(&mut self, forks: usize) {
         self.forks = forks;
-        self.hostvars = None;
+        self.forget_hostvars();
     }
 
     pub fn playbook_dir(&self) -> &Path {
@@ -145,7 +183,7 @@ impl VarStore {
         self.group_files[1] = load_vars_dir(&playbook_dir.join("group_vars"))?;
         self.host_files[1] = load_vars_dir(&playbook_dir.join("host_vars"))?;
         self.playbook_dir = playbook_dir.to_path_buf();
-        self.hostvars = None;
+        self.forget_hostvars();
         Ok(())
     }
 
@@ -154,7 +192,7 @@ impl VarStore {
             .entry(host.to_string())
             .or_default()
             .insert(key.to_string(), value);
-        self.hostvars = None;
+        self.forget_hostvars();
     }
 
     /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
@@ -251,26 +289,47 @@ impl VarStore {
         base
     }
 
-    fn hostvars(&mut self) -> &Map<String, Value> {
-        if self.hostvars.is_none() {
-            let names = self.groups["all"].clone();
-            let mut map = Map::new();
-            for name in names {
-                let view = self.host_view(&name);
-                map.insert(name, Value::Object(view));
-            }
-            self.hostvars = Some(map);
-        }
-        self.hostvars.as_ref().expect("just built")
+    fn forget_hostvars(&mut self) {
+        self.hostvars = None;
+        self.hostvars_with.clear();
     }
 
-    fn add_magic(&mut self, vars: &mut Map<String, Value>, host: &str, scope: &Scope) {
-        let mut hostvars = self.hostvars().clone();
-        if !hostvars.contains_key(host) {
-            // An implicit localhost is in no group, so it is not in the cached map.
-            let view = self.host_view(host);
-            hostvars.insert(host.to_string(), Value::Object(view));
+    /// The `hostvars` view every host of this run renders against, as one shared map: templates
+    /// read a host out of it rather than carrying a copy of it.
+    ///
+    /// `host` is the host about to render. An implicit `localhost` belongs to no group, so it is
+    /// not in the inventory-wide map, and `hostvars[inventory_hostname]` has to answer for it
+    /// all the same: such a host gets its own completed map, kept beside the shared one.
+    pub fn hostvars_shared(&mut self, host: &str) -> Arc<Map<String, Value>> {
+        let base = match &self.hostvars {
+            Some(base) => Arc::clone(base),
+            None => {
+                let names = self.groups["all"].clone();
+                let mut map = Map::new();
+                for name in names {
+                    let view = self.host_view(&name);
+                    map.insert(name, Value::Object(view));
+                }
+                let base = Arc::new(map);
+                self.hostvars = Some(Arc::clone(&base));
+                base
+            }
+        };
+        if base.contains_key(host) {
+            return base;
         }
+        if let Some(completed) = self.hostvars_with.get(host) {
+            return Arc::clone(completed);
+        }
+        let mut map = (*base).clone();
+        map.insert(host.to_string(), Value::Object(self.host_view(host)));
+        let completed = Arc::new(map);
+        self.hostvars_with
+            .insert(host.to_string(), Arc::clone(&completed));
+        completed
+    }
+
+    fn add_magic(&self, vars: &mut Map<String, Value>, host: &str, scope: &Scope) {
         let short = short_name(host);
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
         vars.insert(
@@ -286,7 +345,6 @@ impl VarStore {
             "groups".to_string(),
             serde_json::to_value(&self.groups).unwrap_or_default(),
         );
-        vars.insert("hostvars".to_string(), Value::Object(hostvars));
         vars.insert(
             "ansible_play_hosts".to_string(),
             serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
@@ -694,15 +752,9 @@ mod tests {
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
         assert_eq!(v["group_names"], json!(["web"]));
         assert_eq!(v["groups"]["web"], json!(["web1"]));
-        assert_eq!(v["hostvars"]["web1"]["tier"], json!("ini"));
         assert!(
-            v["hostvars"]["web1"].get("hostvars").is_none(),
-            "hostvars does not nest"
-        );
-        assert_eq!(
-            v["hostvars"]["web1"]["inventory_hostname"],
-            json!("web1"),
-            "the reference exposes a host's own identity through hostvars"
+            v.get("hostvars").is_none(),
+            "hostvars is handed to templates as a shared view, not merged into the map"
         );
         assert_eq!(v["ansible_play_hosts"], json!(["web1"]));
         assert_eq!(v["ansible_play_hosts_all"], json!(["web1"]));
@@ -752,6 +804,47 @@ mod tests {
         assert_eq!(v["ansible_play_batch"], json!(["h2"]));
         assert_eq!(v["play_hosts"], json!(["h2"]));
         assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
+    }
+
+    /// The view `hostvars` reads: one shared map for every host of the inventory, and a
+    /// completed one for a host the inventory does not carry.
+    ///
+    /// What would make this red: a host's own identity dropped from its view, a view that
+    /// nests `hostvars` inside itself, an implicit `localhost` left out of the map it is about
+    /// to render against, or two hosts of the inventory handed two different maps.
+    #[test]
+    fn the_shared_hostvars_view_answers_for_every_host() {
+        let dir = tree();
+        let (_, mut store) = store(&dir);
+        let view = store.hostvars_shared("web1");
+        assert_eq!(view["web1"]["tier"], json!("ini"));
+        assert!(
+            view["web1"].get("hostvars").is_none(),
+            "hostvars does not nest"
+        );
+        assert_eq!(
+            view["web1"]["inventory_hostname"],
+            json!("web1"),
+            "the reference exposes a host's own identity through hostvars"
+        );
+        assert!(
+            Arc::ptr_eq(&view, &store.hostvars_shared("web1")),
+            "the inventory's hosts share one map"
+        );
+        let implicit = store.hostvars_shared("localhost");
+        assert!(
+            !view.contains_key("localhost"),
+            "an implicit localhost is in no group"
+        );
+        assert_eq!(
+            implicit["localhost"]["inventory_hostname"],
+            json!("localhost")
+        );
+        assert_eq!(
+            implicit["web1"]["tier"],
+            json!("ini"),
+            "and it still sees the inventory"
+        );
     }
 
     #[test]

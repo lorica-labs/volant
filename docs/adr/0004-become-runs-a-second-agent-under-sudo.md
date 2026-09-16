@@ -1,6 +1,6 @@
 # `become` runs a second agent under `sudo`
 
-- Status: accepted
+- Status: accepted; the bound on live connections is superseded by [ADR 0005](0005-fork-permits-span-host-local-batches.md)
 - Date: 2026-09-09
 
 ## Context

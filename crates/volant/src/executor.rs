@@ -23,9 +23,9 @@ use crate::inventory::Host;
 use crate::playbook::{Play, PlayTask};
 use crate::render::{Renderer, ansible_json};
 use crate::stats::{Outcome, Stats};
-use crate::template::{Templar, TemplateError};
+use crate::template::{Templar, TemplateError, Vars};
 use crate::transport::{ConnectError, ConnectionDefaults, Escalation, Transport};
-use crate::vars::{Scope, VarStore, load_vars_file, omit_token};
+use crate::vars::{HostVars, Scope, VarStore, load_vars_file, omit_token};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -83,6 +83,15 @@ pub struct Progress {
 /// the play's own live host list. A task whose raw text mentions one of them must not run ahead
 /// of the others, so `linear` puts a boundary in front of it.
 const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
+
+/// Whether the hosts of a play meet in front of this step: one the keyword table declares a
+/// synchronisation point, or one whose text names another host's state. The step loop asks it
+/// twice on the way through an iteration, once to give back a fork permit kept from the batch
+/// before and once to stop and wait for the other hosts. What a batch end asks instead is
+/// whether this driver carries straight on, which is a different question.
+fn is_boundary(task: &PlayTask) -> bool {
+    task.barrier() || reads_across_hosts(task)
+}
 
 /// Whether a task reads across hosts, decided once per play from its unrendered text.
 fn reads_across_hosts(task: &PlayTask) -> bool {
@@ -1153,7 +1162,7 @@ fn remove_omit(value: &mut Value) {
 fn become_for(
     task: &PlayTask,
     play: &PlayPlan,
-    vars: &Map<String, Value>,
+    vars: &HostVars,
     defaults: &ConnectionDefaults,
     templar: &Templar,
 ) -> Result<Option<Escalation>, TemplateError> {
@@ -1418,7 +1427,7 @@ fn task_name(
 /// The task's own name for the `FAILED - RETRYING` line: templated against `vars`, and never
 /// role-prefixed the way `task_name`'s banner is - measured, the retry line of a task inside a
 /// role carries the task's own name rather than the `role : name` the banner shows.
-fn retry_name(task: &PlayTask, vars: &Map<String, Value>, templar: &Templar) -> String {
+fn retry_name(task: &PlayTask, vars: &HostVars, templar: &Templar) -> String {
     if Templar::is_template(&task.name) {
         templar
             .render(&task.name, vars)
@@ -1449,7 +1458,7 @@ fn host_vars(
     live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
-) -> Map<String, Value> {
+) -> HostVars {
     let compiled = plan.steps();
     let role = role
         .and_then(|i| compiled.roles.get(i))
@@ -1471,8 +1480,18 @@ fn host_vars(
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
-    let raw = store.lock().expect("vars lock").for_host(host, &scope);
-    templar.resolve_vars(&raw)
+    let (raw, hostvars) = {
+        let mut store = store.lock().expect("vars lock");
+        // The shared view first: a variable of this host's own can name `hostvars`, and
+        // `resolve_vars` below has to be able to answer it.
+        let hostvars = store.hostvars_shared(host);
+        (store.for_host(host, &scope), hostvars)
+    };
+    let map = templar.resolve_vars(Vars {
+        map: &raw,
+        hostvars: Some(&hostvars),
+    });
+    HostVars { map, hostvars }
 }
 
 /// A task rendered for one host: what to do with it.
@@ -1503,7 +1522,7 @@ struct Item {
     label: Option<String>,
     args: Map<String, Value>,
     /// Variables in force for this item, for `changed_when`, `failed_when` and local modules.
-    vars: Map<String, Value>,
+    vars: HostVars,
     /// The variables the module runs with, this item's layers merged and rendered. Per item
     /// rather than per task because a layer's values are templates and may name the loop
     /// variable.
@@ -1520,7 +1539,7 @@ struct Item {
 /// what Python's `str()` makes of them - `42` is `"42"`, `true` is `"True"`, `null` is `"None"`.
 fn environment_for(
     task: &PlayTask,
-    vars: &Map<String, Value>,
+    vars: &HostVars,
     templar: &Templar,
 ) -> Result<BTreeMap<String, String>, TemplateError> {
     let mut out = BTreeMap::new();
@@ -1615,7 +1634,8 @@ fn prepare(
                 Value::String(task.loop_var.clone()),
             );
             // Variables naming the loop variable could not resolve before it was bound.
-            vars = templar.resolve_vars(&vars);
+            let resolved = templar.resolve_vars(&vars);
+            vars.map = resolved;
         }
         let label = match (&element, &task.loop_label) {
             (None, _) => None,
@@ -1685,7 +1705,7 @@ fn prepare(
 /// here rather than left to look like the operator's own typo.
 fn delegate_for(
     task: &PlayTask,
-    vars: &Map<String, Value>,
+    vars: &HostVars,
     templar: &Templar,
 ) -> Result<Option<String>, TemplateError> {
     let Some(raw) = &task.delegate_to else {
@@ -2127,7 +2147,7 @@ fn apply_conditions(
 
 fn all_hold(
     conditions: &[String],
-    vars: &Map<String, Value>,
+    vars: &HostVars,
     templar: &Templar,
 ) -> Result<bool, TemplateError> {
     for c in conditions {
@@ -2290,7 +2310,7 @@ fn retry_plan(
     item: Option<&Item>,
     templar: &Templar,
 ) -> Result<Option<Retry>, TemplateError> {
-    let empty = Map::new();
+    let empty = HostVars::default();
     let vars = item.map(|i| &i.vars).unwrap_or(&empty);
     let number = |raw: &Value, keyword: &str| -> Result<f64, TemplateError> {
         let rendered = templar.render_value(raw, vars)?;
@@ -2697,6 +2717,26 @@ async fn drive_host(
             }
             let step = &c.steps[pos];
             let task = &step.task;
+            // A permit kept from the batch before goes back here, in front of every wait this
+            // loop can reach: the boundary it stops at, a splice point it has to see grow, and
+            // a step whose successor sits behind one, which is where `advance` waits. A permit
+            // held across any of them is one the hosts that have to reach that same point
+            // cannot have, and with `-f` under the number of live hosts none of them ever
+            // would. The batch being empty is what says this is the kept permit rather than the
+            // one this batch is working under: no wait is reached with a batch in hand.
+            if batch.is_empty()
+                && permit.is_some()
+                && (is_boundary(task)
+                    || crate::compile::is_splice_point(&step.kind)
+                    || steps_over_a_splice_point(&c, pos, cleanup))
+            {
+                permit = None;
+                for key in escalated_links(&links) {
+                    if let Some(link) = links.remove(&key) {
+                        tokio::spawn(link.shutdown());
+                    }
+                }
+            }
             // A step an include spliced in for other hosts. This host reports it and shows
             // nothing, exactly as it does for a handler it never notified: the coordinator's
             // barriers open on hosts that have passed a step, not on hosts that had a reason to
@@ -2754,7 +2794,7 @@ async fn drive_host(
             // election below has to be unanimous: two hosts reading `live_hosts` at two
             // different moments could otherwise elect two different runners for one step, and
             // both of them would run it.
-            if (task.barrier() || reads_across_hosts(task)) && pos > 0 {
+            if is_boundary(task) && pos > 0 {
                 if !batch.is_empty() {
                     break;
                 }
@@ -3707,10 +3747,24 @@ async fn drive_host(
             // Closed off-task rather than awaited here: `shutdown` gives its own agent up to
             // two seconds, and a driver paying that between batches would serialise exactly
             // what releasing the permit just freed.
-            permit = None;
-            for key in escalated_links(&links) {
-                if let Some(link) = links.remove(&key) {
-                    tokio::spawn(link.shutdown());
+            //
+            // Both stay with this driver while the next step needs nobody else. A `register` or
+            // a `changed_when` ends a batch for a reason internal to this host, and handing the
+            // escalated agent back at every one of them cost one `sudo` and one probe per
+            // registered task - measured, six escalations for a play of six. They go back
+            // before every wait on the other hosts, because a permit held across one is a
+            // permit the hosts that have to reach that same point cannot have, and with `-f`
+            // under the number of live hosts none of them ever would. Three kinds of wait:
+            // the boundary the step loop stops at, the splice the next `advance` waits for, and
+            // the step held back above, whose own `advance` runs below.
+            let carries_on =
+                failed_at.is_none() && deferred_error.is_none() && undecided.is_none() && pos < n;
+            if !carries_on {
+                permit = None;
+                for key in escalated_links(&links) {
+                    if let Some(link) = links.remove(&key) {
+                        tokio::spawn(link.shutdown());
+                    }
                 }
             }
             match ended {
@@ -4692,6 +4746,14 @@ mod tests {
         }
     }
 
+    /// A host's variables as the render path carries them: the map, and an empty shared view.
+    fn hvars(v: Value) -> HostVars {
+        HostVars {
+            map: vars(v),
+            ..HostVars::default()
+        }
+    }
+
     fn vars(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap_or_default()
     }
@@ -4731,7 +4793,7 @@ mod tests {
                 element: None,
                 label: None,
                 args: Map::new(),
-                vars: Map::new(),
+                vars: HostVars::default(),
                 environment: BTreeMap::new(),
                 skipped: None,
             };
@@ -4787,7 +4849,7 @@ mod tests {
                     "provided_arguments": provided,
                     "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
                 })),
-                vars: vars(host),
+                vars: hvars(host),
                 environment: BTreeMap::new(),
                 skipped: None,
             };
@@ -4856,7 +4918,7 @@ mod tests {
             t.r#become = task_become;
             let mut p = plan();
             p.r#become = play_become;
-            become_for(&t, &p, &vars(host), &defaults(), &templar).unwrap()
+            become_for(&t, &p, &hvars(host), &defaults(), &templar).unwrap()
         };
         assert!(
             escalate(None, Some(true), json!({"ansible_become": false})).is_none(),
@@ -4892,7 +4954,7 @@ mod tests {
         let mut p = plan();
         p.become_user = Some("play".into());
         assert_eq!(
-            become_for(&t, &p, &Map::new(), &defaults(), &templar)
+            become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
                 .unwrap()
                 .unwrap()
                 .user,
@@ -4900,13 +4962,13 @@ mod tests {
         );
         t.become_user = Some("task".into());
         assert_eq!(
-            become_for(&t, &p, &Map::new(), &defaults(), &templar)
+            become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
                 .unwrap()
                 .unwrap()
                 .user,
             "task"
         );
-        let host = vars(json!({"ansible_become_user": "host"}));
+        let host = hvars(json!({"ansible_become_user": "host"}));
         assert_eq!(
             become_for(&t, &p, &host, &defaults(), &templar)
                 .unwrap()
@@ -4919,14 +4981,14 @@ mod tests {
         let mut d = defaults();
         d.r#become = true;
         assert_eq!(
-            become_for(&bare, &plan(), &Map::new(), &d, &templar)
+            become_for(&bare, &plan(), &HostVars::default(), &d, &templar)
                 .unwrap()
                 .unwrap()
                 .user,
             "root",
             "nothing said anywhere means root, as in Ansible"
         );
-        let templated = vars(json!({"ansible_become_user": "{{ who }}", "who": "deploy"}));
+        let templated = hvars(json!({"ansible_become_user": "{{ who }}", "who": "deploy"}));
         assert_eq!(
             become_for(&t, &p, &templated, &defaults(), &templar)
                 .unwrap()
@@ -4950,7 +5012,7 @@ mod tests {
         t.r#become = Some(true);
         t.become_user = Some("{{ item }}".into());
         t.loop_items = Some(json!(["root", "deploy"]));
-        let err = become_for(&t, &plan(), &Map::new(), &defaults(), &templar).unwrap_err();
+        let err = become_for(&t, &plan(), &HostVars::default(), &defaults(), &templar).unwrap_err();
         assert!(
             err.0.contains("become_user") && err.0.contains("per loop item"),
             "{}",
@@ -4968,7 +5030,7 @@ mod tests {
         let err = become_for(
             &t,
             &plan(),
-            &vars(json!({"ansible_become_method": "su"})),
+            &hvars(json!({"ansible_become_method": "su"})),
             &defaults(),
             &templar,
         )
@@ -4982,7 +5044,7 @@ mod tests {
             become_for(
                 &task("command"),
                 &plan(),
-                &vars(json!({"ansible_become_method": "su"})),
+                &hvars(json!({"ansible_become_method": "su"})),
                 &defaults(),
                 &templar,
             )
@@ -4994,14 +5056,21 @@ mod tests {
             become_method: "doas".into(),
             ..defaults()
         };
-        let err = become_for(&t, &plan(), &Map::new(), &d, &templar).unwrap_err();
+        let err = become_for(&t, &plan(), &HostVars::default(), &d, &templar).unwrap_err();
         assert!(
             err.0.contains("doas") && err.0.contains("not supported"),
             "the defaults are refused for an escalating task the startup pass could not see: {}",
             err.0
         );
         assert_eq!(
-            become_for(&task("command"), &plan(), &Map::new(), &d, &templar).unwrap(),
+            become_for(
+                &task("command"),
+                &plan(),
+                &HostVars::default(),
+                &d,
+                &templar
+            )
+            .unwrap(),
             None,
             "and the same defaults leave a task that never escalates alone"
         );
@@ -5112,7 +5181,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
-            vars: Map::new(),
+            vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,
         };

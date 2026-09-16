@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  handlers:
+    - name: the handler
+      debug: msg=handler-ran
+  tasks:
+    - name: notifies the handler
+      command: "true"
+      notify: the handler
+      register: notified
+    - meta: flush_handlers
+    - name: after the flush
+      debug:
+        msg: "after {{ notified.rc }}"

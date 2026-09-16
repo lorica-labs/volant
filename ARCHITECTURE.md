@@ -14,6 +14,14 @@ This document is the map for contributors. It describes the shape of the code, n
 3. The controller opens one connection per host (SSH by default), uploads the agent if it is not cached, and sends batches. Templating happens on the controller; execution happens in the agent.
 4. Results stream back task by task. The controller applies `register`, `set_fact`, `changed_when`, `failed_when`, queues handlers and renders output.
 
+## Compiling a play into steps
+
+A play is written as a tree and run as a sequence, so it is flattened once, before the first connection. `pre_tasks`, the roles, `tasks` and `post_tasks` become one numbered list of steps, with a handler flush point behind each of the three sections that laid a step out. What the tree said about grouping survives as a span per block plus the section each step sits in, and a jump table over those spans decides where a host goes after a step succeeds, after it fails, and after it is stepped over. Every host walks the same numbered list, so the coordinator can talk about step 7 to all of them at once.
+
+The dangerous half of a flattening is the step nobody runs, since an index skipped quietly is a run that reports success having done less than the playbook asked for. Nothing in the compiler invents an index, and the driver tells the coordinator about every index it steps over, so a step left out is one the recap can still account for.
+
+Two kinds of step have successors nobody knows at compile time: a handler flush, which depends on what the run notified, and a dynamic include, whose file is named by variables the host has not rendered yet. Both are splice points. The splice inserts the new steps where the statement stood and grows the spans that already covered it, and the coordinator publishes a splice at every splice point, an empty one included. A host waits there until that publication arrives, because a host that walks past an insert holds an index the insert has moved, and the step behind it then runs twice.
+
 ## Reaching a host over SSH
 
 1. One `ssh` call asks the cached agent for its version, or reports the machine architecture and a bootstrap exit code saying what is missing.
@@ -30,6 +38,10 @@ This document is the map for contributors. It describes the shape of the code, n
 - `crates/volant/src/vars.rs`: variable sources and Ansible's precedence, plus the magic variables.
 - `crates/volant/src/template/`: the Jinja2 templar, its Ansible filters, tests and lookups.
 - `crates/volant/src/transport.rs`, `agent.rs`: reaching a host and talking to its agent.
+- `crates/volant/src/keywords.rs`: every keyword ansible-core knows, and whether this release runs it or refuses it. `docs/src/keywords.md` is generated from it.
+- `crates/volant/src/preflight.rs`: what a run refuses before it touches a host.
+- `crates/volant/src/compile.rs`, `roles.rs`: a play flattened into steps, and the roles spliced into them.
+- `crates/volant/src/listing.rs`: `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`.
 - `crates/volant/src/executor.rs`: the linear strategy and the task-by-task coordinator.
 - `crates/volant/src/render.rs`, `stats.rs`: console output, recap, exit codes.
 - `crates/volant-agent/src/runner.rs`: batch execution. `modules/`: native modules.

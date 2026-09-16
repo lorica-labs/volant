@@ -63,6 +63,10 @@ wins over the file, and a command-line flag wins over both.
 | `become_user` | `privilege_escalation` | `ANSIBLE_BECOME_USER` | `--become-user` | `root` |
 | `become_method` | `privilege_escalation` | `ANSIBLE_BECOME_METHOD` | `--become-method` | `sudo` |
 
+A configuration file that is there and cannot be read is ignored, and the run goes on with the
+defaults. Volant prints a warning first, which the reference does not: a file you wrote and the
+process cannot open is worth a line, and a warning changes no exit code.
+
 `timeout` becomes `ConnectTimeout` on the `ssh` command line. With `host_key_checking` off,
 `StrictHostKeyChecking=no` and `UserKnownHostsFile=/dev/null` are added, so an unknown key is
 accepted and not written anywhere; with it on, an unknown key refuses the host.
@@ -116,6 +120,10 @@ once; a second failure reports the host unreachable.
 Escalation adds a link rather than replacing one: a host that escalates holds two, one for the
 user it escalates to and one for the account you log in as. The second one is the link that
 stays: it is held from the play that first reached the host to the recap.
+
+`delegate_to` adds links the same way. A delegated task runs on the delegate's own link, under
+the delegate's connection settings, so a host driving a play that delegates to three other hosts
+holds those three links alongside its own.
 
 An escalated link outlives the batch that opened it. Batches end more often than the word
 suggests, since a task carrying `register`, `loop`, `changed_when` or `failed_when` ends the one
@@ -203,3 +211,5 @@ at load time.
 - `become_method` other than `sudo`; `ansible_become_flags` and `become_exe`.
 - SSH passwords (`-k`, `ansible_password`).
 - Windows and network devices.
+
+[Keywords](keywords.md) is the full list, generated from the tables the run itself reads.

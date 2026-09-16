@@ -40,6 +40,10 @@ test:
 docs-modules:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant-protocol the_documentation_table_matches_the_registry
 
+# Regenerate docs/src/keywords.md from the keyword tables
+docs-keywords:
+    VOLANT_UPDATE_DOCS=1 cargo test -p volant the_keyword_page_matches_the_tables
+
 # Run the CI workflow locally (needs Docker)
 ci-local:
     gh act pull_request -W .github/workflows/ci.yml

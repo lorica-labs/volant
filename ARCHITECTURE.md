@@ -4,8 +4,8 @@ This document is the map for contributors. It describes the shape of the code, n
 
 ## Two binaries
 
-- `crates/volant`: the controller. It reads `ansible.cfg`, inventories, playbooks, roles and collections, resolves variables, renders templates, compiles each play into batches of tasks per host, and talks to agents.
-- `crates/volant-agent`: a static binary uploaded once per managed host and cached there. It receives batches of tasks, runs them, and streams results back. It contains the native modules, the facts collector, and a supervisor for a warm Python interpreter that runs unmodified Ansible modules.
+- `crates/volant`: the controller. It reads `ansible.cfg`, inventories, playbooks and roles, resolves variables, renders templates, compiles each play into batches of tasks per host, and talks to agents.
+- `crates/volant-agent`: a static binary uploaded once per managed host and cached there. It receives batches of tasks, runs them, and streams results back. It contains the native modules and nothing else yet.
 
 ## How a playbook runs
 

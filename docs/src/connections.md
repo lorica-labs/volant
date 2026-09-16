@@ -161,7 +161,8 @@ below decides, and tasks that do not escalate keep using the unprivileged agent.
 [ADR 0004](https://github.com/lorica-labs/volant/blob/main/docs/adr/0004-become-runs-a-second-agent-under-sudo.md)
 for why it works this way.
 
-The `become`, `become_user` and `become_method` keywords are accepted on a play and on a task.
+The `become`, `become_user` and `become_method` keywords are accepted on a play, a block and a
+task (see [Keywords](keywords.md)).
 Precedence, measured against the reference: a host's `ansible_become` and `ansible_become_user`
 variables beat both keywords in either direction, the task keyword beats the play keyword, and
 the configuration defaults speak last.
@@ -206,7 +207,9 @@ at load time.
 
 - Collections. Roles load from the standard search paths; a collection does not.
 - Python modules: only the [native modules](modules.md) run.
-- Facts. `gather_facts` is accepted and warns; no `ansible_*` fact is ever defined.
+- Facts. `gather_facts` is accepted and warns; no `ansible_*` fact is ever defined, other than
+  `ansible_failed_task` and `ansible_failed_result`, which a `rescue` sets on the host that
+  failed (see [Variables](variables.md)).
 - `local_action`: refused by name. `delegate_to: localhost` does the same job and runs.
 - `become_method` other than `sudo`; `ansible_become_flags` and `become_exe`.
 - SSH passwords (`-k`, `ansible_password`).

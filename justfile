@@ -34,7 +34,7 @@ lint:
     zizmor .github/workflows
 
 test:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --no-fail-fast
 
 # Regenerate docs/src/modules.md from the module registry
 docs-modules:

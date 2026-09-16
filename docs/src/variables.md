@@ -2,16 +2,22 @@
 
 ## Sources, lowest precedence first
 
-1. `group_vars/all` (inventory directory, then playbook directory)
-2. Inventory group variables, applied by group depth and name
-3. `group_vars/<group>` (inventory directory, then playbook directory)
-4. Inventory host variables
-5. `host_vars/<host>` (inventory directory, then playbook directory)
-6. Play `vars`
-7. Play `vars_files`
-8. Task `vars`
-9. Facts set by `register` and `set_fact`
-10. `--extra-vars`
+1. A role's `defaults/main.yml`
+2. `group_vars/all` (inventory directory, then playbook directory)
+3. Inventory group variables, applied by group depth and name
+4. `group_vars/<group>` (inventory directory, then playbook directory)
+5. Inventory host variables
+6. `host_vars/<host>` (inventory directory, then playbook directory)
+7. Play `vars`
+8. Play `vars_files`
+9. A role's `vars/main.yml`
+10. Task `vars`
+11. Facts set by `register` and `set_fact`
+12. A role's parameters (a free key on a role entry)
+13. `--extra-vars`
+
+See [Roles](playbooks.md#roles) for where the three role layers come from and how they differ
+from each other.
 
 A fixed set of magic variables is added on top of every host's view and always wins: `inventory_hostname`, `inventory_hostname_short`, `group_names`, `groups`, `hostvars`, `ansible_play_hosts`, `ansible_play_hosts_all`, `ansible_play_batch`, the deprecated `play_hosts`, `playbook_dir`, `inventory_dir`, `inventory_file`, `omit`, `ansible_check_mode`, `ansible_diff_mode`, `ansible_forks`, `ansible_version` and `volant_version` (see [ADR 0003](https://github.com/lorica-labs/volant/blob/main/docs/adr/0003-ansible-version-reports-the-reference-release.md)).
 

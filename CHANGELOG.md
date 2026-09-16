@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) - 2026-09-16
+
+### Added
+
+- *(controller)* run plays in serial batches and stop when one fails ([#108](https://github.com/lorica-labs/volant/pull/108))
+- *(controller)* retry with until, censor no_log, pass environment ([#107](https://github.com/lorica-labs/volant/pull/107))
+- *(controller)* run notified handlers at every flush point ([#105](https://github.com/lorica-labs/volant/pull/105))
+- *(controller)* run rescue and always, set ansible_failed_* ([#104](https://github.com/lorica-labs/volant/pull/104))
+- *(controller)* select tasks by tag and list them like the reference ([#103](https://github.com/lorica-labs/volant/pull/103))
+- *(controller)* load roles from the standard paths and import tasks ([#102](https://github.com/lorica-labs/volant/pull/102))
+- *(controller)* compile plays into flat steps with block spans ([#101](https://github.com/lorica-labs/volant/pull/101))
+- *(controller)* load the whole grammar, refuse before connecting ([#98](https://github.com/lorica-labs/volant/pull/98))
+
 ## [0.1.0-alpha.4](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) - 2026-09-09
 
 ### Added

@@ -4976,6 +4976,70 @@ fn a_run_once_include_is_read_for_the_elected_host_alone() {
     );
 }
 
+/// A `run_once` step's runner is elected among the hosts the step's mask includes, and every
+/// other host of the batch waits for it - the ones the mask leaves out as well.
+///
+/// Three hosts and two plays, each with an `include_tasks` a `when` keeps one host out of and a
+/// `run_once` task inside whose registered value the next task reads. The first play leaves out
+/// h2, so the first live host is inside the mask; the second leaves out h1, so it is not.
+///
+/// Measured on ansible-core 2.19.12. First play: `skipping: [h2]`, `changed: [h1]` alone under
+/// the `run_once` banner, both h1 and h3 reading `once on ...` back, all three running `after`,
+/// recap `h1 ok=4 changed=1`, `h2 ok=1 skipped=1`, `h3 ok=3`. Second play: `skipping: [h1]`,
+/// **`changed: [h2]`** - the first host the mask holds, not the first live host - h2 and h3
+/// reading `twice on ...`, recap `h1 ok=1 skipped=1`, `h2 ok=4 changed=1`, `h3 ok=3`.
+///
+/// What would make this red, in the first play: a host outside the mask reporting the step
+/// instead of waiting for the verdict, which releases h3 before h1 has run anything, so h3
+/// reads a register that does not exist yet - `fatal: [h3]` on an undefined variable. In the
+/// second play: the runner elected from the whole live set, which hands the step to h1, a host
+/// that runs nothing - so nobody runs it and both waiting hosts read the same undefined
+/// register.
+#[test]
+fn a_run_once_runner_is_elected_inside_the_steps_mask() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/run-once-masked.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("skipping: [h2]"), "{text}");
+    assert!(text.contains("skipping: [h1]"), "{text}");
+    assert!(text.contains(r#""msg": "once on h1""#), "{text}");
+    assert!(text.contains(r#""msg": "once on h3""#), "{text}");
+    assert!(!text.contains("once on h2"), "{text}");
+    assert!(text.contains(r#""msg": "twice on h2""#), "{text}");
+    assert!(text.contains(r#""msg": "twice on h3""#), "{text}");
+    assert!(!text.contains("twice on h1"), "{text}");
+    for host in ["h1", "h2", "h3"] {
+        assert!(
+            text.contains(&format!(r#""msg": "after on {host}""#)),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(r#""msg": "after again on {host}""#)),
+            "{text}"
+        );
+    }
+    assert!(
+        text.contains("h1                         : ok=5    changed=1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=5    changed=1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h3                         : ok=6    changed=0"),
+        "{text}"
+    );
+}
+
 /// A delegate nothing can reach takes the **delegating** host out of the run, and the line
 /// carries the arrow.
 ///

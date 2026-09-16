@@ -261,6 +261,11 @@ impl PlayTask {
     /// keyword's properties are declared, and a second list of barrier keywords beside it would
     /// be a second thing to keep in step. The textual scan over `hostvars` and the play's host
     /// lists is the executor's own half of the same question and catches what no keyword spells.
+    ///
+    /// The name is spelled here because a task carries its keywords as fields and not as a list
+    /// of names to walk, so this can only ask about the ones it knows. What keeps that honest is
+    /// `keywords::tests::run_once_is_the_only_barrier_keyword`: a second row marked `barrier`
+    /// would look declared and be ignored here, and that test refuses one.
     pub fn barrier(&self) -> bool {
         self.runs_once() && crate::keywords::is_barrier("run_once")
     }

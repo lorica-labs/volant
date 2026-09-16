@@ -1,0 +1,19 @@
+- hosts: h1,h2,h3
+  gather_facts: false
+  tasks:
+    - name: an include two of three hosts ask for
+      include_tasks: run-once-masked-inc.yml
+      when: inventory_hostname != 'h2'
+    - name: after
+      debug:
+        msg: "after on {{ inventory_hostname }}"
+
+- hosts: h1,h2,h3
+  gather_facts: false
+  tasks:
+    - name: an include the first host is kept out of
+      include_tasks: run-once-masked-inc2.yml
+      when: inventory_hostname != 'h1'
+    - name: after again
+      debug:
+        msg: "after again on {{ inventory_hostname }}"

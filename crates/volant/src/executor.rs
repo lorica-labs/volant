@@ -624,11 +624,19 @@ async fn run_batch(
                         // waits for this entry before it sends its own - so `or_insert` keeps
                         // the verdict of the one that ran the task and not the silence of the
                         // ones that did not.
-                        if plan
-                            .steps()
-                            .steps
-                            .get(index)
-                            .is_some_and(|s| s.task.runs_once())
+                        //
+                        // A host that has already failed is the one exception to that order: it
+                        // is out of the live set, so it was never a candidate for the election,
+                        // and under `force_handlers` it walks the rest of the play reporting
+                        // every step it passes on its way to its handlers. Its report is not a
+                        // verdict, and taking it as one would release the waiting hosts before
+                        // the runner had run.
+                        if !state.failed_hosts.contains(&host)
+                            && plan
+                                .steps()
+                                .steps
+                                .get(index)
+                                .is_some_and(|s| s.task.runs_once())
                         {
                             run_once.entry(index).or_insert(false);
                         }
@@ -844,11 +852,14 @@ async fn run_batch(
             }
             Event::TaskDone { host, index } => {
                 finished(&mut done, &mut frontier, &host, index);
-                if plan
-                    .steps()
-                    .steps
-                    .get(index)
-                    .is_some_and(|s| s.task.runs_once())
+                // A host already in `failed_hosts` is walking the rest of the play for its
+                // handlers alone; its report is not a verdict, the same way it is not one above.
+                if !state.failed_hosts.contains(&host)
+                    && plan
+                        .steps()
+                        .steps
+                        .get(index)
+                        .is_some_and(|s| s.task.runs_once())
                 {
                     run_once.entry(index).or_insert(false);
                 }
@@ -1685,7 +1696,7 @@ fn delegate_for(
             .render(raw, vars)
             .map_err(|err| {
                 let hint = if task.loop_items.is_some() && raw.contains(&task.loop_var) {
-                    ". A 'delegate_to' that changes per loop item is not supported yet: one                      batch runs over one link"
+                    ". A 'delegate_to' that changes per loop item is not supported yet: one batch runs over one link"
                         .to_string()
                 } else {
                     String::new()
@@ -2776,17 +2787,39 @@ async fn drive_host(
                     }
                 }
             }
-            // Who runs a `run_once` step: the first live host of the batch, in inventory order.
-            // Every other host of the batch reads what it produced and runs nothing. Measured on
-            // ansible-core 2.19.12: `changed: [h1]` alone under the banner, the registered
-            // variable and the facts readable on h2 as well, and h2 counting no `ok` for it. With
-            // `serial` each batch elects its own, which falls out of `live_hosts` being the
-            // batch's list and not the play's.
-            let runner = progress.borrow().live_hosts.first().cloned();
-            let follower = task.runs_once()
-                && !masked_out
-                && !handlers_only
-                && runner.as_deref().is_some_and(|h| h != name);
+            // Who runs a `run_once` step: the first live host of the batch **the step's mask
+            // includes**, in inventory order. Every other host of the batch reads what it
+            // produced and runs nothing. Measured on ansible-core 2.19.12: `changed: [h1]` alone
+            // under the banner, the registered variable and the facts readable on h2 as well, and
+            // h2 counting no `ok` for it. With `serial` each batch elects its own, which falls
+            // out of `live_hosts` being the batch's list and not the play's. Measured again with
+            // an include a `when` kept one of three hosts out of: the two the mask holds both
+            // read the registered value back, and the third runs only what follows.
+            //
+            // The mask is part of the election and not a filter after it. Elected off the whole
+            // live set, the runner could be a host the mask leaves out - which runs nothing, so
+            // nobody runs the step - and every host outside the mask would report the step
+            // straight away, publishing the verdict before the runner had run. The hosts waiting
+            // on it then read a registered variable that does not exist yet.
+            //
+            // The unanimity this election needs is what
+            // `executor::tests::a_boundary_is_either_declared_by_a_keyword_or_found_in_the_text`
+            // guards, over the table rather than over a run: the barrier above is what makes two
+            // hosts read one live host list, and without it they can elect two runners and run
+            // the task twice.
+            let runner = {
+                let p = progress.borrow();
+                p.live_hosts
+                    .iter()
+                    .find(|h| {
+                        step.hosts
+                            .as_ref()
+                            .is_none_or(|only| only.iter().any(|m| m == *h))
+                    })
+                    .cloned()
+            };
+            let follower =
+                task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind. This one line is what makes a handler run
             // once per notification: every index the flush was asked for goes, whether or not
             // the flush reached it. Measured on ansible-core 2.19.12, both halves - `first
@@ -2982,7 +3015,11 @@ async fn drive_host(
             // on purpose: both of those are splice points, and a host outside the mask still has
             // to report them and wait for the coordinator rather than walk past a list that is
             // about to grow.
-            if masked_out {
+            //
+            // A `run_once` step is the exception and takes the follower arm below instead: the
+            // runner is elected inside the mask, so this host is not it, and reporting the step
+            // here would publish the verdict for the hosts waiting on a runner that has not run.
+            if masked_out && !follower {
                 if !batch.is_empty() {
                     break;
                 }
@@ -3016,7 +3053,9 @@ async fn drive_host(
             //
             // The include and flush arms above are not reached through here on purpose: a
             // follower still reports those and still waits for the splice, it just asks for
-            // nothing. This arm is for every other step.
+            // nothing. This arm is for every other step, a host the step's mask leaves out
+            // included: it has nothing to run either, and nothing to report until the runner has
+            // spoken.
             if follower {
                 if !batch.is_empty() {
                     break;
@@ -3784,6 +3823,12 @@ async fn drive_host(
     // driver also handed one back would leave two entries racing for the same key, and the one
     // that won would be a connection opened with another host's fork permit. The escalated
     // delegated links are already closed with each batch's permit; these are the rest.
+    //
+    // Awaited rather than spawned and forgotten: at the end of the last play the runtime can be
+    // dropped before a detached task ever runs, which would leave the agent on the delegate
+    // waiting on a connection nobody closes. `keep_links` awaits its own `JoinSet` for the same
+    // reason, and this is the same shape.
+    let mut closing = tokio::task::JoinSet::new();
     for key in links
         .keys()
         .filter(|k| k.host != name)
@@ -3791,9 +3836,10 @@ async fn drive_host(
         .collect::<Vec<_>>()
     {
         if let Some(link) = links.remove(&key) {
-            tokio::spawn(link.shutdown());
+            closing.spawn(link.shutdown());
         }
     }
+    while closing.join_next().await.is_some() {}
     // The healthy connection to the host itself outlives the play; `keep_links` decides which
     // of these that is and closes the rest. The run closes what is left once, before the recap.
     let _ = tx

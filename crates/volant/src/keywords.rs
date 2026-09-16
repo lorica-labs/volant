@@ -558,4 +558,34 @@ mod tests {
             assert!(block_keyword(section).is_some(), "{section}");
         }
     }
+
+    /// `run_once` is the only keyword any table declares a barrier.
+    ///
+    /// A task record carries its keywords as typed fields, not as a list of names to walk, so
+    /// `PlayTask::barrier` asks the table for the one name it knows how to read. A second row
+    /// marked `barrier` would look declared and be silently ignored - the keyword accepted and
+    /// then not honoured, which is the failure family this crate hunts. So the tables hold one.
+    ///
+    /// What would make this red: `barrier_kw` used for a second keyword. Whoever adds it has to
+    /// teach `PlayTask::barrier` to ask for it in the same commit.
+    #[test]
+    fn run_once_is_the_only_barrier_keyword() {
+        let declared: Vec<&str> = [
+            TASK_KEYWORDS,
+            PLAY_KEYWORDS,
+            LOOP_CONTROL_KEYWORDS,
+            BLOCK_KEYWORDS,
+            HANDLER_KEYWORDS,
+        ]
+        .iter()
+        .flat_map(|table| table.iter())
+        .filter(|k| k.barrier)
+        .map(|k| k.name)
+        .collect();
+        assert!(!declared.is_empty());
+        assert!(
+            declared.iter().all(|name| *name == "run_once"),
+            "{declared:?}"
+        );
+    }
 }

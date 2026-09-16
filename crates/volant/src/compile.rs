@@ -1003,9 +1003,10 @@ fn unknown_options(
 /// The role one `import_role` task names, read out of its arguments.
 fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
     // Measured: the reference takes these nine and refuses anything else. The last three name
-    // work this release does not do - `public` exports nothing of its own, nothing dedups an
-    // `import_role`, and the argument-spec check has no off switch - so they are refused rather
-    // than accepted and forgotten.
+    // work this release does not do - nothing dedups an `import_role`, the argument-spec check
+    // has no off switch, and `public` exports nothing of its own - so they are refused rather
+    // than accepted and forgotten. `public` is refused by value and not by presence: see
+    // `refuse_public`.
     unknown_options(
         "import_role",
         &task.args,
@@ -1020,8 +1021,9 @@ fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
             "allow_duplicates",
             "rolespec_validate",
         ],
-        &["public", "allow_duplicates", "rolespec_validate"],
+        &["allow_duplicates", "rolespec_validate"],
     )?;
+    refuse_public("import_role", &task.args)?;
     let text = |key: &str| task.args.get(key).and_then(Value::as_str);
     let name = text("name")
         .or_else(|| text("role"))
@@ -1342,7 +1344,8 @@ pub(crate) fn include_role_entry(args: &Map<String, Value>) -> anyhow::Result<Ro
 /// include, where the default `public: false` keeps them to the role's own tasks - so honouring it
 /// would mean changing the play's variable layers while hosts stand at different steps of it.
 /// Refused by name, the way `import_role` refuses the same three, rather than accepted and
-/// dropped.
+/// dropped - but by value for `public`, whose false is what this release does. See
+/// `refuse_public`.
 fn include_role_options(args: &Map<String, Value>) -> anyhow::Result<()> {
     unknown_options(
         "include_role",
@@ -1359,8 +1362,28 @@ fn include_role_options(args: &Map<String, Value>) -> anyhow::Result<()> {
             "rolespec_validate",
             "apply",
         ],
-        &["public", "allow_duplicates", "rolespec_validate", "apply"],
-    )
+        &["allow_duplicates", "rolespec_validate", "apply"],
+    )?;
+    refuse_public("include_role", args)
+}
+
+/// `public` is the one refusable argument whose **false** is what this release already does.
+///
+/// The others name work that is missing: nothing dedups a role, the argument-spec check has no
+/// off switch, and there is no layer to apply keywords through, so writing any of them at all is
+/// asking for something that will not happen. `public: false` asks for the role's `defaults` and
+/// `vars` to stay behind the include, which is exactly what happens here - refusing it by
+/// presence turns a statement that asks for the engine's own behaviour into an error.
+///
+/// Anything that is not a spelled-out false is refused, a template included: what `public` will
+/// be worth is not known where this runs, and the safe answer for an export this release cannot
+/// do is to say so rather than to guess.
+fn refuse_public(statement: &str, args: &Map<String, Value>) -> anyhow::Result<()> {
+    match args.get("public") {
+        None => Ok(()),
+        Some(value) if crate::executor::as_bool_value(value) == Some(false) => Ok(()),
+        Some(_) => bail!("'{statement}' option 'public' is not supported yet"),
+    }
 }
 
 /// `include_tasks` takes a file name and nothing else. `apply:` puts keywords on everything the
@@ -2692,5 +2715,32 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(names, sorted);
+    }
+
+    /// `public` is judged by what it is worth, not by being written.
+    ///
+    /// Measured on ansible-core 2.19.12: `public: false` is the default and keeps the role's
+    /// `defaults` and `vars` behind the include, which is what this release does whether the
+    /// statement says so or not. Refusing every `public` by presence turned a statement asking
+    /// for the engine's own behaviour into an error at exit 4.
+    ///
+    /// What would make this red: `public: false` refused again, so a real role that spells the
+    /// default out cannot be included at all; or a truthy or unresolved `public` accepted, which
+    /// exports nothing and says nothing about it.
+    #[test]
+    fn public_is_refused_by_value_and_not_by_presence() {
+        let asked = |value: Value| {
+            let mut args = Map::new();
+            args.insert("name".into(), json!("base"));
+            args.insert("public".into(), value);
+            include_role_options(&args)
+        };
+        assert!(asked(json!(false)).is_ok());
+        assert!(asked(json!("no")).is_ok());
+        assert!(asked(json!(true)).is_err());
+        assert!(asked(json!("yes")).is_err());
+        // Not knowing is not the same as being told no: an export this release cannot do is
+        // refused rather than guessed at.
+        assert!(asked(json!("{{ maybe }}")).is_err());
     }
 }

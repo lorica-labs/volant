@@ -632,7 +632,15 @@ async fn run_batch(
                 // host's item order, which is the order the reference prints them in.
                 _ => {
                     let mut arrived = includes.remove(&index).unwrap_or_default();
-                    arrived.sort_by_key(|(host, _)| play_hosts.iter().position(|h| h == host));
+                    // `usize::MAX` rather than `None` for a host the batch does not hold: `None`
+                    // sorts in front of every rank, so a name that is not in `play_hosts` would
+                    // take the first `included:` line instead of the last.
+                    arrived.sort_by_key(|(host, _)| {
+                        play_hosts
+                            .iter()
+                            .position(|h| h == host)
+                            .unwrap_or(usize::MAX)
+                    });
                     let mut order: Vec<String> = Vec::new();
                     let mut grouped: HashMap<String, (IncludeGroup, Vec<String>)> = HashMap::new();
                     for (host, groups) in arrived {
@@ -2360,6 +2368,20 @@ async fn drive_host(
                     else {
                         break 'run;
                     };
+                    // Where the drain stands now, for a host that was already draining an
+                    // `always` when this failure was raised. A rescue written **inside** that
+                    // section leaves the drain where it is - the rest of the cleanup still has
+                    // to run - moved by whatever the splices stepped over on the way added in
+                    // front of its end. Measured: `rest of the always` runs behind a rescued
+                    // block written in a cleanup, and it stops running as soon as an include
+                    // between the failure and that rescue grows the list. A rescue **outside**
+                    // the section ends the drain: the host is rescued, not leaving, and
+                    // `after_pending` asked about a section it has left routes it down the
+                    // failed path instead.
+                    cleanup = match cleanup {
+                        Some(end) if next < end => Some(end + grown),
+                        _ => None,
+                    };
                     pos = next + grown;
                 }
                 // Measured on ansible-core 2.19.12: a task failing inside a nested block runs
@@ -2526,12 +2548,15 @@ async fn drive_host(
                         index: pos,
                     })
                     .await;
+                // `n` is the length of the list this host is walking, read before the word it
+                // just sent could let the coordinator grow it. See `wait_for_splice`.
                 if wait_for_splice(
                     &plan,
                     &mut progress,
                     &mut stop,
                     &mut stop_broken,
                     pos,
+                    n,
                     &mut cleanup,
                 )
                 .await
@@ -2617,6 +2642,7 @@ async fn drive_host(
                     &mut stop,
                     &mut stop_broken,
                     pos,
+                    n,
                     &mut cleanup,
                 )
                 .await
@@ -3564,7 +3590,7 @@ async fn stepped_over(
         skipped(tx, host, from..at + 1).await;
         let before = compiled.steps.len();
         drop(compiled);
-        wait_for_splice(plan, progress, stop, stop_broken, at, &mut None).await?;
+        wait_for_splice(plan, progress, stop, stop_broken, at, before, &mut None).await?;
         grown += plan.steps().steps.len() - before;
         // Back at the splice point's successor, which is now the first of the steps it just grew
         // by. This host steps over those too - they sit in the section the flush or the include
@@ -3582,6 +3608,13 @@ async fn stepped_over(
 /// holds cannot be invalidated by the splice. `cleanup`, the end of the `always` section a host
 /// may be draining, is the one index it carries that sits past `at`, so it moves with the list.
 ///
+/// `before` is how long the list was when the host still owed `at` a `TaskDone`, and the caller
+/// has to read it before sending that word. Reading it here would be a race: the coordinator
+/// publishes the splice as soon as the last host reports the index, so the list can already have
+/// grown by the time this function runs, and the growth would then measure as nothing at all -
+/// leaving `cleanup` where it was and ending the host's drain one step early. Rare, load
+/// dependent, and it reports success while a cleanup step nobody ran goes missing.
+///
 /// `None` when the run was interrupted or the coordinator is gone.
 async fn wait_for_splice(
     plan: &PlayPlan,
@@ -3589,9 +3622,9 @@ async fn wait_for_splice(
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     at: usize,
+    before: usize,
     cleanup: &mut Option<usize>,
 ) -> Option<()> {
-    let before = plan.steps().steps.len();
     loop {
         if *stop.borrow() {
             return None;
@@ -4164,6 +4197,58 @@ mod tests {
 
     fn vars(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap_or_default()
+    }
+
+    /// Every row of `LOCAL_MODULES` has an arm in `run_local` behind it.
+    ///
+    /// Nothing but a name joins the two. The table is what the pre-flight consults, what the
+    /// documentation page is generated from and what decides a task runs on the controller
+    /// rather than on the host; the `match` in `run_local` is what then runs. A row added to the
+    /// table without an arm passes the loader, passes the pre-flight, shows its banner, and only
+    /// then fails on the host that reached it, telling the operator that a module the engine
+    /// advertises is "not a controller-side module". That is this project's most expensive bug
+    /// family - accepted, then silently not done - and it is the same totality property the
+    /// keyword tables carry, one level over.
+    ///
+    /// What would make this red: a name in `LOCAL_MODULES` that falls through to the catch-all
+    /// arm.
+    #[test]
+    fn every_local_module_has_an_arm_in_run_local() {
+        let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
+        let store = Mutex::new(
+            VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+        );
+        let templar = Templar::new(PathBuf::from("."));
+        let step = Step {
+            kind: StepKind::Task,
+            task: PlayTask::empty(),
+            block: None,
+            section: crate::compile::Section::Body,
+            role: None,
+            origin: Arc::new(crate::compile::Origin::default()),
+            include_params: None,
+            hosts: None,
+        };
+        for spec in volant_protocol::modules::LOCAL_MODULES {
+            let item = Item {
+                element: None,
+                label: None,
+                args: Map::new(),
+                vars: Map::new(),
+                environment: BTreeMap::new(),
+                skipped: None,
+            };
+            // Arguments are deliberately empty: what is asserted is that the name is known, not
+            // that the module does its work. A module that needs an argument says so in its own
+            // words, which is not the catch-all's words.
+            let result = run_local(&task(spec.name), &item, &step, "h1", &templar, &store, 0);
+            assert_ne!(
+                result.0.get("msg").and_then(Value::as_str),
+                Some(format!("{} is not a controller-side module", spec.name).as_str()),
+                "{} is in LOCAL_MODULES with no arm in run_local",
+                spec.name
+            );
+        }
     }
 
     /// Each complaint the argument check can make, in the reference's own words and in the order

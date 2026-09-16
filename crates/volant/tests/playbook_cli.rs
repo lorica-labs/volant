@@ -11,17 +11,19 @@ fn fixture(name: &str) -> String {
         .to_string()
 }
 
+/// The deadline a run gets when the test did not name one. Generous, because a test that reaches
+/// it has hung rather than been slow.
+///
+/// What it is for is that the shared spawner has no unbounded form: a fixture becomes blockable
+/// the day it gains an `include_tasks` or a `meta: flush_handlers`, and the test driving it says
+/// nothing about that, so the bound belongs to the spawner rather than to the caller's memory.
+/// The runs that still build their own `Command` are the ones this spawner cannot serve - one
+/// that replaces `PATH` outright rather than prepending to it, one that runs from another
+/// directory, and the two that feed a password on standard input.
+const DEFAULT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
 fn volant(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(args)
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        // The role search path is part of what several of these tests assert, and it is read
-        // from the environment: a machine with `ANSIBLE_ROLES_PATH` exported would redden them
-        // for a reason that has nothing to do with the engine.
-        .env_remove("ANSIBLE_ROLES_PATH")
-        .output()
-        .expect("volant runs")
+    volant_within_with_path(args, DEFAULT_DEADLINE, None, &[])
 }
 
 /// Runs volant and fails if it has not finished within `deadline`. A barrier that never opens
@@ -346,12 +348,11 @@ fn extra_vars_and_limit_apply() {
 
 #[test]
 fn ansible_cfg_supplies_the_inventory_when_none_is_given() {
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &fixture("cfg/site.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_CONFIG", fixture("cfg/ansible.cfg"))
-        .output()
-        .unwrap();
+    let out = volant_within_env(
+        &["playbook", &fixture("cfg/site.yml")],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_CONFIG", &fixture("cfg/ansible.cfg"))],
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
         out.status.code(),
@@ -463,12 +464,11 @@ fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     std::fs::create_dir_all(&dir).unwrap();
     let cfg = dir.join("ansible.cfg");
     std::fs::write(&cfg, b"[defaults]\ninventory = ./hosts.ini\n# \xff\xfe\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &fixture("cfg/site.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_CONFIG", cfg.display().to_string())
-        .output()
-        .unwrap();
+    let out = volant_within_env(
+        &["playbook", &fixture("cfg/site.yml")],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_CONFIG", &cfg.display().to_string())],
+    );
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let err = String::from_utf8_lossy(&out.stderr).to_string();
     assert_eq!(
@@ -699,20 +699,7 @@ fn fake_sudo(name: &str, body: &str) -> std::path::PathBuf {
 }
 
 fn volant_with_path(args: &[&str], dir: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(args)
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .output()
-        .expect("volant runs")
+    volant_within_with_path(args, DEFAULT_DEADLINE, Some(dir), &[])
 }
 
 /// Needs passwordless sudo for the current user, as on the development machine and on the CI
@@ -859,12 +846,11 @@ fn unsupported_become_methods_are_refused_by_name() {
         "nothing runs: {}",
         String::from_utf8_lossy(&out.stdout)
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &fixture("become.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_BECOME_METHOD", "doas")
-        .output()
-        .unwrap();
+    let out = volant_within_env(
+        &["playbook", &fixture("become.yml")],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_BECOME_METHOD", "doas")],
+    );
     assert_eq!(out.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("doas"),
@@ -880,12 +866,11 @@ fn unsupported_become_methods_are_refused_by_name() {
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug:\n        msg: nothing escalates here\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &plain.display().to_string()])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_BECOME_METHOD", "doas")
-        .output()
-        .unwrap();
+    let out = volant_within_env(
+        &["playbook", &plain.display().to_string()],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_BECOME_METHOD", "doas")],
+    );
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -4080,11 +4065,13 @@ fn a_rescue_takes_a_failure_raised_inside_an_include() {
 /// and counts one `skipped`, and both includes bring their file in for both hosts. Recap
 /// `ok=5 skipped=1 rescued=1` for each host, exit 0.
 ///
-/// This is the shape where a splice moves an index a host is already carrying: the end of the
-/// `always` section it is draining sits past the insertion point and has to move with it. What
-/// would make this red: that index left where it was, which drains the wrong steps or walks off
-/// the end of the section; or an include reached with the batch unreported, which is a deadlock
-/// and fails on the deadline rather than on an assertion.
+/// What this proves is that an include is reached from inside a `rescue` and from inside an
+/// `always` that runs behind one. Both hosts are rescued here, so neither is draining anything:
+/// the shape where a splice moves an index a host is already carrying is `draining.yml` below,
+/// and the assertions here cannot speak for it. What would make this red: a splice landing
+/// outside the section the statement sat in, so one of the two `included:` lines never prints;
+/// or an include reached with the batch unreported, which is a deadlock and fails on the
+/// deadline rather than on an assertion.
 #[test]
 fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
     let out = volant_within(
@@ -4117,6 +4104,94 @@ fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
             "{text}"
         );
     }
+}
+
+/// A host draining the `always` of a block nobody rescues reaches an include written in that
+/// section, and the rest of the section still runs behind what the include brought in.
+///
+/// Measured on ansible-core 2.19.12: the body fails, the `always` runs its include and then the
+/// task behind it, the step after the block does not run, and the recap reads
+/// `ok=3 failed=1` at exit 2 for each host - the `include_tasks` statement itself counting one of
+/// those three.
+///
+/// This is the shape where a splice moves an index a host is already carrying, and it is the
+/// only test here that can see it: the end of the `always` section the host is draining sits
+/// past the insertion point, and the driver moves it by however much the list grew. What would
+/// make this red: that index left where it was, which ends the drain one step early -
+/// `second always task` never runs and the recap reads `ok=2`.
+#[test]
+fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/draining.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let dir = fixture("include");
+    assert!(
+        text.contains(&format!("included: {dir}/inc-b.yml for h1, h2")),
+        "{text}"
+    );
+    assert!(text.contains("\"msg\": \"second\""), "{text}");
+    assert!(
+        !text.contains("\"msg\": \"past\""),
+        "the step behind the block is not run for a host on its way out: {text}"
+    );
+    for host in ["h1", "h2"] {
+        assert!(
+            text.contains(&format!(
+                "{host}                         : ok=3    changed=0    unreachable=0    failed=1    skipped=0    rescued=0"
+            )),
+            "{text}"
+        );
+    }
+}
+
+/// A block written inside an `always` a host is draining rescues its own failure, and the host
+/// goes on draining behind it - with an include between the failure and that rescue, so the
+/// list grows while the host holds the index the section ends at.
+///
+/// Measured on ansible-core 2.19.12: `h1` fails the outer body, fails again inside the cleanup's
+/// own block, is taken by that block's `rescue`, and then still runs `rest of the always`;
+/// `past the block` runs for neither host. Recap `h1 ok=2 failed=1 rescued=1` and
+/// `h2 ok=4 failed=1 skipped=1 rescued=0`, exit 2. `h2` skips the failing task and is the host
+/// that asks for the include, which is what makes the list grow under `h1`.
+///
+/// What would make this red: the end of the drained section left where it was while the steps
+/// the include brought in went in front of it. The host then reaches its own cleanup's end one
+/// step early, `rest of the always` never runs for `h1`, and the recap reads `ok=1` - a cleanup
+/// step nobody ran and nothing said so.
+#[test]
+fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/cleanup-rescue.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert_eq!(text.matches("\"msg\": \"rest\"").count(), 2, "{text}");
+    assert!(
+        !text.contains("\"msg\": \"past\""),
+        "both hosts are on their way out of the play: {text}"
+    );
+    assert!(
+        text.contains("h1                         : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=4    changed=0    unreachable=0    failed=1    skipped=1    rescued=0"),
+        "{text}"
+    );
 }
 
 /// A file that includes itself is bounded rather than followed.

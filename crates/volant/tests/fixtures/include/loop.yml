@@ -1,0 +1,2 @@
+- name: include myself
+  include_tasks: loop.yml

@@ -20,7 +20,7 @@
 //! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
 use anyhow::bail;
-use volant_protocol::modules::{import_module, is_builtin, is_known};
+use volant_protocol::modules::{import_module, include_module, is_builtin, is_known};
 
 use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
@@ -196,6 +196,13 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     // second pass over the compiled steps sees. `import_playbook` written as a task is refused
     // there too, with the code the reference measures for it.
     if import_module(&task.module).is_some() {
+        return Ok(());
+    }
+    // The two dynamic statements never reach a host either, and what they name is not known until
+    // the host that reaches them has rendered its own variables - so there is nothing here for
+    // the second pass to walk. What can be checked before the first connection is their
+    // arguments, and the compiler checks those where it turns the statement into a step.
+    if include_module(&task.module).is_some() {
         return Ok(());
     }
     if !is_known(&task.module) {

@@ -1,0 +1,16 @@
+# The three dynamic statements each list as one task nobody expands, whether or not the playbook
+# gave it a name of its own.
+- name: includes play
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: the named include
+      include_tasks: imported.yml
+      tags: [inc]
+    - include_tasks: imported.yml
+    - name: the named role include
+      include_role:
+        name: base
+    - include_role:
+        name: base
+    - include_vars: somevars.yml

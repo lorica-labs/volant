@@ -1,0 +1,13 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - block:
+        - name: fail the body
+          command: nosuchbinary-volant-include
+      always:
+        - name: the always includes
+          include_tasks: inc-b.yml
+        - name: second always task
+          debug: msg=second
+    - name: past the block
+      debug: msg=past

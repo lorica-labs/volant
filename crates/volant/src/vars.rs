@@ -426,6 +426,35 @@ pub fn load_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
     }
 }
 
+/// Every path an `include_vars` naming `name` looks in, in the order it looks.
+///
+/// Measured on ansible-core 2.19.12 by reading the list a missing file prints. From a task inside
+/// a role whose `tasks/` wrote the statement, the six are `<role>/vars/`, `<role>/`,
+/// `<role>/tasks/vars/`, `<role>/tasks/`, `<playbook>/vars/` and `<playbook>/`: three bases, each
+/// with its `vars/` first. From a playbook task the role base is absent and the other two are the
+/// same directory, which is why the reference's own message lists the playbook's two **twice** -
+/// reproduced here rather than deduplicated, because the message is what the operator reads and
+/// the list is the message.
+///
+/// An absolute name short-circuits the walk: it is the one path, and the only one worth naming.
+pub fn include_vars_paths(
+    file_dir: &Path,
+    role_dir: Option<&Path>,
+    playbook_dir: &Path,
+    name: &str,
+) -> Vec<PathBuf> {
+    let named = Path::new(name);
+    if named.is_absolute() {
+        return vec![named.to_path_buf()];
+    }
+    let mut out = Vec::new();
+    for base in role_dir.into_iter().chain([file_dir, playbook_dir]) {
+        out.push(base.join("vars").join(name));
+        out.push(base.join(name));
+    }
+    out
+}
+
 /// `-e` values: `key=value` pairs (strings), inline JSON or YAML mappings, and `@file`.
 /// Later items win over earlier ones.
 pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<String, Value>> {

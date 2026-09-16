@@ -1,0 +1,17 @@
+- hosts: h1,h2
+  gather_facts: false
+  vars:
+    which: "{{ 'a' if inventory_hostname == 'h1' else 'b' }}"
+  tasks:
+    - name: static include
+      include_tasks: inc-a.yml
+    - import_tasks: inc-b.yml
+    - name: dynamic include
+      include_tasks: "inc-{{ which }}.yml"
+    - name: loop include
+      include_tasks: inc-a.yml
+      loop: [1, 2]
+    - name: include missing
+      include_tasks: nosuch.yml
+      when: inventory_hostname == 'h2'
+    - debug: msg=after

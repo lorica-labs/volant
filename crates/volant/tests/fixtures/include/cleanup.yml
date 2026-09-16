@@ -1,0 +1,17 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: empty loop include
+      include_tasks: inc-a.yml
+      loop: []
+    - block:
+        - name: fail the body
+          command: nosuchbinary-volant-include
+      rescue:
+        - name: the rescue includes
+          include_tasks: inc-a.yml
+      always:
+        - name: the always includes
+          include_tasks: inc-b.yml
+    - name: past the block
+      debug: msg=past

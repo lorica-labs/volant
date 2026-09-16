@@ -1,0 +1,22 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - block:
+        - name: fail the outer body
+          command: nosuchbinary-volant-a
+      always:
+        - block:
+            - name: fail for h1 only
+              command: nosuchbinary-volant-b
+              when: inventory_hostname == 'h1'
+            - name: the include
+              include_tasks: inc-b.yml
+            - name: tail of the nested body
+              debug: msg=tail
+          rescue:
+            - name: the cleanup rescue
+              debug: msg=cleanuprescue
+        - name: rest of the always
+          debug: msg=rest
+    - name: past the block
+      debug: msg=past

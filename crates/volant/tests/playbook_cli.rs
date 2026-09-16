@@ -722,6 +722,128 @@ fn become_switches_user_and_back() {
     );
 }
 
+/// Six escalated tasks, each closing its batch with a `register`, open the escalated agent
+/// once. The link and the fork permit that bounds it stay with the driver while the next step
+/// needs nobody else, so the run pays one escalation rather than one per registered task.
+///
+/// Counted through a `sudo` that records every invocation and then runs the command it was
+/// given as the invoking user: the count is what is being measured, and needing real privileges
+/// to measure it would make this a test of the machine.
+///
+/// What would make this red: the driver handing back its escalated links after every batch,
+/// which puts six launches in the log instead of one.
+#[test]
+fn escalated_links_survive_a_batch_that_a_register_closed() {
+    let dir = fake_sudo(
+        "countsudo",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$VOLANT_SUDO_LOG\"\n\
+         while [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+    );
+    let log = dir.join("sudo.log");
+    let out = volant_within_with_path(
+        &["playbook", &fixture("become-registered.yml")],
+        DEFAULT_DEADLINE,
+        Some(&dir),
+        &[("VOLANT_SUDO_LOG", &log.display().to_string())],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let recorded = std::fs::read_to_string(&log).expect("the fake sudo wrote its log");
+    // The version probe settles which `sudo` form the link uses and is not a launch of the
+    // agent itself; everything else in the log is one.
+    let launches = recorded
+        .lines()
+        .filter(|line| !line.contains("--version"))
+        .count();
+    assert_eq!(
+        launches, 1,
+        "one escalated agent for six tasks:\n{recorded}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other half of keeping the fork permit across a batch: one fork for two hosts, and a
+/// step that waits for the other host right behind a `register` that ended a batch. The driver
+/// has to hand the permit back in front of that wait, or the host holding it waits for a host
+/// that can never be given one.
+///
+/// `-f 1` is what makes it a proof: with a fork per host both of them hold one anyway and a
+/// permit held across the wait costs nothing. `volant_within` is what makes it a failure - a
+/// deadlock does not print a wrong answer, it prints nothing at all.
+///
+/// What would make this red: the permit kept across the boundary the second task reads
+/// `hostvars` at.
+#[test]
+fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            "-f",
+            "1",
+            &fixture("hostvars-barrier.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("stamped-alpha"), "beta read alpha: {text}");
+    assert_eq!(
+        text.matches("failed=0").count(),
+        2,
+        "both hosts reach the recap: {text}"
+    );
+}
+
+/// The same rule at the other kind of wait: a flush point, where a host waits for the splice
+/// the coordinator makes once every host has reached it. One fork, two hosts, and the flush
+/// sits right behind a `register`.
+///
+/// What would make this red: the permit kept across a splice point, which is the deadlock the
+/// splice rule exists to forbid.
+#[test]
+fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            "-f",
+            "1",
+            &fixture("handlers/flush-behind-a-register.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        text.matches("handler-ran").count(),
+        2,
+        "the handler runs on both hosts: {text}"
+    );
+    assert_eq!(
+        text.matches("ok=3").count(),
+        2,
+        "both hosts reach the recap: {text}"
+    );
+}
+
 /// A `sudo` that wants a password is a task that failed, never a host that could not be
 /// reached: the connection worked, and the run has to exit 2 rather than 4.
 #[test]

@@ -1,0 +1,16 @@
+- hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - command: true
+      register: one
+    - command: true
+      register: two
+    - command: true
+      register: three
+    - command: true
+      register: four
+    - command: true
+      register: five
+    - command: true
+      register: six

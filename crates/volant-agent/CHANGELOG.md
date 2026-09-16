@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.4...volant-agent-v0.1.0-alpha.5) - 2026-09-16
+
+### Added
+
+- *(controller)* retry with until, censor no_log, pass environment ([#107](https://github.com/lorica-labs/volant/pull/107))
+
+### Other
+
+- describe play compilation, roles, blocks, handlers and tags ([#117](https://github.com/lorica-labs/volant/pull/117))
+
 ## [0.1.0-alpha.4](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.3...volant-agent-v0.1.0-alpha.4) - 2026-09-09
 
 ### Other

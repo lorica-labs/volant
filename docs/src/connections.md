@@ -113,31 +113,33 @@ A host keeps its agent link for the whole run, across plays. Tasks travel as bat
 one link instead of one connection per task. If a link dies between two plays, Volant reconnects
 once; a second failure reports the host unreachable.
 
-Escalation adds a link rather than replacing one: while a batch runs, a host that escalates
-holds two links, one for the user that batch escalates to and one for the account you log in as.
-Only that second one lives longer than the batch. What persistence is for is the connection to
-the host itself, and that is the link that stays.
+Escalation adds a link rather than replacing one: a host that escalates holds two, one for the
+user it escalates to and one for the account you log in as. The second one is the link that
+stays: it is held from the play that first reached the host to the recap.
 
-An escalated link closes as soon as its batch is answered, and is reopened by the next batch
-that needs it. That is more often than once per play: a task carrying `register`, `loop`,
-`changed_when` or `failed_when` ends the batch it is in, and so does a task reading another
-host's variables or escalating to a different user. A play built from those pays for a fresh
-escalated link at each one. The reopen is one probe and one `ssh`, because the agent is already
-cached for that user, so it still beats the connection per task the same play costs under
-Ansible, but it is not free: grouping escalated work into runs of plain tasks is what keeps the
-count down.
+An escalated link outlives the batch that opened it. Batches end more often than the word
+suggests, since a task carrying `register`, `loop`, `changed_when` or `failed_when` ends the one
+it is in. None of those needs anything from another host, so the host carries straight on and the
+next batch finds the link already open. A play of six escalated tasks, each registering its
+result, starts one escalated agent instead of six.
+
+The link goes back where the host has to wait for the others: in front of a task the keyword
+table marks as a synchronisation point, a task whose text reads another host's state, a point
+where an include or a handler adds steps to the play, and the end of the play. A host that
+escalates to a second user opens a link for that user as well.
+[ADR 0005](https://github.com/lorica-labs/volant/blob/main/docs/adr/0005-fork-permits-span-host-local-batches.md)
+records the rule.
 
 Each link is a separate `ssh` process and costs the controller three file descriptors, so a run
-is limited by `ulimit -n` as well as by the hosts it names. `forks` bounds the escalated links,
-since a host holds one only while it is one of the hosts working; the link to the host itself is
-held from the play that first reached it to the recap, so a run of N hosts escalating to any
-number of users settles at N plus `forks` links. That is the figure it settles at, not a ceiling
-it never crosses: a link being closed gets up to two seconds to tell its agent to stop, and it is
-closed off to one side rather than waited for, so a play working through batches quickly can hold
-a few descriptors more than the arithmetic says for as long as those closes take. With the usual
-`ulimit -n 1024` the room runs out past roughly 338 links, and `ssh` then stops starting: the
-hosts it happens to hit are reported unreachable although nothing is wrong with them. Raise
-`ulimit -n` before a run that wide.
+is limited by `ulimit -n` as well as by the hosts it names. A run settles at one link per host,
+for the connection that outlives the play, plus `forks` times the number of distinct users the
+hosts at work escalate to between two of those waits. That is the figure it settles at, not a
+ceiling it never crosses: a link being closed gets up to two seconds to tell its agent to stop,
+and it is closed off to one side rather than waited for, so a play working through batches
+quickly can hold a few descriptors more than the arithmetic says for as long as those closes
+take. With the usual `ulimit -n 1024` the room runs out past roughly 338 links, and `ssh` then
+stops starting: the hosts it happens to hit are reported unreachable although nothing is wrong
+with them. Raise `ulimit -n` before a run that wide.
 
 An escalated link also costs one extra `ssh` connection for the `sudo` probe, two when a
 password is wanted. There is no `ControlMaster` yet, so a wide inventory pays for every one of

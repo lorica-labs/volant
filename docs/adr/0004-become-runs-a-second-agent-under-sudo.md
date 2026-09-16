@@ -1,6 +1,6 @@
 # `become` runs a second agent under `sudo`
 
-- Status: accepted
+- Status: accepted; the bound on live connections is superseded by [ADR 0005](0005-fork-permits-span-host-local-batches.md)
 - Date: 2026-09-09
 
 ## Context
@@ -19,5 +19,3 @@ The controller opens one agent connection per (host, target user). A task with `
 - A failed escalation is a failed task, not an unreachable host: the connection worked.
 - Live agent connections per host are not bounded. `forks` bounds how many hosts run at once, not how many links one host holds, and the map keeps one link per distinct target user until the recap, each of them a separate `ssh` process. An escalated link also costs one extra `ssh` connection for the probe, two when a password is wanted. This decision adds no connection multiplexing: every link is its own `ssh` process, and a wide inventory pays for each of them separately.
 - `su`, `doas`, `pbrun` and the rest can be added as other ways to start the agent, without a protocol change.
-
-The bound on live connections is superseded by ADR 0005.

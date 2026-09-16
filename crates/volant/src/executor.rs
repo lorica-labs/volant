@@ -84,15 +84,16 @@ pub struct Progress {
 /// of the others, so `linear` puts a boundary in front of it.
 const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
 
-/// Whether a task reads across hosts, decided once per play from its unrendered text.
 /// Whether the hosts of a play meet in front of this step: one the keyword table declares a
-/// synchronisation point, or one whose text names another host's state. Asked in the step loop,
-/// which stops there, and again when a batch ends, which is what decides whether the fork permit
-/// may stay with this driver.
+/// synchronisation point, or one whose text names another host's state. The step loop asks it
+/// twice on the way through an iteration, once to give back a fork permit kept from the batch
+/// before and once to stop and wait for the other hosts. What a batch end asks instead is
+/// whether this driver carries straight on, which is a different question.
 fn is_boundary(task: &PlayTask) -> bool {
     task.barrier() || reads_across_hosts(task)
 }
 
+/// Whether a task reads across hosts, decided once per play from its unrendered text.
 fn reads_across_hosts(task: &PlayTask) -> bool {
     // `ansible_play_hosts_all` is a static copy of the play's starting host list: no host can
     // ever change it, so matching it buys no ordering guarantee and only costs a barrier. Strip

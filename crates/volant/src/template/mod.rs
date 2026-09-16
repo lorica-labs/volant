@@ -2,9 +2,10 @@
 //! Jinja2 templating the way ansible-core 2.19 does it: strict about undefined variables, and a
 //! template that is one expression yields that expression's value, not its text.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use minijinja::value::{Enumerator, Object};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior};
@@ -57,28 +58,57 @@ impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
     }
 }
 
+/// Converted values, kept for as long as the object holding them. Converting a name when it is
+/// asked for rather than converting the whole map up front only pays off if asking twice costs
+/// once: a template reading `groups` inside a loop asks for it on every iteration, and each of
+/// those conversions is the size of the inventory. Nothing behind a memo changes while it lives -
+/// the map is cloned into the context and the shared view is replaced whole, never mutated - so
+/// there is nothing to invalidate.
+#[derive(Debug, Default)]
+struct Memo(Mutex<HashMap<String, minijinja::Value>>);
+
+impl Memo {
+    fn get(
+        &self,
+        key: &str,
+        convert: impl FnOnce() -> Option<minijinja::Value>,
+    ) -> Option<minijinja::Value> {
+        let mut cache = self.0.lock().expect("template memo");
+        if let Some(value) = cache.get(key) {
+            return Some(value.clone());
+        }
+        let value = convert()?;
+        cache.insert(key.to_string(), value.clone());
+        Some(value)
+    }
+}
+
 /// The root of a render: the host's variables, each converted when it is asked for rather than
 /// all of them up front, and `hostvars` as an object that hands out one host's view on demand.
 #[derive(Debug)]
 struct Context {
     vars: Map<String, Value>,
     hostvars: Option<Arc<Map<String, Value>>>,
+    memo: Memo,
 }
 
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
-        // A map that carries a `hostvars` key of its own - a fixture, a recorded scope - keeps
-        // being read from the map when no view came with it, so the two sources never disagree
-        // about which one answers.
-        if key == "hostvars"
-            && let Some(hostvars) = &self.hostvars
-        {
-            return Some(minijinja::Value::from_object(Hostvars(Arc::clone(
-                hostvars,
-            ))));
-        }
-        self.vars.get(key).map(minijinja::Value::from_serialize)
+        self.memo.get(key, || {
+            // A map that carries a `hostvars` key of its own - a fixture, a recorded scope -
+            // keeps being read from the map when no view came with it, so the two sources never
+            // disagree about which one answers.
+            if key == "hostvars"
+                && let Some(hostvars) = &self.hostvars
+            {
+                return Some(minijinja::Value::from_object(Hostvars {
+                    hosts: Arc::clone(hostvars),
+                    memo: Memo::default(),
+                }));
+            }
+            self.vars.get(key).map(minijinja::Value::from_serialize)
+        })
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
@@ -98,18 +128,22 @@ impl Object for Context {
 /// the whole inventory, which is what a `hostvars | dict2items` asks for; reading one host
 /// costs one host.
 #[derive(Debug)]
-struct Hostvars(Arc<Map<String, Value>>);
+struct Hostvars {
+    hosts: Arc<Map<String, Value>>,
+    memo: Memo,
+}
 
 impl Object for Hostvars {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        self.0
-            .get(key.as_str()?)
-            .map(minijinja::Value::from_serialize)
+        let key = key.as_str()?;
+        self.memo.get(key, || {
+            self.hosts.get(key).map(minijinja::Value::from_serialize)
+        })
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Values(
-            self.0
+            self.hosts
                 .keys()
                 .map(|k| minijinja::Value::from(k.as_str()))
                 .collect(),
@@ -121,6 +155,7 @@ fn context_of(vars: Vars<'_>) -> minijinja::Value {
     minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
         hostvars: vars.hostvars.cloned(),
+        memo: Memo::default(),
     })
 }
 
@@ -490,25 +525,33 @@ mod tests {
     ///
     /// What would make this red: `context_of` serialising the view into the context, which is
     /// what the map used to carry and what cost a copy of every host's variables per task.
+    ///
+    /// The second read is the memo. Converting a name on demand instead of converting the whole
+    /// map up front is only cheaper if the second ask is free, and a template reading an
+    /// inventory-wide name inside a loop asks once per iteration. Dropping the memo makes the
+    /// two reads two different objects and this red.
     #[test]
-    fn the_context_hands_out_the_shared_view_itself() {
+    fn the_context_hands_out_the_shared_view_itself_and_only_builds_it_once() {
         let shared = Arc::new(vars(json!({"a": {"y": 1}, "b": {"y": 2}})));
         let empty = Map::new();
         let ctx = context_of(Vars {
             map: &empty,
             hostvars: Some(&shared),
         });
-        let value = ctx
+        let first = ctx
             .get_attr("hostvars")
-            .expect("hostvars is in the context");
-        assert!(Arc::ptr_eq(
-            &value
-                .downcast_object_ref::<Hostvars>()
-                .expect("the shared object, not a copy of the map")
-                .0,
-            &shared
-        ));
-        drop(value);
+            .expect("hostvars is in the context")
+            .downcast_object::<Hostvars>()
+            .expect("the shared object, not a copy of the map");
+        assert!(Arc::ptr_eq(&first.hosts, &shared));
+        let second = ctx
+            .get_attr("hostvars")
+            .unwrap()
+            .downcast_object::<Hostvars>()
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "the view is built once");
+        drop(first);
+        drop(second);
         drop(ctx);
         assert_eq!(
             Arc::strong_count(&shared),

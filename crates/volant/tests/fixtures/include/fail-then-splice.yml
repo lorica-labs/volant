@@ -1,0 +1,17 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: a remote task that keeps the permit
+      command: "true"
+      register: r
+    - block:
+        - name: a local failure
+          debug:
+            msg: boom
+          failed_when: true
+        - name: an include the failure steps over
+          include_tasks: inc-a.yml
+      rescue:
+        - name: the rescue
+          debug:
+            msg: "rescued on {{ inventory_hostname }}"

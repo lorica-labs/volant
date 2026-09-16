@@ -203,6 +203,36 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     // the second pass to walk. What can be checked before the first connection is their
     // arguments, and the compiler checks those where it turns the statement into a step.
     if include_module(&task.module).is_some() {
+        // `until`, `retries` and `delay` never reach a retry on a statement this engine expands:
+        // the step loop resolves an include and splices behind it well before `prepare`, which is
+        // where the retry plan is built. Accepted here they would be read and dropped, which is
+        // the family this pre-flight exists to close.
+        //
+        // The reference refuses them too. Measured on ansible-core 2.19.12:
+        // `'until' is not a valid attribute for a TaskInclude` at exit 4 for `include_tasks`, the
+        // same sentence naming `IncludeRole` for `include_role`, because `VALID_INCLUDE_KEYWORDS`
+        // holds sixteen names and none of these three. Same refusal, one moment earlier, which is
+        // this pre-flight's usual divergence.
+        //
+        // `include_vars` is not one of these statements, there or here: it is an ordinary
+        // controller-side module on both sides, and both honour the three. Measured on the
+        // reference and on this engine, the same shape each time - two `FAILED - RETRYING` lines
+        // and `attempts: 2`.
+        if let Some(kw) = [
+            (!task.until.is_empty()).then_some("until"),
+            task.retries.is_some().then_some("retries"),
+            task.delay.is_some().then_some("delay"),
+        ]
+        .into_iter()
+        .flatten()
+        .next()
+        {
+            bail!(
+                "task '{}': keyword '{kw}' is not supported yet on '{}'",
+                task.name,
+                task.module
+            );
+        }
         return Ok(());
     }
     if !is_known(&task.module) {
@@ -278,6 +308,59 @@ mod tests {
         );
         let pb = parse("- hosts: all\n  tasks:\n    - command: echo hi\n", "x.yml").unwrap();
         assert!(check(&pb).is_ok(), "an implemented module passes");
+    }
+
+    /// `until`, `retries` and `delay` are refused on the two dynamic statements, and still run on
+    /// an ordinary task.
+    ///
+    /// They cannot do anything on a statement this engine expands: the step loop resolves an
+    /// include and splices behind it before `prepare`, which is where the retry plan is built. The
+    /// reference refuses them too - measured on ansible-core 2.19.12,
+    /// `'until' is not a valid attribute for a TaskInclude` at exit 4, and the same sentence
+    /// naming `IncludeRole`, because `VALID_INCLUDE_KEYWORDS` holds sixteen names and none of
+    /// these three.
+    ///
+    /// `include_vars` is not one of them: it is an ordinary controller-side module on both sides
+    /// and both retry it - measured, two `FAILED - RETRYING` lines and `attempts: 2` each.
+    ///
+    /// What would make this red: any of the three accepted on a statement that expands, which is
+    /// a retry the operator wrote, the engine dropped and the run never attempted; the refusal
+    /// widened to ordinary tasks, which refuses the playbooks task 7 measured; or it widened to
+    /// `include_vars`, which refuses a retry both engines perform.
+    #[test]
+    fn a_retry_on_a_dynamic_statement_is_refused_by_name() {
+        for (kw, value) in [("until", "false"), ("retries", "2"), ("delay", "1")] {
+            let text = refusal(&format!(
+                "- hosts: all\n  tasks:\n    - name: T\n      include_tasks: inc.yml\n      {kw}: {value}\n"
+            ));
+            assert!(
+                text.contains(&format!(
+                    "keyword '{kw}' is not supported yet on 'include_tasks'"
+                )),
+                "{text}"
+            );
+            let text = refusal(&format!(
+                "- hosts: all\n  tasks:\n    - name: T\n      include_role:\n        name: r\n      {kw}: {value}\n"
+            ));
+            assert!(
+                text.contains(&format!(
+                    "keyword '{kw}' is not supported yet on 'include_role'"
+                )),
+                "{text}"
+            );
+        }
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      until: false\n      retries: 2\n      delay: 1\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert!(check(&pb).is_ok(), "an ordinary task still retries");
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: T\n      include_vars: v.yml\n      retries: 2\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert!(check(&pb).is_ok(), "and so does include_vars");
     }
 
     /// Every keyword the loader parked is refused by its own name, and the play it belongs to

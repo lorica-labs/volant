@@ -142,6 +142,10 @@ A handler runs at a flush point, once, however many tasks notified it. The three
 points are listed above; `meta: flush_handlers` adds one wherever it is written, with the
 `TASK [meta]` banner the reference prints there.
 
+A flush point written inside an `include_tasks` runs only for the hosts whose own statement asked
+for that file. The rest report the step, run no handlers there, and keep what they have notified
+for the next flush they reach.
+
 `notify` names a handler. The name reaches the first handler carrying it as its `name`, and
 every handler listening for it through `listen`. The asymmetry is the reference's own, and it is
 what makes a role run three times contribute one handler rather than three. Handlers run in the
@@ -223,6 +227,11 @@ count under `attempts`, and a task that runs out of attempts has failed even if 
 itself passed. `retries` written without `until` runs the task again while its result is failed.
 A looping task retries each item separately, and finishes one item's attempts before starting
 the next.
+
+Volant refuses all three on `include_tasks` and `include_role`, by name, before the first
+connection: a statement it expands never becomes a task it could attempt twice. Ansible refuses
+them too, at load time (`'until' is not a valid attribute for a TaskInclude`). `include_vars` is
+an ordinary module on both sides and retries like any other task.
 
 Where this differs from Ansible:
 

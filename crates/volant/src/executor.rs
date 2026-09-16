@@ -77,6 +77,22 @@ pub struct Progress {
     /// nothing - and it does so whether or not a `rescue` catches the failure for the host that
     /// ran it. So the failure has to travel; the runner leaving the live set does not carry it.
     pub run_once: BTreeMap<usize, bool>,
+    /// Which host runs each `run_once` step, decided here and read by every driver.
+    ///
+    /// The coordinator holds the only serialised view of the live set, so it is the only party
+    /// that can decide this once for everybody. A driver electing from its own read of
+    /// `live_hosts` elects from whatever that list happened to say at the moment it looked: a
+    /// host woken by the publish that carries the runner's own failure or unreachability reads a
+    /// list the runner has already left and elects **itself**, so one `run_once` step runs twice.
+    ///
+    /// An entry is written once and never rewritten, which is what makes two reads of it agree.
+    /// That is also what the reference does: measured on ansible-core 2.19.12, a `run_once`
+    /// runner that dies is not replaced and the hosts waiting on it leave the play.
+    ///
+    /// A step whose mask no live host satisfies gets no entry, which reads the way an election
+    /// that found nobody always read: every live host is outside the mask, reports the step and
+    /// moves on.
+    pub elected: BTreeMap<usize, String>,
 }
 
 /// Names whose value depends on what the other hosts have done: another host's variables, and
@@ -437,6 +453,10 @@ async fn run_batch(
     let (tx, mut rx) = mpsc::channel::<Event>(64);
     // The batch's shared progress. Every driver reads it; only this loop writes it.
     let (progress_tx, progress_rx) = watch::channel(Progress::default());
+    // This first publish is what decides the runner of a `run_once` step at index 0, before any
+    // driver exists to disagree about it. There is no barrier in front of index 0 - nobody has
+    // anything to wait for there - so nothing else could make that election unanimous.
+    let mut elected: BTreeMap<usize, String> = BTreeMap::new();
     publish(
         &progress_tx,
         &play_hosts,
@@ -445,6 +465,8 @@ async fn run_batch(
         &HashMap::new(),
         None,
         &BTreeMap::new(),
+        &compiled.steps,
+        &mut elected,
     );
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
     // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
@@ -605,6 +627,8 @@ async fn run_batch(
                                 &frontier,
                                 spliced,
                                 &run_once,
+                                &plan.steps().steps,
+                                &mut elected,
                             );
                         }
                         pending.entry(key).or_default().push(event);
@@ -657,6 +681,8 @@ async fn run_batch(
                             &frontier,
                             spliced,
                             &run_once,
+                            &plan.steps().steps,
+                            &mut elected,
                         );
                     }
                     Some(Event::Finished {
@@ -683,6 +709,8 @@ async fn run_batch(
                             &frontier,
                             spliced,
                             &run_once,
+                            &plan.steps().steps,
+                            &mut elected,
                         );
                     }
                     Some(Event::Unreachable {
@@ -708,6 +736,8 @@ async fn run_batch(
                             &frontier,
                             spliced,
                             &run_once,
+                            &plan.steps().steps,
+                            &mut elected,
                         );
                     }
                     None => break,
@@ -789,6 +819,13 @@ async fn run_batch(
                 }
             }
             plan_tx.send_replace(Arc::new(next));
+            // The splice moved every index past this point, so an election already decided for
+            // the step that used to sit at `index + 1` now names a different step - possibly one
+            // with a different mask. Nobody has read it: a splice happens only when every host is
+            // done through `index`, and the step behind it is the one they are all waiting for.
+            // Dropped rather than shifted, because the publish below re-decides it against the
+            // list that now exists.
+            elected.split_off(&(index + 1));
             spliced = Some(index);
             publish(
                 &progress_tx,
@@ -798,6 +835,8 @@ async fn run_batch(
                 &frontier,
                 spliced,
                 &run_once,
+                &plan.steps().steps,
+                &mut elected,
             );
         }
         if gone.len() == play_hosts.len() && pending.is_empty() {
@@ -834,6 +873,8 @@ async fn run_batch(
                     &frontier,
                     spliced,
                     &run_once,
+                    &plan.steps().steps,
+                    &mut elected,
                 );
             }
             Event::Finished {
@@ -857,6 +898,8 @@ async fn run_batch(
                     &frontier,
                     spliced,
                     &run_once,
+                    &plan.steps().steps,
+                    &mut elected,
                 );
             }
             Event::TaskDone { host, index } => {
@@ -880,6 +923,8 @@ async fn run_batch(
                     &frontier,
                     spliced,
                     &run_once,
+                    &plan.steps().steps,
+                    &mut elected,
                 );
             }
             // A driver sends a result and the `TaskDone` behind it over the same channel, so a
@@ -1049,6 +1094,9 @@ fn finished(
 /// hosts of the batch, so a driver waiting for it to reach `i - 1` is waiting only on hosts that
 /// are still expected to report - and never on a host of another batch, which has no driver here
 /// to report at all.
+///
+/// It is also where a `run_once` step's runner is elected, for the reason the whole function
+/// exists: this is the one place the live set is read under a serial view. See `Progress::elected`.
 #[allow(clippy::too_many_arguments)]
 fn publish(
     tx: &watch::Sender<Progress>,
@@ -1058,6 +1106,8 @@ fn publish(
     frontier: &HashMap<String, usize>,
     spliced_through: Option<usize>,
     run_once: &BTreeMap<usize, bool>,
+    steps: &[Step],
+    elected: &mut BTreeMap<usize, String>,
 ) {
     let live_hosts: Vec<String> = batch_hosts
         .iter()
@@ -1076,12 +1126,38 @@ fn publish(
         .map(|h| frontier.get(h).copied())
         .min()
         .flatten();
+    // The election, for the one index it can be needed at. `completed_through` is the index every
+    // live host has finished, so `+ 1` is where the slowest of them is standing and is the only
+    // place a driver can be about to read a runner: a host further along has already read one,
+    // and a host behind cannot exist. `None` is the head of the list, which is why the first call
+    // of all - made before a single driver is spawned - decides index 0, where there is no
+    // barrier to decide it.
+    //
+    // The runner is the first live host **the step's mask includes**, which is task 10's rule
+    // applied by the party that now owns it: elected off the whole live set instead, the runner
+    // could be a host the mask leaves out, which runs nothing, so nobody would run the step.
+    //
+    // `or_insert`, never an overwrite: an entry that moved when a host left would be exactly the
+    // race this replaces.
+    let at = completed_through.map_or(0, |c| c + 1);
+    if let Some(step) = steps.get(at)
+        && step.task.runs_once()
+        && !elected.contains_key(&at)
+        && let Some(runner) = live_hosts.iter().find(|h| {
+            step.hosts
+                .as_ref()
+                .is_none_or(|only| only.iter().any(|m| m == *h))
+        })
+    {
+        elected.insert(at, runner.clone());
+    }
     tx.send_replace(Progress {
         completed_through,
         live_hosts,
         play_hosts_left,
         spliced_through,
         run_once: run_once.clone(),
+        elected: elected.clone(),
     });
 }
 
@@ -2570,6 +2646,29 @@ async fn drive_host(
     'run: loop {
         let c = plan.steps();
         let n = c.steps.len();
+        // The fork permit and the escalated links go back before either failure arm below runs.
+        // Both of those arms wait: the rescue and `after_failure` jumps hand their range to
+        // `stepped_over`, and `force_handlers` picks the walk back up through `advance`, and each
+        // of those stops at a splice point the coordinator can only reach once every host has
+        // got there. The step loop's own release cannot cover this. It asks
+        // `steps_over_a_splice_point`, which reads `after` and `after_pending` - the **success**
+        // successor - and never the `rescue_target`/`after_failure` range a host that has just
+        // failed is about to step over. So a local failure, or a `prepare` or `retry_plan` error,
+        // left the loop with an empty batch, skipped the release at the end of it, and blocked at
+        // the include still holding a permit; with `-f` under the number of live hosts no other
+        // host could take that permit to reach the same splice, and the run hung.
+        //
+        // Only on the failure paths, so a batch that ended cleanly still carries its permit into
+        // the next one - that is what makes `-f` bound the work rather than serialise it. The
+        // cost here is one re-acquire on a run that is already going wrong.
+        if failed_at.is_some() || failed_index.is_some() {
+            permit = None;
+            for key in escalated_links(&links) {
+                if let Some(link) = links.remove(&key) {
+                    tokio::spawn(link.shutdown());
+                }
+            }
+        }
         if let Some((index, result)) = failed_at.take() {
             // A handler that failed under `force_handlers` stops the rest: measured on
             // ansible-core 2.19.12, `good handler` does not run behind a `bad handler` that
@@ -2790,10 +2889,10 @@ async fn drive_host(
             // thing to get wrong. It costs one pass over the task's own text, against the full
             // render `prepare` does for it a few lines below.
             //
-            // In front of the flush, include and mask arms rather than behind them, because the
-            // election below has to be unanimous: two hosts reading `live_hosts` at two
-            // different moments could otherwise elect two different runners for one step, and
-            // both of them would run it.
+            // In front of the flush, include and mask arms rather than behind them: a host that
+            // walked into one of those without stopping here would report a step the others have
+            // not reached, and the coordinator's own frontier is what every wait in this file
+            // opens on.
             if is_boundary(task) && pos > 0 {
                 if !batch.is_empty() {
                     break;
@@ -2827,37 +2926,22 @@ async fn drive_host(
                     }
                 }
             }
-            // Who runs a `run_once` step: the first live host of the batch **the step's mask
-            // includes**, in inventory order. Every other host of the batch reads what it
-            // produced and runs nothing. Measured on ansible-core 2.19.12: `changed: [h1]` alone
-            // under the banner, the registered variable and the facts readable on h2 as well, and
-            // h2 counting no `ok` for it. With `serial` each batch elects its own, which falls
-            // out of `live_hosts` being the batch's list and not the play's. Measured again with
-            // an include a `when` kept one of three hosts out of: the two the mask holds both
-            // read the registered value back, and the third runs only what follows.
+            // Who runs a `run_once` step: read, never decided here. The coordinator elected it in
+            // `publish`, off the live set as it stood when every host had finished the step
+            // before this one, and inside this step's own mask. Measured on ansible-core 2.19.12:
+            // `changed: [h1]` alone under the banner, the registered variable and the facts
+            // readable on h2 as well, and h2 counting no `ok` for it. With `serial` each batch
+            // elects its own, which falls out of the coordinator's `live_hosts` being the batch's
+            // list and not the play's. Measured again with an include a `when` kept one of three
+            // hosts out of: the two the mask holds both read the registered value back, and the
+            // third runs only what follows.
             //
-            // The mask is part of the election and not a filter after it. Elected off the whole
-            // live set, the runner could be a host the mask leaves out - which runs nothing, so
-            // nobody runs the step - and every host outside the mask would report the step
-            // straight away, publishing the verdict before the runner had run. The hosts waiting
-            // on it then read a registered variable that does not exist yet.
-            //
-            // The unanimity this election needs is what
-            // `executor::tests::a_boundary_is_either_declared_by_a_keyword_or_found_in_the_text`
-            // guards, over the table rather than over a run: the barrier above is what makes two
-            // hosts read one live host list, and without it they can elect two runners and run
-            // the task twice.
-            let runner = {
-                let p = progress.borrow();
-                p.live_hosts
-                    .iter()
-                    .find(|h| {
-                        step.hosts
-                            .as_ref()
-                            .is_none_or(|only| only.iter().any(|m| m == *h))
-                    })
-                    .cloned()
-            };
+            // What makes this unanimous is that it is one value, written once, and not two reads
+            // of a list that moves. `run_once_is_decided_once_and_survives_the_runner_leaving`
+            // is the guard: elected from this driver's own view of `live_hosts` instead, a host
+            // woken by the publish that carries the runner's failure elects itself and runs the
+            // step a second time.
+            let runner = progress.borrow().elected.get(&pos).cloned();
             let follower =
                 task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind. This one line is what makes a handler run
@@ -2910,7 +2994,14 @@ async fn drive_host(
                 {
                     break 'run;
                 }
-                in_flush = true;
+                // A host the flush's own mask leaves out reports the step and waits for the
+                // splice like everyone else, but it has not performed a flush: the handler steps
+                // behind it carry that same mask, so it runs none of them, and the line below
+                // would otherwise throw away the notifications it is still carrying to the next
+                // flush it does reach.
+                if !masked_out {
+                    in_flush = true;
+                }
                 let Some(next) = advance(
                     &tx,
                     &name,
@@ -5281,6 +5372,8 @@ mod tests {
             &last_done,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
         assert_eq!(rx.borrow().live_hosts, hosts);
@@ -5294,6 +5387,8 @@ mod tests {
             &last_done,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(
             rx.borrow().completed_through,
@@ -5310,6 +5405,8 @@ mod tests {
             &last_done,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(rx.borrow().completed_through, Some(1));
 
@@ -5322,6 +5419,8 @@ mod tests {
             &last_done,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(
             rx.borrow().completed_through,
@@ -5339,9 +5438,119 @@ mod tests {
             &last_done,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert!(rx.borrow().live_hosts.is_empty());
         assert_eq!(rx.borrow().completed_through, None);
+    }
+
+    /// Who runs a `run_once` step is decided once, and a host that leaves afterwards does not
+    /// move it. The mask is part of that decision, not a filter applied after it.
+    ///
+    /// This is the double election. Two drivers used to read `live_hosts` for themselves and take
+    /// the first live host of it, and nothing made them read the same value: at index 0 there is
+    /// no barrier at all, and further along the barrier only says everyone finished the step
+    /// before - not that the live set will hold still across the two reads. A host woken by the
+    /// publish that carries the runner's own failure or unreachability read a list the runner had
+    /// already left, elected itself, and ran the step a **second** time. It was seen as a flake on
+    /// `an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it`, where the run still
+    /// exits 4 and only the line the second runner prints gives it away.
+    ///
+    /// What would make this red: the election moved back into the drivers, which is the second
+    /// read naming `h2`; an overwrite in place of the write-once shape, same thing; or the mask
+    /// dropped from it, which elects a host that runs nothing so nobody runs the step.
+    #[test]
+    fn run_once_is_decided_once_and_survives_the_runner_leaving() {
+        let hosts: Vec<String> = vec!["h1".into(), "h2".into()];
+        let step = |mask: Option<Vec<String>>| Step {
+            kind: StepKind::Task,
+            task: PlayTask {
+                name: "once".into(),
+                module: "command".into(),
+                run_once: Some(true),
+                ..PlayTask::empty()
+            },
+            block: None,
+            section: crate::compile::Section::Body,
+            role: None,
+            origin: Arc::default(),
+            include_params: None,
+            hosts: mask.map(Arc::from),
+        };
+        let steps = vec![step(None), step(Some(vec!["h2".into()]))];
+
+        let (tx, rx) = watch::channel(Progress::default());
+        let mut elected: BTreeMap<usize, String> = BTreeMap::new();
+        let mut frontier: HashMap<String, usize> = HashMap::new();
+        let mut lost: HashSet<String> = HashSet::new();
+
+        // The publish `run_batch` makes before it spawns a single driver. Index 0 has no barrier
+        // in front of it, so this is the only moment its runner can be fixed.
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &frontier,
+            None,
+            &BTreeMap::new(),
+            &steps,
+            &mut elected,
+        );
+        assert_eq!(
+            rx.borrow().elected.get(&0).map(String::as_str),
+            Some("h1"),
+            "the first live host of the batch"
+        );
+
+        // h1 dies on the way, which is the publish that wakes h2.
+        lost.insert("h1".to_string());
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &frontier,
+            None,
+            &BTreeMap::new(),
+            &steps,
+            &mut elected,
+        );
+        let p = rx.borrow().clone();
+        assert_eq!(
+            p.live_hosts,
+            vec!["h2".to_string()],
+            "the list a driver electing for itself would have read"
+        );
+        assert_eq!(
+            p.elected.get(&0).map(String::as_str),
+            Some("h1"),
+            "and the election did not move with it"
+        );
+
+        // The step behind it is masked to h2, and both hosts are live again for it.
+        let (tx, rx) = watch::channel(Progress::default());
+        let mut elected: BTreeMap<usize, String> = BTreeMap::new();
+        for host in &hosts {
+            frontier.insert(host.clone(), 0);
+        }
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &HashSet::new(),
+            &frontier,
+            None,
+            &BTreeMap::new(),
+            &steps,
+            &mut elected,
+        );
+        assert_eq!(
+            rx.borrow().elected.get(&1).map(String::as_str),
+            Some("h2"),
+            "elected inside the step's mask, not filtered after it"
+        );
     }
 
     /// A host is never counted past what it has actually finished, whatever order its reports
@@ -5375,6 +5584,8 @@ mod tests {
             &frontier,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(
             rx.borrow().completed_through,
@@ -5391,6 +5602,8 @@ mod tests {
             &frontier,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(rx.borrow().completed_through, Some(2), "the gap is smaller");
 
@@ -5403,6 +5616,8 @@ mod tests {
             &frontier,
             None,
             &BTreeMap::new(),
+            &[],
+            &mut BTreeMap::new(),
         );
         assert_eq!(
             rx.borrow().completed_through,
@@ -5425,8 +5640,13 @@ mod tests {
     /// keyword, and `delegate_to` is neither - the delegating driver opens its own link to the
     /// delegate, so nothing is shared and nobody has to wait.
     ///
-    /// What would make this red: the `barrier` flag dropped from the table, which lets two
-    /// hosts elect two different runners for one `run_once` step and run it twice; the textual
+    /// This says nothing about who runs a `run_once` step. The election is the coordinator's,
+    /// and `run_once_is_decided_once_and_survives_the_runner_leaving` is what guards it; the
+    /// barrier here only keeps the hosts walking the list together.
+    ///
+    /// What would make this red: the `barrier` flag dropped from the table, which lets a
+    /// `run_once` step be reported by a host while another is still behind it, so the verdict
+    /// the waiting hosts read arrives before the runner has run; the textual
     /// scan dropped, which lets a `hostvars` read run ahead of the host it reads; or
     /// `delegate_to` made a boundary, which would serialise every delegated task on a wait that
     /// buys nothing.

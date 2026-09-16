@@ -367,6 +367,11 @@ pub(crate) fn resolve_notify(c: &Compiled, name: &str) -> Vec<usize> {
 /// of the section the flush was written in: measured on ansible-core 2.19.12, a handler that
 /// fails at a flush written inside a block is taken by that block's `rescue` (`rescued=1`, exit
 /// 0), and a host that never entered a rescue holding the flush steps over the handlers too.
+///
+/// And they carry its mask, for the same reason. A `meta: flush_handlers` inside an
+/// `include_tasks` only one host asked for is spliced in for that host alone; handler steps left
+/// unmasked behind it would be walked by every host of the batch, and each of them would run the
+/// handlers **it** had notified, at a flush it was never asked to perform.
 pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
     let (block, section) = (c.steps[at].block, c.steps[at].section);
     c.handlers
@@ -380,7 +385,7 @@ pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
             role: h.role,
             origin: Arc::clone(&c.steps[at].origin),
             include_params: c.steps[at].include_params.clone(),
-            hosts: None,
+            hosts: c.steps[at].hosts.clone(),
         })
         .collect()
 }

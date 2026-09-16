@@ -2566,6 +2566,112 @@ fn a_host_that_steps_over_a_flush_point_waits_for_it_too() {
     );
 }
 
+/// A `meta: flush_handlers` written inside a dynamic include belongs to the hosts that asked for
+/// that include, and to no others.
+///
+/// Measured on ansible-core 2.19.12 with `h1` alone including the file: `included: ... for h1`,
+/// `TASK [flush inside the include]`, then `RUNNING HANDLER [the handler]` with `handler for h1`
+/// alone; `TASK [after]` for both; and a **second** `RUNNING HANDLER` at the end of the play
+/// carrying `handler for h2`. Recap `h1 ok=4 changed=1`, `h2 ok=3 changed=1 skipped=1`, exit 0.
+///
+/// This is where the splice and the include mask meet, and nothing combined them before. The
+/// handler steps the coordinator splices in behind a flush carry the flush step's own mask, so a
+/// host outside it walks them and runs none. And that host never entered the flush, so it keeps
+/// the notifications it is carrying for the flush it does reach.
+///
+/// What would make this red: handler steps spliced in unmasked, which runs `h2`'s handler early,
+/// under `h1`'s flush, at a point `h2` never asked to flush at; or a masked-out host counted as
+/// having flushed, which throws its notification away and leaves `handler for h2` out of the run
+/// altogether.
+#[test]
+fn a_flush_inside_an_include_runs_the_handlers_of_the_hosts_that_asked_for_it() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("handlers/flush-in-include.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let banners = text
+        .lines()
+        .filter(|l| l.starts_with("RUNNING HANDLER ["))
+        .count();
+    assert_eq!(banners, 2, "one flush each, at different points: {text}");
+    let first = handler_section(&text, "the handler");
+    assert!(
+        first.contains("handler for h1") && !first.contains("handler for h2"),
+        "only the host whose include carried the flush runs its handler there: {text}"
+    );
+    assert!(
+        text.contains("handler for h2"),
+        "and the other host still runs its own, at the flush that closes the play: {text}"
+    );
+    assert!(
+        text.find("after on h2").unwrap() < text.rfind("handler for h2").unwrap(),
+        "h2's handler goes at the end of the play, behind the last task: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
+        ) && text.contains(
+            "h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
+        ),
+        "{text}"
+    );
+}
+
+/// A local failure that steps over an include, with fewer forks than hosts.
+///
+/// `-f 1` and two hosts, so there is exactly one permit in the play. `h1` takes it for the remote
+/// task, keeps it - the task ends its batch on its `register`, not on a wait - and then fails at a
+/// `debug` the next step, with an empty batch. The jump its failure takes runs from that step to
+/// the rescue, and the `include_tasks` sits in between, so `h1` steps over a splice point and
+/// waits there for the coordinator. `h2` cannot get to that same index without a permit, and the
+/// coordinator cannot splice until it does.
+///
+/// The permit release at the end of a batch is skipped for an empty one, and the release at the
+/// top of the step loop asks `steps_over_a_splice_point`, which reads the step's **success**
+/// successor - the include itself, one step along, stepped over by nobody. Neither one looks at
+/// the range a failure is about to jump across. So the permit was still in hand at the wait.
+///
+/// Recap `rescued=1` for both hosts and exit 0, which is what the rescue makes of it.
+///
+/// What would make this red: the permit, or an escalated link, kept across a failure jump. The
+/// run then hangs and only the deadline sees it - both hosts sit in a wait, print nothing more,
+/// and no assertion on the output can fail on that.
+#[test]
+fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            "-f",
+            "1",
+            &fixture("include/fail-then-splice.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("rescued on h1") && text.contains("rescued on h2"),
+        "both hosts got through the jump and into the rescue: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
+        ) && text.contains(
+            "h2                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
+        ),
+        "{text}"
+    );
+}
+
 /// A flush point stepped over from the step immediately in front of it, with that step still in
 /// the batch.
 ///
@@ -5054,6 +5160,53 @@ fn each_serial_batch_elects_its_own_run_once_runner() {
             "{text}"
         );
     }
+}
+
+/// A `run_once` step an include splices in is elected for against the list that now exists.
+///
+/// The splice moves every index behind it, and the election for the step that used to sit at the
+/// insertion point was already decided - against the step the splice pushed along, and against
+/// its mask. The coordinator drops it there rather than letting it name a step it was never about.
+///
+/// Measured on ansible-core 2.19.12, `h2` alone including a file whose first task is `run_once`:
+/// `skipping: [h1]`, `included: ... for h2`, `changed: [h2]` under `once inside the include`,
+/// `inside on h2`, then `changed: [h1]` for the `run_once` behind the include and `behind on h1`
+/// and `behind on h2` under it. Recap `h1 ok=2 changed=1 skipped=1`, `h2 ok=4 changed=1`, exit 0.
+///
+/// What would make this red: an election carried across the splice. It names the host the step
+/// behind the include was elected for, that host is outside the included step's mask so it runs
+/// nothing, and the host the include belongs to reads it as a runner other than itself and waits -
+/// so the `run_once` task inside the include is run by nobody and the run still exits 0, with the
+/// registered variable undefined for the host that asked for it.
+#[test]
+fn a_run_once_step_spliced_in_by_an_include_is_elected_for_afresh() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("handlers/inv.ini"),
+            &fixture("delegate/run-once-after-include.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("changed: [h2]") && text.contains(r#""msg": "inside on h2""#),
+        "the host the include belongs to runs its `run_once` task: {text}"
+    );
+    assert!(
+        text.contains(r#""msg": "behind on h1""#) && text.contains(r#""msg": "behind on h2""#),
+        "and the step behind the include still runs for the whole batch: {text}"
+    );
+    assert!(
+        text.contains(
+            "h1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
+        ) && text.contains(
+            "h2                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
+        ),
+        "{text}"
+    );
 }
 
 /// An `include_tasks` under `run_once` is read for the elected host alone, and only that host

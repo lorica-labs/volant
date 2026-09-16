@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: to a host nothing answers for
+      command: echo hi
+      delegate_to: gone
+    - name: after
+      debug:
+        msg: after

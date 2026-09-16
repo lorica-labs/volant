@@ -143,6 +143,7 @@ impl Renderer {
     /// every line this function can print - the ordinary one, the `fatal:`, the loop item and
     /// the `debug`, at every verbosity. What it does **not** touch is the result itself: the
     /// registered variable and the recap read the real one, measured.
+    #[allow(clippy::too_many_arguments)]
     pub fn result(
         &mut self,
         host: &str,
@@ -151,6 +152,7 @@ impl Renderer {
         label: Option<&str>,
         dump: bool,
         censored: bool,
+        delegate: Option<&str>,
     ) {
         let censored_body = || {
             let mut body = serde_json::Map::new();
@@ -197,9 +199,17 @@ impl Renderer {
         } else {
             String::new()
         };
+        // `[h1 -> h3]` wherever a delegated task has a line, measured on ansible-core 2.19.12 -
+        // `ok:`, `changed:`, the `fatal:` of a failure and a loop item's own line all carry the
+        // arrow. `skipping:` is the one that does not: a task a `when` left out never reached
+        // the delegate, and the reference prints `skipping: [h1]` for it.
+        let who = match delegate {
+            Some(d) => format!("{host} -> {d}"),
+            None => host.to_string(),
+        };
         let line = match outcome {
-            Outcome::Ok => self.paint(OK, &format!("ok: [{host}]{item}{tail}")),
-            Outcome::Changed => self.paint(CHANGED, &format!("changed: [{host}]{item}{tail}")),
+            Outcome::Ok => self.paint(OK, &format!("ok: [{who}]{item}{tail}")),
+            Outcome::Changed => self.paint(CHANGED, &format!("changed: [{who}]{item}{tail}")),
             Outcome::Skipped => self.paint(SKIPPED, &format!("skipping: [{host}]{item}")),
             // A rescued failure shows exactly like one nothing catches: measured on
             // ansible-core 2.19.12, the line is the same `fatal: ... FAILED!` and the only
@@ -208,12 +218,12 @@ impl Renderer {
             Outcome::Failed | Outcome::Rescued | Outcome::Ignored if label.is_some() => self.paint(
                 FAILED,
                 &format!(
-                    "failed: [{host}] (item={}) => {json}",
+                    "failed: [{who}] (item={}) => {json}",
                     label.unwrap_or_default()
                 ),
             ),
             Outcome::Failed | Outcome::Rescued | Outcome::Ignored => {
-                self.paint(FAILED, &format!("fatal: [{host}]: FAILED! => {json}"))
+                self.paint(FAILED, &format!("fatal: [{who}]: FAILED! => {json}"))
             }
         };
         let _ = writeln!(self.out, "{line}");
@@ -232,13 +242,17 @@ impl Renderer {
     /// `censored` is the `no_log` of the task whose batch could not be sent. Measured on
     /// ansible-core 2.19.12: the reference censors this line too, so the reason the host could
     /// not be reached is hidden along with everything else the task would have printed.
-    pub fn unreachable(&mut self, host: &str, msg: &str, censored: bool) {
+    pub fn unreachable(&mut self, host: &str, msg: &str, censored: bool, delegate: Option<&str>) {
         let body = if censored {
             serde_json::json!({"censored": CENSORED, "changed": false})
         } else {
             serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
         };
-        let line = format!("fatal: [{host}]: UNREACHABLE! => {}", ansible_json(&body));
+        let who = match delegate {
+            Some(d) => format!("{host} -> {d}"),
+            None => host.to_string(),
+        };
+        let line = format!("fatal: [{who}]: UNREACHABLE! => {}", ansible_json(&body));
         let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
     }
 
@@ -398,6 +412,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             );
             r.result(
                 "web2",
@@ -406,6 +421,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             );
             r.result(
                 "web3",
@@ -414,6 +430,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             );
             r.result(
                 "web4",
@@ -422,6 +439,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             );
             r.result(
                 "web5",
@@ -430,6 +448,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             );
         });
         let lines: Vec<&str> = out.lines().collect();
@@ -451,7 +470,7 @@ mod tests {
     #[test]
     fn unreachable_and_no_hosts_have_their_lines() {
         let out = capture(|r| {
-            r.unreachable("db1", "agent binary not found", false);
+            r.unreachable("db1", "agent binary not found", false, None);
             r.no_hosts();
         });
         assert_eq!(
@@ -487,6 +506,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         );
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         assert_eq!(
@@ -521,9 +541,9 @@ mod tests {
             (Outcome::Ignored, result(json!({"failed": true, "rc": 1}))),
         ];
         for (outcome, task_result) in cases {
-            let plain = capture(|r| r.result("h", outcome, &task_result, None, false, false));
+            let plain = capture(|r| r.result("h", outcome, &task_result, None, false, false, None));
             let coloured = capture_with_color(true, |r| {
-                r.result("h", outcome, &task_result, None, false, false)
+                r.result("h", outcome, &task_result, None, false, false, None)
             });
             assert_ne!(
                 coloured, plain,
@@ -554,9 +574,17 @@ mod tests {
         let secret = result(json!({"changed": true, "stdout": "secret"}));
         let failed = result(json!({"changed": true, "failed": true, "stdout": "secret"}));
         let out = capture(|r| {
-            r.result("h1", Outcome::Changed, &secret, None, false, true);
-            r.result("h1", Outcome::Ignored, &failed, None, false, true);
-            r.result("h1", Outcome::Changed, &secret, Some("a"), false, true);
+            r.result("h1", Outcome::Changed, &secret, None, false, true, None);
+            r.result("h1", Outcome::Ignored, &failed, None, false, true, None);
+            r.result(
+                "h1",
+                Outcome::Changed,
+                &secret,
+                Some("a"),
+                false,
+                true,
+                None,
+            );
             r.result(
                 "h1",
                 Outcome::Ok,
@@ -564,6 +592,7 @@ mod tests {
                 None,
                 true,
                 true,
+                None,
             );
         });
         let lines: Vec<&str> = out.lines().collect();
@@ -579,7 +608,7 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::new()));
         let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
-        r.result("h1", Outcome::Changed, &secret, None, false, true);
+        r.result("h1", Outcome::Changed, &secret, None, false, true, None);
         r.result(
             "h1",
             Outcome::Ok,
@@ -587,6 +616,7 @@ mod tests {
             None,
             true,
             true,
+            None,
         );
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         let lines: Vec<&str> = out.lines().collect();
@@ -617,7 +647,7 @@ mod tests {
     /// An unreachable host under `no_log` says no more than any other censored line, measured.
     #[test]
     fn a_censored_unreachable_hides_its_reason_too() {
-        let out = capture(|r| r.unreachable("h1", "starting ssh: secret-host", true));
+        let out = capture(|r| r.unreachable("h1", "starting ssh: secret-host", true, None));
         assert_eq!(
             out.trim_end(),
             format!(
@@ -636,6 +666,7 @@ mod tests {
                 Some("one"),
                 false,
                 false,
+                None,
             );
             r.result(
                 "h",
@@ -644,6 +675,7 @@ mod tests {
                 Some("two"),
                 false,
                 false,
+                None,
             );
             r.result(
                 "h",
@@ -652,6 +684,7 @@ mod tests {
                 Some("three"),
                 false,
                 false,
+                None,
             );
             r.result(
                 "h",
@@ -660,6 +693,7 @@ mod tests {
                 None,
                 true,
                 false,
+                None,
             );
         });
         let lines: Vec<&str> = out.lines().collect();

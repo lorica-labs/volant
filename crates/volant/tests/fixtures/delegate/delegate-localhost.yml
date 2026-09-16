@@ -1,0 +1,14 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: to an implicit localhost
+      command: echo hi
+      delegate_to: localhost
+      register: r
+    - name: show
+      debug:
+        msg: "{{ r.stdout }}"
+    - name: skipped and delegated
+      command: echo hi
+      delegate_to: h3
+      when: false

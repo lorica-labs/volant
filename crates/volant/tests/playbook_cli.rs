@@ -1928,12 +1928,12 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
     let probes = [
         (
-            "delegate_to",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      delegate_to: probe\n",
+            "throttle",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      throttle: probe\n",
         ),
         (
-            "run_once",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      run_once: probe\n",
+            "any_errors_fatal",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      any_errors_fatal: probe\n",
         ),
         (
             "order",
@@ -3484,6 +3484,73 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "\"msg\": \"h2\"",
     ),
+    // `run_once` runs the task on the first live host of the batch and hands its registered
+    // variable to every other one. Without the keyword both hosts run it and each registers its
+    // own name, so `h1 on h2` never appears; with it, h2 reads what h1 registered.
+    runs(
+        "task",
+        "run_once",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo \"{{ inventory_hostname }}\"\n      run_once: true\n      register: o\n    - name: Probe read\n      debug:\n        msg: \"{{ o.stdout }} on {{ inventory_hostname }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"h1 on h2\"",
+    ),
+    runs(
+        "block",
+        "run_once",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo \"{{ inventory_hostname }}\"\n          register: o\n      run_once: true\n    - name: Probe read\n      debug:\n        msg: \"{{ o.stdout }} on {{ inventory_hostname }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"h1 on h2\"",
+    ),
+    // A play's `run_once` reaches every task under it, the read included, so the read lives in
+    // a second play. Measured on ansible-core 2.19.12 with this exact shape: `changed: [h1]`
+    // alone in the first play, then `h1 on h1` and `h1 on h2` in the second.
+    runs(
+        "play",
+        "run_once",
+        "- hosts: all\n  gather_facts: false\n  run_once: true\n  tasks:\n    - name: Probe task\n      command: echo \"{{ inventory_hostname }}\"\n      register: o\n- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe read\n      debug:\n        msg: \"{{ o.stdout }} on {{ inventory_hostname }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"h1 on h2\"",
+    ),
+    // `delegate_to` moves the task onto another host's connection and says so in the line.
+    // Parked again, the task runs on h1 itself and the line has no arrow at all.
+    runs(
+        "task",
+        "delegate_to",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      delegate_to: h2\n",
+        &[],
+        0,
+        "changed: [h1 -> h2]",
+    ),
+    runs(
+        "block",
+        "delegate_to",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      delegate_to: h2\n",
+        &[],
+        0,
+        "changed: [h1 -> h2]",
+    ),
+    // `delegate_facts` sends what the task set into the delegate's variables instead of into
+    // its own host's. Parked again, `hostvars['h2'].probe_fact` is undefined and the line reads
+    // `none set`.
+    runs(
+        "task",
+        "delegate_facts",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      set_fact:\n        probe_fact: moved\n      delegate_to: h2\n      delegate_facts: true\n    - name: Probe read\n      debug:\n        msg: \"{{ hostvars['h2'].probe_fact | default('none') }} {{ probe_fact | default('set') }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"moved set\"",
+    ),
+    runs(
+        "block",
+        "delegate_facts",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          set_fact:\n            probe_fact: moved\n      delegate_to: h2\n      delegate_facts: true\n    - name: Probe read\n      debug:\n        msg: \"{{ hostvars['h2'].probe_fact | default('none') }} {{ probe_fact | default('set') }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"moved set\"",
+    ),
     runs(
         "play",
         "force_handlers",
@@ -3587,11 +3654,16 @@ fn every_runs_keyword_changes_something_observable() {
         }
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
         let path = is_become_user_probe(probe).then_some(sudo_dir.as_path());
-        // The `serial` row needs more than one host to cut a batch out of, so it runs against an
-        // inventory of two written beside the probe rather than against the implicit localhost.
+        // `serial` needs more than one host to cut a batch out of, `run_once` needs a second
+        // host to hand its result to, and `delegate_to` needs a second host to run on. They run
+        // against an inventory of two written beside the probe rather than against the implicit
+        // localhost.
         let mut args: Vec<&str> = probe.args.to_vec();
         let inventory = dir.join("serial.inv.ini").display().to_string();
-        if probe.kw == "serial" {
+        if matches!(
+            probe.kw,
+            "serial" | "run_once" | "delegate_to" | "delegate_facts"
+        ) {
             std::fs::write(
                 &inventory,
                 "h1 ansible_connection=local\nh2 ansible_connection=local\n",
@@ -4669,4 +4741,327 @@ fn limit_narrows_before_the_batches_are_cut() {
         text.contains(r#"ok: [h2] => {"msg": "h2,h3 / h2,h3 / h2,h3"}"#),
         "ansible_play_hosts_all is the limited set, not the inventory's full one: {text}"
     );
+}
+
+/// `run_once`, `delegate_to` and `delegate_facts` on the campaign's own fixture.
+///
+/// Every line below is what ansible-core 2.19.12 printed for this playbook against this
+/// inventory: `changed: [h1]` alone under `once`, `once on h1` **and** `once on h2` from the
+/// variable one host registered for both, `changed: [h1 -> h3]` and `changed: [h2 -> h3]` for
+/// the delegated task, `"msg": "h1"` and `"msg": "h2"` behind it because `inventory_hostname`
+/// stays the host the task was written for, `ok: [h1 -> h3]` for the delegated `set_fact`,
+/// `"1 none"` twice because `delegate_facts` put the fact on h3 and not on the host that set
+/// it, and a recap of `h1 ok=6 changed=2`, `h2 ok=5 changed=1` with **no h3 line at all**.
+///
+/// What would make this red: the registered variable not handed to the other host (`once on h2`
+/// undefined, so a `fatal:`); `inventory_hostname` taken from the delegate (`"msg": "h3"`);
+/// `delegate_facts` writing on the delegating host (`"1 1"`); the arrow missing from a
+/// delegated line; or h3 counted in the recap for work it did on somebody else's behalf.
+#[test]
+fn run_once_and_delegate_to_follow_the_reference() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/delegate.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches("changed: [h1]").count(),
+        1,
+        "one host runs the run_once task and it is the first of the batch: {text}"
+    );
+    assert!(
+        !text.contains("changed: [h2]"),
+        "the other host runs nothing for it: {text}"
+    );
+    assert!(text.contains(r#""msg": "once on h1""#), "{text}");
+    assert!(
+        text.contains(r#""msg": "once on h2""#),
+        "the registered variable reaches the host that did not run it: {text}"
+    );
+    assert!(text.contains("changed: [h1 -> h3]"), "{text}");
+    assert!(text.contains("changed: [h2 -> h3]"), "{text}");
+    assert!(
+        text.contains(r#""msg": "h1""#) && text.contains(r#""msg": "h2""#),
+        "inventory_hostname stays the delegating host: {text}"
+    );
+    assert!(text.contains("ok: [h1 -> h3]"), "{text}");
+    assert_eq!(
+        text.matches(r#""msg": "1 none""#).count(),
+        2,
+        "delegate_facts writes on h3 and not on the host that set it: {text}"
+    );
+    assert!(
+        text.contains("h1                         : ok=6    changed=2"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=5    changed=1"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("h3                         :"),
+        "a delegate is not in the recap: {text}"
+    );
+}
+
+/// A `run_once` task that fails takes every other host of the batch out of the play.
+///
+/// Measured on ansible-core 2.19.12: `fatal: [h1]: FAILED!`, no `after` line for either host,
+/// **no recap line for h2** - it ran nothing, so there is nothing to count - and exit 2. The
+/// same holds with a `rescue` around the task: the host that ran it is rescued and carries on
+/// (`rescued=1`, its own `after the block` line), the other host still leaves, and the run
+/// still exits 2.
+///
+/// What would make this red: the other host carrying on past a task nobody ran for it, which is
+/// this project's own worst failure - a run reporting success having done nothing; or the
+/// rescued shape exiting 0, which would report success for a play the reference failed.
+#[test]
+fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/run-once-fails.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("fatal: [h1]: FAILED!"), "{text}");
+    assert!(
+        !text.contains("after on"),
+        "nothing runs behind a run_once that failed: {text}"
+    );
+    assert!(
+        !text.contains("h2                         :"),
+        "a host that ran nothing has no recap line: {text}"
+    );
+
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/run-once-rescued.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "the rescued host is not the whole play: {text}"
+    );
+    assert!(text.contains(r#""msg": "rescued on h1""#), "{text}");
+    assert!(text.contains(r#""msg": "after on h1""#), "{text}");
+    assert!(
+        !text.contains("on h2"),
+        "the other host leaves rather than entering a rescue it never failed into: {text}"
+    );
+    assert!(
+        text.contains("h1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1"),
+        "{text}"
+    );
+    assert!(!text.contains("h2                         :"), "{text}");
+}
+
+/// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the
+/// exit code stays the unreachable one.
+///
+/// Measured on ansible-core 2.19.12 with an unreachable h1: `fatal: [h1]: UNREACHABLE!` with no
+/// arrow, no line and no recap entry for h2, and exit **4** - not 6. So a host that leaves
+/// because its runner never answered adds nothing of its own to the exit code, while a host
+/// that leaves because its runner's task failed adds 2.
+///
+/// What would make this red: h2 waiting for a verdict that can never come, which hangs the run
+/// and reaches the deadline; or h2 counted as failed, which turns the reference's 4 into 6.
+#[test]
+fn an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/run-once-unreachable.ini"),
+            &fixture("delegate/run-once-unreachable.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
+    assert!(
+        !text.contains("on h2"),
+        "the waiting host leaves rather than running the rest: {text}"
+    );
+    assert!(!text.contains("h2                         :"), "{text}");
+}
+
+/// `serial` cuts the play into batches and each batch elects its own runner.
+///
+/// Measured on ansible-core 2.19.12 with `serial: 1` over three hosts: `changed: [h1]`,
+/// `changed: [h2]` and `changed: [h3]`, one per batch, and each host reads its own batch's
+/// result. What would make this red: one runner for the whole play, which leaves two batches
+/// with an undefined registered variable.
+#[test]
+fn each_serial_batch_elects_its_own_run_once_runner() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/run-once-serial.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for host in ["h1", "h2", "h3"] {
+        assert!(
+            text.contains(&format!("changed: [{host}]")),
+            "{host} runs the task for its own batch: {text}"
+        );
+        assert!(
+            text.contains(&format!(r#""msg": "once on {host}""#)),
+            "{text}"
+        );
+    }
+}
+
+/// An `include_tasks` under `run_once` is read for the elected host alone, and only that host
+/// runs what it brought in.
+///
+/// Measured on ansible-core 2.19.12: `included: <path> for h1`, the included tasks running for
+/// h1 with no h2 line under any of their banners, `after` running for both, and a recap of
+/// `h1 ok=4 changed=1`, `h2 ok=1`.
+///
+/// What would make this red: the other host asking for its own copy of the file, which runs the
+/// included tasks twice for a statement the playbook said to run once.
+#[test]
+fn a_run_once_include_is_read_for_the_elected_host_alone() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/run-once-include.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("for h1"), "{text}");
+    assert!(!text.contains("for h1,h2"), "{text}");
+    assert_eq!(
+        text.matches(r#""msg": "included on h1""#).count(),
+        1,
+        "{text}"
+    );
+    assert!(!text.contains("included on h2"), "{text}");
+    assert!(text.contains(r#""msg": "after on h1""#), "{text}");
+    assert!(text.contains(r#""msg": "after on h2""#), "{text}");
+    assert!(
+        text.contains("h1                         : ok=4    changed=1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("h2                         : ok=1    changed=0"),
+        "{text}"
+    );
+}
+
+/// A delegate nothing can reach takes the **delegating** host out of the run, and the line
+/// carries the arrow.
+///
+/// Measured on ansible-core 2.19.12 against an unreachable delegate:
+/// `fatal: [h2 -> h1]: UNREACHABLE!`, the delegating host counted `unreachable=1`, the delegate
+/// absent from the recap, and exit 4.
+///
+/// What would make this red: the arrow missing, which hides which host could not be reached; or
+/// the delegate counted in the recap, which invents a host line for work it never accepted.
+#[test]
+fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/unreachable.ini"),
+            &fixture("delegate/delegate-unreachable.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("fatal: [h1 -> gone]: UNREACHABLE!"), "{text}");
+    assert!(text.contains("carrier_pigeon"), "{text}");
+    assert!(
+        text.contains("h1                         : ok=0    changed=0    unreachable=1"),
+        "{text}"
+    );
+    assert!(!text.contains("gone                 "), "{text}");
+    assert!(!text.contains(r#""msg": "after""#), "{text}");
+}
+
+/// A `delegate_to` naming a host the inventory does not have is an implicit host, and
+/// `localhost` is the local one.
+///
+/// Measured on ansible-core 2.19.12 with no `localhost` in the inventory:
+/// `changed: [h1 -> localhost]`, the command's output readable back on h1, and
+/// `delegate_to: 127.0.0.1` behaving the same way. A delegated task a `when` left out prints
+/// `skipping: [h1]` with **no** arrow, which is the one line the delegate does not reach.
+///
+/// What would make this red: an unknown delegate refused at load, which refuses a playbook the
+/// reference runs; or the arrow printed on a `skipping:` line, which claims a host was
+/// contacted for a task that never left the controller.
+#[test]
+fn an_implicit_localhost_is_a_valid_delegate_and_a_skip_shows_no_arrow() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/delegate-localhost.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("changed: [h1 -> localhost]"), "{text}");
+    assert!(text.contains(r#""msg": "hi""#), "{text}");
+    assert!(
+        text.contains("skipping: [h1]") && !text.contains("skipping: [h1 -> h3]"),
+        "a skipped task never reached the delegate: {text}"
+    );
+}
+
+/// A host that has failed is still a valid delegate.
+///
+/// Measured on ansible-core 2.19.12: h3 fails its own task, h1 then delegates to h3 and the
+/// task runs (`changed: [h1 -> h3]`), because the delegating driver opens its own connection to
+/// the delegate rather than sharing the one the delegate's own driver had.
+///
+/// What would make this red: the delegate looked for in the live host list, which would fail
+/// h1's task for a host that answers perfectly well.
+#[test]
+fn a_failed_host_is_still_a_valid_delegate() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/delegate-failed-host.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("fatal: [h3]: FAILED!"), "{text}");
+    assert!(text.contains("changed: [h1 -> h3]"), "{text}");
+    assert!(text.contains(r#""msg": "hi""#), "{text}");
 }

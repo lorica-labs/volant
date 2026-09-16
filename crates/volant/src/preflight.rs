@@ -285,7 +285,7 @@ mod tests {
     /// dropped here, which is exactly the silent skip this module exists to stop.
     #[test]
     fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["async", "delegate_to", "poll", "run_once", "throttle"] {
+        for kw in ["async", "diff", "poll", "remote_user", "throttle"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
             ));
@@ -317,7 +317,7 @@ mod tests {
     ///
     #[test]
     fn a_keyword_parked_inside_any_section_of_a_block_is_refused() {
-        let parked = "- name: Deep\n          command: echo hi\n          delegate_to: probe";
+        let parked = "- name: Deep\n          command: echo hi\n          throttle: probe";
         for (section, body) in [
             ("block", format!("- block:\n        {parked}\n")),
             (
@@ -331,7 +331,7 @@ mod tests {
         ] {
             let text = refusal(&format!("- hosts: all\n  tasks:\n    {body}"));
             assert!(
-                text.contains("task 'Deep': keyword 'delegate_to' is not supported yet"),
+                text.contains("task 'Deep': keyword 'throttle' is not supported yet"),
                 "{section}: {text}"
             );
         }
@@ -458,7 +458,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            84,
+            77,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

@@ -1,0 +1,9 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: once fails
+      command: nosuchbinary-volant-probe
+      run_once: true
+    - name: after
+      debug:
+        msg: "after on {{ inventory_hostname }}"

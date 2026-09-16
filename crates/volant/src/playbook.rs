@@ -63,12 +63,15 @@ pub struct Play {
     /// the play's variables. Kept raw because it is rendered when the play starts, which is where
     /// the reference renders it - see `compile::batches`.
     pub serial: Option<Value>,
-    /// The play's own `no_log`, `environment` and `check_mode`. All three are task keywords a
-    /// play may also carry, so they are folded into every task at compile time rather than read
-    /// again per step - see `compile`, which uses them as the outermost layer of the merge.
+    /// The play's own `no_log`, `environment`, `check_mode` and `run_once`. All four are task
+    /// keywords a play may also carry, so they are folded into every task at compile time rather
+    /// than read again per step - see `compile`, which uses them as the outermost layer of the
+    /// merge. `delegate_to` and `delegate_facts` are not here because `Play.fattributes` has
+    /// neither: the reference takes them on a block and on a task and nowhere else.
     pub no_log: Option<bool>,
     pub environment: Vec<Value>,
     pub check_mode: Option<bool>,
+    pub run_once: Option<bool>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The
     /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
     /// way it does in the reference; the pre-flight then refuses the run before the first
@@ -172,6 +175,15 @@ pub struct PlayTask {
     /// `check_mode`. `false` is what this release does, so it is accepted and changes nothing;
     /// `true` asks for a mode this release has not written and the pre-flight refuses it.
     pub check_mode: Option<bool>,
+    /// `run_once`: one host of the batch runs the task and every other host reads what it
+    /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
+    /// a task saying `false` inside it have to be told apart from a task that says nothing.
+    pub run_once: Option<bool>,
+    /// `delegate_to`, raw: the task runs on that host's connection while everything else about
+    /// it - `inventory_hostname`, the registered variable, the recap line - stays with the host
+    /// it was written for. Kept as written because it is a template rendered per task.
+    pub delegate_facts: Option<bool>,
+    pub delegate_to: Option<String>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. A task
     /// carrying one is loaded whole and refused by the pre-flight, never run without it.
     ///
@@ -219,6 +231,9 @@ impl PlayTask {
             no_log: None,
             environment: Vec::new(),
             check_mode: None,
+            run_once: None,
+            delegate_facts: None,
+            delegate_to: None,
             unsupported: Vec::new(),
         }
     }
@@ -226,6 +241,28 @@ impl PlayTask {
     /// Whether this task's results are censored. Silence means no.
     pub fn censors(&self) -> bool {
         self.no_log.unwrap_or(false)
+    }
+
+    /// Whether one host of the batch runs this task for all of them. Silence means no.
+    pub fn runs_once(&self) -> bool {
+        self.run_once.unwrap_or(false)
+    }
+
+    /// Whether the facts this task sets belong to the host it was delegated to rather than to
+    /// the host it was written for. Silence means no.
+    pub fn delegates_facts(&self) -> bool {
+        self.delegate_facts.unwrap_or(false)
+    }
+
+    /// Whether the hosts of the batch meet in front of this task before any of them runs it,
+    /// because of a keyword written on it.
+    ///
+    /// Read out of [`crate::keywords`] rather than hard-coded here: the table is where a
+    /// keyword's properties are declared, and a second list of barrier keywords beside it would
+    /// be a second thing to keep in step. The textual scan over `hostvars` and the play's host
+    /// lists is the executor's own half of the same question and catches what no keyword spells.
+    pub fn barrier(&self) -> bool {
+        self.runs_once() && crate::keywords::is_barrier("run_once")
     }
 }
 
@@ -293,6 +330,22 @@ fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
             ),
         },
     }
+}
+
+/// `run_once`, `delegate_facts` and `delegate_to`, wherever the three are written: on a play
+/// (`run_once` alone, which is all `Play.fattributes` carries), on a block, on a role entry or
+/// on a task.
+///
+/// `delegate_to` is kept as written. It is a template rendered against the task's own variables
+/// when the task runs, and rendering it here would resolve it against nothing.
+fn delegation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
+    let facts = boolean(yaml, "delegate_facts")?;
+    let to = match field(yaml, "delegate_to") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(other) => bail!("{context}'delegate_to' must be a host name, found {other:?}"),
+    };
+    Ok((facts, to))
 }
 
 /// A scalar the way that refusal shows it: a string in quotes, a number bare, a sequence or
@@ -584,6 +637,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,
+        run_once: boolean(yaml, "run_once")?,
         unsupported,
     })
 }
@@ -677,6 +731,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
     unsupported.sort_unstable();
     let context = format!("role '{name}': ");
     let (r#become, become_user) = escalation(yaml, &context)?;
+    let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
     Ok(RoleEntry {
         name,
         from,
@@ -694,6 +749,9 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
+            run_once: boolean(yaml, "run_once")?,
+            delegate_facts,
+            delegate_to,
             unsupported,
             ..PlayTask::empty()
         },
@@ -801,6 +859,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
     unsupported.sort_unstable();
     let context = format!("block '{name}': ");
     let (r#become, become_user) = escalation(yaml, &context)?;
+    let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
     Ok(Block {
         body: task_list(field(yaml, "block"), "block")?,
         rescue: task_list(field(yaml, "rescue"), "rescue")?,
@@ -818,6 +877,9 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
+            run_once: boolean(yaml, "run_once")?,
+            delegate_facts,
+            delegate_to,
             unsupported,
             ..PlayTask::empty()
         },
@@ -973,6 +1035,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         (None, None) => (None, false),
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
+    let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
     Ok(PlayTask {
         named: name.is_some(),
         name: name.unwrap_or_else(|| module.clone()),
@@ -999,6 +1062,9 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, &context)?,
         check_mode: boolean(yaml, "check_mode")?,
+        run_once: boolean(yaml, "run_once")?,
+        delegate_facts,
+        delegate_to,
         unsupported,
     })
 }
@@ -1318,12 +1384,12 @@ mod tests {
             "{text}"
         );
         let pb = parse(
-            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      delegate_to: x\n",
+            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      throttle: 1\n",
             "x.yml",
         )
         .expect("the reference has both, so the loader takes both");
         assert_eq!(pb.plays[0].strategy.as_deref(), Some("free"));
-        assert_eq!(first(&pb).unsupported, ["delegate_to"]);
+        assert_eq!(first(&pb).unsupported, ["throttle"]);
     }
 
     #[test]
@@ -1565,7 +1631,7 @@ mod tests {
     /// executor that ignores it.
     #[test]
     fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
-        for kw in ["async", "poll", "delegate_to", "become_flags", "throttle"] {
+        for kw in ["async", "poll", "diff", "become_flags", "throttle"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
                 "x.yml",

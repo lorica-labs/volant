@@ -1074,8 +1074,9 @@ pub(crate) fn compile(
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for
     // the listing. Measured: `--skip-tags <play tag>` leaves a play with nothing to do.
-    // `no_log`, `environment` and `check_mode` join the play's tags here: all three are task
-    // keywords a play may also carry, so putting them in the outermost layer of the merge is what
+    // `no_log`, `environment`, `check_mode` and `run_once` join the play's tags here: all four
+    // are task keywords a play may also carry, so putting them in the outermost layer of the
+    // merge is what
     // makes a play-wide `environment` reach a task inside a role inside a block, with no second
     // path to keep in step with this one.
     let empty = PlayTask {
@@ -1083,6 +1084,7 @@ pub(crate) fn compile(
         no_log: play.no_log,
         environment: play.environment.clone(),
         check_mode: play.check_mode,
+        run_once: play.run_once,
         ..PlayTask::empty()
     };
     // A flush point closes each of the three sections. Measured on ansible-core 2.19.12: the
@@ -1455,6 +1457,14 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     // thing and a task that says the other have to be told apart from a task that says nothing.
     task.no_log = inner.no_log.or(outer.no_log);
     task.check_mode = inner.check_mode.or(outer.check_mode);
+    // Three-state for the same reason, and inherited the same way: `Block.fattributes` carries
+    // all three, `Play.fattributes` carries `run_once` alone, and the innermost value wins.
+    task.run_once = inner.run_once.or(outer.run_once);
+    task.delegate_facts = inner.delegate_facts.or(outer.delegate_facts);
+    task.delegate_to = inner
+        .delegate_to
+        .clone()
+        .or_else(|| outer.delegate_to.clone());
     // `environment` is the one keyword here that does not have a winner: measured on
     // ansible-core 2.19.12, a play's layer and a task's layer are both in force and the task's
     // wins name by name, so the layers are stacked outermost first and merged when the task runs.

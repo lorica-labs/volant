@@ -1,0 +1,18 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: once
+      command: echo once
+      run_once: true
+      register: o
+    - debug: msg="{{ o.stdout }} on {{ inventory_hostname }}"
+    - name: delegated
+      command: echo "{{ inventory_hostname }}"
+      delegate_to: h3
+      register: d
+    - debug: msg="{{ d.stdout }}"
+    - name: delegated facts
+      set_fact: df=1
+      delegate_to: h3
+      delegate_facts: true
+    - debug: msg="{{ hostvars['h3'].df | default('none') }} {{ df | default('none') }}"

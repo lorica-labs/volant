@@ -1,0 +1,13 @@
+- hosts: h1,h3
+  gather_facts: false
+  tasks:
+    - name: h3 fails
+      command: nosuchbinary-volant-probe
+      when: inventory_hostname == 'h3'
+    - name: delegate to the failed host
+      command: echo hi
+      delegate_to: h3
+      register: r
+    - name: show
+      debug:
+        msg: "{{ r.stdout }}"

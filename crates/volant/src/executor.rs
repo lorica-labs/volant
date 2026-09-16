@@ -67,6 +67,16 @@ pub struct Progress {
     /// again: until then the list still ends that flush where the compilation ended it, and the
     /// driver would walk past the handlers instead of into them.
     pub spliced_through: Option<usize>,
+    /// One entry per `run_once` step the elected host has finished, saying whether its task
+    /// failed. The other hosts of the batch wait for their own index to appear here: until it
+    /// does, what the one runner registered or set as a fact is not in the store yet, and a
+    /// host reading it would read nothing.
+    ///
+    /// Both halves are needed. Measured on ansible-core 2.19.12: a `run_once` task that fails
+    /// takes every other host of the play out of it - with no recap line, since they ran
+    /// nothing - and it does so whether or not a `rescue` catches the failure for the host that
+    /// ran it. So the failure has to travel; the runner leaving the live set does not carry it.
+    pub run_once: BTreeMap<usize, bool>,
 }
 
 /// Names whose value depends on what the other hosts have done: another host's variables, and
@@ -154,6 +164,11 @@ enum Event {
         /// the recap and the registered variable read the real result and only the terminal
         /// line is censored.
         censored: bool,
+        /// The host this task's `delegate_to` sent it to, for the `[h1 -> h3]` the reference
+        /// prints. Carried beside the host rather than folded into it because the recap counts
+        /// the host the task was written for: measured on ansible-core 2.19.12, a play over h1
+        /// and h2 delegating to h3 recaps h1 and h2 and shows no h3 line at all.
+        delegate: Option<String>,
     },
     /// One attempt of a task with `until` or `retries` failed and another one is coming, or this
     /// was the last: the reference prints this line after every failed attempt, the last
@@ -192,6 +207,11 @@ enum Event {
     Finished {
         host: String,
         failed: bool,
+        /// This host failed without ever reporting a task: the one runner of a `run_once` step
+        /// failed and took the rest of the batch out of the play with it. Measured on
+        /// ansible-core 2.19.12: those hosts have no recap line, because they ran nothing, and
+        /// the run still exits 2. So the exit code has to hear about it and the recap must not.
+        silent_failure: bool,
         links: Vec<(LinkKey, AgentLink)>,
     },
     Unreachable {
@@ -200,6 +220,11 @@ enum Event {
         /// The `no_log` of the task whose batch could not run. Measured on ansible-core
         /// 2.19.12: the reference censors the `UNREACHABLE!` line too, reason and all.
         censored: bool,
+        /// The delegate the batch could not reach. Measured on ansible-core 2.19.12: a
+        /// `delegate_to` naming a host nothing answers for prints
+        /// `fatal: [h2 -> h1]: UNREACHABLE!` and takes the **delegating** host out of the run,
+        /// which is the host the recap counts.
+        delegate: Option<String>,
     },
 }
 
@@ -241,6 +266,11 @@ struct PlayPlan {
     all_play_hosts: Vec<String>,
     r#become: Option<bool>,
     become_user: Option<String>,
+    /// Every host the inventory resolved, by name, for `delegate_to` to look one up in. The
+    /// whole inventory rather than the play's own hosts: measured on ansible-core 2.19.12, a
+    /// play over h1 and h2 delegates to h3 without h3 being in the play at all, and h3 stays
+    /// out of the recap.
+    inventory: Arc<HashMap<String, Host>>,
 }
 
 impl PlayPlan {
@@ -271,6 +301,7 @@ pub async fn run_play(
     play: &Play,
     compiled: &Compiled,
     hosts: Vec<Host>,
+    inventory: Arc<HashMap<String, Host>>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -343,6 +374,7 @@ pub async fn run_play(
             &live,
             &all,
             &vars_files,
+            Arc::clone(&inventory),
             agents,
             options,
             state,
@@ -369,6 +401,7 @@ async fn run_batch(
     hosts: &[Host],
     all: &[String],
     vars_files: &HashMap<String, Vec<Map<String, Value>>>,
+    inventory: Arc<HashMap<String, Host>>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -389,6 +422,7 @@ async fn run_batch(
         all_play_hosts: all.to_vec(),
         r#become: play.r#become,
         become_user: play.become_user.clone(),
+        inventory,
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
@@ -401,6 +435,7 @@ async fn run_batch(
         &state.failed_hosts,
         &HashMap::new(),
         None,
+        &BTreeMap::new(),
     );
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
     // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
@@ -447,12 +482,14 @@ async fn run_batch(
                             host: reported.clone(),
                             msg: format!("driver panicked: {err}"),
                             censored: false,
+                            delegate: None,
                         })
                         .await;
                     let _ = watchdog_tx
                         .send(Event::Finished {
                             host: reported,
                             failed: true,
+                            silent_failure: false,
                             links: Vec::new(),
                         })
                         .await;
@@ -473,6 +510,13 @@ async fn run_batch(
     // The last splice point the coordinator has published a splice for, republished with every
     // `Progress` so a driver waiting on one reads it whatever else moved.
     let mut spliced: Option<usize> = None;
+    // What the one host elected for each `run_once` step made of it, for the hosts waiting
+    // behind it. Filled here rather than by the elected driver because the failure has to be
+    // published **with** the live-set change it causes: a failed result takes its host out of
+    // `live_hosts` in this same arm, and a host that saw the shrunken list before the verdict
+    // would read a leader that is merely gone and leave the play the quiet way, at the wrong
+    // exit code.
+    let mut run_once: BTreeMap<usize, bool> = BTreeMap::new();
     // What each host asked for at each include step, in arrival order. Keyed by index because a
     // host reports its request and then blocks, which it may do while this loop is still holding
     // an earlier index for a slower host.
@@ -507,23 +551,43 @@ async fn run_batch(
                 }
                 match rx.recv().await {
                     Some(event @ Event::Result { .. }) => {
-                        let (key, lost) = if let Event::Result {
+                        let (key, lost, sank) = if let Event::Result {
                             host,
                             index,
                             outcome,
                             ..
                         } = &event
                         {
-                            ((host.clone(), *index), *outcome == Outcome::Failed)
+                            (
+                                (host.clone(), *index),
+                                *outcome == Outcome::Failed,
+                                matches!(outcome, Outcome::Failed | Outcome::Rescued),
+                            )
                         } else {
                             unreachable!()
                         };
+                        // A `run_once` task that failed, whether or not a `rescue` caught it
+                        // for the host that ran it: measured on ansible-core 2.19.12, the
+                        // rescue keeps that one host in the play (`rescued=1`, exit 2) and the
+                        // others still leave. `Ignored` is not a failure and is left out, so a
+                        // `run_once` under `ignore_errors` carries the whole batch past it.
+                        let announced = sank
+                            && plan
+                                .steps()
+                                .steps
+                                .get(key.1)
+                                .is_some_and(|s| s.task.runs_once());
+                        if announced {
+                            run_once.insert(key.1, true);
+                        }
                         // A failed result is the host leaving the play, and it arrives before
                         // that task's `TaskDone`. Taking it out of the live set here, rather
                         // than waiting for its `Finished`, is what lets the next task read the
                         // shrunken host list without racing the driver that is shutting down.
                         if lost {
                             state.failed_hosts.insert(key.0.clone());
+                        }
+                        if lost || announced {
                             publish(
                                 &progress_tx,
                                 &play_hosts,
@@ -531,6 +595,7 @@ async fn run_batch(
                                 &state.failed_hosts,
                                 &frontier,
                                 spliced,
+                                &run_once,
                             );
                         }
                         pending.entry(key).or_default().push(event);
@@ -555,6 +620,26 @@ async fn run_batch(
                     }
                     Some(Event::TaskDone { host, index }) => {
                         finished(&mut done, &mut frontier, &host, index);
+                        // The elected host is the first to report this step - every other host
+                        // waits for this entry before it sends its own - so `or_insert` keeps
+                        // the verdict of the one that ran the task and not the silence of the
+                        // ones that did not.
+                        //
+                        // A host that has already failed is the one exception to that order: it
+                        // is out of the live set, so it was never a candidate for the election,
+                        // and under `force_handlers` it walks the rest of the play reporting
+                        // every step it passes on its way to its handlers. Its report is not a
+                        // verdict, and taking it as one would release the waiting hosts before
+                        // the runner had run.
+                        if !state.failed_hosts.contains(&host)
+                            && plan
+                                .steps()
+                                .steps
+                                .get(index)
+                                .is_some_and(|s| s.task.runs_once())
+                        {
+                            run_once.entry(index).or_insert(false);
+                        }
                         publish(
                             &progress_tx,
                             &play_hosts,
@@ -562,13 +647,18 @@ async fn run_batch(
                             &state.failed_hosts,
                             &frontier,
                             spliced,
+                            &run_once,
                         );
                     }
                     Some(Event::Finished {
                         host,
                         failed,
+                        silent_failure,
                         links,
                     }) => {
+                        if silent_failure {
+                            stats.failed_unreported(&host);
+                        }
                         if failed {
                             // The host is leaving the run for good: keeping its connection open
                             // would just idle until the run ends.
@@ -583,12 +673,14 @@ async fn run_batch(
                             &state.failed_hosts,
                             &frontier,
                             spliced,
+                            &run_once,
                         );
                     }
                     Some(Event::Unreachable {
                         host,
                         msg,
                         censored,
+                        delegate,
                     }) => {
                         if !header_shown {
                             let live = progress_tx.borrow().clone();
@@ -596,7 +688,7 @@ async fn run_batch(
                             header_shown = true;
                         }
                         stats.unreachable(&host);
-                        out.unreachable(&host, &msg, censored);
+                        out.unreachable(&host, &msg, censored, delegate.as_deref());
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
                         publish(
@@ -606,6 +698,7 @@ async fn run_batch(
                             &state.failed_hosts,
                             &frontier,
                             spliced,
+                            &run_once,
                         );
                     }
                     None => break,
@@ -695,6 +788,7 @@ async fn run_batch(
                 &state.failed_hosts,
                 &frontier,
                 spliced,
+                &run_once,
             );
         }
         if gone.len() == play_hosts.len() && pending.is_empty() {
@@ -713,9 +807,10 @@ async fn run_batch(
                 host,
                 msg,
                 censored,
+                delegate,
             } => {
                 stats.unreachable(&host);
-                out.unreachable(&host, &msg, censored);
+                out.unreachable(&host, &msg, censored, delegate.as_deref());
                 // Into `gone` here as well as in the loop above, because the last thing this
                 // function does is count an `unreachable` for every worker that failed and is
                 // not in that set. A host reported here and left out of it would be counted
@@ -729,13 +824,18 @@ async fn run_batch(
                     &state.failed_hosts,
                     &frontier,
                     spliced,
+                    &run_once,
                 );
             }
             Event::Finished {
                 host,
                 failed,
+                silent_failure,
                 links,
             } => {
+                if silent_failure {
+                    stats.failed_unreported(&host);
+                }
                 if failed {
                     state.failed_hosts.insert(host);
                 }
@@ -747,10 +847,22 @@ async fn run_batch(
                     &state.failed_hosts,
                     &frontier,
                     spliced,
+                    &run_once,
                 );
             }
             Event::TaskDone { host, index } => {
                 finished(&mut done, &mut frontier, &host, index);
+                // A host already in `failed_hosts` is walking the rest of the play for its
+                // handlers alone; its report is not a verdict, the same way it is not one above.
+                if !state.failed_hosts.contains(&host)
+                    && plan
+                        .steps()
+                        .steps
+                        .get(index)
+                        .is_some_and(|s| s.task.runs_once())
+                {
+                    run_once.entry(index).or_insert(false);
+                }
                 publish(
                     &progress_tx,
                     &play_hosts,
@@ -758,6 +870,7 @@ async fn run_batch(
                     &state.failed_hosts,
                     &frontier,
                     spliced,
+                    &run_once,
                 );
             }
             // A driver sends a result and the `TaskDone` behind it over the same channel, so a
@@ -796,7 +909,7 @@ async fn run_batch(
             && !gone.contains(&host)
         {
             stats.unreachable(&host);
-            out.unreachable(&host, &format!("driver panicked: {err}"), false);
+            out.unreachable(&host, &format!("driver panicked: {err}"), false, None);
             state.failed_hosts.insert(host);
         }
     }
@@ -867,16 +980,28 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         show,
         counts,
         censored,
+        delegate,
         ..
     } = event
     else {
         return;
     };
+    // The recap counts the host the task was written for, never the delegate: measured on
+    // ansible-core 2.19.12, a play over h1 and h2 delegating every task to h3 recaps those two
+    // and h3 is not in the recap at all.
     if counts {
         stats.record(&host, outcome, result.changed());
     }
     if show {
-        out.result(&host, outcome, &result, label.as_deref(), dump, censored);
+        out.result(
+            &host,
+            outcome,
+            &result,
+            label.as_deref(),
+            dump,
+            censored,
+            delegate.as_deref(),
+        );
     } else if outcome == Outcome::Ignored {
         // A loop's aggregate prints no line of its own, but the failure it swallowed still has
         // to say so.
@@ -915,6 +1040,7 @@ fn finished(
 /// hosts of the batch, so a driver waiting for it to reach `i - 1` is waiting only on hosts that
 /// are still expected to report - and never on a host of another batch, which has no driver here
 /// to report at all.
+#[allow(clippy::too_many_arguments)]
 fn publish(
     tx: &watch::Sender<Progress>,
     batch_hosts: &[String],
@@ -922,6 +1048,7 @@ fn publish(
     lost: &HashSet<String>,
     frontier: &HashMap<String, usize>,
     spliced_through: Option<usize>,
+    run_once: &BTreeMap<usize, bool>,
 ) {
     let live_hosts: Vec<String> = batch_hosts
         .iter()
@@ -945,6 +1072,7 @@ fn publish(
         live_hosts,
         play_hosts_left,
         spliced_through,
+        run_once: run_once.clone(),
     });
 }
 
@@ -1349,14 +1477,23 @@ fn host_vars(
 
 /// A task rendered for one host: what to do with it.
 enum Prepared {
-    /// Every item (or the single non-loop item) had a false `when`: results are ready.
+    /// Every item (or the single non-loop item) had a false `when`: results are ready. No
+    /// delegate travels with it: measured on ansible-core 2.19.12, a task a `when` left out
+    /// prints `skipping: [h1]` with no arrow, because it never reached the delegate.
     Skipped(Vec<Item>),
-    /// `set_fact` or `debug`: run on the controller.
-    Local(Vec<Item>),
+    /// `set_fact` or `debug`: run on the controller. A `delegate_to` changes nothing about
+    /// where it runs - measured, a delegated `debug` still runs here - so the delegate travels
+    /// only as the name the line shows.
+    Local(Vec<Item>, Option<String>),
     /// Send to the agent, one `Task` per item, over a link running as this task's escalated
     /// user. Escalation belongs to the task rather than to an item: it decides which agent on
     /// the host the whole task talks to, so every item of a loop shares it.
-    Remote(Vec<Item>, Option<Escalation>),
+    ///
+    /// The host is the delegate when the task has one, and that is the host the link is opened
+    /// to, keyed by, and reused from: measured on ansible-core 2.19.12, a task delegated away
+    /// from a host nothing can reach runs perfectly well, so the delegating host's own
+    /// connection is never opened for it.
+    Remote(Vec<Item>, Option<Escalation>, Option<Host>),
 }
 
 /// One loop item (or the whole task when there is no loop), rendered.
@@ -1526,11 +1663,77 @@ fn prepare(
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
     }
+    let delegate = delegate_for(task, &base, templar)?.map(|name| delegate_host(&name, plan));
     if is_local(&task.module) {
-        return Ok(Prepared::Local(items));
+        return Ok(Prepared::Local(items, delegate.map(|d| d.name)));
     }
+    // From the delegating host's own variables, measured on ansible-core 2.19.12:
+    // `ansible_become_user` under a `delegate_to` still reads the value the **delegating**
+    // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
+    // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation = become_for(task, plan, &base, defaults, templar)?;
-    Ok(Prepared::Remote(items, escalation))
+    Ok(Prepared::Remote(items, escalation, delegate))
+}
+
+/// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what
+/// `delegate_to: "{{ maybe | default('') }}"` renders to when nobody asked for one.
+///
+/// Rendered against the task's variables and **not** against one loop item's, the way
+/// `become_user` is and for the same reason: one batch is one message to one agent over one
+/// link, and a task whose items each name a different delegate would have to split across links
+/// and interleave the answers. The reference does delegate per item; that divergence is named
+/// here rather than left to look like the operator's own typo.
+fn delegate_for(
+    task: &PlayTask,
+    vars: &Map<String, Value>,
+    templar: &Templar,
+) -> Result<Option<String>, TemplateError> {
+    let Some(raw) = &task.delegate_to else {
+        return Ok(None);
+    };
+    let name = if Templar::is_template(raw) {
+        templar
+            .render(raw, vars)
+            .map_err(|err| {
+                let hint = if task.loop_items.is_some() && raw.contains(&task.loop_var) {
+                    ". A 'delegate_to' that changes per loop item is not supported yet: one batch runs over one link"
+                        .to_string()
+                } else {
+                    String::new()
+                };
+                TemplateError(format!("rendering 'delegate_to' {raw}: {}{hint}", err.0))
+            })?
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| {
+                TemplateError(format!("'delegate_to' must render to a host name: {raw}"))
+            })?
+    } else {
+        raw.clone()
+    };
+    Ok(Some(name).filter(|n| !n.is_empty()))
+}
+
+/// The host a `delegate_to` names: the inventory's own entry when it has one, an implicit host
+/// otherwise.
+///
+/// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
+/// inventory runs locally (`changed: [h1 -> localhost]`), `127.0.0.1` does the same, and a name
+/// the inventory has never heard of is **connected to** rather than refused - `delegate_to:
+/// nosuch` reports `fatal: [h1 -> nosuch]: UNREACHABLE!` with ssh's own resolution error and
+/// exits 4. So an unknown name is an ssh target of that name, not a load-time error.
+fn delegate_host(name: &str, plan: &PlayPlan) -> Host {
+    if let Some(host) = plan.inventory.get(name) {
+        return host.clone();
+    }
+    let mut vars = BTreeMap::new();
+    if matches!(name, "localhost" | "127.0.0.1" | "::1") {
+        vars.insert("ansible_connection".to_string(), json!("local"));
+    }
+    Host {
+        name: name.to_string(),
+        vars,
+    }
 }
 
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
@@ -1564,7 +1767,12 @@ fn display(v: &Value) -> String {
 /// A deliberate divergence, recorded rather than hidden: these land as facts, which is precedence
 /// 20 here against the reference's own rank 19 for `include_vars`. The two differ only for a name
 /// a host variable also carries.
-fn run_include_vars(item: &Item, step: &Step, host: &str, store: &Mutex<VarStore>) -> TaskResult {
+fn run_include_vars(
+    item: &Item,
+    step: &Step,
+    hosts: &[String],
+    store: &Mutex<VarStore>,
+) -> TaskResult {
     let Some(name) = item
         .args
         .get("file")
@@ -1626,7 +1834,9 @@ fn run_include_vars(item: &Item, step: &Step, host: &str, store: &Mutex<VarStore
     {
         let mut vars = store.lock().expect("vars lock");
         for (key, value) in &facts {
-            vars.set_fact(host, key, value.clone());
+            for host in hosts {
+                vars.set_fact(host, key, value.clone());
+            }
         }
     }
     let mut r = Map::new();
@@ -1645,24 +1855,25 @@ fn run_local(
     task: &PlayTask,
     item: &Item,
     step: &Step,
-    host: &str,
+    fact_hosts: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
 ) -> TaskResult {
     let mut r = Map::new();
     match short_name(&task.module) {
-        "include_vars" => return run_include_vars(item, step, host, store),
+        "include_vars" => return run_include_vars(item, step, fact_hosts, store),
         "set_fact" => {
             let mut facts = Map::new();
             for (k, v) in &item.args {
                 if k == "cacheable" {
                     continue;
                 }
-                store
-                    .lock()
-                    .expect("vars lock")
-                    .set_fact(host, k, v.clone());
+                let mut vars = store.lock().expect("vars lock");
+                for host in fact_hosts {
+                    vars.set_fact(host, k, v.clone());
+                }
+                drop(vars);
                 facts.insert(k.clone(), v.clone());
             }
             r.insert("ansible_facts".into(), Value::Object(facts));
@@ -2287,7 +2498,15 @@ async fn drive_host(
     // whether the task it happened under censors its output.
     let mut unreachable: Option<String> = None;
     let mut unreachable_censored = false;
+    // The delegate of the task whose batch could not be reached, for the `[h2 -> h1]` the
+    // `UNREACHABLE!` line carries. Measured on ansible-core 2.19.12: the delegating host is the
+    // one the recap counts, and the delegate only shows in the line.
+    let mut unreachable_delegate: Option<String> = None;
     let mut failed = false;
+    // Set when this host leaves the play with nothing to show for it: the one runner of a
+    // `run_once` step failed, so this host never ran the task and has no line, and the run
+    // still has to exit 2 for it. Measured on ansible-core 2.19.12.
+    let mut silent_failure = false;
     // Not always step 0: a block with an empty `block:` list lays its rescue out there, and
     // nothing has failed. The steps in front of the first one are stepped over like any other.
     let mut pos = first(&plan.steps());
@@ -2453,6 +2672,12 @@ async fn drive_host(
         // The escalation every task of the batch shares. A batch is one message to one agent,
         // so it cannot span two target users.
         let mut batch_escalation: Option<Escalation> = None;
+        // The host every task of the batch runs on, when a `delegate_to` moved it off this one:
+        // the name for the `[h1 -> h3]` its lines carry, and the host the link is opened to and
+        // keyed by. One batch is one link, so a second delegate ends the batch like a second
+        // target user does.
+        let mut batch_delegate: Option<String> = None;
+        let mut batch_target: Option<Host> = None;
         // Set when the batch's one task retries. A retried task is alone in its batch, so this
         // says how the whole batch runs: item by item, attempt by attempt, rather than in one
         // trip to the agent.
@@ -2514,6 +2739,87 @@ async fn drive_host(
                 pos = next;
                 continue;
             }
+            // A step the hosts of the batch meet in front of: one the table declares a
+            // synchronisation point (`run_once`, whose one runner every other host reads), or
+            // one whose text names another host's state (`hostvars` and the play's live host
+            // lists). Neither subsumes the other - `run_once` spells none of those names, and a
+            // `hostvars` read needs no keyword - so a step is a boundary when either says so.
+            //
+            // Asked of the task rather than read off a table parallel to the step list: the
+            // list grows at a flush point, and a second list to keep in step with it is a second
+            // thing to get wrong. It costs one pass over the task's own text, against the full
+            // render `prepare` does for it a few lines below.
+            //
+            // In front of the flush, include and mask arms rather than behind them, because the
+            // election below has to be unanimous: two hosts reading `live_hosts` at two
+            // different moments could otherwise elect two different runners for one step, and
+            // both of them would run it.
+            if (task.barrier() || reads_across_hosts(task)) && pos > 0 {
+                if !batch.is_empty() {
+                    break;
+                }
+                loop {
+                    if *stop.borrow() {
+                        break 'run;
+                    }
+                    let p = progress.borrow().clone();
+                    // Alone in the play there is nobody left to wait for, which is also how a
+                    // wait ends when every other host has died.
+                    if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos)
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        changed = progress.changed() => {
+                            // The coordinator is gone, so no further progress can be published
+                            // and waiting on it would never end.
+                            if changed.is_err() {
+                                break;
+                            }
+                        }
+                        res = stop.changed(), if !stop_broken => {
+                            if res.is_err() {
+                                stop_broken = true;
+                            } else {
+                                break 'run;
+                            }
+                        }
+                    }
+                }
+            }
+            // Who runs a `run_once` step: the first live host of the batch **the step's mask
+            // includes**, in inventory order. Every other host of the batch reads what it
+            // produced and runs nothing. Measured on ansible-core 2.19.12: `changed: [h1]` alone
+            // under the banner, the registered variable and the facts readable on h2 as well, and
+            // h2 counting no `ok` for it. With `serial` each batch elects its own, which falls
+            // out of `live_hosts` being the batch's list and not the play's. Measured again with
+            // an include a `when` kept one of three hosts out of: the two the mask holds both
+            // read the registered value back, and the third runs only what follows.
+            //
+            // The mask is part of the election and not a filter after it. Elected off the whole
+            // live set, the runner could be a host the mask leaves out - which runs nothing, so
+            // nobody runs the step - and every host outside the mask would report the step
+            // straight away, publishing the verdict before the runner had run. The hosts waiting
+            // on it then read a registered variable that does not exist yet.
+            //
+            // The unanimity this election needs is what
+            // `executor::tests::a_boundary_is_either_declared_by_a_keyword_or_found_in_the_text`
+            // guards, over the table rather than over a run: the barrier above is what makes two
+            // hosts read one live host list, and without it they can elect two runners and run
+            // the task twice.
+            let runner = {
+                let p = progress.borrow();
+                p.live_hosts
+                    .iter()
+                    .find(|h| {
+                        step.hosts
+                            .as_ref()
+                            .is_none_or(|only| only.iter().any(|m| m == *h))
+                    })
+                    .cloned()
+            };
+            let follower =
+                task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind. This one line is what makes a handler run
             // once per notification: every index the flush was asked for goes, whether or not
             // the flush reached it. Measured on ansible-core 2.19.12, both halves - `first
@@ -2592,10 +2898,13 @@ async fn drive_host(
                     break;
                 }
                 let live = progress.borrow().clone();
-                // A host outside the mask, or one running for its handlers alone, asks for
-                // nothing and shows nothing. It still reports the step and waits: the steps go in
-                // behind this index for everyone's list.
-                let asked = if masked_out || handlers_only {
+                // A host outside the mask, one running for its handlers alone, or one that lost
+                // the `run_once` election, asks for nothing and shows nothing. It still reports
+                // the step and waits: the steps go in behind this index for everyone's list.
+                // Measured on ansible-core 2.19.12, `include_tasks` under `run_once: true`:
+                // `included: inc.yml for h1` names the one host, the included tasks run for h1
+                // alone, and h2 counts nothing for any of them.
+                let asked = if masked_out || handlers_only || follower {
                     Vec::new()
                 } else {
                     let (groups, shown) = resolve_include(
@@ -2706,7 +3015,11 @@ async fn drive_host(
             // on purpose: both of those are splice points, and a host outside the mask still has
             // to report them and wait for the coordinator rather than walk past a list that is
             // about to grow.
-            if masked_out {
+            //
+            // A `run_once` step is the exception and takes the follower arm below instead: the
+            // runner is elected inside the mask, so this host is not it, and reporting the step
+            // here would publish the verdict for the hosts waiting on a runner that has not run.
+            if masked_out && !follower {
                 if !batch.is_empty() {
                     break;
                 }
@@ -2733,48 +3046,77 @@ async fn drive_host(
                 pos = next;
                 continue;
             }
-            // A task that reads across hosts is a boundary before itself: the batch in hand
-            // goes out first, and then this host waits for the others to reach the previous
-            // task, the way `linear` does.
+            // A host that lost the `run_once` election. It runs nothing and shows nothing, and
+            // it waits here until the coordinator publishes what the one runner made of the
+            // step: what that host registered or set as a fact is written for every host of the
+            // batch, and a host reading it one moment too early would read nothing.
             //
-            // Asked of the task rather than read off a table parallel to the step list: the
-            // list grows at a flush point, and a second list to keep in step with it is a second
-            // thing to get wrong. It costs one pass over the task's own text, against the full
-            // render `prepare` does for it a few lines below.
-            if reads_across_hosts(task) && pos > 0 {
+            // The include and flush arms above are not reached through here on purpose: a
+            // follower still reports those and still waits for the splice, it just asks for
+            // nothing. This arm is for every other step, a host the step's mask leaves out
+            // included: it has nothing to run either, and nothing to report until the runner has
+            // spoken.
+            if follower {
                 if !batch.is_empty() {
                     break;
                 }
-                loop {
-                    if *stop.borrow() {
+                let runner = runner.clone().unwrap_or_default();
+                let Some(verdict) =
+                    wait_for_run_once(&mut progress, &mut stop, &mut stop_broken, &runner, pos)
+                        .await
+                else {
+                    break 'run;
+                };
+                match verdict {
+                    // Measured on ansible-core 2.19.12: a `run_once` task that failed takes
+                    // every other host of the play out of it, with no line and no recap entry
+                    // of their own - they ran nothing - while the run still exits 2. It holds
+                    // with a `rescue` around the task as well: the one host that ran it is
+                    // rescued (`rescued=1`) and the others still leave.
+                    RunOnce::Failed => {
+                        failed = true;
+                        silent_failure = true;
                         break 'run;
                     }
-                    let p = progress.borrow().clone();
-                    // Alone in the play there is nobody left to wait for, which is also how a
-                    // wait ends when every other host has died.
-                    if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos)
-                    {
-                        break;
+                    // The one runner left the play without a verdict, which is what an
+                    // unreachable host does. Measured: `fatal: [h1]: UNREACHABLE!` with no
+                    // arrow, h2 absent from the recap, exit **4** and not 6 - so this departure
+                    // counts for nothing of its own.
+                    RunOnce::Gone => {
+                        failed = true;
+                        break 'run;
                     }
-                    tokio::select! {
-                        changed = progress.changed() => {
-                            // The coordinator is gone, so no further progress can be published
-                            // and waiting on it would never end.
-                            if changed.is_err() {
-                                break;
-                            }
-                        }
-                        res = stop.changed(), if !stop_broken => {
-                            if res.is_err() {
-                                stop_broken = true;
-                            } else {
-                                break 'run;
-                            }
-                        }
-                    }
+                    RunOnce::Done => {}
                 }
+                let _ = tx
+                    .send(Event::TaskDone {
+                        host: name.clone(),
+                        index: pos,
+                    })
+                    .await;
+                let Some(next) = advance(
+                    &tx,
+                    &name,
+                    &plan,
+                    &mut progress,
+                    &mut stop,
+                    &mut stop_broken,
+                    pos,
+                    &mut cleanup,
+                )
+                .await
+                else {
+                    break 'run;
+                };
+                pos = next;
+                continue;
             }
             let live = progress.borrow().clone();
+            // Where a registered variable lands. A `run_once` step is run by one host for the
+            // whole batch, so what it registered is written for every live host of the batch:
+            // measured on ansible-core 2.19.12, `register: o` under `run_once: true` on h1
+            // reads back as `o.stdout` on h2 as well. Every other step writes for its own host.
+            let register_hosts: Vec<String> = fact_targets(task, &name, &live.live_hosts);
             match prepare(
                 step,
                 &name,
@@ -2800,6 +3142,8 @@ async fn drive_host(
                         .collect();
                     // A skipped task fails nothing, so no rescue is in question for it, and it
                     // made no attempt to retry.
+                    // No delegate on a skipped task: measured on ansible-core 2.19.12, a
+                    // `delegate_to` a `when` left out prints `skipping: [h1]` with no arrow.
                     report_task(
                         &tx,
                         &name,
@@ -2811,14 +3155,15 @@ async fn drive_host(
                         &[],
                         false,
                         false,
+                        None,
                     )
                     .await;
                     if let Some(reg) = &task.register {
-                        store.lock().expect("vars lock").set_fact(
-                            &name,
-                            reg,
-                            registered_value(task, &results),
-                        );
+                        let mut vars = store.lock().expect("vars lock");
+                        let value = registered_value(task, &results);
+                        for target in &register_hosts {
+                            vars.set_fact(target, reg, value.clone());
+                        }
                     }
                     let Some(next) = advance(
                         &tx,
@@ -2871,10 +3216,19 @@ async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Local(items)) => {
+                Ok(Prepared::Local(items, delegate)) => {
                     if !batch.is_empty() {
                         break;
                     }
+                    // A controller-side module runs here whatever `delegate_to` says - measured
+                    // on ansible-core 2.19.12, a delegated `set_fact` and a delegated `debug`
+                    // both run on the controller - so the delegate decides two things and no
+                    // more: the name the line shows, and, under `delegate_facts`, whose facts
+                    // the module writes.
+                    let fact_hosts: Vec<String> = match (task.delegates_facts(), &delegate) {
+                        (true, Some(to)) => vec![to.clone()],
+                        _ => register_hosts.clone(),
+                    };
                     let retry = match retry_plan(task, items.first(), &templar) {
                         Ok(retry) => retry,
                         Err(err) => {
@@ -2899,7 +3253,13 @@ async fn drive_host(
                                         task,
                                         item,
                                         run_local(
-                                            task, item, step, &name, &templar, &store, verbosity,
+                                            task,
+                                            item,
+                                            step,
+                                            &fact_hosts,
+                                            &templar,
+                                            &store,
+                                            verbosity,
                                         ),
                                         &templar,
                                     );
@@ -2942,11 +3302,11 @@ async fn drive_host(
                         lefts.push(mine);
                     }
                     if let Some(reg) = &task.register {
-                        store.lock().expect("vars lock").set_fact(
-                            &name,
-                            reg,
-                            registered_value(task, &results),
-                        );
+                        let mut vars = store.lock().expect("vars lock");
+                        let value = registered_value(task, &results);
+                        for target in &register_hosts {
+                            vars.set_fact(target, reg, value.clone());
+                        }
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
@@ -2955,7 +3315,17 @@ async fn drive_host(
                     let dump =
                         short_name(&task.module) == "debug" && !(task.censors() && verbosity == 0);
                     if let Some(result) = report_task(
-                        &tx, &name, pos, task, &results, &labels, &lefts, &names, dump, rescuable,
+                        &tx,
+                        &name,
+                        pos,
+                        task,
+                        &results,
+                        &labels,
+                        &lefts,
+                        &names,
+                        dump,
+                        rescuable,
+                        delegate.as_deref(),
                     )
                     .await
                     {
@@ -2980,11 +3350,15 @@ async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Remote(items, escalation)) => {
-                    // A different target user is a different agent on the host, so the batch
-                    // ends here and the next one opens its own link. `pos` does not move, so
-                    // this task is the first of that batch.
-                    if !batch.is_empty() && escalation != batch_escalation {
+                Ok(Prepared::Remote(items, escalation, delegate)) => {
+                    // A different target user is a different agent on the host, and a different
+                    // delegate is a different host entirely, so either one ends the batch and
+                    // the next one opens its own link. `pos` does not move, so this task is the
+                    // first of that batch.
+                    let delegate_name = delegate.as_ref().map(|d| d.name.clone());
+                    if !batch.is_empty()
+                        && (escalation != batch_escalation || delegate_name != batch_delegate)
+                    {
                         break;
                     }
                     let retry = match retry_plan(task, items.first(), &templar) {
@@ -3001,6 +3375,8 @@ async fn drive_host(
                         break;
                     }
                     batch_escalation = escalation;
+                    batch_delegate = delegate_name;
+                    batch_target = delegate;
                     batch_retry = retry;
                     // A looping task ends the batch because its items travel with
                     // `ignore_errors` set, so the agent runs all of them the way Ansible does.
@@ -3058,6 +3434,7 @@ async fn drive_host(
             // below happens with it still unreported. Measured on ansible-core 2.19.12, the
             // reference censors the `UNREACHABLE!` line of a `no_log` task, reason and all.
             unreachable_censored = c.steps[batch[0].0].task.censors();
+            unreachable_delegate = batch_delegate.clone();
             if permit.is_none() {
                 match Arc::clone(&forks).acquire_owned().await {
                     Ok(p) => permit = Some(p),
@@ -3069,8 +3446,12 @@ async fn drive_host(
                     }
                 }
             }
+            // The delegate's own connection, never the delegating host's. Measured on
+            // ansible-core 2.19.12: a task delegated away from a host that answers nothing runs
+            // perfectly well, so the delegating host's link is not opened for it at all.
+            let target = batch_target.as_ref().unwrap_or(&host);
             let key = LinkKey {
-                host: name.clone(),
+                host: target.name.clone(),
                 become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
             };
             let link = match reuse_or_connect(
@@ -3078,7 +3459,7 @@ async fn drive_host(
                 &mut checked,
                 &key,
                 batch_escalation.as_ref(),
-                &host,
+                target,
                 &agents,
                 &options,
             )
@@ -3108,6 +3489,7 @@ async fn drive_host(
                         &[],
                         false,
                         rescuable,
+                        batch_delegate.as_deref(),
                     )
                     .await;
                     failed |= !rescuable;
@@ -3273,11 +3655,12 @@ async fn drive_host(
                     break;
                 }
                 if let Some(reg) = &task.register {
-                    store.lock().expect("vars lock").set_fact(
-                        &name,
-                        reg,
-                        registered_value(task, &results),
-                    );
+                    let live = progress.borrow().live_hosts.clone();
+                    let mut vars = store.lock().expect("vars lock");
+                    let value = registered_value(task, &results);
+                    for target in fact_targets(task, &name, &live) {
+                        vars.set_fact(&target, reg, value.clone());
+                    }
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
                 let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
@@ -3293,6 +3676,7 @@ async fn drive_host(
                     retried_names,
                     false,
                     rescuable,
+                    batch_delegate.as_deref(),
                 )
                 .await
                 {
@@ -3392,6 +3776,7 @@ async fn drive_host(
                 &[],
                 false,
                 rescuable,
+                None,
             )
             .await
             {
@@ -3428,15 +3813,40 @@ async fn drive_host(
                 host: name.clone(),
                 msg,
                 censored: unreachable_censored,
+                delegate: unreachable_delegate,
             })
             .await;
     }
+    // A link this driver opened to somebody else's host - a `delegate_to` - goes no further
+    // than this play. What connection persistence is for is the link to the host a driver owns,
+    // and the run keeps exactly one per host: handing back a second link to a host whose own
+    // driver also handed one back would leave two entries racing for the same key, and the one
+    // that won would be a connection opened with another host's fork permit. The escalated
+    // delegated links are already closed with each batch's permit; these are the rest.
+    //
+    // Awaited rather than spawned and forgotten: at the end of the last play the runtime can be
+    // dropped before a detached task ever runs, which would leave the agent on the delegate
+    // waiting on a connection nobody closes. `keep_links` awaits its own `JoinSet` for the same
+    // reason, and this is the same shape.
+    let mut closing = tokio::task::JoinSet::new();
+    for key in links
+        .keys()
+        .filter(|k| k.host != name)
+        .cloned()
+        .collect::<Vec<_>>()
+    {
+        if let Some(link) = links.remove(&key) {
+            closing.spawn(link.shutdown());
+        }
+    }
+    while closing.join_next().await.is_some() {}
     // The healthy connection to the host itself outlives the play; `keep_links` decides which
     // of these that is and closes the rest. The run closes what is left once, before the recap.
     let _ = tx
         .send(Event::Finished {
             host: name,
             failed,
+            silent_failure,
             links: links.into_iter().collect(),
         })
         .await;
@@ -3497,6 +3907,85 @@ async fn reuse_or_connect<'a>(
         links.insert(key.clone(), link);
     }
     Ok(links.get_mut(key).expect("connected just above"))
+}
+
+/// The hosts a step's registered variable and facts are written for: every live host of the
+/// batch when one of them runs the step for all of them, and the step's own host otherwise.
+///
+/// Measured on ansible-core 2.19.12: a `run_once` task's `register` and its `set_fact` are both
+/// readable on every host of the batch, not only on the one that ran it.
+fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
+    if task.runs_once() && !live.is_empty() {
+        live.to_vec()
+    } else {
+        vec![host.to_string()]
+    }
+}
+
+/// What became of a `run_once` step, from the point of view of a host that did not run it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunOnce {
+    /// The one runner finished the step without failing; whatever it registered or set as a
+    /// fact is in the store for every host of the batch.
+    Done,
+    /// It failed. Measured on ansible-core 2.19.12: every other host leaves the play here, with
+    /// no line of its own and no recap entry, and the run exits 2 - with a `rescue` around the
+    /// task as well, which keeps the runner itself in the play.
+    Failed,
+    /// It left the play without a verdict, which is what an unreachable host does. Measured:
+    /// exit 4 and no recap line for the hosts that were waiting, so their departure adds
+    /// nothing of its own.
+    Gone,
+}
+
+/// Waits for the one runner of the `run_once` step at `pos` to say what it made of it.
+///
+/// `None` when the run was interrupted, the way every other wait in this file answers it.
+///
+/// The verdict is read before the live host list, and that order is the whole of it: the
+/// coordinator publishes a failed result and the shrunken list in the same `Progress`, so a
+/// host that asked "is the runner still live?" first would see a runner that is merely gone and
+/// leave at exit 4 where the reference exits 2.
+async fn wait_for_run_once(
+    progress: &mut watch::Receiver<Progress>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    runner: &str,
+    pos: usize,
+) -> Option<RunOnce> {
+    loop {
+        if *stop.borrow() {
+            return None;
+        }
+        let p = progress.borrow().clone();
+        match p.run_once.get(&pos) {
+            Some(true) => return Some(RunOnce::Failed),
+            Some(false) => return Some(RunOnce::Done),
+            None => {}
+        }
+        // The host this step was handed to has left the batch without a verdict, which is what
+        // an unreachable host does. Asked of that one host and not of the list's length: with
+        // three hosts waiting on a runner that died, a test for "anybody else still live" would
+        // be true for ever and this wait would never end.
+        if !p.live_hosts.iter().any(|h| h == runner) {
+            return Some(RunOnce::Gone);
+        }
+        tokio::select! {
+            changed = progress.changed() => {
+                // The coordinator is gone, so no verdict can ever be published.
+                if changed.is_err() {
+                    return Some(RunOnce::Gone);
+                }
+            }
+            res = stop.changed(), if !*stop_broken => {
+                if res.is_err() {
+                    *stop_broken = true;
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Whether `advance` from `pos` would walk past a splice point - a flush or an include - and so
@@ -3697,7 +4186,9 @@ fn resolve_include(
     defaults: &ConnectionDefaults,
 ) -> (Vec<IncludeGroup>, Vec<Shown>) {
     let items = match prepare(step, host, plan, live, templar, store, defaults) {
-        Ok(Prepared::Skipped(items) | Prepared::Local(items) | Prepared::Remote(items, _)) => items,
+        Ok(
+            Prepared::Skipped(items) | Prepared::Local(items, _) | Prepared::Remote(items, _, _),
+        ) => items,
         // A `when` that cannot be evaluated or a `loop` that is not a list, reported with the
         // reference's own prefix for a task that dies before it runs. Not deferred the way an
         // ordinary task's is: this arm is reached with the batch empty, so there is nothing to
@@ -3938,6 +4429,7 @@ async fn report_include(
                 show: true,
                 counts: !is_loop,
                 censored,
+                delegate: None,
             })
             .await;
     }
@@ -3974,6 +4466,7 @@ async fn report_include(
                     show: empty,
                     counts: true,
                     censored,
+                    delegate: None,
                 })
                 .await;
         }
@@ -4014,6 +4507,7 @@ async fn report_task(
     names: &[String],
     dump: bool,
     rescuable: bool,
+    delegate: Option<&str>,
 ) -> Option<TaskResult> {
     let is_loop = task.loop_items.is_some();
     let censored = task.censors();
@@ -4047,6 +4541,7 @@ async fn report_task(
                 show: true,
                 counts: !is_loop,
                 censored,
+                delegate: delegate.map(str::to_string),
             })
             .await;
     }
@@ -4087,6 +4582,7 @@ async fn report_task(
                 show,
                 counts: true,
                 censored,
+                delegate: delegate.map(str::to_string),
             })
             .await;
     }
@@ -4176,6 +4672,7 @@ mod tests {
             play_vars: Map::new(),
             vars_files: HashMap::new(),
             all_play_hosts: Vec::new(),
+            inventory: Arc::new(HashMap::new()),
             r#become: None,
             become_user: None,
         }
@@ -4241,7 +4738,15 @@ mod tests {
             // Arguments are deliberately empty: what is asserted is that the name is known, not
             // that the module does its work. A module that needs an argument says so in its own
             // words, which is not the catch-all's words.
-            let result = run_local(&task(spec.name), &item, &step, "h1", &templar, &store, 0);
+            let result = run_local(
+                &task(spec.name),
+                &item,
+                &step,
+                std::slice::from_ref(&"h1".to_string()),
+                &templar,
+                &store,
+                0,
+            );
             assert_ne!(
                 result.0.get("msg").and_then(Value::as_str),
                 Some(format!("{} is not a controller-side module", spec.name).as_str()),
@@ -4699,12 +5204,28 @@ mod tests {
         let mut last_done = HashMap::new();
         let mut lost = HashSet::new();
 
-        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &last_done,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
         assert_eq!(rx.borrow().live_hosts, hosts);
 
         last_done.insert("beta".to_string(), 3);
-        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &last_done,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(
             rx.borrow().completed_through,
             None,
@@ -4712,11 +5233,27 @@ mod tests {
         );
 
         last_done.insert("alpha".to_string(), 1);
-        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &last_done,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(rx.borrow().completed_through, Some(1));
 
         lost.insert("alpha".to_string());
-        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &last_done,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(
             rx.borrow().completed_through,
             Some(3),
@@ -4725,7 +5262,15 @@ mod tests {
         assert_eq!(rx.borrow().live_hosts, vec!["beta".to_string()]);
 
         lost.insert("beta".to_string());
-        publish(&tx, &hosts, &hosts, &lost, &last_done, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &last_done,
+            None,
+            &BTreeMap::new(),
+        );
         assert!(rx.borrow().live_hosts.is_empty());
         assert_eq!(rx.borrow().completed_through, None);
     }
@@ -4753,7 +5298,15 @@ mod tests {
         for index in [4, 5] {
             finished(&mut done, &mut frontier, "alpha", index);
         }
-        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &frontier,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(
             rx.borrow().completed_through,
             Some(1),
@@ -4761,11 +5314,27 @@ mod tests {
         );
 
         finished(&mut done, &mut frontier, "alpha", 2);
-        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &frontier,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(rx.borrow().completed_through, Some(2), "the gap is smaller");
 
         finished(&mut done, &mut frontier, "alpha", 3);
-        publish(&tx, &hosts, &hosts, &lost, &frontier, None);
+        publish(
+            &tx,
+            &hosts,
+            &hosts,
+            &lost,
+            &frontier,
+            None,
+            &BTreeMap::new(),
+        );
         assert_eq!(
             rx.borrow().completed_through,
             Some(5),
@@ -4779,5 +5348,103 @@ mod tests {
             flatten_once(vec![json!([1, [2]]), json!(3)]),
             vec![json!(1), json!([2]), json!(3)]
         );
+    }
+
+    /// The step loop's boundary test is the union of two independent rules, and neither one
+    /// covers the other: `run_once` is a boundary because the table says so and spells none of
+    /// the cross-host names, a `hostvars` read is a boundary because of its text and carries no
+    /// keyword, and `delegate_to` is neither - the delegating driver opens its own link to the
+    /// delegate, so nothing is shared and nobody has to wait.
+    ///
+    /// What would make this red: the `barrier` flag dropped from the table, which lets two
+    /// hosts elect two different runners for one `run_once` step and run it twice; the textual
+    /// scan dropped, which lets a `hostvars` read run ahead of the host it reads; or
+    /// `delegate_to` made a boundary, which would serialise every delegated task on a wait that
+    /// buys nothing.
+    #[test]
+    fn a_boundary_is_either_declared_by_a_keyword_or_found_in_the_text() {
+        let mut t = task("command");
+        assert!(!t.barrier() && !reads_across_hosts(&t));
+
+        t.run_once = Some(true);
+        assert!(t.barrier(), "the table declares run_once a barrier");
+        assert!(
+            !reads_across_hosts(&t),
+            "and it spells none of the cross-host names, so the scan alone would miss it"
+        );
+        t.run_once = Some(false);
+        assert!(!t.barrier(), "a task that says false is not one");
+        t.run_once = None;
+
+        t.delegate_to = Some("h3".into());
+        t.delegate_facts = Some(true);
+        assert!(
+            !t.barrier() && !reads_across_hosts(&t),
+            "a delegated task shares nothing: its driver opens its own link to the delegate"
+        );
+
+        let mut t = task("command");
+        t.args
+            .insert("cmd".into(), json!("echo {{ hostvars['a'].x }}"));
+        assert!(
+            reads_across_hosts(&t),
+            "the scan catches what no keyword spells"
+        );
+        assert!(!t.barrier(), "and it needs no keyword to do it");
+    }
+
+    /// A delegate is the inventory's own host when it has one, the local host for the three
+    /// implicit spellings, and an ssh target of that name otherwise.
+    ///
+    /// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
+    /// inventory runs locally, and `delegate_to: nosuch` is connected to rather than refused -
+    /// it reports ssh's own resolution failure as `UNREACHABLE`.
+    ///
+    /// What would make this red: an unknown name refused, which refuses a playbook the
+    /// reference runs; or `localhost` turned into an ssh target, which tries to connect to the
+    /// machine the controller is already on.
+    #[test]
+    fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
+        let mut plan = plan();
+        let mut known = Host {
+            name: "h3".into(),
+            vars: BTreeMap::new(),
+        };
+        known.vars.insert("ansible_host".into(), json!("10.0.0.3"));
+        plan.inventory = Arc::new(HashMap::from([("h3".to_string(), known)]));
+
+        let found = delegate_host("h3", &plan);
+        assert_eq!(found.vars.get("ansible_host"), Some(&json!("10.0.0.3")));
+
+        for name in ["localhost", "127.0.0.1", "::1"] {
+            let implicit = delegate_host(name, &plan);
+            assert_eq!(implicit.name, name);
+            assert_eq!(
+                implicit.vars.get("ansible_connection"),
+                Some(&json!("local")),
+                "{name}"
+            );
+        }
+
+        let stranger = delegate_host("nosuch", &plan);
+        assert_eq!(stranger.name, "nosuch");
+        assert!(
+            stranger.vars.is_empty(),
+            "an unknown name is an ssh target of that name, not a refusal"
+        );
+    }
+
+    /// A `run_once` step's registered variable and facts are written for every live host of the
+    /// batch; every other step writes for its own host alone.
+    ///
+    /// What would make this red: the broadcast dropped, which leaves the hosts that did not run
+    /// the task with an undefined variable behind it.
+    #[test]
+    fn a_run_once_step_writes_its_result_for_the_whole_batch() {
+        let live = ["h1".to_string(), "h2".to_string()];
+        let mut t = task("command");
+        assert_eq!(fact_targets(&t, "h1", &live), ["h1"]);
+        t.run_once = Some(true);
+        assert_eq!(fact_targets(&t, "h1", &live), live);
     }
 }

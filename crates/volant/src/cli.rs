@@ -227,6 +227,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .clone()
         .unwrap_or(config.become_method.clone());
     let all_hosts = inventory.resolve("all").hosts;
+    // Every host by name, for `delegate_to` to look one up in. The whole inventory and not the
+    // play's own hosts: measured on ansible-core 2.19.12, a play over h1 and h2 delegates to an
+    // h3 that is in the inventory and not in the play, and h3 stays out of the recap.
+    let inventory_hosts: Arc<HashMap<String, Host>> = Arc::new(
+        all_hosts
+            .iter()
+            .map(|h| (h.name.clone(), h.clone()))
+            .collect(),
+    );
     let escalates = args.r#become
         || config.r#become
         || playbooks
@@ -352,7 +361,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     local_agent_checked = true;
                 }
                 let end = executor::run_play(
-                    play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
+                    play,
+                    compiled,
+                    hosts,
+                    Arc::clone(&inventory_hosts),
+                    &agents,
+                    &options,
+                    &mut state,
+                    out,
+                    &mut stats,
                 )
                 .await?;
                 // A batch that lost every live host it had ends the whole run, measured: no

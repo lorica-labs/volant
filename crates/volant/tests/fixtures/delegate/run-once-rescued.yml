@@ -1,0 +1,14 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - block:
+        - name: once fails in a block
+          command: nosuchbinary-volant-probe
+          run_once: true
+      rescue:
+        - name: rescued
+          debug:
+            msg: "rescued on {{ inventory_hostname }}"
+    - name: after the block
+      debug:
+        msg: "after on {{ inventory_hostname }}"

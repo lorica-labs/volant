@@ -31,10 +31,49 @@ pub enum Support {
 pub struct Keyword {
     pub name: &'static str,
     pub support: Support,
+    /// Whether a task carrying this keyword is a synchronisation point: the hosts of the batch
+    /// meet in front of it before any of them runs it.
+    ///
+    /// Declared here rather than inferred from the task's text, because the two keywords that
+    /// need a boundary do not spell one. `run_once` runs on one host and every other host reads
+    /// what it produced, so the election has to be unanimous and the readers have to wait; no
+    /// substring in the task says so. The textual scan over `hostvars`, `ansible_play_hosts` and
+    /// `ansible_play_batch` stays alongside it and catches what a keyword cannot: a task that
+    /// reads another host's variables without any keyword at all. A step is a boundary when
+    /// either says so.
+    pub barrier: bool,
 }
 
 const fn kw(name: &'static str, support: Support) -> Keyword {
-    Keyword { name, support }
+    Keyword {
+        name,
+        support,
+        barrier: false,
+    }
+}
+
+/// A keyword whose presence on a task makes that task a synchronisation point.
+const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
+    Keyword {
+        name,
+        support,
+        barrier: true,
+    }
+}
+
+/// Whether `name` is a keyword some table declares a synchronisation point. Asked by name so
+/// the step loop reads the table rather than a second list that could drift from it.
+pub fn is_barrier(name: &str) -> bool {
+    [
+        TASK_KEYWORDS,
+        PLAY_KEYWORDS,
+        LOOP_CONTROL_KEYWORDS,
+        BLOCK_KEYWORDS,
+        HANDLER_KEYWORDS,
+    ]
+    .iter()
+    .flat_map(|table| table.iter())
+    .any(|k| k.name == name && k.barrier)
 }
 
 use Support::{Preflight, Runs};
@@ -66,8 +105,8 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("connection", Preflight),
     kw("debugger", Preflight),
     kw("delay", Runs),
-    kw("delegate_facts", Preflight),
-    kw("delegate_to", Preflight),
+    kw("delegate_facts", Runs),
+    kw("delegate_to", Runs),
     kw("diff", Preflight),
     kw("environment", Runs),
     kw("failed_when", Runs),
@@ -85,7 +124,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("register", Runs),
     kw("remote_user", Preflight),
     kw("retries", Runs),
-    kw("run_once", Preflight),
+    barrier_kw("run_once", Runs),
     kw("tags", Runs),
     kw("throttle", Preflight),
     kw("timeout", Runs),
@@ -176,7 +215,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("pre_tasks", Runs),
     kw("remote_user", Preflight),
     kw("roles", Runs),
-    kw("run_once", Preflight),
+    barrier_kw("run_once", Runs),
     kw("serial", Runs),
     kw("strategy", Runs),
     kw("tags", Runs),
@@ -230,8 +269,8 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("collections", Preflight),
     kw("connection", Preflight),
     kw("debugger", Preflight),
-    kw("delegate_facts", Preflight),
-    kw("delegate_to", Preflight),
+    kw("delegate_facts", Runs),
+    kw("delegate_to", Runs),
     kw("diff", Preflight),
     kw("environment", Runs),
     kw("ignore_errors", Runs),
@@ -243,7 +282,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("port", Preflight),
     kw("remote_user", Preflight),
     kw("rescue", Runs),
-    kw("run_once", Preflight),
+    barrier_kw("run_once", Runs),
     kw("tags", Runs),
     kw("throttle", Preflight),
     kw("timeout", Runs),
@@ -518,5 +557,35 @@ mod tests {
             assert!(task_keyword(section).is_none(), "{section}");
             assert!(block_keyword(section).is_some(), "{section}");
         }
+    }
+
+    /// `run_once` is the only keyword any table declares a barrier.
+    ///
+    /// A task record carries its keywords as typed fields, not as a list of names to walk, so
+    /// `PlayTask::barrier` asks the table for the one name it knows how to read. A second row
+    /// marked `barrier` would look declared and be silently ignored - the keyword accepted and
+    /// then not honoured, which is the failure family this crate hunts. So the tables hold one.
+    ///
+    /// What would make this red: `barrier_kw` used for a second keyword. Whoever adds it has to
+    /// teach `PlayTask::barrier` to ask for it in the same commit.
+    #[test]
+    fn run_once_is_the_only_barrier_keyword() {
+        let declared: Vec<&str> = [
+            TASK_KEYWORDS,
+            PLAY_KEYWORDS,
+            LOOP_CONTROL_KEYWORDS,
+            BLOCK_KEYWORDS,
+            HANDLER_KEYWORDS,
+        ]
+        .iter()
+        .flat_map(|table| table.iter())
+        .filter(|k| k.barrier)
+        .map(|k| k.name)
+        .collect();
+        assert!(!declared.is_empty());
+        assert!(
+            declared.iter().all(|name| *name == "run_once"),
+            "{declared:?}"
+        );
     }
 }

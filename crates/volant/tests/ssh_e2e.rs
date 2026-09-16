@@ -427,3 +427,61 @@ fn ssh_become_over_ssh() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A delegated task travels over the **delegate's** connection, never the delegating host's.
+///
+/// Two inventory names for the same localhost, each with an `ansible_remote_tmp` of its own.
+/// The play runs on `a` and its only task is delegated to `b`, so the agent has to be probed
+/// and cached under `b`'s directory and `a`'s must stay empty: `a`'s own link is never opened
+/// at all. Measured on ansible-core 2.19.12, that is exactly what the reference does - a task
+/// delegated away from a host nothing can reach still runs.
+///
+/// This lives in the ssh suite because the local suite cannot see it: with every host on the
+/// local connection there is no per-host connection state to tell the two apart.
+///
+/// What would make this red: the transport built from the delegating host's variables, which
+/// puts the agent under `a`'s directory and leaves `b`'s empty; or the arrow missing from the
+/// line, which hides which host actually ran the task.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_delegate_to_another_inventory_name() {
+    let dir = tmp("delegate");
+    let a_tmp = dir.join("remote-a");
+    let b_tmp = dir.join("remote-b");
+    let inv_path = dir.join("inventory.ini");
+    let mut text = String::new();
+    for (host, remote) in [("a", &a_tmp), ("b", &b_tmp)] {
+        text.push_str(&format!(
+            "{host} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='-F /dev/null'\n",
+            user(),
+            key(),
+            remote.display(),
+        ));
+    }
+    std::fs::write(&inv_path, text).unwrap();
+    let play = dir.join("delegated.yml");
+    std::fs::write(
+        &play,
+        "- hosts: a\n  gather_facts: false\n  tasks:\n    - name: delegated\n      command: echo delegated\n      delegate_to: b\n",
+    )
+    .unwrap();
+    let out = volant(&[
+        "playbook",
+        "-i",
+        &inv_path.display().to_string(),
+        &play.display().to_string(),
+    ]);
+    let shown = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{shown}");
+    assert!(shown.contains("changed: [a -> b]"), "{shown}");
+    let cached = |root: &Path| root.join(format!("volant-agent-{}", env!("CARGO_PKG_VERSION")));
+    assert!(
+        cached(&b_tmp).join("volant-agent").exists(),
+        "the delegate's own directory holds the agent: {shown}"
+    );
+    assert!(
+        !cached(&a_tmp).join("volant-agent").exists(),
+        "the delegating host's connection is never opened, so nothing lands in its directory: {shown}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

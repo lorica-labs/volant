@@ -33,6 +33,12 @@ pub struct HostStats {
 #[derive(Debug, Default)]
 pub struct Stats {
     hosts: BTreeMap<String, HostStats>,
+    /// Hosts the run failed without their ever reporting a task. Measured on ansible-core
+    /// 2.19.12: a `run_once` task that fails takes every other host of the play out of it, and
+    /// those hosts have **no recap line at all** - they ran nothing, so there is nothing to
+    /// count - while the run still exits 2. A counter would have printed a line the reference
+    /// does not, so the exit code reads this set and the recap does not.
+    unreported: std::collections::BTreeSet<String>,
 }
 
 impl Stats {
@@ -58,6 +64,11 @@ impl Stats {
                 }
             }
         }
+    }
+
+    /// A host that failed with nothing to show for it. See [`Stats::unreported`].
+    pub fn failed_unreported(&mut self, host: &str) {
+        self.unreported.insert(host.to_string());
     }
 
     pub fn unreachable(&mut self, host: &str) {
@@ -125,7 +136,7 @@ pub fn error_code(err: &anyhow::Error) -> i32 {
 /// ansible-playbook's exit status: 2 for failed hosts, 4 for unreachable hosts, combined.
 pub fn exit_code(stats: &Stats) -> i32 {
     let mut code = 0;
-    if stats.hosts().any(|(_, h)| h.failed > 0) {
+    if stats.hosts().any(|(_, h)| h.failed > 0) || !stats.unreported.is_empty() {
         code |= 2;
     }
     if stats.hosts().any(|(_, h)| h.unreachable > 0) {

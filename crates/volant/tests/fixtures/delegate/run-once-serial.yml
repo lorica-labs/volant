@@ -1,0 +1,11 @@
+- hosts: h1,h2,h3
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: once per batch
+      command: echo once
+      run_once: true
+      register: o
+    - name: show
+      debug:
+        msg: "{{ o.stdout }} on {{ inventory_hostname }}"

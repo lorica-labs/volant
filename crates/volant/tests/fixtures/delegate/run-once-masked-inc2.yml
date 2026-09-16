@@ -1,0 +1,7 @@
+- name: once inside the second include
+  command: echo twice
+  run_once: true
+  register: p
+- name: read the second register
+  debug:
+    msg: "{{ p.stdout }} on {{ inventory_hostname }}"

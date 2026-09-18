@@ -189,7 +189,6 @@ pub(super) async fn run_batch(
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);
-    // The batch's shared progress. Every driver reads it; only this loop writes it.
     let (progress_tx, progress_rx) = watch::channel(Progress::default());
     let mut coordinator = Coordinator {
         tx: &progress_tx,
@@ -364,17 +363,13 @@ pub(super) async fn run_batch(
                     }
                     Some(Event::TaskDone { host, index }) => {
                         coordinator.finished(&mut done, &host, index);
-                        // The elected host is the first to report this step - every other host
-                        // waits for this entry before it sends its own - so `or_insert` keeps
-                        // the verdict of the one that ran the task and not the silence of the
-                        // ones that did not.
-                        //
-                        // A host that has already failed is the one exception to that order: it
-                        // is out of the live set, so it was never a candidate for the election,
-                        // and under `force_handlers` it walks the rest of the play reporting
-                        // every step it passes on its way to its handlers. Its report is not a
-                        // verdict, and taking it as one would release the waiting hosts before
-                        // the runner had run.
+                        // `or_insert` keeps the verdict of the host that ran the task, which is
+                        // the first to report the step. A host that has already failed is the
+                        // exception to that order: it is out of the live set, so it was never a
+                        // candidate for the election, and under `force_handlers` it walks the
+                        // rest of the play reporting every step it passes on its way to its
+                        // handlers. Its report is not a verdict, and taking it as one would
+                        // release the waiters before the elected runner had run.
                         if !state.failed_hosts.contains(&host)
                             && plan
                                 .steps()
@@ -426,12 +421,10 @@ pub(super) async fn run_batch(
             }
         }
         // Every host is now either done with this step or out of the play, which is the moment
-        // the plan's one dynamic primitive is safe: no driver can be past this index, because a
-        // driver that reported a flush point waits here, and a driver that stepped over one
-        // waits there too. The handler steps go in behind it and the new list is published.
-        //
-        // A play with no handlers splices nothing and still publishes, because the drivers
-        // waiting on it have no way to know that and would wait for ever.
+        // the plan's one dynamic primitive is safe: no driver can be past this index, whether it
+        // reported the splice point or stepped over it. A play with no handlers splices nothing
+        // and still publishes, because the drivers waiting on it have no way to know that and
+        // would wait for ever.
         if crate::compile::is_splice_point(&step.kind) {
             let mut next = { (**plan_tx.borrow()).clone() };
             if let StepKind::Flush { .. } = step.kind {
@@ -498,12 +491,10 @@ pub(super) async fn run_batch(
             }
             plan_tx.send_replace(Arc::new(next));
 
-            // The splice moved every index past this point, so an election already decided for
-            // the step that used to sit at `index + 1` now names a different step - possibly one
-            // with a different mask. Nobody has read it: a splice happens only when every host is
-            // done through `index`, and the step behind it is the one they are all waiting for.
-            // Dropped rather than shifted, because the publish below re-decides it against the
-            // list that now exists.
+            // The splice moved every index past this point, so an election decided for the step
+            // that used to sit at `index + 1` now names a different step, possibly under a
+            // different mask. Nobody has read it yet, and dropping it rather than shifting it
+            // lets the publish below re-decide it against the list that now exists.
             coordinator.forget_elections_past(index);
             coordinator.spliced_through = Some(index);
             coordinator.publish(&state.failed_hosts, &plan.steps().steps);
@@ -787,19 +778,11 @@ impl Coordinator<'_> {
             .map(|h| self.frontier.get(h).copied())
             .min()
             .flatten();
-        // The election, for the one index it can be needed at. `completed_through` is the index
-        // every live host has finished, so `+ 1` is where the slowest of them is standing and is
-        // the only place a driver can be about to read a runner: a host further along has already
-        // read one, and a host behind cannot exist. `None` is the head of the list, which is why
-        // the first call of all - made before a single driver is spawned - decides index 0, where
-        // there is no barrier to decide it.
-        //
-        // The runner is the first live host **the step's mask includes**, applied by the party
-        // that owns it: elected off the whole live set instead, the runner could be a host the
-        // mask leaves out, which runs nothing, so nobody would run the step.
-        //
-        // `or_insert`, never an overwrite: an entry that moved when a host left would be exactly
-        // the race this replaces.
+        // The election, for the one index it can be needed at: `completed_through + 1` is where
+        // the slowest live host stands, and `None` is the head of the list, which is how the
+        // first call of all - made before a driver exists - decides index 0. The runner is the
+        // first live host the step's mask includes, because one outside it runs nothing and
+        // nobody would run the step. Never an overwrite; see `Progress::elected`.
         let at = completed_through.map_or(0, |c| c + 1);
         if let Some(step) = steps.get(at)
             && step.task.runs_once()
@@ -913,6 +896,9 @@ mod tests {
     use crate::playbook::PlayTask;
 
     /// A coordinator over one list of hosts, which the batch and the play share.
+    ///
+    /// `run_once` and `elected` start empty and then persist across every `publish` the test
+    /// makes, so a test over a real step list reads the elections its earlier calls decided.
     fn coordinator<'a>(tx: &'a watch::Sender<Progress>, hosts: &'a [String]) -> Coordinator<'a> {
         Coordinator {
             tx,

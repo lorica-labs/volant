@@ -1147,11 +1147,20 @@ fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Map<String, 
 /// order a `notify` is written in decides nothing (handlers run in definition order, measured),
 /// but keeping it is what lets a refusal name the first one the playbook wrote.
 fn names(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<String>> {
-    let one = |node: &Yaml| -> anyhow::Result<String> {
+    one_or_many(yaml, key, |node| {
         node.as_str()
             .map(str::to_string)
             .ok_or_else(|| anyhow!("{context}'{key}' must be a name or a list of names"))
-    };
+    })
+}
+
+/// One value or a list of them, kept in the order they were written. An absent or null field is
+/// an empty list, which is what the reference does with `notify:` written with nothing under it.
+fn one_or_many<T>(
+    yaml: &Yaml,
+    key: &str,
+    one: impl Fn(&Yaml) -> anyhow::Result<T>,
+) -> anyhow::Result<Vec<T>> {
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
         Some(Yaml::Sequence(items)) => items.iter().map(one).collect(),
@@ -1197,20 +1206,13 @@ fn parse_handlers(node: Option<&Yaml>) -> anyhow::Result<Vec<HandlerTask>> {
 /// `when`, `changed_when`, `failed_when`: one expression or a list of them. A YAML boolean is
 /// spelled back as Python would (`True`/`False`) so the expression evaluator reads it.
 fn conditions(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<String>> {
-    let one = |node: &Yaml| -> anyhow::Result<String> {
-        match node {
-            Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
-            Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
-            other => bail!(
-                "{context}'{key}' must be an expression or a list of expressions, found {other:?}"
-            ),
-        }
-    };
-    match field(yaml, key) {
-        None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
-        Some(Yaml::Sequence(items)) => items.iter().map(one).collect(),
-        Some(node) => Ok(vec![one(node)?]),
-    }
+    one_or_many(yaml, key, |node| match node {
+        Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
+        Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
+        other => bail!(
+            "{context}'{key}' must be an expression or a list of expressions, found {other:?}"
+        ),
+    })
 }
 
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
@@ -1882,5 +1884,35 @@ mod tests {
             assert_eq!(t.module, "meta");
             assert_eq!(t.args["_raw_params"], serde_json::json!(action));
         }
+    }
+
+    /// The two fields `one_or_many` reads share a shape and not a refusal: a `notify` says the
+    /// element must be a name, a `when` says it must be an expression, and both name the keyword
+    /// and the task. Nothing else asserted either sentence, so a reader that lost one and kept
+    /// the other would have passed the suite.
+    ///
+    /// What would make this red: either refusal carrying the other's words, or the keyword and
+    /// the task's own context dropped from it.
+    #[test]
+    fn the_two_one_or_many_fields_refuse_in_their_own_words() {
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      notify: [3]\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("task 't': 'notify' must be a name or a list of names"),
+            "{err:#}"
+        );
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      when: [3]\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}")
+                .contains("task 't': 'when' must be an expression or a list of expressions"),
+            "{err:#}"
+        );
     }
 }

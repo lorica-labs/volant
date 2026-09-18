@@ -882,7 +882,7 @@ impl Builder<'_> {
             });
         }
         let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
-        let outer_role = self.role_dir.replace(path.clone());
+        let outer_role = self.role_dir.replace(path);
         let result = self.items(&role.tasks, &kw, block, section, Some(index));
         self.file_dir = previous;
         self.role_dir = outer_role;

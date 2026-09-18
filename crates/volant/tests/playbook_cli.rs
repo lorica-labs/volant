@@ -4560,6 +4560,42 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     }
 }
 
+/// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this
+/// release has no layer to put the keywords it carries on. Both an unknown key and `apply` are
+/// caught before the first connection, the same as every other include and import statement.
+///
+/// What would make this red: `include_options` accepting anything, which would run the include
+/// and report success having ignored what the operator wrote.
+#[test]
+fn include_tasks_refuses_apply_and_an_unknown_key() {
+    let dir = probe_dir("include-tasks-options");
+    std::fs::write(dir.join("sub.yml"), "- name: T\n  command: echo hi\n")
+        .expect("the probe include target is written");
+    for (body, message) in [
+        (
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - include_tasks:\n        file: sub.yml\n        apply:\n          become: true\n",
+            "'include_tasks' option 'apply'",
+        ),
+        (
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - include_tasks:\n        file: sub.yml\n        nosuchkey: true\n",
+            "Invalid options for include_tasks: nosuchkey",
+        ),
+    ] {
+        std::fs::write(dir.join("site.yml"), body).expect("the probe playbook is written");
+        let path = dir.join("site.yml");
+        let out = volant(&["playbook", &path.display().to_string()]);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(4), "{text}");
+        assert!(text.contains(message), "{text}");
+        assert!(!text.contains("PLAY ["), "nothing runs before it: {text}");
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// `import_playbook` puts the imported file's plays where the statement stands, not at the end.
 ///
 /// Measured: a file importing `sub.yml`, declaring a play of its own and importing `sub.yml`
@@ -4615,6 +4651,35 @@ fn an_import_tasks_naming_a_missing_file_stops_the_run() {
         "{err}"
     );
     assert!(err.contains("on the Ansible Controller."), "{err}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// `import_playbook` is a play-level statement; written as a task, the reference cannot run it
+/// either, and dies with its own traceback rather than a message naming what was wrong.
+///
+/// Measured on ansible-core 2.19.12: `Task failed: Action 'ansible.builtin.import_playbook' does
+/// not support raw params.`, exit 2. This engine refuses it the same way, before anything runs.
+///
+/// What would make this red: the task falling through to the ordinary module path instead, which
+/// would try to run a module named `import_playbook` and fail with a different message.
+#[test]
+fn import_playbook_written_as_a_task_is_refused_by_its_own_name() {
+    let dir = probe_dir("import-playbook-as-task");
+    std::fs::write(
+        dir.join("site.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - import_playbook: sub.yml\n",
+    )
+    .expect("the probe playbook is written");
+    let path = dir.join("site.yml");
+    let out = volant(&["playbook", &path.display().to_string()]);
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(
+        err.contains(
+            "Task failed: Action 'ansible.builtin.import_playbook' does not support raw params."
+        ),
+        "{err}"
+    );
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 

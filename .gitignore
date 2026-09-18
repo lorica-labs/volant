@@ -1,5 +1,6 @@
 /target/
 /docs/book/
+/mutants.out*
 
 # editor project files, wherever they show up in the tree
 **/.idea/

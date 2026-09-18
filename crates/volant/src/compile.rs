@@ -1687,6 +1687,45 @@ mod tests {
         selected(text, &selection(&[], &[]))
     }
 
+    /// The three states the doc comment on [`beside_or_in_role`] measures against
+    /// UBUNTU22-CIS: only beside the importer, only in the role's own `tasks/`, and both -
+    /// the one beside the importer winning whenever it is there.
+    ///
+    /// What would make this red: the role fallback never taking over even when nothing sits
+    /// beside the importer, which is the one behaviour every automated test before this one
+    /// left to a doc comment and a full third-party role in `bench-compile` - a recipe outside
+    /// this crate's own test gate.
+    #[test]
+    fn beside_or_in_role_prefers_beside_and_falls_back_to_the_role() {
+        let dir =
+            std::env::temp_dir().join(format!("volant-beside-or-in-role-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file_dir = dir.join("tasks/sub");
+        let role_tasks = dir.join("tasks");
+        std::fs::create_dir_all(&file_dir).unwrap();
+        std::fs::create_dir_all(&role_tasks).unwrap();
+
+        // Neither exists: the path reported is the one beside the importer.
+        assert_eq!(
+            beside_or_in_role(&file_dir, Some(&dir), "warning_facts.yml"),
+            file_dir.join("warning_facts.yml")
+        );
+
+        // Only the role has it: the fallback takes over.
+        std::fs::write(role_tasks.join("warning_facts.yml"), "").unwrap();
+        assert_eq!(
+            beside_or_in_role(&file_dir, Some(&dir), "warning_facts.yml"),
+            role_tasks.join("warning_facts.yml")
+        );
+
+        // Both have it: the one beside the importer wins.
+        std::fs::write(file_dir.join("warning_facts.yml"), "").unwrap();
+        assert_eq!(
+            beside_or_in_role(&file_dir, Some(&dir), "warning_facts.yml"),
+            file_dir.join("warning_facts.yml")
+        );
+    }
+
     fn selected(text: &str, selection: &TagSelection) -> Compiled {
         let pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
         compile(&pb.plays[0], &RoleSearch::default(), selection).unwrap_or_else(|e| panic!("{e:#}"))
@@ -2468,6 +2507,22 @@ mod tests {
             let c = selected(TAGGED, &selection(run, skip));
             assert_eq!(names(&c), *want, "--tags {run:?} --skip-tags {skip:?}");
         }
+    }
+
+    /// `own.len() == 1` is what pairs with `own[0] == UNTAGGED` to mark a task the untagged
+    /// set: a task carrying two tags is not that set, even when one of the two happens to be
+    /// the literal word "untagged" - the pseudo-tag is a property of an empty-looking list,
+    /// not of any list that contains the word.
+    ///
+    /// What would make this red: the length check loosened so a two-tag list also counts,
+    /// which would drop this task from `--tags tagged` and, symmetrically, tighten so a
+    /// genuine one-tag `untagged` list stopped counting and such a task leaked into
+    /// `--tags tagged`.
+    #[test]
+    fn a_second_tag_beside_the_literal_word_untagged_keeps_the_task_tagged() {
+        let sel = selection(&["tagged"], &[]);
+        assert!(sel.selects(&["untagged".to_string(), "real".to_string()]));
+        assert!(!sel.selects(&["untagged".to_string()]));
     }
 
     /// A block's tags reach the tasks under it and join whatever they carry themselves, at any

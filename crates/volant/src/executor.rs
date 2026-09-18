@@ -459,21 +459,19 @@ async fn run_batch(
     let (tx, mut rx) = mpsc::channel::<Event>(64);
     // The batch's shared progress. Every driver reads it; only this loop writes it.
     let (progress_tx, progress_rx) = watch::channel(Progress::default());
+    let mut coordinator = Coordinator {
+        tx: &progress_tx,
+        batch_hosts: &play_hosts,
+        all_hosts: all,
+        frontier: HashMap::new(),
+        spliced_through: None,
+        run_once: BTreeMap::new(),
+        elected: BTreeMap::new(),
+    };
     // This first publish is what decides the runner of a `run_once` step at index 0, before any
     // driver exists to disagree about it. There is no barrier in front of index 0 - nobody has
     // anything to wait for there - so nothing else could make that election unanimous.
-    let mut elected: BTreeMap<usize, String> = BTreeMap::new();
-    publish(
-        &progress_tx,
-        &play_hosts,
-        all,
-        &state.failed_hosts,
-        &HashMap::new(),
-        None,
-        &BTreeMap::new(),
-        &compiled.steps,
-        &mut elected,
-    );
+    coordinator.publish(&state.failed_hosts, &compiled.steps);
     // Ansible's `forks`, as permits. More permits than hosts would only raise the ceiling
     // above what this play can use, and `Semaphore` refuses a count near `usize::MAX`. Written
     // as `min` then `max` rather than `clamp(1, hosts.len())`: `clamp` panics whenever its
@@ -539,21 +537,6 @@ async fn run_batch(
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
     let mut done: HashSet<(String, usize)> = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
-    // The index each host has finished every task through. Not the highest index it has
-    // mentioned: a driver reports the steps it is about to step over as soon as it has decided
-    // to, which is before the batch in front of them has run, so its reports do arrive out of
-    // order. See `finished`.
-    let mut frontier: HashMap<String, usize> = HashMap::new();
-    // The last splice point the coordinator has published a splice for, republished with every
-    // `Progress` so a driver waiting on one reads it whatever else moved.
-    let mut spliced: Option<usize> = None;
-    // What the one host elected for each `run_once` step made of it, for the hosts waiting
-    // behind it. Filled here rather than by the elected driver because the failure has to be
-    // published **with** the live-set change it causes: a failed result takes its host out of
-    // `live_hosts` in this same arm, and a host that saw the shrunken list before the verdict
-    // would read a leader that is merely gone and leave the play the quiet way, at the wrong
-    // exit code.
-    let mut run_once: BTreeMap<usize, bool> = BTreeMap::new();
     // What each host asked for at each include step, in arrival order. Keyed by index because a
     // host reports its request and then blocks, which it may do while this loop is still holding
     // an earlier index for a slower host.
@@ -615,7 +598,7 @@ async fn run_batch(
                                 .get(key.1)
                                 .is_some_and(|s| s.task.runs_once());
                         if announced {
-                            run_once.insert(key.1, true);
+                            coordinator.run_once.insert(key.1, true);
                         }
                         // A failed result is the host leaving the play, and it arrives before
                         // that task's `TaskDone`. Taking it out of the live set here, rather
@@ -625,17 +608,7 @@ async fn run_batch(
                             state.failed_hosts.insert(key.0.clone());
                         }
                         if lost || announced {
-                            publish(
-                                &progress_tx,
-                                &play_hosts,
-                                all,
-                                &state.failed_hosts,
-                                &frontier,
-                                spliced,
-                                &run_once,
-                                &plan.steps().steps,
-                                &mut elected,
-                            );
+                            coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                         }
                         pending.entry(key).or_default().push(event);
                     }
@@ -658,7 +631,7 @@ async fn run_batch(
                         includes.entry(index).or_default().push((host, groups));
                     }
                     Some(Event::TaskDone { host, index }) => {
-                        finished(&mut done, &mut frontier, &host, index);
+                        coordinator.finished(&mut done, &host, index);
                         // The elected host is the first to report this step - every other host
                         // waits for this entry before it sends its own - so `or_insert` keeps
                         // the verdict of the one that ran the task and not the silence of the
@@ -677,19 +650,9 @@ async fn run_batch(
                                 .get(index)
                                 .is_some_and(|s| s.task.runs_once())
                         {
-                            run_once.entry(index).or_insert(false);
+                            coordinator.run_once.entry(index).or_insert(false);
                         }
-                        publish(
-                            &progress_tx,
-                            &play_hosts,
-                            all,
-                            &state.failed_hosts,
-                            &frontier,
-                            spliced,
-                            &run_once,
-                            &plan.steps().steps,
-                            &mut elected,
-                        );
+                        coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                     }
                     Some(Event::Finished {
                         host,
@@ -707,17 +670,7 @@ async fn run_batch(
                         }
                         keep_links(&mut state.links, links, failed).await;
                         gone.insert(host);
-                        publish(
-                            &progress_tx,
-                            &play_hosts,
-                            all,
-                            &state.failed_hosts,
-                            &frontier,
-                            spliced,
-                            &run_once,
-                            &plan.steps().steps,
-                            &mut elected,
-                        );
+                        coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                     }
                     Some(Event::Unreachable {
                         host,
@@ -734,17 +687,7 @@ async fn run_batch(
                         out.unreachable(&host, &msg, censored, delegate.as_deref());
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
-                        publish(
-                            &progress_tx,
-                            &play_hosts,
-                            all,
-                            &state.failed_hosts,
-                            &frontier,
-                            spliced,
-                            &run_once,
-                            &plan.steps().steps,
-                            &mut elected,
-                        );
+                        coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                     }
                     None => break,
                 }
@@ -829,19 +772,9 @@ async fn run_batch(
             // done through `index`, and the step behind it is the one they are all waiting for.
             // Dropped rather than shifted, because the publish below re-decides it against the
             // list that now exists.
-            elected.split_off(&(index + 1));
-            spliced = Some(index);
-            publish(
-                &progress_tx,
-                &play_hosts,
-                all,
-                &state.failed_hosts,
-                &frontier,
-                spliced,
-                &run_once,
-                &plan.steps().steps,
-                &mut elected,
-            );
+            coordinator.forget_elections_past(index);
+            coordinator.spliced_through = Some(index);
+            coordinator.publish(&state.failed_hosts, &plan.steps().steps);
         }
         if gone.len() == play_hosts.len() && pending.is_empty() {
             break;
@@ -864,17 +797,7 @@ async fn run_batch(
                 stats.unreachable(&host);
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
                 state.failed_hosts.insert(host);
-                publish(
-                    &progress_tx,
-                    &play_hosts,
-                    all,
-                    &state.failed_hosts,
-                    &frontier,
-                    spliced,
-                    &run_once,
-                    &plan.steps().steps,
-                    &mut elected,
-                );
+                coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
             Event::Finished {
                 host,
@@ -889,20 +812,10 @@ async fn run_batch(
                     state.failed_hosts.insert(host);
                 }
                 keep_links(&mut state.links, links, failed).await;
-                publish(
-                    &progress_tx,
-                    &play_hosts,
-                    all,
-                    &state.failed_hosts,
-                    &frontier,
-                    spliced,
-                    &run_once,
-                    &plan.steps().steps,
-                    &mut elected,
-                );
+                coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
             Event::TaskDone { host, index } => {
-                finished(&mut done, &mut frontier, &host, index);
+                coordinator.finished(&mut done, &host, index);
                 // A host already in `failed_hosts` is walking the rest of the play for its
                 // handlers alone; its report is not a verdict, the same way it is not one above.
                 if !state.failed_hosts.contains(&host)
@@ -912,19 +825,9 @@ async fn run_batch(
                         .get(index)
                         .is_some_and(|s| s.task.runs_once())
                 {
-                    run_once.entry(index).or_insert(false);
+                    coordinator.run_once.entry(index).or_insert(false);
                 }
-                publish(
-                    &progress_tx,
-                    &play_hosts,
-                    all,
-                    &state.failed_hosts,
-                    &frontier,
-                    spliced,
-                    &run_once,
-                    &plan.steps().steps,
-                    &mut elected,
-                );
+                coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
             // A driver sends a result and the `TaskDone` behind it over the same channel, so a
             // result reaching here is one the task loop above never read - which happens when
@@ -1062,105 +965,130 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     }
 }
 
-/// Files one finished step and moves that host's frontier: the index it has finished every step
-/// through, which is the only figure a barrier may open on.
-///
-/// The frontier is not the highest index a host has mentioned. A driver collecting a batch
-/// decides where it goes next before the batch has run, and tells the coordinator about the
-/// steps it stepped over there and then, so a report for step 9 can arrive while step 7 is
-/// still on the wire. Counting the highest would open another host's `hostvars` barrier on work
-/// this one has not started. A gap closes when the batch reports; a gap that never closes
-/// belongs to a host that failed or went unreachable, and such a host is out of the live set,
-/// so nothing waits on it.
-fn finished(
-    done: &mut HashSet<(String, usize)>,
-    frontier: &mut HashMap<String, usize>,
-    host: &str,
-    index: usize,
-) {
-    done.insert((host.to_string(), index));
-    let mut next = frontier.get(host).map_or(0, |reached| reached + 1);
-    while done.contains(&(host.to_string(), next)) {
-        frontier.insert(host.to_string(), next);
-        next += 1;
-    }
+/// The coordinator's published state: everything a publish reads, held in one place because it
+/// is read under one serialised view and nowhere else.
+struct Coordinator<'a> {
+    /// The batch's shared progress. Every driver reads it; only the coordinator writes it.
+    tx: &'a watch::Sender<Progress>,
+    /// The batch's own hosts, which is what `ansible_play_batch` is served from.
+    batch_hosts: &'a [String],
+    /// Every host of the play, which is what `ansible_play_hosts_all` is served from.
+    all_hosts: &'a [String],
+    /// The index each host has finished every task through. Not the highest index it has
+    /// mentioned: a driver reports the steps it is about to step over as soon as it has decided
+    /// to, which is before the batch in front of them has run, so its reports do arrive out of
+    /// order. See `finished`.
+    frontier: HashMap<String, usize>,
+    /// The last splice point the coordinator has published a splice for, republished with every
+    /// `Progress` so a driver waiting on one reads it whatever else moved.
+    spliced_through: Option<usize>,
+    /// What the one host elected for each `run_once` step made of it, for the hosts waiting
+    /// behind it. Filled by the coordinator rather than by the elected driver because the failure
+    /// has to be published **with** the live-set change it causes: a failed result takes its host
+    /// out of `live_hosts` in the same arm, and a host that saw the shrunken list before the
+    /// verdict would read a leader that is merely gone and leave the play the quiet way, at the
+    /// wrong exit code.
+    run_once: BTreeMap<usize, bool>,
+    /// Who runs each `run_once` step. Written once per index and never rewritten. See
+    /// `Progress::elected`.
+    elected: BTreeMap<usize, String>,
 }
 
-/// Republishes the batch's progress. `live_hosts` is the batch's own list minus the hosts that
-/// have failed or gone unreachable, which is what `ansible_play_batch` reports and the only list
-/// a wait may open on; `play_hosts_left` is the same subtraction over the whole play, which is
-/// what `ansible_play_hosts` reports. `completed_through` is the lowest frontier among the live
-/// hosts of the batch, so a driver waiting for it to reach `i - 1` is waiting only on hosts that
-/// are still expected to report - and never on a host of another batch, which has no driver here
-/// to report at all.
-///
-/// It is also where a `run_once` step's runner is elected, for the reason the whole function
-/// exists: this is the one place the live set is read under a serial view. See `Progress::elected`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the coordinator's whole published state, read under one serialised view"
-)]
-fn publish(
-    tx: &watch::Sender<Progress>,
-    batch_hosts: &[String],
-    all_hosts: &[String],
-    lost: &HashSet<String>,
-    frontier: &HashMap<String, usize>,
-    spliced_through: Option<usize>,
-    run_once: &BTreeMap<usize, bool>,
-    steps: &[Step],
-    elected: &mut BTreeMap<usize, String>,
-) {
-    let live_hosts: Vec<String> = batch_hosts
-        .iter()
-        .filter(|h| !lost.contains(*h))
-        .cloned()
-        .collect();
-    let play_hosts_left: Vec<String> = all_hosts
-        .iter()
-        .filter(|h| !lost.contains(*h))
-        .cloned()
-        .collect();
-    // `None` sorts below every `Some`, so a live host that has reported nothing yet holds the
-    // minimum at `None` and no barrier opens on it.
-    let completed_through = live_hosts
-        .iter()
-        .map(|h| frontier.get(h).copied())
-        .min()
-        .flatten();
-    // The election, for the one index it can be needed at. `completed_through` is the index every
-    // live host has finished, so `+ 1` is where the slowest of them is standing and is the only
-    // place a driver can be about to read a runner: a host further along has already read one,
-    // and a host behind cannot exist. `None` is the head of the list, which is why the first call
-    // of all - made before a single driver is spawned - decides index 0, where there is no
-    // barrier to decide it.
-    //
-    // The runner is the first live host **the step's mask includes**, which is task 10's rule
-    // applied by the party that now owns it: elected off the whole live set instead, the runner
-    // could be a host the mask leaves out, which runs nothing, so nobody would run the step.
-    //
-    // `or_insert`, never an overwrite: an entry that moved when a host left would be exactly the
-    // race this replaces.
-    let at = completed_through.map_or(0, |c| c + 1);
-    if let Some(step) = steps.get(at)
-        && step.task.runs_once()
-        && !elected.contains_key(&at)
-        && let Some(runner) = live_hosts.iter().find(|h| {
-            step.hosts
-                .as_ref()
-                .is_none_or(|only| only.iter().any(|m| m == *h))
-        })
-    {
-        elected.insert(at, runner.clone());
+impl Coordinator<'_> {
+    /// Files one finished step and moves that host's frontier: the index it has finished every
+    /// step through, which is the only figure a barrier may open on.
+    ///
+    /// The frontier is not the highest index a host has mentioned. A driver collecting a batch
+    /// decides where it goes next before the batch has run, and tells the coordinator about the
+    /// steps it stepped over there and then, so a report for step 9 can arrive while step 7 is
+    /// still on the wire. Counting the highest would open another host's `hostvars` barrier on
+    /// work this one has not started. A gap closes when the batch reports; a gap that never
+    /// closes belongs to a host that failed or went unreachable, and such a host is out of the
+    /// live set, so nothing waits on it.
+    fn finished(&mut self, done: &mut HashSet<(String, usize)>, host: &str, index: usize) {
+        done.insert((host.to_string(), index));
+        let mut next = self.frontier.get(host).map_or(0, |reached| reached + 1);
+        while done.contains(&(host.to_string(), next)) {
+            self.frontier.insert(host.to_string(), next);
+            next += 1;
+        }
     }
-    tx.send_replace(Progress {
-        completed_through,
-        live_hosts,
-        play_hosts_left,
-        spliced_through,
-        run_once: run_once.clone(),
-        elected: elected.clone(),
-    });
+
+    /// Drops every election past `index`, which a splice invalidated: the entries name steps
+    /// that have moved.
+    fn forget_elections_past(&mut self, index: usize) {
+        self.elected.split_off(&(index + 1));
+    }
+
+    /// Republishes the batch's progress. `live_hosts` is the batch's own list minus the hosts
+    /// that have failed or gone unreachable, which is what `ansible_play_batch` reports and the
+    /// only list a wait may open on; `play_hosts_left` is the same subtraction over the whole
+    /// play, which is what `ansible_play_hosts` reports. `completed_through` is the lowest
+    /// frontier among the live hosts of the batch, so a driver waiting for it to reach `i - 1`
+    /// is waiting only on hosts that are still expected to report - and never on a host of
+    /// another batch, which has no driver here to report at all.
+    ///
+    /// It is also where a `run_once` step's runner is elected, for the reason this method
+    /// exists: this is the one place the live set is read under a serial view. See
+    /// `Progress::elected`.
+    ///
+    /// `lost` and `steps` stay parameters: the first is the run's own failed set, which the
+    /// caller borrows mutably elsewhere in the same scope, and the second is a list that grows
+    /// under the caller, read again at each call.
+    fn publish(&mut self, lost: &HashSet<String>, steps: &[Step]) {
+        let live_hosts: Vec<String> = self
+            .batch_hosts
+            .iter()
+            .filter(|h| !lost.contains(*h))
+            .cloned()
+            .collect();
+        let play_hosts_left: Vec<String> = self
+            .all_hosts
+            .iter()
+            .filter(|h| !lost.contains(*h))
+            .cloned()
+            .collect();
+        // `None` sorts below every `Some`, so a live host that has reported nothing yet holds the
+        // minimum at `None` and no barrier opens on it.
+        let completed_through = live_hosts
+            .iter()
+            .map(|h| self.frontier.get(h).copied())
+            .min()
+            .flatten();
+        // The election, for the one index it can be needed at. `completed_through` is the index
+        // every live host has finished, so `+ 1` is where the slowest of them is standing and is
+        // the only place a driver can be about to read a runner: a host further along has already
+        // read one, and a host behind cannot exist. `None` is the head of the list, which is why
+        // the first call of all - made before a single driver is spawned - decides index 0, where
+        // there is no barrier to decide it.
+        //
+        // The runner is the first live host **the step's mask includes**, applied by the party
+        // that owns it: elected off the whole live set instead, the runner could be a host the
+        // mask leaves out, which runs nothing, so nobody would run the step.
+        //
+        // `or_insert`, never an overwrite: an entry that moved when a host left would be exactly
+        // the race this replaces.
+        let at = completed_through.map_or(0, |c| c + 1);
+        if let Some(step) = steps.get(at)
+            && step.task.runs_once()
+            && !self.elected.contains_key(&at)
+            && let Some(runner) = live_hosts.iter().find(|h| {
+                step.hosts
+                    .as_ref()
+                    .is_none_or(|only| only.iter().any(|m| m == *h))
+            })
+        {
+            self.elected.insert(at, runner.clone());
+        }
+        self.tx.send_replace(Progress {
+            completed_through,
+            live_hosts,
+            play_hosts_left,
+            spliced_through: self.spliced_through,
+            run_once: self.run_once.clone(),
+            elected: self.elected.clone(),
+        });
+    }
 }
 
 /// Files the connections one host handed back, keeping only the one worth keeping.
@@ -5366,73 +5294,46 @@ mod tests {
         assert!(reads_across_hosts(&t), "play_batch is unaffected");
     }
 
+    /// A coordinator over one list of hosts, which the batch and the play share.
+    fn coordinator<'a>(tx: &'a watch::Sender<Progress>, hosts: &'a [String]) -> Coordinator<'a> {
+        Coordinator {
+            tx,
+            batch_hosts: hosts,
+            all_hosts: hosts,
+            frontier: HashMap::new(),
+            spliced_through: None,
+            run_once: BTreeMap::new(),
+            elected: BTreeMap::new(),
+        }
+    }
+
     /// The barrier opens on the slowest live host, and a host that has left the play stops
     /// holding it: this is what keeps a wait from outliving the host it waits for.
     #[test]
     fn progress_follows_the_slowest_live_host_and_forgets_the_others() {
         let hosts: Vec<String> = vec!["alpha".into(), "beta".into()];
         let (tx, rx) = watch::channel(Progress::default());
-        let mut last_done = HashMap::new();
+        let mut co = coordinator(&tx, &hosts);
         let mut lost = HashSet::new();
 
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &last_done,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.publish(&lost, &[]);
         assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
         assert_eq!(rx.borrow().live_hosts, hosts);
 
-        last_done.insert("beta".to_string(), 3);
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &last_done,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.frontier.insert("beta".to_string(), 3);
+        co.publish(&lost, &[]);
         assert_eq!(
             rx.borrow().completed_through,
             None,
             "alpha has reported nothing, so the barrier stays shut"
         );
 
-        last_done.insert("alpha".to_string(), 1);
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &last_done,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.frontier.insert("alpha".to_string(), 1);
+        co.publish(&lost, &[]);
         assert_eq!(rx.borrow().completed_through, Some(1));
 
         lost.insert("alpha".to_string());
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &last_done,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.publish(&lost, &[]);
         assert_eq!(
             rx.borrow().completed_through,
             Some(3),
@@ -5441,17 +5342,7 @@ mod tests {
         assert_eq!(rx.borrow().live_hosts, vec!["beta".to_string()]);
 
         lost.insert("beta".to_string());
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &last_done,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.publish(&lost, &[]);
         assert!(rx.borrow().live_hosts.is_empty());
         assert_eq!(rx.borrow().completed_through, None);
     }
@@ -5492,23 +5383,12 @@ mod tests {
         let steps = vec![step(None), step(Some(vec!["h2".into()]))];
 
         let (tx, rx) = watch::channel(Progress::default());
-        let mut elected: BTreeMap<usize, String> = BTreeMap::new();
-        let mut frontier: HashMap<String, usize> = HashMap::new();
+        let mut co = coordinator(&tx, &hosts);
         let mut lost: HashSet<String> = HashSet::new();
 
         // The publish `run_batch` makes before it spawns a single driver. Index 0 has no barrier
         // in front of it, so this is the only moment its runner can be fixed.
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &steps,
-            &mut elected,
-        );
+        co.publish(&lost, &steps);
         assert_eq!(
             rx.borrow().elected.get(&0).map(String::as_str),
             Some("h1"),
@@ -5517,17 +5397,7 @@ mod tests {
 
         // h1 dies on the way, which is the publish that wakes h2.
         lost.insert("h1".to_string());
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &steps,
-            &mut elected,
-        );
+        co.publish(&lost, &steps);
         let p = rx.borrow().clone();
         assert_eq!(
             p.live_hosts,
@@ -5542,21 +5412,11 @@ mod tests {
 
         // The step behind it is masked to h2, and both hosts are live again for it.
         let (tx, rx) = watch::channel(Progress::default());
-        let mut elected: BTreeMap<usize, String> = BTreeMap::new();
+        let mut co = coordinator(&tx, &hosts);
         for host in &hosts {
-            frontier.insert(host.clone(), 0);
+            co.frontier.insert(host.clone(), 0);
         }
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &HashSet::new(),
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &steps,
-            &mut elected,
-        );
+        co.publish(&HashSet::new(), &steps);
         assert_eq!(
             rx.borrow().elected.get(&1).map(String::as_str),
             Some("h2"),
@@ -5575,61 +5435,31 @@ mod tests {
     fn a_gap_in_a_hosts_reports_holds_the_barrier_where_it_is() {
         let hosts: Vec<String> = vec!["alpha".into()];
         let (tx, rx) = watch::channel(Progress::default());
+        let mut co = coordinator(&tx, &hosts);
         let mut done = HashSet::new();
-        let mut frontier = HashMap::new();
         let lost = HashSet::new();
 
         for index in [0, 1] {
-            finished(&mut done, &mut frontier, "alpha", index);
+            co.finished(&mut done, "alpha", index);
         }
         // Steps 4 and 5 are stepped over: the driver says so while the batch holding 2 and 3 is
         // still running.
         for index in [4, 5] {
-            finished(&mut done, &mut frontier, "alpha", index);
+            co.finished(&mut done, "alpha", index);
         }
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.publish(&lost, &[]);
         assert_eq!(
             rx.borrow().completed_through,
             Some(1),
             "the steps behind the gap are not finished yet"
         );
 
-        finished(&mut done, &mut frontier, "alpha", 2);
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.finished(&mut done, "alpha", 2);
+        co.publish(&lost, &[]);
         assert_eq!(rx.borrow().completed_through, Some(2), "the gap is smaller");
 
-        finished(&mut done, &mut frontier, "alpha", 3);
-        publish(
-            &tx,
-            &hosts,
-            &hosts,
-            &lost,
-            &frontier,
-            None,
-            &BTreeMap::new(),
-            &[],
-            &mut BTreeMap::new(),
-        );
+        co.finished(&mut done, "alpha", 3);
+        co.publish(&lost, &[]);
         assert_eq!(
             rx.borrow().completed_through,
             Some(5),

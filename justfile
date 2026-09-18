@@ -11,7 +11,7 @@ default:
 # Install git hooks, sign-off, and the tools the other recipes need
 setup:
     git config core.hooksPath .githooks
-    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta cargo-llvm-cov
+    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta cargo-llvm-cov cargo-mutants
 
 # Accept pending insta snapshots after reading them
 insta-accept:
@@ -43,6 +43,22 @@ test:
 # Line coverage over the workspace. The ssh tests are #[ignore]d and are not in this figure.
 coverage:
     cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}}
+
+# Mutation score over the files this recipe is pointed at. Each mutant is a small edit to the
+# source that the tests must notice; a mutant nothing catches is an assertion that could not have
+# failed. `cargo build --workspace` first, and `--copy-target true`, carry the already-built
+# target/ (with the sibling `volant-agent` binary the integration suite execs) into every
+# mutant's scratch copy: without it, nothing inside cargo-mutants' own scratch build produces
+# that binary and every mutant's baseline fails before a single mutation runs. `--test-tool
+# nextest` matches every other recipe here and keeps tests process-isolated, which a handful of
+# this suite's tests need. `--jobs 1`, not 4: measured on the dev host, `--copy-target` copies a
+# ~2 GB target/ per parallel job, and /tmp there is a 7.6 GB tmpfs shared with everything else
+# running - both 4 and 2 parallel copies exceeded it mid-campaign ("Disk quota exceeded"); one
+# job at a time is the value that ran two full campaigns without it. Slow on purpose: one build
+# and one test run per mutant. Not in CI.
+mutants file="crates/volant/src/keywords.rs":
+    cargo build --workspace
+    cargo mutants --file {{file}} --timeout 120 --jobs 1 --no-shuffle --test-tool nextest --copy-target true
 
 # Regenerate docs/src/modules.md from the module registry
 docs-modules:

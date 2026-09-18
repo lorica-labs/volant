@@ -663,6 +663,24 @@ mod tests {
         );
     }
 
+    /// `is_barrier` has exactly one caller, `PlayTask::barrier`, and it only ever asks about the
+    /// literal `"run_once"` - a name that is both present in every table and marked `barrier`.
+    /// That single call site can never tell a lookup that ignores its argument, or one that
+    /// widens the match from "named and marked" to "named or marked", from the real thing: every
+    /// input it is ever given makes both the honest answer and the two broken ones agree.
+    ///
+    /// What would make this red: `is_barrier` returning the same answer for every name, or
+    /// treating a name match alone (without the `barrier` flag) as enough.
+    #[test]
+    fn is_barrier_reads_both_the_name_and_the_flag() {
+        assert!(is_barrier("run_once"));
+        // `name` is a real keyword in every table and is not a barrier: a lookup that only
+        // checks the name would say yes.
+        assert!(!is_barrier("name"));
+        // Not a keyword at all: a lookup that ignores its argument would say yes.
+        assert!(!is_barrier("not_a_real_keyword"));
+    }
+
     /// What would make this red: a keyword added, removed or flipped between `Runs` and
     /// `Preflight` without regenerating the page, which would leave the site telling operators
     /// that something works when the pre-flight refuses it, or the other way round.

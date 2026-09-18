@@ -863,11 +863,6 @@ async fn run_batch(
             } => {
                 stats.unreachable(&host);
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
-                // Into `gone` here as well as in the loop above, because the last thing this
-                // function does is count an `unreachable` for every worker that failed and is
-                // not in that set. A host reported here and left out of it would be counted
-                // twice in the recap for one failure.
-                gone.insert(host.clone());
                 state.failed_hosts.insert(host);
                 publish(
                     &progress_tx,

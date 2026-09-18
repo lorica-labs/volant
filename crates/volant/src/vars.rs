@@ -20,6 +20,31 @@ use crate::yaml;
 pub struct HostVars {
     pub map: Map<String, Value>,
     pub hostvars: Arc<Map<String, Value>>,
+    /// `groups` and the play's host lists, shared for the same reason and in the same way.
+    pub shared: Arc<Map<String, Value>>,
+}
+
+impl HostVars {
+    /// Writes a name into the host's own map once the map is built - a loop variable, a
+    /// `register` name, `result`. Such a write is the last one there is and beats everything
+    /// the merge produced, the inventory-wide values included: a name that collides with one of
+    /// them leaves this host's shared map, which is how the host's own value gets to answer.
+    /// The map is left alone when there is no collision, so the ordinary write costs nothing.
+    pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
+        if self.shared.contains_key(&key) {
+            let mut shared = Map::clone(&self.shared);
+            shared.remove(&key);
+            self.shared = Arc::new(shared);
+        }
+        self.map.insert(key, value)
+    }
+
+    /// Reads a name the way a template reads it: the inventory-wide values first, because they
+    /// were merged last, then the host's own map. Everything that asks this map for a name by
+    /// hand rather than through a render goes through here, so the two answer alike.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.shared.get(key).or_else(|| self.map.get(key))
+    }
 }
 
 impl std::ops::Deref for HostVars {
@@ -41,6 +66,7 @@ impl<'a> From<&'a HostVars> for Vars<'a> {
         Vars {
             map: &vars.map,
             hostvars: Some(&vars.hostvars),
+            shared: Some(&vars.shared),
         }
     }
 }
@@ -96,7 +122,14 @@ pub struct VarStore {
     /// The same view completed with a host the inventory does not carry - an implicit
     /// `localhost` - one map per such host. There is normally at most one of them in a run.
     hostvars_with: BTreeMap<String, Arc<Map<String, Value>>>,
+    /// The inventory-wide values, with the three host lists they were built from. `groups` is
+    /// fixed for the run, but the lists come from the coordinator's last published progress and
+    /// move whenever a host drops out, so the map is good for one triple and no longer.
+    shared: Option<(SharedKey, Arc<Map<String, Value>>)>,
 }
+
+/// The play and batch host lists one `shared` map was built from.
+type SharedKey = (Vec<String>, Vec<String>, Vec<String>);
 
 /// The value Ansible substitutes for `omit`: a parameter equal to it is dropped from the task.
 /// Ansible generates a fresh random suffix per run; a stable one changes nothing for playbooks
@@ -164,6 +197,7 @@ impl VarStore {
             forks: crate::config::DEFAULT_FORKS,
             hostvars: None,
             hostvars_with: BTreeMap::new(),
+            shared: None,
         })
     }
 
@@ -205,6 +239,9 @@ impl VarStore {
     /// layer on either side of it rather than derived from the documented numbering: `defaults`
     /// under an inventory variable, `vars` above the play's `vars:` and under a task's, and a
     /// role parameter above a `set_fact` and under `-e`.
+    ///
+    /// The inventory-wide magic variables are not in this map: `shared_values` builds them, and
+    /// a template reads them from there first, which is the place in the order they had here.
     pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
         let mut vars = scope.role_defaults.clone();
         extend(&mut vars, &self.host_base(host));
@@ -219,7 +256,7 @@ impl VarStore {
         }
         extend(&mut vars, &scope.role_params);
         extend(&mut vars, &self.extra);
-        self.add_magic(&mut vars, host, scope);
+        self.add_magic(&mut vars, host);
         vars
     }
 
@@ -289,6 +326,10 @@ impl VarStore {
         base
     }
 
+    /// The shared inventory-wide map is deliberately not dropped here: `groups` is assigned in
+    /// `new` and never touched again, and the host lists are keyed on in `shared_values`. The
+    /// day a module adds a host to the inventory mid-run, `groups` starts moving and this has
+    /// to drop `self.shared` too, or the run keeps reading the inventory it started with.
     fn forget_hostvars(&mut self) {
         self.hostvars = None;
         self.hostvars_with.clear();
@@ -328,7 +369,53 @@ impl VarStore {
         completed
     }
 
-    fn add_magic(&self, vars: &mut Map<String, Value>, host: &str, scope: &Scope) {
+    /// The values every host of a batch reads the same: `groups`, which is fixed for the run,
+    /// and the three live host lists, which are fixed for as long as nobody drops out. Each is
+    /// the size of the inventory, so they are built once and handed to templates as one shared
+    /// object rather than copied into every host's map for every task.
+    ///
+    /// The deprecated `play_hosts` answers with the batch, not the play: measured on
+    /// ansible-core 2.19.12, `h2` in the first batch of a `serial: 2` run over three hosts reads
+    /// `['h2']` from it where `ansible_play_hosts` says `['h2', 'h3']`.
+    pub fn shared_values(&mut self, scope: &Scope) -> Arc<Map<String, Value>> {
+        if let Some((key, map)) = &self.shared
+            && key.0 == scope.play_hosts
+            && key.1 == scope.batch_hosts
+            && key.2 == scope.all_play_hosts
+        {
+            return Arc::clone(map);
+        }
+        let batch = serde_json::to_value(&scope.batch_hosts).unwrap_or_default();
+        let mut map = Map::new();
+        map.insert(
+            "groups".to_string(),
+            serde_json::to_value(&self.groups).unwrap_or_default(),
+        );
+        map.insert(
+            "ansible_play_hosts".to_string(),
+            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
+        );
+        map.insert(
+            "ansible_play_hosts_all".to_string(),
+            serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
+        );
+        map.insert("ansible_play_batch".to_string(), batch.clone());
+        map.insert("play_hosts".to_string(), batch);
+        let shared = Arc::new(map);
+        self.shared = Some((
+            (
+                scope.play_hosts.clone(),
+                scope.batch_hosts.clone(),
+                scope.all_play_hosts.clone(),
+            ),
+            Arc::clone(&shared),
+        ));
+        shared
+    }
+
+    /// The magic variables that belong to one host. The inventory-wide ones are not here: see
+    /// `shared_values`.
+    fn add_magic(&self, vars: &mut Map<String, Value>, host: &str) {
         let short = short_name(host);
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
         vars.insert(
@@ -339,29 +426,6 @@ impl VarStore {
         vars.insert(
             "group_names".to_string(),
             serde_json::to_value(group_names).unwrap_or_default(),
-        );
-        vars.insert(
-            "groups".to_string(),
-            serde_json::to_value(&self.groups).unwrap_or_default(),
-        );
-        vars.insert(
-            "ansible_play_hosts".to_string(),
-            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
-        );
-        vars.insert(
-            "ansible_play_hosts_all".to_string(),
-            serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
-        );
-        vars.insert(
-            "ansible_play_batch".to_string(),
-            serde_json::to_value(&scope.batch_hosts).unwrap_or_default(),
-        );
-        // The deprecated `play_hosts` is the batch, not the play: measured on ansible-core
-        // 2.19.12, `h2` in the first batch of a `serial: 2` run over three hosts reads `['h2']`
-        // from it where `ansible_play_hosts` says `['h2', 'h3']`.
-        vars.insert(
-            "play_hosts".to_string(),
-            serde_json::to_value(&scope.batch_hosts).unwrap_or_default(),
         );
         vars.insert(
             "playbook_dir".to_string(),
@@ -750,14 +814,36 @@ mod tests {
         assert_eq!(v["inventory_hostname"], json!("web1"));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
         assert_eq!(v["group_names"], json!(["web"]));
-        assert_eq!(v["groups"]["web"], json!(["web1"]));
-        assert!(
-            v.get("hostvars").is_none(),
-            "hostvars is handed to templates as a shared view, not merged into the map"
+        for name in [
+            "hostvars",
+            "groups",
+            "ansible_play_hosts",
+            "ansible_play_hosts_all",
+            "ansible_play_batch",
+            "play_hosts",
+        ] {
+            assert!(
+                v.get(name).is_none(),
+                "{name} is handed to templates as a shared view, not merged into the map"
+            );
+        }
+        let shared = store.shared_values(&scope(&["web1"]));
+        assert_eq!(shared["groups"]["web"], json!(["web1"]));
+        assert_eq!(shared["ansible_play_hosts"], json!(["web1"]));
+        assert_eq!(shared["ansible_play_hosts_all"], json!(["web1"]));
+        assert_eq!(shared["ansible_play_batch"], json!(["web1"]));
+        // Asking the host's variables by name, which is what an argument spec does, answers for
+        // the five as well: they are somewhere else, not gone.
+        let host = HostVars {
+            map: v.clone(),
+            hostvars: Arc::default(),
+            shared,
+        };
+        assert_eq!(
+            host.get("groups").map(|g| &g["web"]),
+            Some(&json!(["web1"]))
         );
-        assert_eq!(v["ansible_play_hosts"], json!(["web1"]));
-        assert_eq!(v["ansible_play_hosts_all"], json!(["web1"]));
-        assert_eq!(v["ansible_play_batch"], json!(["web1"]));
+        assert_eq!(host.get("inventory_hostname"), Some(&json!("web1")));
         assert_eq!(
             v["playbook_dir"],
             json!(dir.join("play").display().to_string())
@@ -790,19 +876,26 @@ mod tests {
     fn the_batch_the_live_play_and_the_resolved_play_are_three_lists() {
         let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
         let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        let v = store.for_host(
-            "h2",
-            &Scope {
-                play_hosts: vec!["h2".into(), "h3".into()],
-                batch_hosts: vec!["h2".into()],
-                all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
-                ..Scope::default()
-            },
-        );
+        let v = store.shared_values(&Scope {
+            play_hosts: vec!["h2".into(), "h3".into()],
+            batch_hosts: vec!["h2".into()],
+            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+            ..Scope::default()
+        });
         assert_eq!(v["ansible_play_hosts"], json!(["h2", "h3"]));
         assert_eq!(v["ansible_play_batch"], json!(["h2"]));
         assert_eq!(v["play_hosts"], json!(["h2"]));
         assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
+        // The map is cached, and the next batch is a different answer: asking again with other
+        // lists has to rebuild it. What would make this red: a cache that never checks its key.
+        let next = store.shared_values(&Scope {
+            play_hosts: vec!["h3".into()],
+            batch_hosts: vec!["h3".into()],
+            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+            ..Scope::default()
+        });
+        assert_eq!(next["ansible_play_hosts"], json!(["h3"]));
+        assert_eq!(next["ansible_play_batch"], json!(["h3"]));
     }
 
     /// The view `hostvars` reads: one shared map for every host of the inventory, and a

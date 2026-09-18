@@ -226,18 +226,24 @@ pub(super) fn host_vars(
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
-    let (raw, hostvars) = {
+    let (raw, hostvars, shared) = {
         let mut store = store.lock().expect("vars lock");
-        // The shared view first: a variable of this host's own can name `hostvars`, and
-        // `resolve_vars` below has to be able to answer it.
+        // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
+        // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
-        (store.for_host(host, &scope), hostvars)
+        let shared = store.shared_values(&scope);
+        (store.for_host(host, &scope), hostvars, shared)
     };
     let map = templar.resolve_vars(Vars {
         map: &raw,
         hostvars: Some(&hostvars),
+        shared: Some(&shared),
     });
-    HostVars { map, hostvars }
+    HostVars {
+        map,
+        hostvars,
+        shared,
+    }
 }
 
 /// A task rendered for one host: what to do with it.

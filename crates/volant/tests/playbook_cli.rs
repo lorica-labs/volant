@@ -3919,6 +3919,36 @@ fn every_runs_keyword_changes_something_observable() {
     std::fs::remove_dir_all(&sudo_dir).expect("the fake sudo directory is removed");
 }
 
+/// A loop variable named after one of the values the whole inventory shares renders the item,
+/// not the inventory. Measured on ansible-core 2.19.12: the loop variable is bound once the
+/// host's variables are built, so it is the last write there is and it wins over the play's own
+/// host list for as long as the loop runs.
+///
+/// What would make this red: reading `play_hosts` out of the shared inventory-wide values with
+/// no account of what was written into the host's map afterwards. Both items then render the
+/// play's host list instead of `1` and `2`.
+#[test]
+fn a_loop_variable_wins_over_the_inventory_wide_value_it_is_named_after() {
+    let dir = probe_dir("loop-var-shadows-shared");
+    let (code, text) = run_probe(
+        &dir,
+        "shadow",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug:\n        msg: \"{{ play_hosts }}\"\n      loop: [1, 2]\n      loop_control:\n        loop_var: play_hosts\n",
+        &[],
+        None,
+    );
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains(r#""msg": 1"#) && text.contains(r#""msg": 2"#),
+        "each item renders itself: {text}"
+    );
+    assert!(
+        !text.contains(r#""msg": ["localhost"]"#),
+        "and never the play's host list: {text}"
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// A play's roles, read from the directory beside the playbook and spliced into the step list.
 ///
 /// The snapshot is the reference's own output for this fixture, measured on ansible-core

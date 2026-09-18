@@ -47,6 +47,11 @@ impl std::error::Error for TemplateError {}
 pub struct Vars<'a> {
     pub map: &'a Map<String, Value>,
     pub hostvars: Option<&'a Arc<Map<String, Value>>>,
+    /// The values the whole inventory shares — `groups` and the play's host lists — read out of
+    /// here rather than copied into every host's map for every task. Consulted *before* `map`,
+    /// because these used to be written into it last and last is what wins. A name written into
+    /// the map later still wins, because `HostVars::insert` takes it out of here first.
+    pub shared: Option<&'a Arc<Map<String, Value>>>,
 }
 
 impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
@@ -54,6 +59,7 @@ impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
         Vars {
             map,
             hostvars: None,
+            shared: None,
         }
     }
 }
@@ -89,6 +95,7 @@ impl Memo {
 struct Context {
     vars: Map<String, Value>,
     hostvars: Option<Arc<Map<String, Value>>>,
+    shared: Option<Arc<Map<String, Value>>>,
     memo: Memo,
 }
 
@@ -107,6 +114,15 @@ impl Object for Context {
                     memo: Memo::default(),
                 }));
             }
+            // Before the host's own map, never after: these are the inventory-wide values, and
+            // they used to be merged into that map last, so they beat a fact of the same name.
+            // A loop variable or a registered name that collides with one of them is not here
+            // to be found: `HostVars::insert` drops it from the host's shared map as it writes.
+            if let Some(shared) = &self.shared
+                && let Some(value) = shared.get(key)
+            {
+                return Some(minijinja::Value::from_serialize(value));
+            }
             self.vars.get(key).map(minijinja::Value::from_serialize)
         })
     }
@@ -119,6 +135,11 @@ impl Object for Context {
             .collect();
         if self.hostvars.is_some() && !self.vars.contains_key("hostvars") {
             keys.push(minijinja::Value::from("hostvars"));
+        }
+        for key in self.shared.iter().flat_map(|s| s.keys()) {
+            if !self.vars.contains_key(key) {
+                keys.push(minijinja::Value::from(key.as_str()));
+            }
         }
         Enumerator::Values(keys)
     }
@@ -155,6 +176,7 @@ fn context_of(vars: Vars<'_>) -> minijinja::Value {
     minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
         hostvars: vars.hostvars.cloned(),
+        shared: vars.shared.cloned(),
         memo: Memo::default(),
     })
 }
@@ -292,6 +314,7 @@ impl Templar {
             let ctx = context_of(Vars {
                 map: &current,
                 hostvars: vars.hostvars,
+                shared: vars.shared,
             });
             let mut next = current.clone();
             let mut changed = false;
@@ -513,6 +536,7 @@ mod tests {
             let vars = Vars {
                 map: &empty,
                 hostvars: Some(&shared),
+                shared: None,
             };
             assert_eq!(t.render(text, vars).unwrap(), want, "{text}");
         }
@@ -537,6 +561,7 @@ mod tests {
         let ctx = context_of(Vars {
             map: &empty,
             hostvars: Some(&shared),
+            shared: None,
         });
         let first = ctx
             .get_attr("hostvars")
@@ -558,6 +583,62 @@ mod tests {
             1,
             "and the context gives it back when it goes"
         );
+    }
+
+    /// The inventory-wide values are read out of the shared map and not out of the host's own,
+    /// and they still beat a fact of the same name — which is the order they had when they were
+    /// written into that map last.
+    ///
+    /// What would make this red: consulting the host's map before the shared one. A `set_fact`
+    /// named `groups` would then win, and every template reading `groups` after it would read
+    /// the fact instead of the inventory.
+    #[test]
+    fn a_fact_does_not_shadow_an_inventory_wide_value() {
+        let t = Templar::new(std::env::temp_dir());
+        let shared = Arc::new(vars(json!({"groups": {"web": ["h1"]}})));
+        let fact = vars(json!({"groups": "a set_fact wrote this", "own": 1}));
+        let vars = Vars {
+            map: &fact,
+            hostvars: None,
+            shared: Some(&shared),
+        };
+        assert_eq!(
+            t.render("{{ groups['web'] }}", vars).unwrap(),
+            json!(["h1"])
+        );
+        // And the host's own names are still its own: the shared map answers for what it holds
+        // and for nothing else.
+        assert_eq!(t.render("{{ own }}", vars).unwrap(), json!(1));
+    }
+
+    /// A name both maps carry is listed once when the context is walked as a mapping. A
+    /// `set_fact: groups=x` produces exactly that state: the fact is merged into the host's map
+    /// and the inventory's `groups` is in the shared one.
+    ///
+    /// No playbook reaches this today. The root context is not a value a template can name -
+    /// there is no `vars` magic variable to walk, and `lookup('vars', ...)` resolves one name
+    /// at a time through `get_value` - so nothing renders it as a mapping. The guard is still
+    /// the difference between a list of names and a list with a duplicate in it, and the first
+    /// thing to name the root context would read `groups` twice and hand `| dict2items` two
+    /// entries with the same key.
+    ///
+    /// What would make this red: dropping the `contains_key` guard from `enumerate`.
+    #[test]
+    fn a_name_both_maps_carry_is_listed_once() {
+        let shared = Arc::new(vars(json!({"groups": {"web": ["h1"]}})));
+        let fact = vars(json!({"groups": "a set_fact wrote this", "own": 1}));
+        let ctx = context_of(Vars {
+            map: &fact,
+            hostvars: None,
+            shared: Some(&shared),
+        });
+        let mut names: Vec<String> = ctx
+            .try_iter()
+            .expect("the root context walks as a mapping")
+            .map(|name| name.to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["groups", "own"]);
     }
 
     /// A map that carries a `hostvars` key of its own, with no view beside it, still reads from

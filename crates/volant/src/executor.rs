@@ -2392,33 +2392,6 @@ fn conditional_error(err: &TemplateError) -> String {
     format!("Task failed: Error while evaluating conditional: {}", err.0)
 }
 
-/// Waits `delay`, or gives up when the run is interrupted.
-async fn sleep_between(
-    delay: Duration,
-    stop: &mut watch::Receiver<bool>,
-    stop_broken: &mut bool,
-) -> Option<()> {
-    if delay.is_zero() {
-        return Some(());
-    }
-    let deadline = tokio::time::Instant::now() + delay;
-    loop {
-        if *stop.borrow() {
-            return None;
-        }
-        tokio::select! {
-            () = tokio::time::sleep_until(deadline) => return Some(()),
-            res = stop.changed(), if !*stop_broken => {
-                if res.is_err() {
-                    *stop_broken = true;
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
-}
-
 /// One item of one task, as the agent is asked to run it.
 fn protocol_task(task: &PlayTask, item: &Item) -> Task {
     Task {
@@ -2506,15 +2479,19 @@ async fn drive_host(
     verbosity: u8,
     existing: Vec<(LinkKey, AgentLink)>,
     forks: Arc<Semaphore>,
-    mut progress: watch::Receiver<Progress>,
+    progress: watch::Receiver<Progress>,
     tx: mpsc::Sender<Event>,
 ) {
     let name = host.name.clone();
-    let mut stop = options.stop.clone();
-    // Set once the stop watch's sender is gone, so a dropped sender is never read as an
-    // interrupt and the select below stops polling a branch that would otherwise resolve
-    // immediately forever.
-    let mut stop_broken = false;
+    let mut driver = Driver {
+        tx: &tx,
+        name: &name,
+        plan: &plan,
+        progress,
+        stop: options.stop.clone(),
+        stop_broken: false,
+        cleanup: None,
+    };
     // One entry per target user on this host: the connecting user's own agent, and one more
     // for each `become_user` the play escalates to. Connections this play never uses itself
     // stay in here untouched and go straight back with `Finished`.
@@ -2544,17 +2521,7 @@ async fn drive_host(
     let mut pos = first(&plan.steps());
     // An interrupt here leaves `pos` where it is; the run loop's own `stop` test below is what
     // ends the play for this host, and the `Finished` at the end of this function still goes.
-    if let Some(grown) = stepped_over(
-        &tx,
-        &name,
-        &plan,
-        &mut progress,
-        &mut stop,
-        &mut stop_broken,
-        0..pos,
-    )
-    .await
-    {
+    if let Some(grown) = driver.stepped_over(0..pos).await {
         pos += grown;
     }
     let mut batch_id: u64 = 0;
@@ -2577,7 +2544,6 @@ async fn drive_host(
     // two are the only state a failure adds: the coordinator still knows one thing about a
     // host, that it failed.
     let mut failed_at: Option<(usize, TaskResult)> = None;
-    let mut cleanup: Option<usize> = None;
 
     'run: loop {
         let c = plan.steps();
@@ -2628,17 +2594,7 @@ async fn drive_host(
                         Value::Object(result.0.clone()),
                     );
                 }
-                let Some(grown) = stepped_over(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    index + 1..next,
-                )
-                .await
-                else {
+                let Some(grown) = driver.stepped_over(index + 1..next).await else {
                     break 'run;
                 };
                 // Where the drain stands now, for a host that was already draining an
@@ -2651,7 +2607,7 @@ async fn drive_host(
                 // the section ends the drain: the host is rescued, not leaving, and
                 // `after_pending` asked about a section it has left routes it down the
                 // failed path instead.
-                cleanup = match cleanup {
+                driver.cleanup = match driver.cleanup {
                     Some(end) if next < end => Some(end + grown),
                     _ => None,
                 };
@@ -2664,21 +2620,11 @@ async fn drive_host(
                 failed_index = Some(index);
                 match after_failure(&c, index) {
                     Some((next, end)) => {
-                        let Some(grown) = stepped_over(
-                            &tx,
-                            &name,
-                            &plan,
-                            &mut progress,
-                            &mut stop,
-                            &mut stop_broken,
-                            index + 1..next,
-                        )
-                        .await
-                        else {
+                        let Some(grown) = driver.stepped_over(index + 1..next).await else {
                             break 'run;
                         };
                         pos = next + grown;
-                        cleanup = Some(end + grown);
+                        driver.cleanup = Some(end + grown);
                     }
                     // Nothing left to clean up. Where the host goes from here is the single
                     // test below, so `force_handlers` changes it in one place rather than
@@ -2697,25 +2643,14 @@ async fn drive_host(
             && let Some(index) = failed_index.take()
         {
             handlers_only = true;
-            cleanup = None;
-            let Some(next) = advance(
-                &tx,
-                &name,
-                &plan,
-                &mut progress,
-                &mut stop,
-                &mut stop_broken,
-                index,
-                &mut cleanup,
-            )
-            .await
-            else {
+            driver.cleanup = None;
+            let Some(next) = driver.advance(index).await else {
                 break 'run;
             };
             pos = next;
             continue 'run;
         }
-        if pos >= n || *stop.borrow() {
+        if pos >= n || driver.stopped() {
             break 'run;
         }
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
@@ -2760,7 +2695,7 @@ async fn drive_host(
                 && permit.is_some()
                 && (is_boundary(task)
                     || crate::compile::is_splice_point(&step.kind)
-                    || steps_over_a_splice_point(&c, pos, cleanup))
+                    || driver.steps_over_a_splice_point(&c, pos))
             {
                 permit = None;
                 for key in escalated_links(&links) {
@@ -2788,24 +2723,8 @@ async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                driver.task_done(pos).await;
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
@@ -2830,33 +2749,8 @@ async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                loop {
-                    if *stop.borrow() {
-                        break 'run;
-                    }
-                    let p = progress.borrow().clone();
-                    // Alone in the play there is nobody left to wait for, which is also how a
-                    // wait ends when every other host has died.
-                    if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos)
-                    {
-                        break;
-                    }
-                    tokio::select! {
-                        changed = progress.changed() => {
-                            // The coordinator is gone, so no further progress can be published
-                            // and waiting on it would never end.
-                            if changed.is_err() {
-                                break;
-                            }
-                        }
-                        res = stop.changed(), if !stop_broken => {
-                            if res.is_err() {
-                                stop_broken = true;
-                            } else {
-                                break 'run;
-                            }
-                        }
-                    }
+                if driver.wait_for_barrier(pos).await.is_none() {
+                    break 'run;
                 }
             }
             // Who runs a `run_once` step: read, never decided here. The coordinator elected it in
@@ -2874,7 +2768,7 @@ async fn drive_host(
             // is the guard: elected from this driver's own view of `live_hosts` instead, a host
             // woken by the publish that carries the runner's failure elects itself and runs the
             // step a second time.
-            let runner = progress.borrow().elected.get(&pos).cloned();
+            let runner = driver.progress.borrow().elected.get(&pos).cloned();
             let follower =
                 task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind. This one line is what makes a handler run
@@ -2898,33 +2792,12 @@ async fn drive_host(
                 // host with nothing under it, and the three the compiler adds show nothing at
                 // all. A host already out of the play shows nothing either.
                 if explicit && !handlers_only && !masked_out {
-                    let _ = tx
-                        .send(Event::Banner {
-                            host: name.clone(),
-                            index: pos,
-                        })
-                        .await;
+                    driver.banner(pos).await;
                 }
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
+                driver.task_done(pos).await;
                 // `n` is the length of the list this host is walking, read before the word it
                 // just sent could let the coordinator grow it. See `wait_for_splice`.
-                if wait_for_splice(
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    n,
-                    &mut cleanup,
-                )
-                .await
-                .is_none()
-                {
+                if driver.wait_for_splice(pos, n).await.is_none() {
                     break 'run;
                 }
                 // A host the flush's own mask leaves out reports the step and waits for the
@@ -2935,18 +2808,7 @@ async fn drive_host(
                 if !masked_out {
                     in_flush = true;
                 }
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
@@ -2961,7 +2823,7 @@ async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                let live = progress.borrow().clone();
+                let live = driver.progress.borrow().clone();
                 // A host outside the mask, one running for its handlers alone, or one that lost
                 // the `run_once` election, asks for nothing and shows nothing. It still reports
                 // the step and waits: the steps go in behind this index for everyone's list.
@@ -2999,45 +2861,18 @@ async fn drive_host(
                         groups: asked,
                     })
                     .await;
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
+                driver.task_done(pos).await;
                 // Waited for even by a host whose own include just failed: the splice grows every
                 // index past this one, and `rescue_target` and `after` are about to be asked for
                 // this step on the list the splice leaves behind. A host that skipped the wait
                 // would jump to a target computed against the list as it used to be.
-                if wait_for_splice(
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    n,
-                    &mut cleanup,
-                )
-                .await
-                .is_none()
-                {
+                if driver.wait_for_splice(pos, n).await.is_none() {
                     break 'run;
                 }
                 if failed_at.is_some() {
                     break;
                 }
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
@@ -3051,24 +2886,8 @@ async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                driver.task_done(pos).await;
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
@@ -3087,24 +2906,8 @@ async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                driver.task_done(pos).await;
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
@@ -3125,10 +2928,7 @@ async fn drive_host(
                     break;
                 }
                 let runner = runner.clone().unwrap_or_default();
-                let Some(verdict) =
-                    wait_for_run_once(&mut progress, &mut stop, &mut stop_broken, &runner, pos)
-                        .await
-                else {
+                let Some(verdict) = driver.wait_for_run_once(&runner, pos).await else {
                     break 'run;
                 };
                 match verdict {
@@ -3152,30 +2952,14 @@ async fn drive_host(
                     }
                     RunOnce::Done => {}
                 }
-                let _ = tx
-                    .send(Event::TaskDone {
-                        host: name.clone(),
-                        index: pos,
-                    })
-                    .await;
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    pos,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                driver.task_done(pos).await;
+                let Some(next) = driver.advance(pos).await else {
                     break 'run;
                 };
                 pos = next;
                 continue;
             }
-            let live = progress.borrow().clone();
+            let live = driver.progress.borrow().clone();
             // Where a registered variable lands. A `run_once` step is run by one host for the
             // whole batch, so what it registered is written for every live host of the batch:
             // measured on ansible-core 2.19.12, `register: o` under `run_once: true` on h1
@@ -3229,18 +3013,7 @@ async fn drive_host(
                             vars.set_fact(target, reg, value.clone());
                         }
                     }
-                    let Some(next) = advance(
-                        &tx,
-                        &name,
-                        &plan,
-                        &mut progress,
-                        &mut stop,
-                        &mut stop_broken,
-                        pos,
-                        &mut cleanup,
-                    )
-                    .await
-                    else {
+                    let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
                     pos = next;
@@ -3252,30 +3025,9 @@ async fn drive_host(
                     if !batch.is_empty() {
                         break;
                     }
-                    let _ = tx
-                        .send(Event::Banner {
-                            host: name.clone(),
-                            index: pos,
-                        })
-                        .await;
-                    let _ = tx
-                        .send(Event::TaskDone {
-                            host: name.clone(),
-                            index: pos,
-                        })
-                        .await;
-                    let Some(next) = advance(
-                        &tx,
-                        &name,
-                        &plan,
-                        &mut progress,
-                        &mut stop,
-                        &mut stop_broken,
-                        pos,
-                        &mut cleanup,
-                    )
-                    .await
-                    else {
+                    driver.banner(pos).await;
+                    driver.task_done(pos).await;
+                    let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
                     pos = next;
@@ -3349,10 +3101,7 @@ async fn drive_host(
                                     // `until: r.changed`.
                                     r.0.insert("failed".into(), json!(true));
                                 }
-                                if sleep_between(retry.delay, &mut stop, &mut stop_broken)
-                                    .await
-                                    .is_none()
-                                {
+                                if driver.sleep_between(retry.delay).await.is_none() {
                                     break 'run;
                                 }
                                 if last {
@@ -3397,18 +3146,7 @@ async fn drive_host(
                         break;
                     }
                     notify(&c, task, &results, &mut notified);
-                    let Some(next) = advance(
-                        &tx,
-                        &name,
-                        &plan,
-                        &mut progress,
-                        &mut stop,
-                        &mut stop_broken,
-                        pos,
-                        &mut cleanup,
-                    )
-                    .await
-                    else {
+                    let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
                     pos = next;
@@ -3463,24 +3201,12 @@ async fn drive_host(
                     // that flush until it has one. Both sides would then wait for the other.
                     // Every other blocking wait in this loop is already reached with the batch
                     // empty; this one has to be too.
-                    if rescue_target(&c, pos).is_some()
-                        || steps_over_a_splice_point(&c, pos, cleanup)
+                    if rescue_target(&c, pos).is_some() || driver.steps_over_a_splice_point(&c, pos)
                     {
                         undecided = Some(pos);
                         break;
                     }
-                    let Some(next) = advance(
-                        &tx,
-                        &name,
-                        &plan,
-                        &mut progress,
-                        &mut stop,
-                        &mut stop_broken,
-                        pos,
-                        &mut cleanup,
-                    )
-                    .await
-                    else {
+                    let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
                     pos = next;
@@ -3610,8 +3336,8 @@ async fn drive_host(
                             &name,
                             batch_id,
                             vec![protocol_task(task, item)],
-                            &mut stop,
-                            &mut stop_broken,
+                            &mut driver.stop,
+                            &mut driver.stop_broken,
                         )
                         .await;
                         let raw = flat.pop().flatten();
@@ -3645,10 +3371,7 @@ async fn drive_host(
                             r.0.insert("failed".into(), json!(true));
                             received[0][ii] = Some(r);
                         }
-                        if sleep_between(retry.delay, &mut stop, &mut stop_broken)
-                            .await
-                            .is_none()
-                        {
+                        if driver.sleep_between(retry.delay).await.is_none() {
                             break 'run;
                         }
                         if last {
@@ -3672,9 +3395,15 @@ async fn drive_host(
                         origin.push((bi, ii));
                     }
                 }
-                let (flat, ended) =
-                    run_agent_batch(link, &name, batch_id, tasks, &mut stop, &mut stop_broken)
-                        .await;
+                let (flat, ended) = run_agent_batch(
+                    link,
+                    &name,
+                    batch_id,
+                    tasks,
+                    &mut driver.stop,
+                    &mut driver.stop_broken,
+                )
+                .await;
                 for (k, result) in flat.into_iter().enumerate() {
                     if let Some(&(bi, ii)) = origin.get(k) {
                         received[bi][ii] = result;
@@ -3717,7 +3446,7 @@ async fn drive_host(
                     break;
                 }
                 if let Some(reg) = &task.register {
-                    let live = progress.borrow().live_hosts.clone();
+                    let live = driver.progress.borrow().live_hosts.clone();
                     let mut vars = store.lock().expect("vars lock");
                     let value = registered_value(task, &results);
                     for target in fact_targets(task, &name, &live) {
@@ -3805,18 +3534,7 @@ async fn drive_host(
                 && undecided_reported
                 && let Some(step) = undecided
             {
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    step,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                let Some(next) = driver.advance(step).await else {
                     break 'run;
                 };
                 pos = next;
@@ -3859,18 +3577,7 @@ async fn drive_host(
                 failed |= !rescuable;
                 failed_at = Some((index, result));
             } else {
-                let Some(next) = advance(
-                    &tx,
-                    &name,
-                    &plan,
-                    &mut progress,
-                    &mut stop,
-                    &mut stop_broken,
-                    index,
-                    &mut cleanup,
-                )
-                .await
-                else {
+                let Some(next) = driver.advance(index).await else {
                     break 'run;
                 };
                 pos = next;
@@ -4013,232 +3720,323 @@ enum RunOnce {
     Gone,
 }
 
-/// Waits for the one runner of the `run_once` step at `pos` to say what it made of it.
+/// Everything one host's driver carries from one step to the next: who it is, what it is
+/// walking, and the watches every wait below opens on.
 ///
-/// `None` when the run was interrupted, the way every other wait in this file answers it.
-///
-/// The verdict is read before the live host list, and that order is the whole of it: the
-/// coordinator publishes a failed result and the shrunken list in the same `Progress`, so a
-/// host that asked "is the runner still live?" first would see a runner that is merely gone and
-/// leave at exit 4 where the reference exits 2.
-async fn wait_for_run_once(
-    progress: &mut watch::Receiver<Progress>,
-    stop: &mut watch::Receiver<bool>,
-    stop_broken: &mut bool,
-    runner: &str,
-    pos: usize,
-) -> Option<RunOnce> {
-    loop {
-        if *stop.borrow() {
-            return None;
-        }
-        let p = progress.borrow().clone();
-        match p.run_once.get(&pos) {
-            Some(true) => return Some(RunOnce::Failed),
-            Some(false) => return Some(RunOnce::Done),
-            None => {}
-        }
-        // The host this step was handed to has left the batch without a verdict, which is what
-        // an unreachable host does. Asked of that one host and not of the list's length: with
-        // three hosts waiting on a runner that died, a test for "anybody else still live" would
-        // be true for ever and this wait would never end.
-        if !p.live_hosts.iter().any(|h| h == runner) {
-            return Some(RunOnce::Gone);
-        }
-        tokio::select! {
-            changed = progress.changed() => {
-                // The coordinator is gone, so no verdict can ever be published.
-                if changed.is_err() {
-                    return Some(RunOnce::Gone);
-                }
-            }
-            res = stop.changed(), if !*stop_broken => {
-                if res.is_err() {
-                    *stop_broken = true;
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
+/// What a wait needs of this host is the same at every step, so it lives here rather than
+/// travelling through each of them. Only `cleanup` moves underneath it.
+struct Driver<'a> {
+    /// Where every word this host owes the coordinator, and every line it shows, goes.
+    tx: &'a mpsc::Sender<Event>,
+    name: &'a str,
+    plan: &'a PlayPlan,
+    /// The batch's shared progress, written by the coordinator alone.
+    progress: watch::Receiver<Progress>,
+    stop: watch::Receiver<bool>,
+    /// Set once the stop watch's sender is gone, so a dropped sender is never read as an
+    /// interrupt and the selects below stop polling a branch that would otherwise resolve
+    /// immediately forever.
+    stop_broken: bool,
+    /// The index the `always` section this host is draining ends at, when it is draining one.
+    /// The one index it carries that sits past a splice point, so the one a splice moves.
+    cleanup: Option<usize>,
 }
 
-/// Whether `advance` from `pos` would walk past a splice point - a flush or an include - and so
-/// block waiting for the splice.
-///
-/// A driver may only wait for a splice once it owes the coordinator nothing in front of it: the
-/// coordinator walks the step list in order and holds at each index until every host is done
-/// with it or gone, so a host waiting at a splice point while a step behind it is still unreported
-/// waits for an index the coordinator can never reach. The batch collection loop asks this before
-/// moving on from a step it has queued and not yet run.
-fn steps_over_a_splice_point(compiled: &Compiled, pos: usize, cleanup: Option<usize>) -> bool {
-    let next = match cleanup {
-        Some(end) => match after_pending(compiled, pos, end) {
-            Some((next, _)) => next,
-            None => return false,
-        },
-        None => after(compiled, pos),
-    };
-    (pos + 1..next.min(compiled.steps.len()))
-        .any(|i| crate::compile::is_splice_point(&compiled.steps[i].kind))
-}
-
-/// The step this host moves to after finishing `pos`, past the sections it has no reason to
-/// enter. A host draining an `always` section after a failure finishes that section instead,
-/// and `cleanup` - the index that section ends at - moves with it to the next one.
-///
-/// Returns the length of the step list when the play is over for this host, which is what the
-/// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the driver's whole context, advanced by one step"
-)]
-async fn advance(
-    tx: &mpsc::Sender<Event>,
-    host: &str,
-    plan: &PlayPlan,
-    progress: &mut watch::Receiver<Progress>,
-    stop: &mut watch::Receiver<bool>,
-    stop_broken: &mut bool,
-    pos: usize,
-    cleanup: &mut Option<usize>,
-) -> Option<usize> {
-    let compiled = plan.steps();
-    let next = match *cleanup {
-        Some(end) => after_pending(&compiled, pos, end).map(|(next, end)| {
-            *cleanup = Some(end);
-            next
-        }),
-        None => Some(after(&compiled, pos)),
-    };
-    let Some(next) = next else {
-        return Some(compiled.steps.len());
-    };
-    // Every flush point between here and there grows the list behind it, and every index past
-    // it - this destination, and the end of the section this host may be draining - moves by
-    // however much it grew.
-    let grown = stepped_over(tx, host, plan, progress, stop, stop_broken, pos + 1..next).await?;
-    if let Some(end) = cleanup.as_mut() {
-        *end += grown;
+impl Driver<'_> {
+    /// Whether the run has been interrupted.
+    fn stopped(&self) -> bool {
+        *self.stop.borrow()
     }
-    Some(next + grown)
-}
 
-/// Tells the coordinator about every step of `range` this host stepped over, stopping at each
-/// splice point on the way, and answers how much longer the list is for it.
-///
-/// A host has to stop at a splice point it steps over as surely as at one it runs. The
-/// coordinator inserts steps behind a flush or an include once every host has reported that
-/// index, and a host that read the list again before that would be holding an index into a list
-/// that has changed underneath it - the exact shape this file's barrier invariant exists to
-/// prevent. Measured on ansible-core 2.19.12: a `meta: flush_handlers` written inside a `rescue:`
-/// nobody entered runs nothing and shows nothing, and so does an `include_tasks` written there,
-/// which is what puts a live host in this position.
-async fn stepped_over(
-    tx: &mpsc::Sender<Event>,
-    host: &str,
-    plan: &PlayPlan,
-    progress: &mut watch::Receiver<Progress>,
-    stop: &mut watch::Receiver<bool>,
-    stop_broken: &mut bool,
-    range: std::ops::Range<usize>,
-) -> Option<usize> {
-    let mut grown = 0;
-    let mut from = range.start;
-    loop {
-        let compiled = plan.steps();
-        let end = range.end + grown;
-        let splice = (from..end.min(compiled.steps.len()))
-            .find(|&i| crate::compile::is_splice_point(&compiled.steps[i].kind));
-        let Some(at) = splice else {
-            skipped(tx, host, from..end).await;
-            return Some(grown);
-        };
-        skipped(tx, host, from..at + 1).await;
-        let before = compiled.steps.len();
-        drop(compiled);
-        wait_for_splice(plan, progress, stop, stop_broken, at, before, &mut None).await?;
-        grown += plan.steps().steps.len() - before;
-        // Back at the splice point's successor, which is now the first of the steps it just grew
-        // by. This host steps over those too - they sit in the section the flush or the include
-        // sat in, and it is not in that section - but it still owes the coordinator a word about
-        // each of them, or the barrier behind them opens on a host that never said it had passed
-        // them.
-        from = at + 1;
-    }
-}
-
-/// Waits until the coordinator has put the handler steps in behind the flush point at `at`.
-///
-/// This is the whole of the plan's one dynamic primitive on the driver's side: between reporting
-/// a flush point and this returning, the host reads nothing from the step list, so the index it
-/// holds cannot be invalidated by the splice. `cleanup`, the end of the `always` section a host
-/// may be draining, is the one index it carries that sits past `at`, so it moves with the list.
-///
-/// `before` is how long the list was when the host still owed `at` a `TaskDone`, and the caller
-/// has to read it before sending that word. Reading it here would be a race: the coordinator
-/// publishes the splice as soon as the last host reports the index, so the list can already have
-/// grown by the time this function runs, and the growth would then measure as nothing at all -
-/// leaving `cleanup` where it was and ending the host's drain one step early. Rare, load
-/// dependent, and it reports success while a cleanup step nobody ran goes missing.
-///
-/// `None` when the run was interrupted or the coordinator is gone.
-async fn wait_for_splice(
-    plan: &PlayPlan,
-    progress: &mut watch::Receiver<Progress>,
-    stop: &mut watch::Receiver<bool>,
-    stop_broken: &mut bool,
-    at: usize,
-    before: usize,
-    cleanup: &mut Option<usize>,
-) -> Option<()> {
-    loop {
-        if *stop.borrow() {
-            return None;
-        }
-        if progress.borrow().spliced_through.is_some_and(|s| s >= at) {
-            break;
-        }
-        tokio::select! {
-            changed = progress.changed() => {
-                // The coordinator is gone, so no splice can be published and waiting on one
-                // would never end. Whatever the host has left to do, it does on the list it has.
-                if changed.is_err() {
-                    return Some(());
-                }
-            }
-            res = stop.changed(), if !*stop_broken => {
-                if res.is_err() {
-                    *stop_broken = true;
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
-    if let Some(end) = cleanup.as_mut() {
-        *end += plan.steps().steps.len() - before;
-    }
-    Some(())
-}
-
-/// Tells the coordinator about every step in `range` that this host stepped over, so the shared
-/// progress it publishes counts this host as having reached them.
-///
-/// It is what keeps a host that steps over a section from waiting on itself: the progress every
-/// barrier reads is the lowest step any live host has finished, so a host that jumped from 3 to
-/// 9 without saying so would hold that figure at 3 while waiting for it to reach 8. Both halves
-/// of that are live now: a host that failed steps over the rest of the body on its way to a
-/// cleanup, and a host that failed nothing steps over every `rescue` it walks past - the second
-/// with the whole play still waiting on it.
-async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<usize>) {
-    for index in range {
-        let _ = tx
+    /// Tells the coordinator this host is done with the step at `index`.
+    async fn task_done(&self, index: usize) {
+        let _ = self
+            .tx
             .send(Event::TaskDone {
-                host: host.to_string(),
+                host: self.name.to_string(),
                 index,
             })
             .await;
+    }
+
+    /// Asks for the banner of the step at `index`.
+    async fn banner(&self, index: usize) {
+        let _ = self
+            .tx
+            .send(Event::Banner {
+                host: self.name.to_string(),
+                index,
+            })
+            .await;
+    }
+
+    /// Waits `delay`, or gives up when the run is interrupted.
+    async fn sleep_between(&mut self, delay: Duration) -> Option<()> {
+        if delay.is_zero() {
+            return Some(());
+        }
+        let deadline = tokio::time::Instant::now() + delay;
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            tokio::select! {
+                () = tokio::time::sleep_until(deadline) => return Some(()),
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits until every other live host of the batch has finished the step in front of `pos`.
+    ///
+    /// This is what a step the batch meets in front of opens on, and its exit condition is its
+    /// own: alone in the batch there is nobody left to wait for, which is also how the wait ends
+    /// when every other host has died.
+    ///
+    /// `None` when the run was interrupted.
+    async fn wait_for_barrier(&mut self, pos: usize) -> Option<()> {
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            let p = self.progress.borrow().clone();
+            if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos) {
+                return Some(());
+            }
+            tokio::select! {
+                changed = self.progress.changed() => {
+                    // The coordinator is gone, so no further progress can be published
+                    // and waiting on it would never end.
+                    if changed.is_err() {
+                        return Some(());
+                    }
+                }
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits for the one runner of the `run_once` step at `pos` to say what it made of it.
+    ///
+    /// `None` when the run was interrupted, the way every other wait in this file answers it.
+    ///
+    /// The verdict is read before the live host list, and that order is the whole of it: the
+    /// coordinator publishes a failed result and the shrunken list in the same `Progress`, so a
+    /// host that asked "is the runner still live?" first would see a runner that is merely gone
+    /// and leave at exit 4 where the reference exits 2.
+    async fn wait_for_run_once(&mut self, runner: &str, pos: usize) -> Option<RunOnce> {
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            let p = self.progress.borrow().clone();
+            match p.run_once.get(&pos) {
+                Some(true) => return Some(RunOnce::Failed),
+                Some(false) => return Some(RunOnce::Done),
+                None => {}
+            }
+            // The host this step was handed to has left the batch without a verdict, which is
+            // what an unreachable host does. Asked of that one host and not of the list's
+            // length: with three hosts waiting on a runner that died, a test for "anybody else
+            // still live" would be true for ever and this wait would never end.
+            if !p.live_hosts.iter().any(|h| h == runner) {
+                return Some(RunOnce::Gone);
+            }
+            tokio::select! {
+                changed = self.progress.changed() => {
+                    // The coordinator is gone, so no verdict can ever be published.
+                    if changed.is_err() {
+                        return Some(RunOnce::Gone);
+                    }
+                }
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether `advance` from `pos` would walk past a splice point - a flush or an include - and
+    /// so block waiting for the splice.
+    ///
+    /// A driver may only wait for a splice once it owes the coordinator nothing in front of it:
+    /// the coordinator walks the step list in order and holds at each index until every host is
+    /// done with it or gone, so a host waiting at a splice point while a step behind it is still
+    /// unreported waits for an index the coordinator can never reach. The batch collection loop
+    /// asks this before moving on from a step it has queued and not yet run.
+    fn steps_over_a_splice_point(&self, compiled: &Compiled, pos: usize) -> bool {
+        let next = match self.cleanup {
+            Some(end) => match after_pending(compiled, pos, end) {
+                Some((next, _)) => next,
+                None => return false,
+            },
+            None => after(compiled, pos),
+        };
+        (pos + 1..next.min(compiled.steps.len()))
+            .any(|i| crate::compile::is_splice_point(&compiled.steps[i].kind))
+    }
+
+    /// The step this host moves to after finishing `pos`, past the sections it has no reason to
+    /// enter. A host draining an `always` section after a failure finishes that section instead,
+    /// and `cleanup` - the index that section ends at - moves with it to the next one.
+    ///
+    /// Returns the length of the step list when the play is over for this host, which is what the
+    /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
+    async fn advance(&mut self, pos: usize) -> Option<usize> {
+        let compiled = self.plan.steps();
+        let next = match self.cleanup {
+            Some(end) => after_pending(&compiled, pos, end).map(|(next, end)| {
+                self.cleanup = Some(end);
+                next
+            }),
+            None => Some(after(&compiled, pos)),
+        };
+        let Some(next) = next else {
+            return Some(compiled.steps.len());
+        };
+        // Every flush point between here and there grows the list behind it, and every index past
+        // it - this destination, and the end of the section this host may be draining - moves by
+        // however much it grew.
+        let grown = self.stepped_over(pos + 1..next).await?;
+        if let Some(end) = self.cleanup.as_mut() {
+            *end += grown;
+        }
+        Some(next + grown)
+    }
+
+    /// Tells the coordinator about every step of `range` this host stepped over, stopping at each
+    /// splice point on the way, and answers how much longer the list is for it.
+    ///
+    /// A host has to stop at a splice point it steps over as surely as at one it runs. The
+    /// coordinator inserts steps behind a flush or an include once every host has reported that
+    /// index, and a host that read the list again before that would be holding an index into a
+    /// list that has changed underneath it - the exact shape this file's barrier invariant exists
+    /// to prevent. Measured on ansible-core 2.19.12: a `meta: flush_handlers` written inside a
+    /// `rescue:` nobody entered runs nothing and shows nothing, and so does an `include_tasks`
+    /// written there, which is what puts a live host in this position.
+    async fn stepped_over(&mut self, range: std::ops::Range<usize>) -> Option<usize> {
+        let mut grown = 0;
+        let mut from = range.start;
+        loop {
+            let compiled = self.plan.steps();
+            let end = range.end + grown;
+            let splice = (from..end.min(compiled.steps.len()))
+                .find(|&i| crate::compile::is_splice_point(&compiled.steps[i].kind));
+            let Some(at) = splice else {
+                self.skipped(from..end).await;
+                return Some(grown);
+            };
+            self.skipped(from..at + 1).await;
+            let before = compiled.steps.len();
+            drop(compiled);
+            // The bare wait, and not the one that moves `cleanup`: the growth of this splice is
+            // part of what this function answers, and the caller moves `cleanup` by the whole of
+            // that answer. Moving it here as well would move it twice and end the host's drain
+            // past the section it is draining.
+            self.wait_past_splice(at).await?;
+            grown += self.plan.steps().steps.len() - before;
+            // Back at the splice point's successor, which is now the first of the steps it just
+            // grew by. This host steps over those too - they sit in the section the flush or the
+            // include sat in, and it is not in that section - but it still owes the coordinator a
+            // word about each of them, or the barrier behind them opens on a host that never said
+            // it had passed them.
+            from = at + 1;
+        }
+    }
+
+    /// Waits until the coordinator has put the handler steps in behind the flush point at `at`,
+    /// and moves the end of the `always` section this host may be draining by however much the
+    /// splice grew the list - the one index it carries that sits past `at`.
+    ///
+    /// `before` is how long the list was when the host still owed `at` a `TaskDone`, and the
+    /// caller has to read it before sending that word. Reading it here would be a race: the
+    /// coordinator publishes the splice as soon as the last host reports the index, so the list
+    /// can already have grown by the time this runs, and the growth would then measure as nothing
+    /// at all - leaving `cleanup` where it was and ending the host's drain one step early. Rare,
+    /// load dependent, and it reports success while a cleanup step nobody ran goes missing.
+    ///
+    /// `None` when the run was interrupted or the coordinator is gone.
+    async fn wait_for_splice(&mut self, at: usize, before: usize) -> Option<()> {
+        if self.wait_past_splice(at).await?
+            && let Some(end) = self.cleanup.as_mut()
+        {
+            *end += self.plan.steps().steps.len() - before;
+        }
+        Some(())
+    }
+
+    /// The wait alone, for the caller whose `cleanup` must not move here.
+    ///
+    /// This is the whole of the plan's one dynamic primitive on the driver's side: between
+    /// reporting a splice point and this returning, the host reads nothing from the step list, so
+    /// the index it holds cannot be invalidated by the splice.
+    ///
+    /// `true` when the splice landed, `false` when the coordinator is gone and none ever will
+    /// land - which is why this is answered rather than assumed: an index that moves with the
+    /// list must not move for a splice that was never published. `None` when the run was
+    /// interrupted.
+    async fn wait_past_splice(&mut self, at: usize) -> Option<bool> {
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            if self
+                .progress
+                .borrow()
+                .spliced_through
+                .is_some_and(|s| s >= at)
+            {
+                return Some(true);
+            }
+            tokio::select! {
+                changed = self.progress.changed() => {
+                    // The coordinator is gone, so no splice can be published and waiting on one
+                    // would never end. Whatever the host has left to do, it does on the list it
+                    // has.
+                    if changed.is_err() {
+                        return Some(false);
+                    }
+                }
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tells the coordinator about every step in `range` that this host stepped over, so the
+    /// shared progress it publishes counts this host as having reached them.
+    ///
+    /// It is what keeps a host that steps over a section from waiting on itself: the progress
+    /// every barrier reads is the lowest step any live host has finished, so a host that jumped
+    /// from 3 to 9 without saying so would hold that figure at 3 while waiting for it to reach 8.
+    /// Both halves of that are live now: a host that failed steps over the rest of the body on
+    /// its way to a cleanup, and a host that failed nothing steps over every `rescue` it walks
+    /// past - the second with the whole play still waiting on it.
+    async fn skipped(&self, range: std::ops::Range<usize>) {
+        for index in range {
+            self.task_done(index).await;
+        }
     }
 }
 

@@ -413,7 +413,7 @@ pub(crate) const FLUSH_HANDLERS: &str = "flush_handlers";
 pub(crate) fn meta_action(task: &PlayTask) -> &str {
     task.args
         .get("_raw_params")
-        .and_then(serde_json::Value::as_str)
+        .and_then(Value::as_str)
         .unwrap_or_default()
 }
 
@@ -492,8 +492,7 @@ fn serial_size(value: &Value, total: usize) -> anyhow::Result<i64> {
     let refused = |value: &Value| -> anyhow::Error {
         let shown = value
             .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| crate::render::ansible_json(value));
+            .map_or_else(|| crate::render::ansible_json(value), str::to_string);
         Refusal::at(
             4,
             format!(
@@ -1695,8 +1694,8 @@ mod tests {
 
     fn selection(run: &[&str], skip: &[&str]) -> TagSelection {
         TagSelection::new(
-            run.iter().map(|s| s.to_string()).collect(),
-            skip.iter().map(|s| s.to_string()).collect(),
+            run.iter().map(ToString::to_string).collect(),
+            skip.iter().map(ToString::to_string).collect(),
         )
     }
 
@@ -2401,7 +2400,7 @@ mod tests {
     }
 
     /// The measurement playbook the tag algebra was read off, task for task.
-    const TAGGED: &str = r#"
+    const TAGGED: &str = r"
 - hosts: all
   tasks:
     - name: a
@@ -2422,7 +2421,7 @@ mod tests {
       tags: [blk]
     - name: f-untagged
       debug: msg=f
-"#;
+";
 
     /// Every selection measured against ansible-core 2.19.12 on this exact playbook, each one
     /// asserting the whole list of surviving names rather than the presence of one of them.
@@ -2478,7 +2477,7 @@ mod tests {
     /// the inner tag or the outer one and makes one of the two `--tags` below select nothing.
     #[test]
     fn tags_accumulate_from_the_play_down_through_nested_blocks() {
-        let text = r#"
+        let text = r"
 - hosts: all
   tags: [play]
   tasks:
@@ -2489,7 +2488,7 @@ mod tests {
               tags: [own]
           tags: [inner]
       tags: [outer]
-"#;
+";
         let c = compiled(text);
         assert_eq!(c.steps[0].task.tags, ["inner", "outer", "own", "play"]);
         for tag in ["play", "outer", "inner", "own"] {
@@ -2514,7 +2513,7 @@ mod tests {
     #[test]
     fn filtering_leaves_every_span_covering_its_own_steps() {
         let c = selected(
-            r#"
+            r"
 - hosts: all
   tasks:
     - name: kept before
@@ -2531,7 +2530,7 @@ mod tests {
     - name: kept after
       debug: msg=d
       tags: [keep]
-"#,
+",
             &selection(&["keep"], &[]),
         );
         assert_eq!(names(&c), ["kept before", "kept cleanup", "kept after"]);

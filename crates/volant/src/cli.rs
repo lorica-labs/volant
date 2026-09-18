@@ -143,7 +143,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         hosts: args.list_hosts,
         syntax: args.syntax_check,
     };
-    let selection = tag_selection(args, &config, &mode);
+    let selection = tag_selection(args, &config, mode);
     // Every playbook is loaded first, then every one of them is checked, so an operator gets
     // the refusal for the second playbook before the first one has touched a host. Nothing
     // below this line may assume a keyword was handled that the pre-flight did not let past.
@@ -190,7 +190,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 // Resolved even for `--list-tasks`, which never prints a host: the reference
                 // warns about a pattern nothing matches whichever listing was asked for, and
                 // that warning is the only sign an operator gets of a typo in `hosts:`.
-                let hosts = play_hosts(&inventory, play, &limit, out, &mut warned);
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
                 plays.push(listing::PlayEntry {
                     play,
                     compiled,
@@ -282,8 +282,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         remote_tmp: config.remote_tmp,
         connect_timeout: args
             .timeout
-            .map(std::time::Duration::from_secs)
-            .unwrap_or(config.timeout),
+            .map_or(config.timeout, std::time::Duration::from_secs),
         r#become: args.r#become || config.r#become,
         become_user: args
             .become_user
@@ -346,9 +345,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                 if play.dir != current_dir {
                     state.templar = Arc::new(Templar::new(play.dir.clone()));
                     state.vars.lock().expect("vars lock").rebase(&play.dir)?;
-                    current_dir = play.dir.clone();
+                    current_dir.clone_from(&play.dir);
                 }
-                let hosts = play_hosts(&inventory, play, &limit, out, &mut warned);
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
                 if !local_agent_checked
                     && hosts.iter().any(|h| {
                         matches!(
@@ -419,7 +418,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
 /// instead of narrowing it: measured, it lists `never` tags too, because the point of the
 /// command is to show every tag a playbook has. A `--tags` or a `--skip-tags` from any source
 /// takes that back.
-fn tag_selection(args: &PlaybookArgs, config: &Config, mode: &Listing) -> TagSelection {
+fn tag_selection(args: &PlaybookArgs, config: &Config, mode: Listing) -> TagSelection {
     let joined = |from_config: &[String], from_cli: &[String]| -> Vec<String> {
         let mut tags = from_config.to_vec();
         tags.extend(
@@ -474,7 +473,7 @@ fn resolve_limit(
 fn play_hosts(
     inventory: &Inventory,
     play: &playbook::Play,
-    limit: &Option<HashSet<String>>,
+    limit: Option<&HashSet<String>>,
     out: &mut Renderer,
     warned: &mut HashSet<String>,
 ) -> Vec<Host> {
@@ -554,9 +553,8 @@ fn spawn_signal_watcher(stop: watch::Sender<bool>) {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
-            let mut term = match signal(SignalKind::terminate()) {
-                Ok(term) => term,
-                Err(_) => return,
+            let Ok(mut term) = signal(SignalKind::terminate()) else {
+                return;
             };
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}

@@ -11,6 +11,7 @@
 //! `~/.ansible/tmp` itself and says why.
 #![cfg(unix)]
 
+use std::fmt::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -69,12 +70,13 @@ fn inventory_with_ssh_args(dir: &Path, hosts: &[(&str, &str)], extra_ssh_args: &
     };
     let mut text = String::new();
     for (name, extra) in hosts {
-        text.push_str(&format!(
-            "{name} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='{common_args}' {extra}\n",
+        let _ = writeln!(
+            text,
+            "{name} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='{common_args}' {extra}",
             user(),
             key(),
             remote_tmp(dir).display(),
-        ));
+        );
     }
     let path = dir.join("inventory.ini");
     std::fs::write(&path, text).unwrap();
@@ -451,12 +453,13 @@ fn ssh_delegate_to_another_inventory_name() {
     let inv_path = dir.join("inventory.ini");
     let mut text = String::new();
     for (host, remote) in [("a", &a_tmp), ("b", &b_tmp)] {
-        text.push_str(&format!(
-            "{host} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='-F /dev/null'\n",
+        let _ = writeln!(
+            text,
+            "{host} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={} ansible_ssh_common_args='-F /dev/null'",
             user(),
             key(),
             remote.display(),
-        ));
+        );
     }
     std::fs::write(&inv_path, text).unwrap();
     let play = dir.join("delegated.yml");

@@ -110,7 +110,10 @@ impl Refusal {
     /// Gives `err` this code unless it already carries one of its own, so a blanket code for a
     /// whole family of refusals cannot bury the one a member of it measured for itself.
     pub fn or(code: i32, err: anyhow::Error) -> anyhow::Error {
-        if err.chain().any(|link| link.is::<Refusal>()) {
+        if err
+            .chain()
+            .any(<dyn std::error::Error + 'static>::is::<Refusal>)
+        {
             err
         } else {
             Refusal::at(code, format!("{err:#}"))

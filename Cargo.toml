@@ -11,6 +11,30 @@ repository = "https://github.com/lorica-labs/volant"
 homepage = "https://github.com/lorica-labs/volant"
 authors = ["Hugo Planque"]
 
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+assigning_clones = "warn"
+default_trait_access = "warn"
+format_collect = "warn"
+format_push_string = "warn"
+ignored_unit_patterns = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+match_bool = "warn"
+match_same_arms = "warn"
+needless_continue = "warn"
+needless_raw_string_hashes = "warn"
+redundant_closure_for_method_calls = "warn"
+ref_option = "warn"
+semicolon_if_nothing_returned = "warn"
+single_match_else = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnested_or_patterns = "warn"
+
 [workspace.dependencies]
 anstream = "1"
 anstyle = "1"

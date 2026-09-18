@@ -69,19 +69,19 @@ mod tests {
     #[test]
     fn truncated_length_is_an_error() {
         let err = read_frame(Cursor::new(vec![0, 0])).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
     fn truncated_payload_is_an_error() {
         let err = read_frame(Cursor::new(vec![0, 0, 0, 9, b'x'])).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
     fn oversized_length_is_rejected_before_allocating() {
         let err = read_frame(Cursor::new(vec![0xff, 0xff, 0xff, 0xff])).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
@@ -92,6 +92,6 @@ mod tests {
     #[test]
     fn payload_len_rejects_a_frame_over_the_limit() {
         let err = payload_len([0xff; 4]).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

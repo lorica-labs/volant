@@ -13,6 +13,9 @@ homepage.workspace = true
 authors.workspace = true
 build = "build.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 anstream.workspace = true
 anstyle.workspace = true

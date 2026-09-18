@@ -143,7 +143,10 @@ impl Renderer {
     /// every line this function can print - the ordinary one, the `fatal:`, the loop item and
     /// the `debug`, at every verbosity. What it does **not** touch is the result itself: the
     /// registered variable and the recap read the real one, measured.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one task result's whole display context: the outcome plus four parameters that change what gets printed - two flags (dump, censored) and two optional strings (label, delegate)"
+    )]
     pub fn result(
         &mut self,
         host: &str,
@@ -334,7 +337,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     struct Shared(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Shared {
+    impl Write for Shared {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
@@ -543,7 +546,7 @@ mod tests {
         for (outcome, task_result) in cases {
             let plain = capture(|r| r.result("h", outcome, &task_result, None, false, false, None));
             let coloured = capture_with_color(true, |r| {
-                r.result("h", outcome, &task_result, None, false, false, None)
+                r.result("h", outcome, &task_result, None, false, false, None);
             });
             assert_ne!(
                 coloured, plain,

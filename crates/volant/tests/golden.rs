@@ -62,27 +62,26 @@ fn every_golden_case_matches_the_reference() {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        let ours: Result<Option<Value>, String> = match case.get("when").and_then(Value::as_str) {
-            Some(when) => templar
-                .condition(when, &vars)
-                .map(|ok| ok.then(|| Value::String("ran".into())))
-                .map_err(|e| e.to_string()),
-            None => {
+        let ours: Result<Option<Value>, String> =
+            if let Some(when) = case.get("when").and_then(Value::as_str) {
+                templar
+                    .condition(when, &vars)
+                    .map(|ok| ok.then(|| Value::String("ran".into())))
+                    .map_err(|e| e.to_string())
+            } else {
                 let text = case["template"].as_str().expect("template is a string");
                 templar
                     .render(text, &vars)
                     .map(Some)
                     .map_err(|e| e.to_string())
-            }
-        };
+            };
         let verdict = match (
             &ours,
             entry.get("error"),
             entry.get("skipped"),
             entry.get("result"),
         ) {
-            (Err(_), Some(_), _, _) => Ok(()),
-            (Ok(None), _, Some(_), _) => Ok(()),
+            (Err(_), Some(_), _, _) | (Ok(None), _, Some(_), _) => Ok(()),
             (Ok(Some(v)), None, None, Some(want)) if same(v, want) => Ok(()),
             _ => Err(format!(
                 "{case}\n  reference: {}\n  ours: {ours:?}",
@@ -163,7 +162,7 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
 #[test]
 fn every_listing_matches_the_reference_byte_for_byte() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
-    let expected: serde_json::Map<String, Value> =
+    let expected: Map<String, Value> =
         serde_json::from_str(include_str!("golden/expected_listing.json"))
             .expect("expected_listing.json parses");
     let mut failures = Vec::new();
@@ -253,7 +252,7 @@ fn inventory_matches_the_reference() {
         // warned correctly because this fixture used to warn on every single pattern.
         match (want["warning"].as_bool(), res.warnings.is_empty()) {
             (Some(true), true) => {
-                failures.push(format!("pattern {pattern}: the reference warns, we do not"))
+                failures.push(format!("pattern {pattern}: the reference warns, we do not"));
             }
             (Some(false), false) => failures.push(format!(
                 "pattern {pattern}: we warn, the reference does not: {:?}",

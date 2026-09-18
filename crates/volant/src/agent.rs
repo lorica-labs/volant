@@ -171,7 +171,7 @@ impl AgentLink {
                         "agent {version} speaks protocol {protocol}, this controller speaks {PROTOCOL_VERSION}"
                     )
                 }
-                Some(FromAgent::Log { .. }) => continue,
+                Some(FromAgent::Log { .. }) => {}
                 Some(other) => bail!("unexpected message before ready: {other:?}"),
                 None => bail!("agent exited before answering"),
             }
@@ -188,7 +188,7 @@ impl AgentLink {
             loop {
                 match self.recv().await {
                     Ok(Some(FromAgent::BatchDone { batch, .. })) if batch == id => return true,
-                    Ok(Some(_)) => continue,
+                    Ok(Some(_)) => {}
                     Ok(None) | Err(_) => return false,
                 }
             }

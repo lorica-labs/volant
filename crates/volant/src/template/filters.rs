@@ -42,9 +42,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
         regex_test(&v, &pattern, false, kwargs)
     });
     env.add_test("contains", |seq: Value, item: Value| {
-        seq.try_iter()
-            .map(|mut it| it.any(|x| x == item))
-            .unwrap_or(false)
+        seq.try_iter().is_ok_and(|mut it| it.any(|x| x == item))
     });
 
     env.add_function(
@@ -167,9 +165,8 @@ fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<Value, Err
         .get::<Option<String>>("list_merge")?
         .unwrap_or_else(|| "replace".to_string());
     kwargs.assert_all_used()?;
-    let mut out = match json(&first) {
-        serde_json::Value::Object(m) => m,
-        _ => return Err(invalid("|combine expects dictionaries")),
+    let serde_json::Value::Object(mut out) = json(&first) else {
+        return Err(invalid("|combine expects dictionaries"));
     };
     for other in rest.iter() {
         let serde_json::Value::Object(other) = json(other) else {
@@ -189,12 +186,12 @@ fn merge_into(
     for (k, v) in source {
         match (target.get_mut(&k), v) {
             (Some(serde_json::Value::Object(t)), serde_json::Value::Object(s)) if recursive => {
-                merge_into(t, s, recursive, list_merge)
+                merge_into(t, s, recursive, list_merge);
             }
             (Some(serde_json::Value::Array(t)), serde_json::Value::Array(s))
                 if list_merge == "append" =>
             {
-                t.extend(s)
+                t.extend(s);
             }
             (Some(serde_json::Value::Array(t)), serde_json::Value::Array(mut s))
                 if list_merge == "prepend" =>
@@ -451,7 +448,7 @@ fn regex_search(
         return Ok(Value::from(()));
     };
     if groups.is_empty() {
-        return Ok(Value::from(caps.get(0).map(|m| m.as_str()).unwrap_or("")));
+        return Ok(Value::from(caps.get(0).map_or("", |m| m.as_str())));
     }
     let mut out = Vec::new();
     for g in groups.iter() {
@@ -463,7 +460,7 @@ fn regex_search(
         } else {
             return Err(invalid(format!("Unknown match group '{g}'")));
         };
-        out.push(Value::from(m.map(|m| m.as_str()).unwrap_or("")));
+        out.push(Value::from(m.map_or("", |m| m.as_str())));
     }
     Ok(Value::from(out))
 }
@@ -509,8 +506,7 @@ fn lookup(
     for term in terms {
         let term_text = term
             .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| term.to_string());
+            .map_or_else(|| term.to_string(), str::to_string);
         let found = match name {
             "env" | "ansible.builtin.env" => {
                 Value::from(std::env::var(&term_text).unwrap_or_default())

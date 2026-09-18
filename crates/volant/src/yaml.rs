@@ -213,8 +213,7 @@ pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
         Yaml::Value(Scalar::Boolean(b)) => Value::Bool(*b),
         Yaml::Value(Scalar::Integer(i)) => Value::from(*i),
         Yaml::Value(Scalar::FloatingPoint(f)) => serde_json::Number::from_f64(f.into_inner())
-            .map(Value::Number)
-            .unwrap_or_else(|| Value::String(f.to_string())),
+            .map_or_else(|| Value::String(f.to_string()), Value::Number),
         Yaml::Value(Scalar::String(s)) => Value::String(s.to_string()),
         Yaml::Sequence(items) => {
             Value::Array(items.iter().map(to_json).collect::<anyhow::Result<_>>()?)

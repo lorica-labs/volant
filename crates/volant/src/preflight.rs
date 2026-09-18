@@ -430,7 +430,7 @@ mod tests {
     fn a_meta_action_is_honoured_or_refused_by_its_own_name() {
         let play =
             |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
-        for (action, supported) in crate::compile::META_ACTIONS {
+        for (action, supported) in META_ACTIONS {
             let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
             let checked = check(&pb);
             if *supported {

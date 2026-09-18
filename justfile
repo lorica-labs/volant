@@ -1,13 +1,17 @@
 set shell := ["bash", "-uc"]
 set windows-shell := ["bash", "-uc"]
 
+# The measured line coverage minus one point: a threshold that cannot drift down in silence, and
+# that one refactor removing a covered branch does not break.
+COVERAGE_FLOOR := "91"
+
 default:
     @just --list
 
 # Install git hooks, sign-off, and the tools the other recipes need
 setup:
     git config core.hooksPath .githooks
-    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta
+    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta cargo-llvm-cov
 
 # Accept pending insta snapshots after reading them
 insta-accept:
@@ -35,6 +39,10 @@ lint:
 
 test:
     cargo nextest run --workspace --no-fail-fast
+
+# Line coverage over the workspace. The ssh tests are #[ignore]d and are not in this figure.
+coverage:
+    cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}}
 
 # Regenerate docs/src/modules.md from the module registry
 docs-modules:

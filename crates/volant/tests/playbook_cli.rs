@@ -18,9 +18,6 @@ fn fixture(name: &str) -> String {
 /// What it is for is that the shared spawner has no unbounded form: a fixture becomes blockable
 /// the day it gains an `include_tasks` or a `meta: flush_handlers`, and the test driving it says
 /// nothing about that, so the bound belongs to the spawner rather than to the caller's memory.
-/// The runs that still build their own `Command` are the ones this spawner cannot serve - one
-/// that replaces `PATH` outright rather than prepending to it, one that runs from another
-/// directory, and the two that feed a password on standard input.
 const DEFAULT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
 fn volant(args: &[&str]) -> Output {
@@ -53,12 +50,30 @@ fn volant_within_with_path(
     path: Option<&Path>,
     envs: &[(&str, &str)],
 ) -> Output {
+    volant_within_full(args, deadline, path, None, None, None, envs)
+}
+
+/// `volant_within`, with `PATH` replaced outright rather than prepended to, a working directory
+/// of its own, and a line fed to standard input -- the three forms the escalation and the
+/// configuration tests need, and the reason none of them has to build its own `Command` and lose
+/// the deadline with it.
+fn volant_within_full(
+    args: &[&str],
+    deadline: std::time::Duration,
+    path: Option<&Path>,
+    replace_path: Option<&Path>,
+    cwd: Option<&Path>,
+    stdin_line: Option<&str>,
+    envs: &[(&str, &str)],
+) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
     command
         .args(args)
         .env("NO_COLOR", "1")
         .env_remove("COLUMNS")
-        .env_remove("ANSIBLE_ROLES_PATH");
+        .env_remove("ANSIBLE_ROLES_PATH")
+        .env_remove("ANSIBLE_RUN_TAGS")
+        .env_remove("ANSIBLE_SKIP_TAGS");
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -72,11 +87,29 @@ fn volant_within_with_path(
             ),
         );
     }
+    if let Some(dir) = replace_path {
+        command.env("PATH", dir.display().to_string());
+    }
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    if stdin_line.is_some() {
+        command.stdin(std::process::Stdio::piped());
+    }
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("volant starts");
+    if let Some(line) = stdin_line {
+        use std::io::Write as _;
+        child
+            .stdin
+            .take()
+            .expect("volant's standard input")
+            .write_all(line.as_bytes())
+            .expect("the password reaches volant");
+    }
     let started = std::time::Instant::now();
     loop {
         match child.try_wait().expect("volant is waitable") {
@@ -503,21 +536,25 @@ fn the_three_sources_of_a_tag_list_add_up() {
     let cfg = dir.join("ansible.cfg");
     std::fs::write(&cfg, "[tags]\nrun = x\n").unwrap();
     let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
+    let config = cfg.display().to_string();
     let list = |run_tags: Option<&str>, args: &[&str]| -> String {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
-        command
-            .args(["playbook", "-i", "inv.ini", "--list-tasks"])
-            .args(args)
-            .arg("tags.yml")
-            .current_dir(&listing)
-            .env("NO_COLOR", "1")
-            .env("ANSIBLE_CONFIG", cfg.display().to_string())
-            .env_remove("ANSIBLE_RUN_TAGS")
-            .env_remove("ANSIBLE_SKIP_TAGS");
+        let mut argv = vec!["playbook", "-i", "inv.ini", "--list-tasks"];
+        argv.extend_from_slice(args);
+        argv.push("tags.yml");
+        let mut envs = vec![("ANSIBLE_CONFIG", config.as_str())];
         if let Some(tags) = run_tags {
-            command.env("ANSIBLE_RUN_TAGS", tags);
+            envs.push(("ANSIBLE_RUN_TAGS", tags));
         }
-        String::from_utf8_lossy(&command.output().unwrap().stdout).to_string()
+        let out = volant_within_full(
+            &argv,
+            DEFAULT_DEADLINE,
+            None,
+            None,
+            Some(&listing),
+            None,
+            &envs,
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
     };
     let from_file = list(None, &[]);
     assert!(
@@ -647,12 +684,11 @@ fn zero_forks_is_refused() {
 /// as a successful run and not as an empty one.
 #[test]
 fn an_unparsable_forks_in_ansible_cfg_is_refused_with_the_reference_s_code() {
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &fixture("cfg/site.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_CONFIG", fixture("cfg/bad-forks.cfg"))
-        .output()
-        .unwrap();
+    let out = volant_within_env(
+        &["playbook", &fixture("cfg/site.yml")],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-forks.cfg"))],
+    );
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
@@ -877,33 +913,11 @@ fn a_rejected_sudo_password_is_named_as_such() {
         "badpassword",
         "#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n",
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", "-K", &fixture("become.yml")])
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map(|mut child| {
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(b"not-the-password\n")
-                .unwrap();
-            child.wait_with_output().unwrap()
-        })
-        .unwrap();
+    let out = volant_feeding_stdin(
+        &["playbook", "-K", &fixture("become.yml")],
+        &dir,
+        "not-the-password\n",
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
         text.contains(volant::transport::INCORRECT_SUDO_PASSWORD),
@@ -923,13 +937,15 @@ fn a_host_without_sudo_fails_the_task_with_the_shells_words() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // An empty directory as the whole PATH: nothing named `sudo` can be found from here.
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", &fixture("become.yml")])
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        .env("PATH", dir.display().to_string())
-        .output()
-        .unwrap();
+    let out = volant_within_full(
+        &["playbook", &fixture("become.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        Some(&dir),
+        None,
+        None,
+        &[],
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("fatal: [localhost]: FAILED!"), "{text}");
     assert!(
@@ -1009,33 +1025,19 @@ fn unsupported_become_methods_are_refused_by_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Runs `volant` with `dir` first on `PATH` and `password` on stdin, the way `-K` reads it.
-fn volant_with_password(args: &[&str], dir: &Path, password: &str) -> Output {
-    use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(args)
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("volant runs");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(password.as_bytes())
-        .unwrap();
-    child.wait_with_output().unwrap()
+/// Runs `volant` with `dir` first on `PATH` and one line written to stdin, which is where `-K`
+/// reads from. The line is a fixture, never a credential: the fake `sudo` these tests put on
+/// `PATH` rejects whatever it is given.
+fn volant_feeding_stdin(args: &[&str], dir: &Path, line: &str) -> Output {
+    volant_within_full(
+        args,
+        DEFAULT_DEADLINE,
+        Some(dir),
+        None,
+        None,
+        Some(line),
+        &[],
+    )
 }
 
 /// The only path the password itself travels: `sudo -k -S` reads it off the link's stdin, ahead
@@ -1062,7 +1064,7 @@ fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
              exec \"$@\"\n"
         ),
     );
-    let out = volant_with_password(
+    let out = volant_feeding_stdin(
         &["playbook", "-K", &fixture("become-password.yml")],
         &dir,
         &format!("{expected}\n"),
@@ -1102,7 +1104,7 @@ fn a_sudo_that_reads_no_password_is_never_written_one() {
          exec \"$@\"\n",
     );
     let answer = format!("only-this-run-{}", std::process::id());
-    let out = volant_with_password(
+    let out = volant_feeding_stdin(
         &["playbook", "-K", &fixture("become-password.yml")],
         &dir,
         &format!("{answer}\n"),

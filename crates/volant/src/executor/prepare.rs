@@ -100,14 +100,11 @@ fn become_for(
     if !on {
         return Ok(None);
     }
-    // The method is refused here, for the task that would actually use it, the way the
-    // playbook's own keyword is refused at load time. A task that escalates nowhere is not
-    // affected by a method it never runs.
-    //
-    // A variable beats the defaults, which carry `ansible.cfg`, its environment variables and
-    // the command line. The startup pass already refuses what it can see; this catches the same
-    // value reaching an escalating task through `group_vars`, `host_vars`, `--extra-vars` or a
-    // `set_fact`, and the defaults for a task whose escalation the startup pass could not see.
+    // The method is refused for the task that would actually use it, so a task escalating
+    // nowhere is unaffected by a method it never runs. A variable beats the defaults, which
+    // carry `ansible.cfg` and the command line: this catches the value reaching an escalating
+    // task through `group_vars`, `host_vars`, `--extra-vars` or a `set_fact`, which the startup
+    // pass cannot see.
     match vars.get("ansible_become_method").and_then(Value::as_str) {
         Some(method) if method != crate::playbook::BECOME_METHOD => {
             return Err(TemplateError(format!(
@@ -130,20 +127,11 @@ fn become_for(
             .or_else(|| play.become_user.clone())
             .unwrap_or_else(|| defaults.become_user.clone()),
     };
-    // `become_user: "{{ app_user }}"` is ordinary Ansible, and the rendered name is what the
-    // link is keyed by, so it has to be resolved before the connection is opened.
-    //
-    // It renders against the task's variables and not against one loop item's, so a
-    // `become_user` naming the loop variable has nothing to render against and the task fails.
-    // The reference escalates per item there, which is a divergence: one batch is one message
-    // to one agent under one user, and a task whose items each want a different user would have
-    // to split across links and interleave the answers. Saying which keyword could not be
-    // rendered, and why, is what keeps that from reading as the operator's own typo - it used
-    // to fail with nothing but "an option with an undefined variable".
-    //
-    // The name of the loop variable only explains the failure on a task that actually loops.
-    // On a loopless task it is an ordinary undefined variable that happens to be spelled like
-    // one, and the divergence is not what went wrong.
+    // `become_user: "{{ app_user }}"` is ordinary Ansible, and the rendered name keys the link,
+    // so it is resolved before the connection is opened. It renders against the task's variables
+    // and not one loop item's: the reference escalates per item, and this engine diverges there
+    // because one batch is one message to one agent under one user. The hint below names the
+    // keyword, and names the loop variable only on a task that actually loops.
     let user = if Templar::is_template(&user) {
         templar
             .render(&user, vars)

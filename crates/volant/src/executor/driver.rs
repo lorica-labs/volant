@@ -148,30 +148,19 @@ pub(super) async fn drive_host(
     // The step a terminal failure was raised at, read once the host has finished whatever
     // cleanup it owed: it is where `force_handlers` picks the walk back up.
     let mut failed_index: Option<usize> = None;
-    // The step a failure was just reported at with the result it failed with, and the `always`
-    // section this host is draining on its way out - as the index that section ends at. Those
-    // two are the only state a failure adds: the coordinator still knows one thing about a
-    // host, that it failed.
+    // The step a failure was just reported at, with the result it failed with. The `always`
+    // section this host is draining on its way out is the other half of a failure's state, and
+    // it lives on `Driver::cleanup`; the coordinator still knows one thing about a host, that
+    // it failed.
     let mut failed_at: Option<(usize, TaskResult)> = None;
 
     'run: loop {
         let c = plan.steps();
         let n = c.steps.len();
-        // The fork permit and the escalated links go back before either failure arm below runs.
-        // Both of those arms wait: the rescue and `after_failure` jumps hand their range to
-        // `stepped_over`, and `force_handlers` picks the walk back up through `advance`, and each
-        // of those stops at a splice point the coordinator can only reach once every host has
-        // got there. The step loop's own release cannot cover this. It asks
-        // `steps_over_a_splice_point`, which reads `after` and `after_pending` - the **success**
-        // successor - and never the `rescue_target`/`after_failure` range a host that has just
-        // failed is about to step over. So a local failure, or a `prepare` or `retry_plan` error,
-        // left the loop with an empty batch, skipped the release at the end of it, and blocked at
-        // the include still holding a permit; with `-f` under the number of live hosts no other
-        // host could take that permit to reach the same splice, and the run hung.
-        //
-        // Only on the failure paths, so a batch that ended cleanly still carries its permit into
-        // the next one - that is what makes `-f` bound the work rather than serialise it. The
-        // cost here is one re-acquire on a run that is already going wrong.
+        // The fork permit and the escalated links go back before either failure arm below waits
+        // at a splice point: the step loop's own release reads the success successor and never
+        // the range a host that has just failed steps over. Only on the failure paths, so a batch
+        // that ended cleanly still carries its permit into the next one.
         if failed_at.is_some() || failed_index.is_some() {
             permit = None;
             for key in escalated_links(&links) {
@@ -206,16 +195,11 @@ pub(super) async fn drive_host(
                 let Some(grown) = driver.stepped_over(index + 1..next).await else {
                     break 'run;
                 };
-                // Where the drain stands now, for a host that was already draining an
-                // `always` when this failure was raised. A rescue written **inside** that
-                // section leaves the drain where it is - the rest of the cleanup still has
-                // to run - moved by whatever the splices stepped over on the way added in
-                // front of its end. Measured: `rest of the always` runs behind a rescued
-                // block written in a cleanup, and it stops running as soon as an include
-                // between the failure and that rescue grows the list. A rescue **outside**
-                // the section ends the drain: the host is rescued, not leaving, and
-                // `after_pending` asked about a section it has left routes it down the
-                // failed path instead.
+                // A rescue written **inside** the `always` this host was draining leaves the
+                // drain where it is, moved by whatever the splices grew in front of its end;
+                // one written outside ends it. Measured: `rest of the always` runs behind a
+                // rescued block written in a cleanup, and stops as soon as an include between
+                // the failure and that rescue grows the list.
                 driver.cleanup = match driver.cleanup {
                     Some(end) if next < end => Some(end + grown),
                     _ => None,
@@ -293,13 +277,11 @@ pub(super) async fn drive_host(
             }
             let step = &c.steps[pos];
             let task = &step.task;
-            // A permit kept from the batch before goes back here, in front of every wait this
-            // loop can reach: the boundary it stops at, a splice point it has to see grow, and
-            // a step whose successor sits behind one, which is where `advance` waits. A permit
-            // held across any of them is one the hosts that have to reach that same point
-            // cannot have, and with `-f` under the number of live hosts none of them ever
-            // would. The batch being empty is what says this is the kept permit rather than the
-            // one this batch is working under: no wait is reached with a batch in hand.
+            // A permit kept from the batch before goes back in front of every wait this loop can
+            // reach, because a permit held across one is a permit the hosts that have to reach
+            // that same point cannot have. The batch being empty is what says this is the kept
+            // permit and not the one this batch works under: no wait is reached with a batch in
+            // hand.
             if batch.is_empty()
                 && permit.is_some()
                 && (is_boundary(task)
@@ -339,21 +321,11 @@ pub(super) async fn drive_host(
                 pos = next;
                 continue;
             }
-            // A step the hosts of the batch meet in front of: one the table declares a
-            // synchronisation point (`run_once`, whose one runner every other host reads), or
-            // one whose text names another host's state (`hostvars` and the play's live host
-            // lists). Neither subsumes the other - `run_once` spells none of those names, and a
-            // `hostvars` read needs no keyword - so a step is a boundary when either says so.
-            //
-            // Asked of the task rather than read off a table parallel to the step list: the
-            // list grows at a flush point, and a second list to keep in step with it is a second
-            // thing to get wrong. It costs one pass over the task's own text, against the full
-            // render `prepare` does for it a few lines below.
-            //
-            // In front of the flush, include and mask arms rather than behind them: a host that
-            // walked into one of those without stopping here would report a step the others have
-            // not reached, and the coordinator's own frontier is what every wait in this file
-            // opens on.
+            // A step the hosts of the batch meet in front of: `run_once`, or a text naming another
+            // host's state. In front of the flush, include and mask arms rather than behind them,
+            // because a host that walked into one of those without stopping here would report a
+            // step the others have not reached, and every wait in this file opens on the
+            // coordinator's frontier.
             if is_boundary(task) && pos > 0 {
                 if !batch.is_empty() {
                     break;
@@ -362,30 +334,23 @@ pub(super) async fn drive_host(
                     break 'run;
                 }
             }
-            // Who runs a `run_once` step: read, never decided here. The coordinator elected it in
-            // `publish`, off the live set as it stood when every host had finished the step
-            // before this one, and inside this step's own mask. Measured on ansible-core 2.19.12:
-            // `changed: [h1]` alone under the banner, the registered variable and the facts
-            // readable on h2 as well, and h2 counting no `ok` for it. With `serial` each batch
-            // elects its own, which falls out of the coordinator's `live_hosts` being the batch's
-            // list and not the play's. Measured again with an include a `when` kept one of three
-            // hosts out of: the two the mask holds both read the registered value back, and the
-            // third runs only what follows.
-            //
-            // What makes this unanimous is that it is one value, written once, and not two reads
-            // of a list that moves. `run_once_is_decided_once_and_survives_the_runner_leaving`
-            // is the guard: elected from this driver's own view of `live_hosts` instead, a host
-            // woken by the publish that carries the runner's failure elects itself and runs the
-            // step a second time.
+            // Who runs a `run_once` step: read, never decided here, because one value written
+            // once is what makes every host agree on it. See `Progress::elected`. With `serial`
+            // each batch elects its own, which falls out of the coordinator's `live_hosts` being
+            // the batch's list and not the play's.
             let runner = driver.progress.borrow().elected.get(&pos).cloned();
+            // Measured on ansible-core 2.19.12: `changed: [h1]` alone under the banner, the
+            // registered variable and the facts readable on h2 as well, and h2 counting no `ok`
+            // for it. Measured again with an include a `when` kept one of three hosts out of:
+            // the two the mask holds both read the registered value back, and the third runs
+            // only what follows.
             let follower =
                 task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
-            // Leaving a flush point's handlers behind. This one line is what makes a handler run
-            // once per notification: every index the flush was asked for goes, whether or not
-            // the flush reached it. Measured on ansible-core 2.19.12, both halves - `first
-            // handler` notified twice runs once and does **not** come back at the next flush,
-            // and a handler notified by a handler defined **before** it runs in neither flush.
-            // A task behind the flush notifying again is what plays a handler a second time.
+            // Leaving a flush point's handlers behind: every index the flush was asked for goes,
+            // reached or not, so a handler runs once per notification. Measured on ansible-core
+            // 2.19.12, both halves - `first handler` notified twice runs once and does **not**
+            // come back at the next flush, and a handler notified by a handler defined **before**
+            // it runs in neither flush.
             if in_flush && !matches!(step.kind, StepKind::Handler(_)) {
                 notified.clear();
                 in_flush = false;
@@ -433,12 +398,11 @@ pub(super) async fn drive_host(
                     break;
                 }
                 let live = driver.progress.borrow().clone();
-                // A host outside the mask, one running for its handlers alone, or one that lost
-                // the `run_once` election, asks for nothing and shows nothing. It still reports
-                // the step and waits: the steps go in behind this index for everyone's list.
-                // Measured on ansible-core 2.19.12, `include_tasks` under `run_once: true`:
-                // `included: inc.yml for h1` names the one host, the included tasks run for h1
-                // alone, and h2 counts nothing for any of them.
+                // A host outside the mask, running for its handlers alone, or that lost the
+                // `run_once` election asks for nothing and shows nothing, and still reports the
+                // step and waits: the steps go in behind this index for everyone's list. Measured
+                // on ansible-core 2.19.12, `include_tasks` under `run_once: true`: `included:
+                // inc.yml for h1` names the one host, the tasks run for h1 alone, h2 counts none.
                 let asked = if masked_out || handlers_only || follower {
                     Vec::new()
                 } else {
@@ -502,15 +466,11 @@ pub(super) async fn drive_host(
                 pos = next;
                 continue;
             }
-            // A step an include brought in for other hosts. Reported and shown nothing, the way
-            // a handler this host never notified is. It sits after the flush and the include arms
-            // on purpose: both of those are splice points, and a host outside the mask still has
-            // to report them and wait for the coordinator rather than walk past a list that is
-            // about to grow.
-            //
-            // A `run_once` step is the exception and takes the follower arm below instead: the
-            // runner is elected inside the mask, so this host is not it, and reporting the step
-            // here would publish the verdict for the hosts waiting on a runner that has not run.
+            // A step an include brought in for other hosts: reported, shown nothing, the way a
+            // handler this host never notified is. After the flush and include arms on purpose,
+            // because those are splice points a host outside the mask still has to report and
+            // wait at. A `run_once` step takes the follower arm below instead: reporting it here
+            // would publish a verdict for the hosts waiting on a runner that has not run.
             if masked_out && !follower {
                 if !batch.is_empty() {
                     break;
@@ -522,16 +482,11 @@ pub(super) async fn drive_host(
                 pos = next;
                 continue;
             }
-            // A host that lost the `run_once` election. It runs nothing and shows nothing, and
-            // it waits here until the coordinator publishes what the one runner made of the
-            // step: what that host registered or set as a fact is written for every host of the
-            // batch, and a host reading it one moment too early would read nothing.
-            //
-            // The include and flush arms above are not reached through here on purpose: a
-            // follower still reports those and still waits for the splice, it just asks for
-            // nothing. This arm is for every other step, a host the step's mask leaves out
-            // included: it has nothing to run either, and nothing to report until the runner has
-            // spoken.
+            // A host that lost the `run_once` election waits here for the coordinator to publish
+            // what the runner made of the step: what that host registered or set as a fact is
+            // written for the whole batch, and reading it a moment too early reads nothing. Below
+            // the include and flush arms on purpose - a follower still reports those and waits
+            // for the splice, it just asks for nothing.
             if follower {
                 if !batch.is_empty() {
                     break;
@@ -798,18 +753,11 @@ pub(super) async fn drive_host(
                         || !task.failed_when.is_empty()
                         || batch_retry.is_some();
                     batch.push((pos, items));
-                    // Where this host goes after a step a `rescue` would catch depends on how
-                    // that step ends, so the batch stops here and `pos` waits for the result.
-                    // Moving it now would step over that very rescue and tell the coordinator
-                    // so - the host would then enter a section already reported as passed, and
-                    // its `fatal:` line would print under the banner of a later task.
-                    //
-                    // A flush point between here and where this step leads ends the batch for
-                    // its own reason: `advance` would stop at it and wait for the splice while
-                    // this step has no `TaskDone` behind it, and the coordinator cannot reach
-                    // that flush until it has one. Both sides would then wait for the other.
-                    // Every other blocking wait in this loop is already reached with the batch
-                    // empty; this one has to be too.
+                    // Where this host goes after a step a `rescue` would catch depends on how that
+                    // step ends, so the batch stops here: moving `pos` now would step over that
+                    // very rescue and tell the coordinator so. A flush point between here and
+                    // where the step leads ends the batch for its own reason - `advance` would
+                    // wait for a splice the coordinator cannot publish without this step's word.
                     if rescue_target(&c, pos).is_some() || driver.steps_over_a_splice_point(&c, pos)
                     {
                         undecided = Some(pos);
@@ -863,12 +811,12 @@ pub(super) async fn drive_host(
             .await
             {
                 Ok(l) => l,
-                // The host answered and then refused to escalate, so this is the task failing
-                // and not the host going away. `ignore_errors` is deliberately not honoured:
-                // the batch never ran, and a run that reported success while having quietly
-                // skipped every escalated task is the worst outcome available here.
-                // Measured on ansible-core 2.19.12: a `become_user` the host refuses is a task
-                // failure like any other, so a rescue around it takes it (`rescued=1`, exit 0).
+                // The host answered and then refused to escalate, so this is the task failing and
+                // not the host going away. `ignore_errors` is deliberately not honoured: the
+                // batch never ran, and a run reporting success while having quietly skipped every
+                // escalated task is the worst outcome here. Measured on ansible-core 2.19.12: a
+                // refused `become_user` is a task failure, so a rescue takes it (`rescued=1`,
+                // exit 0).
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
                     let mut task = c.steps[index].task.clone();
@@ -1020,15 +968,11 @@ pub(super) async fn drive_host(
                 }
                 ended
             };
-            // Report every task of the batch in order; tasks the agent never reached (after a
-            // failure) are not reported at all, as in Ansible.
-            //
-            // `undecided`, when set, is always this loop's last entry - the step whose own
-            // batch-ending push is the one in the `Prepared::Remote` arm above. Whether it was
-            // actually reported is tracked rather than assumed: the agent can end the batch
-            // `Ok` without a result for it (a bug elsewhere, or a connection hiccup the batch
-            // outcome does not carry), and advancing past a step with no `TaskDone` behind it
-            // is the exact barrier stall this task exists to avoid.
+            // Report every task of the batch in order; tasks the agent never reached after a
+            // failure are not reported at all, as in Ansible. Whether `undecided` was actually
+            // reported is tracked rather than assumed, because the agent can end the batch `Ok`
+            // without a result for it and advancing past a step with no `TaskDone` behind it
+            // stalls every barrier behind it.
             let mut undecided_reported = false;
             for (bi, (index, items)) in batch.iter().enumerate() {
                 let task = &c.steps[*index].task;
@@ -1089,34 +1033,11 @@ pub(super) async fn drive_host(
                     undecided_reported = true;
                 }
             }
-            // The results are in and reported, so the next host may start while this one
-            // renders its remaining local tasks.
-            //
-            // The escalated links go with the permit, which is what makes `forks` bound the
-            // connections open as well as the hosts working. It bounded only the latter, and a
-            // driver keeps its links from its first batch to the end of the play, so a wide
-            // play held one link per host per target user however narrow `-f` was. Measured on
-            // the development machine: three controller descriptors per link, so the usual
-            // `ulimit -n 1024` runs out past roughly 338 links, and 20 hosts escalating to root
-            // under `ulimit -n 128` and `-f 5` reported `UNREACHABLE! ... starting ssh: Too
-            // many open files` for a host that was perfectly reachable. The link to the host
-            // itself stays - that is the expensive one, and the one persistence is for - and
-            // the escalated agent is already cached for its user, so reopening it is one probe
-            // and one `ssh`.
-            //
-            // Closed off-task rather than awaited here: `shutdown` gives its own agent up to
-            // two seconds, and a driver paying that between batches would serialise exactly
-            // what releasing the permit just freed.
-            //
-            // Both stay with this driver while the next step needs nobody else. A `register` or
-            // a `changed_when` ends a batch for a reason internal to this host, and handing the
-            // escalated agent back at every one of them cost one `sudo` and one probe per
-            // registered task - measured, six escalations for a play of six. They go back
-            // before every wait on the other hosts, because a permit held across one is a
-            // permit the hosts that have to reach that same point cannot have, and with `-f`
-            // under the number of live hosts none of them ever would. Three kinds of wait:
-            // the boundary the step loop stops at, the splice the next `advance` waits for, and
-            // the step held back above, whose own `advance` runs below.
+            // The results are in and reported, so the next host may start. The escalated links go
+            // back with the permit, which is what makes `forks` bound the connections open as
+            // well as the hosts working; the link to the host itself stays, being the one
+            // persistence is for. Closed off-task rather than awaited: `shutdown` gives its agent
+            // two seconds, and paying that here would serialise what the permit just freed.
             let carries_on =
                 failed_at.is_none() && deferred_error.is_none() && undecided.is_none() && pos < n;
             if !carries_on {
@@ -1154,12 +1075,11 @@ pub(super) async fn drive_host(
             && let Some((index, err)) = deferred_error
         {
             let task = &c.steps[index].task;
-            // The reference's own prefix on the `msg` of a task that dies before it runs -
-            // a `when` it cannot evaluate, arguments it cannot render. Measured: a failing
-            // `when` reports `Task failed: Error while evaluating conditional: ...`, and a
-            // playbook of the operator's testing `'Task failed' in result.msg` must still see
-            // it here. `failed_when` is the one that does not get it: there the reference
-            // leaves `msg` empty and puts the error in `failed_when_result`.
+            // The reference's own prefix on the `msg` of a task that dies before it runs - a
+            // `when` it cannot evaluate, arguments it cannot render. Measured: a failing `when`
+            // reports `Task failed: Error while evaluating conditional: ...`, so a playbook
+            // testing `'Task failed' in result.msg` must still see it. `failed_when` does not get
+            // it: there the reference leaves `msg` empty and fills `failed_when_result`.
             let results = vec![(
                 None,
                 TaskResult::failed_with(format!("Task failed: {}", err.0)),
@@ -1209,17 +1129,11 @@ pub(super) async fn drive_host(
             })
             .await;
     }
-    // A link this driver opened to somebody else's host - a `delegate_to` - goes no further
-    // than this play. What connection persistence is for is the link to the host a driver owns,
-    // and the run keeps exactly one per host: handing back a second link to a host whose own
-    // driver also handed one back would leave two entries racing for the same key, and the one
-    // that won would be a connection opened with another host's fork permit. The escalated
-    // delegated links are already closed with each batch's permit; these are the rest.
-    //
-    // Awaited rather than spawned and forgotten: at the end of the last play the runtime can be
-    // dropped before a detached task ever runs, which would leave the agent on the delegate
-    // waiting on a connection nobody closes. `keep_links` awaits its own `JoinSet` for the same
-    // reason, and this is the same shape.
+    // A link this driver opened to somebody else's host - a `delegate_to` - goes no further than
+    // this play, because the run keeps exactly one link per host and a second one handed back for
+    // a host whose own driver also handed one back would race for the same key. Awaited rather
+    // than spawned: at the end of the last play the runtime can be dropped before a detached task
+    // runs, leaving the delegate's agent waiting on a connection nobody closes.
     let mut closing = tokio::task::JoinSet::new();
     for key in links
         .keys()
@@ -1511,7 +1425,9 @@ impl Driver<'_> {
     /// at all - leaving `cleanup` where it was and ending the host's drain one step early. Rare,
     /// load dependent, and it reports success while a cleanup step nobody ran goes missing.
     ///
-    /// `None` when the run was interrupted or the coordinator is gone.
+    /// `None` only when the run was interrupted. A coordinator that is gone answers `Some(())`:
+    /// no splice will ever land, so `cleanup` stays where it is and the host carries on with the
+    /// list it has, which is what `wait_past_splice` answers `false` for.
     async fn wait_for_splice(&mut self, at: usize, before: usize) -> Option<()> {
         if self.wait_past_splice(at).await?
             && let Some(end) = self.cleanup.as_mut()

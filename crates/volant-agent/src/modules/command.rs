@@ -438,7 +438,7 @@ mod tests {
             .take(64 * 1_048_576)
             .collect();
         let r = done(execute(
-            &args(json!({"_raw_params": "cat", "stdin": payload.clone()})),
+            &args(json!({"_raw_params": "cat", "stdin": payload})),
             true,
             &Context::default(),
             &|| false,

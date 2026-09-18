@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Runs one play on its hosts with the `linear` strategy. Each host renders its own tasks,
-//! groups consecutive remote tasks into batches, and runs `set_fact` and `debug` locally.
-//! Output is shown task by task, once every live host has reported that task.
+//! Runs one play on its hosts with the `linear` strategy: consecutive remote tasks are grouped
+//! into batches, `set_fact` and `debug` run on the controller, and output is shown task by task,
+//! once every live host has reported that task. This file holds what the modules share - the
+//! run's settings, the connections kept between plays, and the entry point the command line
+//! calls.
 
 mod coordinator;
 mod driver;

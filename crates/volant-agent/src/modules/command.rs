@@ -50,8 +50,7 @@ pub(crate) fn execute(
         .get("_raw_params")
         .or_else(|| args.get("cmd"))
         .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("");
+        .map_or("", str::trim);
     let argv: Vec<String> = match args.get("argv").and_then(Value::as_array) {
         Some(list) => list
             .iter()
@@ -145,7 +144,7 @@ pub(crate) fn execute(
             Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
         }
     };
-    let rc = exit_code(&status);
+    let rc = exit_code(status);
     let mut stdout = stdout.join().unwrap_or_default();
     let mut stderr = stderr.join().unwrap_or_default();
     if let Some(stdin_writer) = stdin_writer {
@@ -202,7 +201,7 @@ fn kill_group(child: &std::process::Child) {
 }
 
 /// Ansible reports a signal death as the negative signal number, like Python's `Popen`.
-fn exit_code(status: &std::process::ExitStatus) -> i64 {
+fn exit_code(status: std::process::ExitStatus) -> i64 {
     if let Some(code) = status.code() {
         return i64::from(code);
     }
@@ -301,7 +300,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn args(v: serde_json::Value) -> Map<String, Value> {
+    fn args(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
     }
 
@@ -487,7 +486,7 @@ mod tests {
 
     #[test]
     fn cancellation_kills_the_program() {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let run = execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
@@ -512,12 +511,12 @@ mod tests {
 
     #[test]
     fn a_timeout_kills_the_program_and_reports_ansible_shape() {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let r = done(execute(
             &args(json!({"_raw_params": "sleep 30"})),
             false,
             &Context {
-                timeout: Some(std::time::Duration::from_secs(1)),
+                timeout: Some(Duration::from_secs(1)),
                 ..Context::default()
             },
             &|| false,
@@ -540,23 +539,23 @@ mod tests {
         // exec'd (replacing the shell) rather than forked, leaving no grandchild to kill.
         let marker = format!("30.{}", std::process::id());
         let alive = |marker: &str| {
-            std::process::Command::new("pgrep")
+            Command::new("pgrep")
                 .args(["-f", marker])
                 .output()
                 .is_ok_and(|o| !o.stdout.is_empty())
         };
         // Cancel only once the grandchild is actually running. Cancelling straight away kills the
         // shell before it forks, so nothing would survive however narrow the kill was.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(5);
         let run = execute(
             &args(json!({"_raw_params": format!("sleep {marker} & wait")})),
             true,
             &Context::default(),
-            &|| alive(&marker) || std::time::Instant::now() > deadline,
+            &|| alive(&marker) || Instant::now() > deadline,
         );
         assert!(matches!(run, Run::Cancelled));
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let survivors = std::process::Command::new("pgrep")
+        thread::sleep(Duration::from_millis(200));
+        let survivors = Command::new("pgrep")
             .args(["-f", &marker])
             .output()
             .unwrap();

@@ -321,7 +321,10 @@ pub struct PlayEnd {
 /// out**: the hosts that failed in an earlier play are still in it, because the reference cuts
 /// its batches from that list and only then drops the failures from each batch. Cutting the
 /// filtered list instead merges two batches into one whenever an earlier play lost a host.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the play's whole context: nine values with no natural grouping until the controller is split"
+)]
 pub async fn run_play(
     play: &Play,
     compiled: &Compiled,
@@ -419,7 +422,10 @@ pub async fn run_play(
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
 /// does between them. Without `serial` a play is one batch and this is the whole of it.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the batch's whole context: the coordinator loop, its drivers and the step list it walks"
+)]
 async fn run_batch(
     play: &Play,
     compiled: &Compiled,
@@ -505,7 +511,7 @@ async fn run_batch(
                         host, plan, agents, options, templar, vars, verbosity, existing, forks,
                         progress, tx,
                     )
-                    .await
+                    .await;
                 });
                 if let Err(err) = driver.await {
                     let _ = watchdog_tx
@@ -753,72 +759,70 @@ async fn run_batch(
         // waiting on it have no way to know that and would wait for ever.
         if crate::compile::is_splice_point(&step.kind) {
             let mut next = { (**plan_tx.borrow()).clone() };
-            match step.kind {
-                StepKind::Flush { .. } => {
-                    let steps = crate::compile::handler_steps(&next, index);
-                    next.splice(index + 1, steps);
-                }
+            if let StepKind::Flush { .. } = step.kind {
+                let steps = crate::compile::handler_steps(&next, index);
+                next.splice(index + 1, steps);
+            } else {
                 // The requests of every host, grouped so two hosts that asked for the same thing
                 // share one `included:` line and one copy of the steps behind it. First
                 // appearance decides the order, walked in the play's host order and then in each
                 // host's item order, which is the order the reference prints them in.
-                _ => {
-                    let mut arrived = includes.remove(&index).unwrap_or_default();
-                    // `usize::MAX` rather than `None` for a host the batch does not hold: `None`
-                    // sorts in front of every rank, so a name that is not in `play_hosts` would
-                    // take the first `included:` line instead of the last.
-                    arrived.sort_by_key(|(host, _)| {
-                        play_hosts
-                            .iter()
-                            .position(|h| h == host)
-                            .unwrap_or(usize::MAX)
-                    });
-                    let mut order: Vec<String> = Vec::new();
-                    let mut grouped: HashMap<String, (IncludeGroup, Vec<String>)> = HashMap::new();
-                    for (host, groups) in arrived {
-                        for group in groups {
-                            match grouped.entry(group.key.clone()) {
-                                Entry::Vacant(slot) => {
-                                    order.push(group.key.clone());
-                                    slot.insert((group, vec![host.clone()]));
-                                }
-                                Entry::Occupied(mut slot) => slot.get_mut().1.push(host.clone()),
+                let mut arrived = includes.remove(&index).unwrap_or_default();
+                // `usize::MAX` rather than `None` for a host the batch does not hold: `None`
+                // sorts in front of every rank, so a name that is not in `play_hosts` would
+                // take the first `included:` line instead of the last.
+                arrived.sort_by_key(|(host, _)| {
+                    play_hosts
+                        .iter()
+                        .position(|h| h == host)
+                        .unwrap_or(usize::MAX)
+                });
+                let mut order: Vec<String> = Vec::new();
+                let mut grouped: HashMap<String, (IncludeGroup, Vec<String>)> = HashMap::new();
+                for (host, groups) in arrived {
+                    for group in groups {
+                        match grouped.entry(group.key.clone()) {
+                            Entry::Vacant(slot) => {
+                                order.push(group.key.clone());
+                                slot.insert((group, vec![host.clone()]));
                             }
+                            Entry::Occupied(mut slot) => slot.get_mut().1.push(host.clone()),
                         }
                     }
-                    let mut lines: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
-                    let mut expansions: Vec<crate::compile::Grafted> = Vec::new();
-                    for key in order {
-                        let (group, hosts) = grouped.remove(&key).expect("a key just inserted");
-                        lines.push((group.what, hosts.clone(), group.label));
-                        expansions.push(crate::compile::Grafted {
-                            expanded: group.expanded,
-                            params: group.params,
-                            hosts: hosts.into(),
-                        });
+                }
+                let mut lines: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
+                let mut expansions: Vec<crate::compile::Grafted> = Vec::new();
+                for key in order {
+                    let (group, hosts) = grouped.remove(&key).expect("a key just inserted");
+                    lines.push((group.what, hosts.clone(), group.label));
+                    expansions.push(crate::compile::Grafted {
+                        expanded: group.expanded,
+                        params: group.params,
+                        hosts: hosts.into(),
+                    });
+                }
+                crate::compile::graft(&mut next, index + 1, &step, expansions);
+                for (what, hosts, label) in lines {
+                    // The banner goes in front of the first line this step shows, and for an
+                    // include that is often this one: every host resolved its file, so none
+                    // of them printed a result.
+                    if !header_shown {
+                        let live = progress_tx.borrow().clone();
+                        let against = hosts.first().map(String::as_str).unwrap_or_default();
+                        header(&step, &task_name(&step, against, &plan, &live, state), out);
+                        header_shown = true;
                     }
-                    crate::compile::graft(&mut next, index + 1, &step, expansions);
-                    for (what, hosts, label) in lines {
-                        // The banner goes in front of the first line this step shows, and for an
-                        // include that is often this one: every host resolved its file, so none
-                        // of them printed a result.
-                        if !header_shown {
-                            let live = progress_tx.borrow().clone();
-                            let against = hosts.first().map(String::as_str).unwrap_or_default();
-                            header(&step, &task_name(&step, against, &plan, &live, state), out);
-                            header_shown = true;
-                        }
-                        out.included(&what, &hosts, label.as_deref());
-                        // Measured on ansible-core 2.19.12: one `ok` per host per item, so a
-                        // two-item loop over two hosts counts four. The statement's own aggregate
-                        // counts nothing, which is what keeps `h1 ok=10` at ten.
-                        for host in &hosts {
-                            stats.record(host, Outcome::Ok, false);
-                        }
+                    out.included(&what, &hosts, label.as_deref());
+                    // Measured on ansible-core 2.19.12: one `ok` per host per item, so a
+                    // two-item loop over two hosts counts four. The statement's own aggregate
+                    // counts nothing, which is what keeps `h1 ok=10` at ten.
+                    for host in &hosts {
+                        stats.record(host, Outcome::Ok, false);
                     }
                 }
             }
             plan_tx.send_replace(Arc::new(next));
+
             // The splice moved every index past this point, so an election already decided for
             // the step that used to sit at `index + 1` now names a different step - possibly one
             // with a different mask. Nobody has read it: a splice happens only when every host is
@@ -939,7 +943,7 @@ async fn run_batch(
             // left to splice the steps in for, and nothing left to run them.
             Event::Include { .. } => {}
             event @ (Event::Result { .. } | Event::Retrying { .. }) => {
-                report_result(event, stats, out)
+                report_result(event, stats, out);
             }
         }
     }
@@ -1097,7 +1101,10 @@ fn finished(
 ///
 /// It is also where a `run_once` step's runner is elected, for the reason the whole function
 /// exists: this is the one place the live set is read under a serial view. See `Progress::elected`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the coordinator's whole published state, read under one serialised view"
+)]
 fn publish(
     tx: &watch::Sender<Progress>,
     batch_hosts: &[String],
@@ -1265,14 +1272,13 @@ fn become_for(
                 "ansible_become_method '{method}' is not supported yet"
             )));
         }
-        Some(_) => {}
         None if defaults.become_method != crate::playbook::BECOME_METHOD => {
             return Err(TemplateError(format!(
                 "become_method '{}' is not supported yet",
                 defaults.become_method
             )));
         }
-        None => {}
+        Some(_) | None => {}
     }
     let user = match vars.get("ansible_become_user").and_then(Value::as_str) {
         Some(user) => user.to_string(),
@@ -1357,7 +1363,10 @@ pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
 /// does not exist without a word and runs the play, and warns once for an entry whose template
 /// has no value. Every other template failure stops the run, as it does there. A file that is
 /// there but cannot be read stops the run too.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "three host lists the reference distinguishes; folding them loses which is which"
+)]
 fn load_play_vars_files(
     play: &Play,
     hosts: &[Host],
@@ -1430,17 +1439,16 @@ fn load_play_vars_files(
             if !path.exists() {
                 continue;
             }
-            files.push(match loaded.get(&path) {
-                Some(file) => file.clone(),
-                None => {
-                    // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
-                    // does not parse stops the reference with the same code a broken playbook
-                    // gets.
-                    let file =
-                        load_vars_file(&path).map_err(|err| crate::stats::Refusal::or(4, err))?;
-                    loaded.insert(path, file.clone());
-                    file
-                }
+            files.push(if let Some(file) = loaded.get(&path) {
+                file.clone()
+            } else {
+                // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
+                // does not parse stops the reference with the same code a broken playbook
+                // gets.
+                let file =
+                    load_vars_file(&path).map_err(|err| crate::stats::Refusal::or(4, err))?;
+                loaded.insert(path, file.clone());
+                file
             });
         }
         per_host.insert(host.name.clone(), files);
@@ -1524,7 +1532,10 @@ fn retry_name(task: &PlayTask, vars: &HostVars, templar: &Templar) -> String {
 /// a step that belongs to no role. Role parameters are the one layer that does not leave the
 /// role - measured, a parameter beats a `set_fact` inside the role and is not defined at all in
 /// the play's own tasks afterwards.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver's whole context, read for one host's variables"
+)]
 fn host_vars(
     host: &str,
     plan: &PlayPlan,
@@ -1915,7 +1926,7 @@ fn run_include_vars(
         body.insert("failed".into(), json!(true));
         return TaskResult(body);
     };
-    let loaded = match crate::vars::load_vars_file(path) {
+    let loaded = match load_vars_file(path) {
         Ok(map) => map,
         Err(err) => return TaskResult::failed_with(format!("Task failed: {err:#}")),
     };
@@ -2249,8 +2260,7 @@ fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) ->
     if task.loop_items.is_none() {
         return results
             .first()
-            .map(|(_, r)| Value::Object(r.0.clone()))
-            .unwrap_or(Value::Null);
+            .map_or(Value::Null, |(_, r)| Value::Object(r.0.clone()));
     }
     if results.is_empty() {
         let mut agg = empty_loop_result().0;
@@ -2387,7 +2397,7 @@ fn retry_plan(
     templar: &Templar,
 ) -> Result<Option<Retry>, TemplateError> {
     let empty = HostVars::default();
-    let vars = item.map(|i| &i.vars).unwrap_or(&empty);
+    let vars = item.map_or(&empty, |i| &i.vars);
     let number = |raw: &Value, keyword: &str| -> Result<f64, TemplateError> {
         let rendered = templar.render_value(raw, vars)?;
         match &rendered {
@@ -2474,7 +2484,7 @@ async fn sleep_between(
             return None;
         }
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => return Some(()),
+            () = tokio::time::sleep_until(deadline) => return Some(()),
             res = stop.changed(), if !*stop_broken => {
                 if res.is_err() {
                     *stop_broken = true;
@@ -2559,7 +2569,10 @@ fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool) -> Outcom
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver's whole context; drive_host has a single call site, spawned once per host by the loop above"
+)]
 async fn drive_host(
     host: Host,
     plan: Arc<PlayPlan>,
@@ -2676,81 +2689,78 @@ async fn drive_host(
             if handlers_only {
                 break 'run;
             }
-            match rescue_target(&c, index) {
-                // A `rescue` takes this failure: the host jumps into it and stays in the play,
-                // which is why `failed` was never set for it. The two variables the recovery
-                // reads are written on the way in, and they outlive the block and the play -
-                // measured, a task after the block and a task in the next play both still read
-                // `ansible_failed_task`.
-                Some(next) => {
-                    let task = &c.steps[index].task;
-                    {
-                        let mut vars = store.lock().expect("vars lock");
-                        vars.set_fact(&name, "ansible_failed_task", failed_task_value(task));
-                        vars.set_fact(
-                            &name,
-                            "ansible_failed_result",
-                            Value::Object(result.0.clone()),
-                        );
-                    }
-                    let Some(grown) = stepped_over(
-                        &tx,
+            // A `rescue` takes this failure: the host jumps into it and stays in the play,
+            // which is why `failed` was never set for it. The two variables the recovery
+            // reads are written on the way in, and they outlive the block and the play -
+            // measured, a task after the block and a task in the next play both still read
+            // `ansible_failed_task`.
+            if let Some(next) = rescue_target(&c, index) {
+                let task = &c.steps[index].task;
+                {
+                    let mut vars = store.lock().expect("vars lock");
+                    vars.set_fact(&name, "ansible_failed_task", failed_task_value(task));
+                    vars.set_fact(
                         &name,
-                        &plan,
-                        &mut progress,
-                        &mut stop,
-                        &mut stop_broken,
-                        index + 1..next,
-                    )
-                    .await
-                    else {
-                        break 'run;
-                    };
-                    // Where the drain stands now, for a host that was already draining an
-                    // `always` when this failure was raised. A rescue written **inside** that
-                    // section leaves the drain where it is - the rest of the cleanup still has
-                    // to run - moved by whatever the splices stepped over on the way added in
-                    // front of its end. Measured: `rest of the always` runs behind a rescued
-                    // block written in a cleanup, and it stops running as soon as an include
-                    // between the failure and that rescue grows the list. A rescue **outside**
-                    // the section ends the drain: the host is rescued, not leaving, and
-                    // `after_pending` asked about a section it has left routes it down the
-                    // failed path instead.
-                    cleanup = match cleanup {
-                        Some(end) if next < end => Some(end + grown),
-                        _ => None,
-                    };
-                    pos = next + grown;
+                        "ansible_failed_result",
+                        Value::Object(result.0.clone()),
+                    );
                 }
+                let Some(grown) = stepped_over(
+                    &tx,
+                    &name,
+                    &plan,
+                    &mut progress,
+                    &mut stop,
+                    &mut stop_broken,
+                    index + 1..next,
+                )
+                .await
+                else {
+                    break 'run;
+                };
+                // Where the drain stands now, for a host that was already draining an
+                // `always` when this failure was raised. A rescue written **inside** that
+                // section leaves the drain where it is - the rest of the cleanup still has
+                // to run - moved by whatever the splices stepped over on the way added in
+                // front of its end. Measured: `rest of the always` runs behind a rescued
+                // block written in a cleanup, and it stops running as soon as an include
+                // between the failure and that rescue grows the list. A rescue **outside**
+                // the section ends the drain: the host is rescued, not leaving, and
+                // `after_pending` asked about a section it has left routes it down the
+                // failed path instead.
+                cleanup = match cleanup {
+                    Some(end) if next < end => Some(end + grown),
+                    _ => None,
+                };
+                pos = next + grown;
+            } else {
                 // Measured on ansible-core 2.19.12: a task failing inside a nested block runs
                 // the inner `always`, then the outer one, and only then leaves the play. A
                 // `cleanup` already in hand is left where it is: a failure raised while
                 // draining one `always` still has to finish leaving through the ones outside.
-                None => {
-                    failed_index = Some(index);
-                    match after_failure(&c, index) {
-                        Some((next, end)) => {
-                            let Some(grown) = stepped_over(
-                                &tx,
-                                &name,
-                                &plan,
-                                &mut progress,
-                                &mut stop,
-                                &mut stop_broken,
-                                index + 1..next,
-                            )
-                            .await
-                            else {
-                                break 'run;
-                            };
-                            pos = next + grown;
-                            cleanup = Some(end + grown);
-                        }
-                        // Nothing left to clean up. Where the host goes from here is the single
-                        // test below, so `force_handlers` changes it in one place rather than
-                        // two.
-                        None => pos = n,
+                failed_index = Some(index);
+                match after_failure(&c, index) {
+                    Some((next, end)) => {
+                        let Some(grown) = stepped_over(
+                            &tx,
+                            &name,
+                            &plan,
+                            &mut progress,
+                            &mut stop,
+                            &mut stop_broken,
+                            index + 1..next,
+                        )
+                        .await
+                        else {
+                            break 'run;
+                        };
+                        pos = next + grown;
+                        cleanup = Some(end + grown);
                     }
+                    // Nothing left to clean up. Where the host goes from here is the single
+                    // test below, so `force_handlers` changes it in one place rather than
+                    // two.
+                    None => pos = n,
                 }
             }
         }
@@ -3374,57 +3384,56 @@ async fn drive_host(
                     for item in &items {
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
-                        let r = match &item.skipped {
-                            Some(s) => s.clone(),
-                            None => {
-                                let mut attempt = 0;
-                                loop {
-                                    attempt += 1;
-                                    let mut r = finish(
+                        let r = if let Some(s) = &item.skipped {
+                            s.clone()
+                        } else {
+                            let mut attempt = 0;
+                            loop {
+                                attempt += 1;
+                                let mut r = finish(
+                                    task,
+                                    item,
+                                    run_local(
                                         task,
                                         item,
-                                        run_local(
-                                            task,
-                                            item,
-                                            step,
-                                            &fact_hosts,
-                                            &templar,
-                                            &store,
-                                            verbosity,
-                                        ),
+                                        step,
+                                        &fact_hosts,
                                         &templar,
-                                    );
-                                    let Some(retry) = &retry else { break r };
-                                    r.0.insert("attempts".into(), json!(attempt));
-                                    match until_holds(task, item, &r, retry, &templar) {
-                                        // A condition that cannot be evaluated ends the task
-                                        // there, with no further attempt and no `attempts` -
-                                        // measured, and the reference's own prefix for a task
-                                        // that dies rather than fails.
-                                        Err(e) => {
-                                            break TaskResult::failed_with(conditional_error(&e));
-                                        }
-                                        Ok(true) => break r,
-                                        Ok(false) => {}
+                                        &store,
+                                        verbosity,
+                                    ),
+                                    &templar,
+                                );
+                                let Some(retry) = &retry else { break r };
+                                r.0.insert("attempts".into(), json!(attempt));
+                                match until_holds(task, item, &r, retry, &templar) {
+                                    // A condition that cannot be evaluated ends the task
+                                    // there, with no further attempt and no `attempts` -
+                                    // measured, and the reference's own prefix for a task
+                                    // that dies rather than fails.
+                                    Err(e) => {
+                                        break TaskResult::failed_with(conditional_error(&e));
                                     }
-                                    mine.push(retry.attempts - attempt + 1);
-                                    let last = attempt >= retry.attempts;
-                                    if last {
-                                        // The loop ran out with the condition still false, which
-                                        // is a failed task even when the module itself passed:
-                                        // measured with a `changed_when: false` under
-                                        // `until: r.changed`.
-                                        r.0.insert("failed".into(), json!(true));
-                                    }
-                                    if sleep_between(retry.delay, &mut stop, &mut stop_broken)
-                                        .await
-                                        .is_none()
-                                    {
-                                        break 'run;
-                                    }
-                                    if last {
-                                        break r;
-                                    }
+                                    Ok(true) => break r,
+                                    Ok(false) => {}
+                                }
+                                mine.push(retry.attempts - attempt + 1);
+                                let last = attempt >= retry.attempts;
+                                if last {
+                                    // The loop ran out with the condition still false, which
+                                    // is a failed task even when the module itself passed:
+                                    // measured with a `changed_when: false` under
+                                    // `until: r.changed`.
+                                    r.0.insert("failed".into(), json!(true));
+                                }
+                                if sleep_between(retry.delay, &mut stop, &mut stop_broken)
+                                    .await
+                                    .is_none()
+                                {
+                                    break 'run;
+                                }
+                                if last {
+                                    break r;
                                 }
                             }
                         };
@@ -3567,14 +3576,13 @@ async fn drive_host(
             unreachable_censored = c.steps[batch[0].0].task.censors();
             unreachable_delegate = batch_delegate.clone();
             if permit.is_none() {
-                match Arc::clone(&forks).acquire_owned().await {
-                    Ok(p) => permit = Some(p),
+                if let Ok(p) = Arc::clone(&forks).acquire_owned().await {
+                    permit = Some(p);
+                } else {
                     // Nothing in this run closes the semaphore, so this is a bug rather than
                     // a shutdown. Reporting it beats returning as if the host had run.
-                    Err(_) => {
-                        unreachable = Some("the run's fork limit is gone".to_string());
-                        break 'run;
-                    }
+                    unreachable = Some("the run's fork limit is gone".to_string());
+                    break 'run;
                 }
             }
             // The delegate's own connection, never the delegating host's. Measured on
@@ -4001,7 +4009,6 @@ async fn drive_host(
 /// play if its agent still answers, a fresh one otherwise. A kept connection gets exactly one
 /// liveness check per play, and a failed check exactly one reconnection; a failed reconnection
 /// is the host's `UNREACHABLE`.
-#[allow(clippy::too_many_arguments)]
 async fn reuse_or_connect<'a>(
     links: &'a mut HashMap<LinkKey, AgentLink>,
     checked: &mut HashSet<LinkKey>,
@@ -4159,7 +4166,10 @@ fn steps_over_a_splice_point(compiled: &Compiled, pos: usize, cleanup: Option<us
 ///
 /// Returns the length of the step list when the play is over for this host, which is what the
 /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver's whole context, advanced by one step"
+)]
 async fn advance(
     tx: &mpsc::Sender<Event>,
     host: &str,
@@ -4318,7 +4328,10 @@ async fn skipped(tx: &mpsc::Sender<Event>, host: &str, range: std::ops::Range<us
 /// host's** task, which is what lets a `rescue` around the statement take them - measured on
 /// ansible-core 2.19.12, an `include_tasks` in a block's body whose file is missing is rescued
 /// like any other failure - and what lets the other hosts carry on.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver's whole context, needed to resolve one include"
+)]
 fn resolve_include(
     compiled: &Compiled,
     step: &Step,
@@ -4640,7 +4653,10 @@ async fn report_include(
 /// `names` is parallel to `results` as well: each item's task name, already templated. The
 /// `FAILED - RETRYING` line shows it rather than the raw `task.name` - measured, a templated name
 /// like `probe {{ n }}` renders there the way it does everywhere else.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "three lists parallel to results: labels, retries and names; folding them into a struct hides which is parallel to what"
+)]
 async fn report_task(
     tx: &mpsc::Sender<Event>,
     host: &str,

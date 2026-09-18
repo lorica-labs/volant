@@ -2,6 +2,8 @@
 #![cfg(unix)]
 mod common;
 
+use std::collections::BTreeMap;
+
 use common::spawn_agent;
 use serde_json::json;
 use volant_protocol::{BatchOutcome, FromAgent, LogLevel, PROTOCOL_VERSION, Task, ToAgent};
@@ -12,7 +14,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         args: json!({"_raw_params": cmd}).as_object().unwrap().clone(),
         ignore_errors,
         timeout: None,
-        environment: Default::default(),
+        environment: BTreeMap::default(),
     }
 }
 

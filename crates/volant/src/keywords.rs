@@ -76,6 +76,8 @@ pub fn is_barrier(name: &str) -> bool {
     .any(|k| k.name == name && k.barrier)
 }
 
+use std::fmt::Write as _;
+
 use Support::{Preflight, Runs};
 
 /// Task keywords, alphabetical. The module key is whatever is left over once these are taken.
@@ -358,34 +360,37 @@ pub fn documentation() -> String {
     names.sort_unstable();
     names.dedup();
     for name in names {
-        out.push_str(&format!(
-            "| `{name}` | {} | {} | {} |\n",
+        let _ = writeln!(
+            out,
+            "| `{name}` | {} | {} | {} |",
             status(PLAY_KEYWORDS, name),
             status(BLOCK_KEYWORDS, name),
             status(TASK_KEYWORDS, name)
-        ));
+        );
     }
     out.push_str(
         "\n## Handlers\n\nA handler takes every task keyword above, and one of its own.\n\n\
          | Keyword | Status |\n|---|---|\n",
     );
     for k in HANDLER_KEYWORDS {
-        out.push_str(&format!(
-            "| `{}` | {} |\n",
+        let _ = writeln!(
+            out,
+            "| `{}` | {} |",
             k.name,
             status(HANDLER_KEYWORDS, k.name)
-        ));
+        );
     }
     out.push_str(
         "\n## Under `loop_control`\n\nA sub-key ansible-core does not have is refused when the \
          playbook is read.\n\n| Sub-key | Status |\n|---|---|\n",
     );
     for k in LOOP_CONTROL_KEYWORDS {
-        out.push_str(&format!(
-            "| `{}` | {} |\n",
+        let _ = writeln!(
+            out,
+            "| `{}` | {} |",
             k.name,
             status(LOOP_CONTROL_KEYWORDS, k.name)
-        ));
+        );
     }
     out
 }
@@ -499,7 +504,7 @@ mod tests {
             "varnames",
             "vars",
         ];
-        let mut expected: Vec<String> = task_fattributes.iter().map(|s| s.to_string()).collect();
+        let mut expected: Vec<String> = task_fattributes.iter().map(ToString::to_string).collect();
         expected.push("local_action".to_string());
         expected.extend(lookups.iter().map(|l| format!("with_{l}")));
         expected.sort_unstable();

@@ -301,19 +301,18 @@ impl VarStore {
     /// not in the inventory-wide map, and `hostvars[inventory_hostname]` has to answer for it
     /// all the same: such a host gets its own completed map, kept beside the shared one.
     pub fn hostvars_shared(&mut self, host: &str) -> Arc<Map<String, Value>> {
-        let base = match &self.hostvars {
-            Some(base) => Arc::clone(base),
-            None => {
-                let names = self.groups["all"].clone();
-                let mut map = Map::new();
-                for name in names {
-                    let view = self.host_view(&name);
-                    map.insert(name, Value::Object(view));
-                }
-                let base = Arc::new(map);
-                self.hostvars = Some(Arc::clone(&base));
-                base
+        let base = if let Some(base) = &self.hostvars {
+            Arc::clone(base)
+        } else {
+            let names = self.groups["all"].clone();
+            let mut map = Map::new();
+            for name in names {
+                let view = self.host_view(&name);
+                map.insert(name, Value::Object(view));
             }
+            let base = Arc::new(map);
+            self.hostvars = Some(Arc::clone(&base));
+            base
         };
         if base.contains_key(host) {
             return base;
@@ -544,7 +543,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn tree() -> std::path::PathBuf {
+    fn tree() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "volant-vars-{}-{}",
             std::process::id(),
@@ -593,7 +592,7 @@ mod tests {
             .as_nanos()
     }
 
-    fn store(dir: &std::path::Path) -> (Inventory, VarStore) {
+    fn store(dir: &Path) -> (Inventory, VarStore) {
         let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
         let store = VarStore::new(
             &inv,
@@ -606,7 +605,7 @@ mod tests {
     }
 
     fn scope(hosts: &[&str]) -> Scope {
-        let names: Vec<String> = hosts.iter().map(|h| h.to_string()).collect();
+        let names: Vec<String> = hosts.iter().map(ToString::to_string).collect();
         Scope {
             play_hosts: names.clone(),
             batch_hosts: names.clone(),
@@ -701,7 +700,7 @@ mod tests {
             ..Scope::default()
         };
 
-        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
         store.set_fact("h1", "p", json!("fact"));
         let v = store.for_host("h1", &role(Map::new()));
         assert_eq!(
@@ -734,7 +733,7 @@ mod tests {
         );
 
         let extra: Map<String, Value> = json!({"p": "extra"}).as_object().unwrap().clone();
-        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), extra).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), extra).unwrap();
         let v = store.for_host("h1", &role(Map::new()));
         assert_eq!(
             v["p"],
@@ -790,7 +789,7 @@ mod tests {
     #[test]
     fn the_batch_the_live_play_and_the_resolved_play_are_three_lists() {
         let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
-        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
         let v = store.for_host(
             "h2",
             &Scope {
@@ -850,7 +849,7 @@ mod tests {
     #[test]
     fn a_short_hostname_drops_the_domain() {
         let inv = Inventory::parse_ini("web1.example.com\n").unwrap();
-        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
         let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
     }
@@ -859,7 +858,7 @@ mod tests {
     fn a_host_that_shares_a_group_name_still_gets_its_variables() {
         // Ansible warns "Found both group and host with same name" and runs the host.
         let inv = Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
-        let mut store = VarStore::new(&inv, None, std::path::Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
         let v = store.for_host("db", &scope(&["db"]));
         assert_eq!(v["inventory_hostname"], json!("db"));
         assert_eq!(v["x"], json!(1));

@@ -476,9 +476,8 @@ pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
 /// operator typed.
 fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Result<Playbook> {
     let docs = crate::yaml::load(text, source)?;
-    let entries = match docs.first() {
-        Some(Yaml::Sequence(items)) => items,
-        _ => bail!("{source}: a playbook must be a list of plays"),
+    let Some(Yaml::Sequence(entries)) = docs.first() else {
+        bail!("{source}: a playbook must be a list of plays");
     };
     let mut plays = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
@@ -1267,7 +1266,7 @@ mod tests {
         tasks(&pb.plays[0])[0]
     }
 
-    const SAMPLE: &str = r#"
+    const SAMPLE: &str = r"
 - name: Smoke test
   hosts: web,db
   gather_facts: false
@@ -1287,7 +1286,7 @@ mod tests {
         argv: [true]
       args:
         chdir: /
-"#;
+";
 
     #[test]
     fn plays_and_tasks_are_loaded() {

@@ -114,7 +114,7 @@ impl Inventory {
                     let group = group.clone();
                     let members = &mut inv.group_mut(&group).hosts;
                     if !members.iter().any(|h| h == name) {
-                        members.push(name.to_string());
+                        members.push(name.clone());
                     }
                 }
                 Section::Children(group) => {
@@ -196,9 +196,10 @@ impl Inventory {
         }
         for name in selected {
             res.hosts
-                .push(match self.hosts.iter().any(|h| h.name == name) {
-                    true => self.host_with_vars(&name),
-                    false => implicit_localhost(&name),
+                .push(if self.hosts.iter().any(|h| h.name == name) {
+                    self.host_with_vars(&name)
+                } else {
+                    implicit_localhost(&name)
                 });
         }
         res
@@ -1095,11 +1096,11 @@ env=prod
     /// rather than retyped, so the two never drift apart.
     #[test]
     fn ini_integers_follow_pythons_literal_grammar() {
-        let expected: serde_json::Value =
+        let expected: Value =
             serde_json::from_str(include_str!("../tests/golden/expected_inventory.json")).unwrap();
         let web1 = &expected["hostvars"]["web1"];
         let inv = Inventory::load(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/golden/inventory.ini")
                 .as_path(),
         )

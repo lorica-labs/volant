@@ -47,7 +47,7 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("become", &self.r#become)
             .field("become_user", &self.become_user)
             .field("become_method", &self.become_method)
-            .field("become_password", &redacted(&self.become_password))
+            .field("become_password", &redacted(self.become_password.as_ref()))
             .finish()
     }
 }
@@ -65,12 +65,12 @@ impl std::fmt::Debug for Escalation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Escalation")
             .field("user", &self.user)
-            .field("password", &redacted(&self.password))
+            .field("password", &redacted(self.password.as_ref()))
             .finish()
     }
 }
 
-fn redacted(password: &Option<String>) -> &'static str {
+fn redacted(password: Option<&String>) -> &'static str {
     match password {
         Some(_) => "<redacted>",
         None => "None",
@@ -272,7 +272,7 @@ fn local_argv(agent: &str, escalated: Escalated<'_>) -> Vec<String> {
         return vec![agent.to_string()];
     };
     let mut argv = vec!["sudo".to_string(), "-H".to_string()];
-    argv.extend(form.flags().iter().map(|s| s.to_string()));
+    argv.extend(form.flags().iter().map(ToString::to_string));
     argv.extend([
         "-u".to_string(),
         escalation.user.clone(),
@@ -329,7 +329,7 @@ async fn settle_form<F, Fut>(
 ) -> Result<(SudoForm, Captured), ConnectError>
 where
     F: FnMut(SudoForm) -> Fut,
-    Fut: std::future::Future<Output = Result<Captured, ConnectError>>,
+    Fut: Future<Output = Result<Captured, ConnectError>>,
 {
     let quiet = probe(SudoForm::NoPrompt).await?;
     let refusal = match escalation_outcome(ran(&quiet), &quiet.stderr, None) {
@@ -952,7 +952,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn host(vars: serde_json::Value) -> Host {
+    fn host(vars: Value) -> Host {
         Host {
             name: "web1".into(),
             vars: vars

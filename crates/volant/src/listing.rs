@@ -24,6 +24,8 @@
 //! Both were measured by running the same command repeatedly: four distinct orders in eight
 //! runs for three hosts. Sorting is the only answer that can be compared with anything.
 
+use std::fmt::Write as _;
+
 use crate::compile::{self, Compiled};
 use crate::playbook::Play;
 
@@ -54,7 +56,7 @@ impl Listing {
     /// exits 4. That is a malformed value rather than an unimplemented feature - it is wrong in
     /// every release, not only this one - and reading it later would mean letting a task hold a
     /// value that is not a boolean, which is the state the loader exists to make unreachable.
-    pub fn wanted(&self) -> bool {
+    pub fn wanted(self) -> bool {
         self.tasks || self.tags || self.hosts || self.syntax
     }
 }
@@ -105,13 +107,14 @@ pub(crate) fn render(entries: &[PlaybookEntry], mode: Listing) -> String {
                 play.tags.join(",")
             );
             if mode.hosts {
-                msg.push_str(&format!(
+                let _ = write!(
+                    msg,
                     "\n    pattern: {}\n    hosts ({}):",
                     patterns(&play.host_patterns),
                     entry.hosts.len()
-                ));
+                );
                 for host in &entry.hosts {
-                    msg.push_str(&format!("\n      {host}"));
+                    let _ = write!(msg, "\n      {host}");
                 }
             }
             line(&mut out, &msg);
@@ -135,17 +138,18 @@ pub(crate) fn render(entries: &[PlaybookEntry], mode: Listing) -> String {
                 }
                 all.extend(step.task.tags.iter().map(String::as_str));
                 if mode.tasks {
-                    body.push_str(&format!(
-                        "      {}\tTAGS: [{}]\n",
+                    let _ = writeln!(
+                        body,
+                        "      {}\tTAGS: [{}]",
                         label(step, entry.compiled),
                         step.task.tags.join(", ")
-                    ));
+                    );
                 }
             }
             if mode.tags {
                 all.sort_unstable();
                 all.dedup();
-                body.push_str(&format!("      TASK TAGS: [{}]\n", all.join(", ")));
+                let _ = writeln!(body, "      TASK TAGS: [{}]", all.join(", "));
             }
             line(&mut out, &body);
         }
@@ -173,7 +177,7 @@ fn patterns(written: &[String]) -> String {
 ///
 /// This is deliberately not the banner, which prefixes an unnamed role task too
 /// (`TASK [spec : debug]`). The two were measured separately because they differ.
-fn label(step: &crate::compile::Step, compiled: &Compiled) -> String {
+fn label(step: &compile::Step, compiled: &Compiled) -> String {
     if !step.task.named {
         return step.task.name.clone();
     }

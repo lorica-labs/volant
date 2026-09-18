@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![cfg(unix)]
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -579,9 +580,10 @@ fn the_agent_connection_survives_across_plays() {
 fn forks_bounds_the_hosts_running_at_once() {
     let dir = std::env::temp_dir().join(format!("volant-forks-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let inv: String = (1..=6)
-        .map(|i| format!("h{i} ansible_connection=local\n"))
-        .collect();
+    let inv: String = (1..=6).fold(String::new(), |mut out, i| {
+        let _ = writeln!(out, "h{i} ansible_connection=local");
+        out
+    });
     std::fs::write(dir.join("inv.ini"), inv).unwrap();
     std::fs::write(
         dir.join("sleep.yml"),
@@ -698,7 +700,7 @@ fn fake_sudo(name: &str, body: &str) -> std::path::PathBuf {
     dir
 }
 
-fn volant_with_path(args: &[&str], dir: &std::path::Path) -> Output {
+fn volant_with_path(args: &[&str], dir: &Path) -> Output {
     volant_within_with_path(args, DEFAULT_DEADLINE, Some(dir), &[])
 }
 
@@ -1008,7 +1010,7 @@ fn unsupported_become_methods_are_refused_by_name() {
 }
 
 /// Runs `volant` with `dir` first on `PATH` and `password` on stdin, the way `-K` reads it.
-fn volant_with_password(args: &[&str], dir: &std::path::Path, password: &str) -> Output {
+fn volant_with_password(args: &[&str], dir: &Path, password: &str) -> Output {
     use std::io::Write;
     let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
         .args(args)
@@ -1548,9 +1550,10 @@ fn each_playbook_prints_its_own_recap() {
 fn seventy_hosts_finish_with_a_full_recap() {
     let dir = std::env::temp_dir().join(format!("volant-many-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let inv: String = (1..=70)
-        .map(|i| format!("h{i:02} ansible_connection=local\n"))
-        .collect();
+    let inv: String = (1..=70).fold(String::new(), |mut out, i| {
+        let _ = writeln!(out, "h{i:02} ansible_connection=local");
+        out
+    });
     std::fs::write(dir.join("inv.ini"), inv).unwrap();
     let out = volant_within(
         &[
@@ -2013,7 +2016,7 @@ fn probe_dir(kind: &str) -> std::path::PathBuf {
 }
 
 fn run_probe(
-    dir: &std::path::Path,
+    dir: &Path,
     kw: &str,
     body: &str,
     extra: &[&str],
@@ -3852,10 +3855,7 @@ const FAKE_SUDO_FOR_BECOME_USER: &str = "#!/bin/sh\n\
 fn is_become_user_probe(probe: &RunsProbe) -> bool {
     matches!(
         (probe.table, probe.kw),
-        ("task", "become")
-            | ("task", "become_user")
-            | ("play", "become_user")
-            | ("block", "become_user")
+        ("task", "become" | "become_user") | ("play" | "block", "become_user")
     )
 }
 

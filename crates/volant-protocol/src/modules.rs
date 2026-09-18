@@ -3,6 +3,8 @@
 //! them. Written once here; the agent's implementation table and the documentation are
 //! checked against it.
 
+use std::fmt::Write as _;
+
 /// One native module: its Ansible name and how the controller parses its arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleSpec {
@@ -226,12 +228,13 @@ pub fn documentation_table() -> String {
     );
     let rows = |specs: &[ModuleSpec], out: &mut String| {
         for m in specs {
-            out.push_str(&format!(
-                "| `{}` | {} | {} |\n",
+            let _ = writeln!(
+                out,
+                "| `{}` | {} | {} |",
                 m.name,
                 if m.free_form { "yes" } else { "no" },
                 m.summary
-            ));
+            );
         }
     };
     rows(NATIVE_MODULES, &mut out);

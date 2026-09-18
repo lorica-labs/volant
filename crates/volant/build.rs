@@ -11,8 +11,10 @@ fn main() {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(
+            || "unknown".to_string(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        );
 
     let epoch = std::env::var("SOURCE_DATE_EPOCH")
         .ok()
@@ -20,8 +22,7 @@ fn main() {
         .unwrap_or_else(|| {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0)
+                .map_or(0, |d| d.as_secs() as i64)
         });
 
     println!("cargo:rustc-env=VOLANT_GIT_SHA={sha}");

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![cfg(unix)]
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -66,7 +67,7 @@ async fn runs_a_batch_through_the_local_transport() {
                 .clone(),
             ignore_errors: false,
             timeout: None,
-            environment: Default::default(),
+            environment: BTreeMap::default(),
         }],
     })
     .await
@@ -114,15 +115,15 @@ async fn cancel_stops_the_running_task_and_its_children() {
                 .clone(),
             ignore_errors: false,
             timeout: None,
-            environment: Default::default(),
+            environment: BTreeMap::default(),
         }],
     })
     .await
     .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let started = std::time::Instant::now();
     assert!(
-        link.cancel(9, std::time::Duration::from_secs(5)).await,
+        link.cancel(9, Duration::from_secs(5)).await,
         "agent must confirm the cancel"
     );
     assert!(started.elapsed().as_secs() < 5);
@@ -154,14 +155,14 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
                 .clone(),
             ignore_errors: false,
             timeout: None,
-            environment: Default::default(),
+            environment: BTreeMap::default(),
         }],
     })
     .await
     .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     drop(link);
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let survivors = std::process::Command::new("pgrep")
         .args(["-f", &marker])
         .output()
@@ -183,7 +184,7 @@ async fn a_silent_agent_fails_the_handshake_within_the_timeout() {
     let started = std::time::Instant::now();
     // `/bin/sleep` with no argument prints its usage and leaves, so the handshake either
     // times out or fails on the closed pipe; both mean the caller is not left waiting.
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), link.handshake()).await;
+    let outcome = tokio::time::timeout(Duration::from_secs(1), link.handshake()).await;
     assert!(
         outcome.is_err() || outcome.unwrap().is_err(),
         "a silent agent must not look like a successful handshake"
@@ -209,7 +210,10 @@ fn spawn_shell(script: &str) -> AgentLink {
 /// Renders `bytes` as a `sh`/`printf` octal escape sequence, so arbitrary bytes (including
 /// NUL, which cannot travel through a process argument) can be written by a shell script.
 fn octal_escape(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("\\{b:03o}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "\\{b:03o}");
+        out
+    })
 }
 
 #[tokio::test]
@@ -249,7 +253,7 @@ async fn dropping_a_racing_recv_does_not_desync_the_next_one() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     tokio::select! {
-        _ = tokio::time::sleep(Duration::ZERO) => {}
+        () = tokio::time::sleep(Duration::ZERO) => {}
         result = link.recv() => panic!("recv should not resolve before the payload arrives: {result:?}"),
     }
 

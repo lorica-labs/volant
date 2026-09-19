@@ -17,6 +17,10 @@
 //! lookup plugin `ansible.builtin` ships. The internal `async_val` and `loop_with` entries are
 //! not spellings a playbook can use and are left out.
 
+use std::fmt::Write as _;
+
+use Support::{Preflight, Runs};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
     /// Something in this release honours it: it runs, or it is refused by its own name with
@@ -75,10 +79,6 @@ pub fn is_barrier(name: &str) -> bool {
     .flat_map(|table| table.iter())
     .any(|k| k.name == name && k.barrier)
 }
-
-use std::fmt::Write as _;
-
-use Support::{Preflight, Runs};
 
 /// Task keywords, alphabetical. The module key is whatever is left over once these are taken.
 ///

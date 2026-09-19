@@ -43,9 +43,11 @@ test:
 # Line coverage over the workspace. The ssh tests are #[ignore]d and are not in this figure.
 # llvm-cov's TOTAL row reads regions, then functions, then lines, and the first column is the one
 # a reader takes for the last. The second command names the figure the threshold is about, so
-# nobody has to count columns.
+# nobody has to count columns. `set -o pipefail` so a breach fails the recipe: this shell has no
+# pipefail by default (see line 1), and without it the exit status is `tee`'s, which is always 0.
+# Line coverage over the workspace, gated at COVERAGE_FLOOR.
 coverage:
-    cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}} | tee /tmp/volant-coverage.txt
+    set -o pipefail; cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}} | tee /tmp/volant-coverage.txt
     @awk '/^TOTAL/ {print "regions " $4 "   functions " $7 "   LINES " $10 "  <- the threshold is on this one"}' /tmp/volant-coverage.txt
 
 # Mutation score over the files this recipe is pointed at. Each mutant is a small edit to the
@@ -60,6 +62,7 @@ coverage:
 # running - both 4 and 2 parallel copies exceeded it mid-campaign ("Disk quota exceeded"); one
 # job at a time is the value that ran two full campaigns without it. Slow on purpose: one build
 # and one test run per mutant. Not in CI.
+# Mutation score for the given file, one build and one test run per mutant. Not in CI.
 mutants file="crates/volant/src/keywords.rs":
     cargo build --workspace
     cargo mutants --file {{file}} --timeout 120 --jobs 1 --no-shuffle --test-tool nextest --copy-target true

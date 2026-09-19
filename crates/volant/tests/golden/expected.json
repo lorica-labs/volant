@@ -1174,5 +1174,14 @@
         "value": 3
       }
     ]
+  },
+  {
+    "case": {
+      "template": "{{ reg }}",
+      "untrusted": {
+        "reg": "{{ 1 + 1 }}"
+      }
+    },
+    "result": "{{ 1 + 1 }}"
   }
 ]

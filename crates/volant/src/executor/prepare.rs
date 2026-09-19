@@ -226,23 +226,37 @@ pub(super) fn host_vars(
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
-    let (raw, hostvars, shared) = {
+    let (raw, hostvars, shared, untrusted, untrusted_hosts) = {
         let mut store = store.lock().expect("vars lock");
         // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
         let shared = store.shared_values(&scope);
-        (store.for_host(host, &scope), hostvars, shared)
+        let untrusted = store.untrusted_of(host);
+        let untrusted_hosts = store.untrusted_hosts();
+        (
+            store.for_host(host, &scope),
+            hostvars,
+            shared,
+            untrusted,
+            untrusted_hosts,
+        )
     };
+    // The merged map carries this host's facts, so the names that came from a managed host
+    // travel into the resolution below and are left there exactly as they arrived.
     let map = templar.resolve_vars(Vars {
         map: &raw,
         hostvars: Some(&hostvars),
         shared: Some(&shared),
+        untrusted: Some(&untrusted),
+        untrusted_hosts: Some(&untrusted_hosts),
     });
     HostVars {
         map,
         hostvars,
         shared,
+        untrusted,
+        untrusted_hosts,
     }
 }
 
@@ -355,10 +369,15 @@ pub(super) fn prepare(
         templar,
         store,
     );
+    // Whether the list this loop walks came from a managed host. A loop over a literal list the
+    // playbook wrote binds author content; one over `{{ r.stdout_lines }}` binds data, and the
+    // items of such a loop are never rendered again.
+    let mut items_from_host = false;
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) => {
-            let rendered = templar.render_value(raw, &base)?;
+            let (rendered, tainted) = templar.render_value_tainted(raw, &base)?;
+            items_from_host = tainted;
             let list = match rendered {
                 Value::Array(items) => items,
                 other => {
@@ -380,7 +399,11 @@ pub(super) fn prepare(
     for element in elements {
         let mut vars = base.clone();
         if let Some(el) = &element {
-            vars.insert(task.loop_var.clone(), el.clone());
+            if items_from_host {
+                vars.insert_untrusted(task.loop_var.clone(), el.clone());
+            } else {
+                vars.insert(task.loop_var.clone(), el.clone());
+            }
             vars.insert(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),

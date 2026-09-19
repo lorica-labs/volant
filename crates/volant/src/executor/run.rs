@@ -136,7 +136,7 @@ pub(super) fn run_local(
                 }
                 let mut vars = store.lock().expect("vars lock");
                 for host in fact_hosts {
-                    vars.set_fact(host, k, v.clone());
+                    vars.set_untrusted_fact(host, k, v.clone());
                 }
                 drop(vars);
                 facts.insert(k.clone(), v.clone());
@@ -372,9 +372,9 @@ fn apply_conditions(
     }
     let mut vars = item.vars.clone();
     if let Some(reg) = &task.register {
-        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
     }
-    vars.insert("result".into(), Value::Object(result.0.clone()));
+    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     if !task.changed_when.is_empty() {
         let changed = all_hold(&task.changed_when, &vars, templar)?;
         result.0.insert("changed".into(), json!(changed));
@@ -616,9 +616,9 @@ pub(super) fn until_holds(
     }
     let mut vars = item.vars.clone();
     if let Some(reg) = &task.register {
-        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
     }
-    vars.insert("result".into(), Value::Object(result.0.clone()));
+    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     all_hold(&retry.until, &vars, templar)
 }
 

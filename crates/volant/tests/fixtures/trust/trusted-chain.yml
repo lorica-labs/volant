@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    z: "{{ 1 + 1 }}"
+    y: "{{ z }}"
+  tasks:
+    - name: A chain of author templates still renders
+      debug:
+        msg: "{{ y }}"

@@ -2,7 +2,7 @@
 //! Variable sources and their precedence, from inventory groups up to extra vars, plus the
 //! magic variables Ansible defines for every host.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,9 +22,20 @@ pub struct HostVars {
     pub hostvars: Arc<Map<String, Value>>,
     /// `groups` and the play's host lists, shared for the same reason and in the same way.
     pub shared: Arc<Map<String, Value>>,
+    /// Names in `map` that came from a managed host, for this host and this task.
+    pub untrusted: BTreeSet<String>,
+    /// Hosts holding at least one such name, for the `hostvars[other]` path.
+    pub untrusted_hosts: Arc<BTreeSet<String>>,
 }
 
 impl HostVars {
+    /// `insert`, for a name whose value came from a managed host: a `register`, `result`, a loop
+    /// item built from one. The name is data from here on and is never rendered again.
+    pub fn insert_untrusted(&mut self, key: String, value: Value) -> Option<Value> {
+        self.untrusted.insert(key.clone());
+        self.insert(key, value)
+    }
+
     /// Writes a name into the host's own map once the map is built - a loop variable, a
     /// `register` name, `result`. Such a write is the last one there is and beats everything
     /// the merge produced, the inventory-wide values included: a name that collides with one of
@@ -67,6 +78,8 @@ impl<'a> From<&'a HostVars> for Vars<'a> {
             map: &vars.map,
             hostvars: Some(&vars.hostvars),
             shared: Some(&vars.shared),
+            untrusted: Some(&vars.untrusted),
+            untrusted_hosts: Some(&vars.untrusted_hosts),
         }
     }
 }
@@ -113,6 +126,8 @@ pub struct VarStore {
     group_names: BTreeMap<String, Vec<String>>,
     groups: BTreeMap<String, Vec<String>>,
     facts: BTreeMap<String, Map<String, Value>>,
+    /// Of those facts, the names that came from a managed host rather than from the playbook.
+    untrusted: BTreeMap<String, BTreeSet<String>>,
     extra: Map<String, Value>,
     /// What `ansible_forks` reports, which the reference sets from the run's own `forks`.
     forks: usize,
@@ -193,6 +208,7 @@ impl VarStore {
             group_names,
             groups,
             facts: BTreeMap::new(),
+            untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
             hostvars: None,
@@ -221,12 +237,47 @@ impl VarStore {
         Ok(())
     }
 
+    /// Writes a fact the playbook wrote: `include_vars`, and the engine's own bookkeeping. The
+    /// name gets its trust back, because a write from an author-side source is author content
+    /// whatever the name held before.
     pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
+        if let Some(names) = self.untrusted.get_mut(host) {
+            names.remove(key);
+        }
         self.facts
             .entry(host.to_string())
             .or_default()
             .insert(key.to_string(), value);
         self.forget_hostvars();
+    }
+
+    /// Writes a fact that came from a managed host: a module result, a `register`, a `set_fact`.
+    /// The name is data from here on, and a template that reads it is not rendered again.
+    pub fn set_untrusted_fact(&mut self, host: &str, key: &str, value: Value) {
+        // After, not before: `set_fact` clears the name, because a write from an author-side
+        // source gives the trust back.
+        self.set_fact(host, key, value);
+        self.untrusted
+            .entry(host.to_string())
+            .or_default()
+            .insert(key.to_string());
+    }
+
+    pub fn untrusted_of(&self, host: &str) -> BTreeSet<String> {
+        self.untrusted.get(host).cloned().unwrap_or_default()
+    }
+
+    /// Hosts holding at least one untrusted name, for the `hostvars[other]` path. Rebuilt on each
+    /// call: the map has one entry per host that ever registered something, and a task reads it
+    /// once, so caching it would buy a clone and cost an invalidation rule.
+    pub fn untrusted_hosts(&self) -> Arc<BTreeSet<String>> {
+        Arc::new(
+            self.untrusted
+                .iter()
+                .filter(|(_, names)| !names.is_empty())
+                .map(|(host, _)| host.clone())
+                .collect(),
+        )
     }
 
     /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
@@ -838,6 +889,7 @@ mod tests {
             map: v.clone(),
             hostvars: Arc::default(),
             shared,
+            ..HostVars::default()
         };
         assert_eq!(
             host.get("groups").map(|g| &g["web"]),

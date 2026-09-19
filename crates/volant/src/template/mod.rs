@@ -2,9 +2,10 @@
 //! Jinja2 templating the way ansible-core 2.19 does it: strict about undefined variables, and a
 //! template that is one expression yields that expression's value, not its text.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use minijinja::value::{Enumerator, Object};
@@ -36,6 +37,26 @@ impl fmt::Display for TemplateError {
 
 impl std::error::Error for TemplateError {}
 
+/// Set while a render pass reads a name whose value came from a managed host rather than from
+/// the playbook. A result built from such a name is data, so the extra passes below do not run
+/// on it and an expression that arrived in a command's output is never evaluated here.
+pub(crate) type Tainted = Arc<AtomicBool>;
+
+/// The name `Context` answers with the render's taint sink. Two colons cannot appear in a Jinja
+/// identifier, so no playbook can name it, read it or shadow it.
+pub(crate) const TAINT_KEY: &str = "volant::tainted";
+
+#[derive(Debug)]
+pub(crate) struct TaintSink(pub(crate) Tainted);
+
+impl TaintSink {
+    pub(crate) fn taint(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Object for TaintSink {}
+
 /// What a template renders against: one host's own variables, and — on the path where a host
 /// runs a task — the whole inventory's view behind `hostvars`.
 ///
@@ -52,6 +73,12 @@ pub struct Vars<'a> {
     /// because these used to be written into it last and last is what wins. A name written into
     /// the map later still wins, because `HostVars::insert` takes it out of here first.
     pub shared: Option<&'a Arc<Map<String, Value>>>,
+    /// Names in `map` whose value came from a managed host. Reading one of them during a render
+    /// makes the result data: see `render_in`.
+    pub untrusted: Option<&'a BTreeSet<String>>,
+    /// Hosts that have at least one such name, for the `hostvars[other]` path. Coarser than the
+    /// reference, which tags each string: reading any name of such a host taints the render.
+    pub untrusted_hosts: Option<&'a BTreeSet<String>>,
 }
 
 impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
@@ -60,6 +87,8 @@ impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
             map,
             hostvars: None,
             shared: None,
+            untrusted: None,
+            untrusted_hosts: None,
         }
     }
 }
@@ -96,12 +125,25 @@ struct Context {
     vars: Map<String, Value>,
     hostvars: Option<Arc<Map<String, Value>>>,
     shared: Option<Arc<Map<String, Value>>>,
+    untrusted: BTreeSet<String>,
+    untrusted_hosts: BTreeSet<String>,
+    tainted: Tainted,
     memo: Memo,
 }
 
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
+        if key == TAINT_KEY {
+            return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
+                &self.tainted,
+            ))));
+        }
+        // Before the memo, never after: a second read of the same name is answered from the
+        // cache and would otherwise leave the render looking clean.
+        if self.untrusted.contains(key) {
+            self.tainted.store(true, Ordering::Relaxed);
+        }
         self.memo.get(key, || {
             // A map that carries a `hostvars` key of its own - a fixture, a recorded scope -
             // keeps being read from the map when no view came with it, so the two sources never
@@ -111,6 +153,8 @@ impl Object for Context {
             {
                 return Some(minijinja::Value::from_object(Hostvars {
                     hosts: Arc::clone(hostvars),
+                    untrusted_hosts: self.untrusted_hosts.clone(),
+                    tainted: Arc::clone(&self.tainted),
                     memo: Memo::default(),
                 }));
             }
@@ -151,12 +195,20 @@ impl Object for Context {
 #[derive(Debug)]
 struct Hostvars {
     hosts: Arc<Map<String, Value>>,
+    /// Hosts holding at least one name that came from a managed host. Reading any name of such
+    /// a host taints the render, which is coarser than the reference's per-string tag.
+    untrusted_hosts: BTreeSet<String>,
+    tainted: Tainted,
     memo: Memo,
 }
 
 impl Object for Hostvars {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
+        // Before the memo, for the same reason as in `Context`.
+        if self.untrusted_hosts.contains(key) {
+            self.tainted.store(true, Ordering::Relaxed);
+        }
         self.memo.get(key, || {
             self.hosts.get(key).map(minijinja::Value::from_serialize)
         })
@@ -172,13 +224,18 @@ impl Object for Hostvars {
     }
 }
 
-fn context_of(vars: Vars<'_>) -> minijinja::Value {
-    minijinja::Value::from_object(Context {
+fn context_of(vars: Vars<'_>) -> (minijinja::Value, Tainted) {
+    let tainted: Tainted = Arc::new(AtomicBool::new(false));
+    let ctx = minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
         hostvars: vars.hostvars.cloned(),
         shared: vars.shared.cloned(),
+        untrusted: vars.untrusted.cloned().unwrap_or_default(),
+        untrusted_hosts: vars.untrusted_hosts.cloned().unwrap_or_default(),
+        tainted: Arc::clone(&tainted),
         memo: Memo::default(),
-    })
+    });
+    (ctx, tainted)
 }
 
 pub struct Templar {
@@ -205,15 +262,31 @@ impl Templar {
         text: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<Value, TemplateError> {
-        self.render_in(text, &context_of(vars.into()))
+        let (ctx, tainted) = context_of(vars.into());
+        self.render_in(text, &ctx, &tainted)
     }
 
-    fn render_in(&self, text: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
+    fn render_in(
+        &self,
+        text: &str,
+        ctx: &minijinja::Value,
+        tainted: &Tainted,
+    ) -> Result<Value, TemplateError> {
+        // Per string, not per context: `render_value_in` walks a whole structure through one
+        // context, and a tainted field must not make the next field data too.
+        tainted.store(false, Ordering::Relaxed);
         let mut value = self.render_once(text, ctx)?;
         // A variable can hold a template of its own, so Ansible renders a result again while it
         // still carries a marker. Three further passes: a chain longer than that is a loop, and
         // an unchanged result ends it earlier.
+        //
+        // Not when the pass read a value that came from a managed host, or a file read at run
+        // time: such a result is data, and rendering it again is how a remote string gets to
+        // run code here.
         for _ in 0..3 {
+            if tainted.load(Ordering::Relaxed) {
+                break;
+            }
             let Value::String(text) = &value else { break };
             if !Self::is_template(text) {
                 break;
@@ -246,26 +319,47 @@ impl Templar {
         value: &Value,
         vars: impl Into<Vars<'a>>,
     ) -> Result<Value, TemplateError> {
-        self.render_value_in(value, &context_of(vars.into()))
+        Ok(self.render_value_tainted(value, vars)?.0)
+    }
+
+    /// `render_value`, saying as well whether what came out is data: true when any string of it
+    /// was rendered by a pass that read a name from a managed host, or read a file at run time.
+    /// The loop path asks, because the items of a loop built from a registered list are data and
+    /// must not be rendered again once they are bound to the loop variable.
+    pub fn render_value_tainted<'a>(
+        &self,
+        value: &Value,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<(Value, bool), TemplateError> {
+        let (ctx, tainted) = context_of(vars.into());
+        let mut any = false;
+        let out = self.render_value_in(value, &ctx, &tainted, &mut any)?;
+        Ok((out, any))
     }
 
     fn render_value_in(
         &self,
         value: &Value,
         ctx: &minijinja::Value,
+        tainted: &Tainted,
+        any: &mut bool,
     ) -> Result<Value, TemplateError> {
         Ok(match value {
-            Value::String(s) => self.render_in(s, ctx)?,
+            Value::String(s) => {
+                let out = self.render_in(s, ctx, tainted)?;
+                *any |= tainted.load(Ordering::Relaxed);
+                out
+            }
             Value::Array(items) => Value::Array(
                 items
                     .iter()
-                    .map(|v| self.render_value_in(v, ctx))
+                    .map(|v| self.render_value_in(v, ctx, tainted, any))
                     .collect::<Result<_, _>>()?,
             ),
             Value::Object(map) => {
                 let mut out = Map::new();
                 for (k, v) in map {
-                    out.insert(k.clone(), self.render_value_in(v, ctx)?);
+                    out.insert(k.clone(), self.render_value_in(v, ctx, tainted, any)?);
                 }
                 Value::Object(out)
             }
@@ -279,7 +373,9 @@ impl Templar {
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<Value, TemplateError> {
-        self.evaluate_in(expr, &context_of(vars.into()))
+        // `evaluate_in` takes one pass and no more, so a result built from a name that came from
+        // a managed host is already handed back as it stands: there is nothing here to stop.
+        self.evaluate_in(expr, &context_of(vars.into()).0)
     }
 
     fn evaluate_in(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
@@ -300,6 +396,11 @@ impl Templar {
     /// Templates the string values of a variable map against the map itself, a few passes, until
     /// nothing changes. Best effort: a value that fails to render is left as written, so the
     /// error surfaces where the value is used, as it does in Ansible.
+    ///
+    /// A name that came from a managed host is left exactly as it arrived. This is the other
+    /// half of the barrier `render_in` holds: the merged map a task renders against carries the
+    /// facts, so a registered value whose text looks like an expression would be evaluated here,
+    /// one task before anything even reads it.
     pub fn resolve_vars<'a>(&self, vars: impl Into<Vars<'a>>) -> Map<String, Value> {
         let vars = vars.into();
         // Most maps hold no template at all: walking them once is far cheaper than the two
@@ -307,24 +408,39 @@ impl Templar {
         if !vars.map.values().any(holds_template) {
             return vars.map.clone();
         }
+        // The names the store knows about, and the ones a pass turns into data as it goes: a
+        // value rendered from a managed host's name, or from a file read at run time, is data
+        // from that pass on and the passes after this one leave it alone.
+        let mut untrusted = vars.untrusted.cloned().unwrap_or_default();
         let mut current = vars.map.clone();
         for _ in 0..5 {
             // One context for the whole pass: every value of the map renders against the same
             // map, so building it per value paid for the same conversion once per variable.
-            let ctx = context_of(Vars {
+            let (ctx, tainted) = context_of(Vars {
                 map: &current,
                 hostvars: vars.hostvars,
                 shared: vars.shared,
+                untrusted: Some(&untrusted),
+                untrusted_hosts: vars.untrusted_hosts,
             });
             let mut next = current.clone();
             let mut changed = false;
+            let mut soiled = Vec::new();
             for (k, v) in &current {
-                let rendered = self.render_value_lenient(v, &ctx);
+                if untrusted.contains(k) {
+                    continue;
+                }
+                let mut any = false;
+                let rendered = self.render_value_lenient(v, &ctx, &tainted, &mut any);
+                if any {
+                    soiled.push(k.clone());
+                }
                 if rendered != *v {
                     changed = true;
                     next.insert(k.clone(), rendered);
                 }
             }
+            untrusted.extend(soiled);
             current = next;
             if !changed {
                 break;
@@ -333,20 +449,30 @@ impl Templar {
         current
     }
 
-    fn render_value_lenient(&self, value: &Value, ctx: &minijinja::Value) -> Value {
+    fn render_value_lenient(
+        &self,
+        value: &Value,
+        ctx: &minijinja::Value,
+        tainted: &Tainted,
+        any: &mut bool,
+    ) -> Value {
         match value {
             Value::String(s) if Self::is_template(s) => {
-                self.render_in(s, ctx).unwrap_or_else(|_| value.clone())
+                let out = self
+                    .render_in(s, ctx, tainted)
+                    .unwrap_or_else(|_| value.clone());
+                *any |= tainted.load(Ordering::Relaxed);
+                out
             }
             Value::Array(items) => Value::Array(
                 items
                     .iter()
-                    .map(|v| self.render_value_lenient(v, ctx))
+                    .map(|v| self.render_value_lenient(v, ctx, tainted, any))
                     .collect(),
             ),
             Value::Object(map) => Value::Object(
                 map.iter()
-                    .map(|(k, v)| (k.clone(), self.render_value_lenient(v, ctx)))
+                    .map(|(k, v)| (k.clone(), self.render_value_lenient(v, ctx, tainted, any)))
                     .collect(),
             ),
             other => other.clone(),
@@ -537,6 +663,8 @@ mod tests {
                 map: &empty,
                 hostvars: Some(&shared),
                 shared: None,
+                untrusted: None,
+                untrusted_hosts: None,
             };
             assert_eq!(t.render(text, vars).unwrap(), want, "{text}");
         }
@@ -558,10 +686,12 @@ mod tests {
     fn the_context_hands_out_the_shared_view_itself_and_only_builds_it_once() {
         let shared = Arc::new(vars(json!({"a": {"y": 1}, "b": {"y": 2}})));
         let empty = Map::new();
-        let ctx = context_of(Vars {
+        let (ctx, _) = context_of(Vars {
             map: &empty,
             hostvars: Some(&shared),
             shared: None,
+            untrusted: None,
+            untrusted_hosts: None,
         });
         let first = ctx
             .get_attr("hostvars")
@@ -601,6 +731,8 @@ mod tests {
             map: &fact,
             hostvars: None,
             shared: Some(&shared),
+            untrusted: None,
+            untrusted_hosts: None,
         };
         assert_eq!(
             t.render("{{ groups['web'] }}", vars).unwrap(),
@@ -627,10 +759,12 @@ mod tests {
     fn a_name_both_maps_carry_is_listed_once() {
         let shared = Arc::new(vars(json!({"groups": {"web": ["h1"]}})));
         let fact = vars(json!({"groups": "a set_fact wrote this", "own": 1}));
-        let ctx = context_of(Vars {
+        let (ctx, _) = context_of(Vars {
             map: &fact,
             hostvars: None,
             shared: Some(&shared),
+            untrusted: None,
+            untrusted_hosts: None,
         });
         let mut names: Vec<String> = ctx
             .try_iter()

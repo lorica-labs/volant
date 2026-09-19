@@ -523,6 +523,13 @@ fn lookup(
                         path.display()
                     ))
                 })?;
+                // The file's text is data: whatever it holds, it is never rendered again.
+                // ansible-core 2.19 does the same by tagging the string it returns.
+                if let Some(sink) = state.lookup(super::TAINT_KEY)
+                    && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
+                {
+                    sink.taint();
+                }
                 Value::from(text.trim_end_matches(['\r', '\n']))
             }
             "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {

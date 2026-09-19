@@ -57,21 +57,42 @@ fn every_golden_case_matches_the_reference() {
     let mut failures = Vec::new();
     for entry in expected() {
         let case = &entry["case"];
-        let vars: Map<String, Value> = case
+        let mut vars: Map<String, Value> = case
             .get("vars")
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        // A case's `untrusted` names are the ones the reference got from a managed host, through
+        // a `command` the generator registers and carries into a `set_fact`. On this side they
+        // are ordinary values with their names in the untrusted set, which is the same state the
+        // executor hands a render after a `register`.
+        let untrusted: std::collections::BTreeSet<String> = case
+            .get("untrusted")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| {
+                vars.insert(k.clone(), v.clone());
+                k.clone()
+            })
+            .collect();
+        let vars = volant::template::Vars {
+            map: &vars,
+            hostvars: None,
+            shared: None,
+            untrusted: Some(&untrusted),
+            untrusted_hosts: None,
+        };
         let ours: Result<Option<Value>, String> =
             if let Some(when) = case.get("when").and_then(Value::as_str) {
                 templar
-                    .condition(when, &vars)
+                    .condition(when, vars)
                     .map(|ok| ok.then(|| Value::String("ran".into())))
                     .map_err(|e| e.to_string())
             } else {
                 let text = case["template"].as_str().expect("template is a string");
                 templar
-                    .render(text, &vars)
+                    .render(text, vars)
                     .map(Some)
                     .map_err(|e| e.to_string())
             };

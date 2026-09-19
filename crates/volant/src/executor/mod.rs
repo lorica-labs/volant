@@ -26,7 +26,7 @@ use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::stats::Stats;
-use crate::template::Templar;
+use crate::template::{Templar, Vars};
 use crate::transport::ConnectionDefaults;
 use crate::vars::{Scope, VarStore, load_vars_file};
 
@@ -257,16 +257,24 @@ fn load_play_vars_files(
             all_play_hosts: all_play_hosts.to_vec(),
             ..Scope::default()
         };
-        let vars = state.templar.resolve_vars(
-            &state
-                .vars
-                .lock()
-                .expect("vars lock")
-                .for_host(&host.name, &scope),
-        );
+        let (raw, shared) = {
+            let mut store = state.vars.lock().expect("vars lock");
+            let shared = store.shared_values(&scope);
+            (store.for_host(&host.name, &scope), shared)
+        };
+        let resolved = state.templar.resolve_vars(Vars {
+            map: &raw,
+            hostvars: None,
+            shared: Some(&shared),
+        });
+        let vars = Vars {
+            map: &resolved,
+            hostvars: None,
+            shared: Some(&shared),
+        };
         let mut files = Vec::new();
         for raw in &play.vars_files {
-            let rendered = match state.templar.render(raw, &vars) {
+            let rendered = match state.templar.render(raw, vars) {
                 Ok(rendered) => rendered,
                 // Only a variable without a value is recoverable. Every other template failure
                 // stops the run there, and swallowing them all as one undefined variable both

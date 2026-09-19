@@ -41,8 +41,12 @@ test:
     cargo nextest run --workspace --no-fail-fast
 
 # Line coverage over the workspace. The ssh tests are #[ignore]d and are not in this figure.
+# llvm-cov's TOTAL row reads regions, then functions, then lines, and the first column is the one
+# a reader takes for the last. The second command names the figure the threshold is about, so
+# nobody has to count columns.
 coverage:
-    cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}}
+    cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}} | tee /tmp/volant-coverage.txt
+    @awk '/^TOTAL/ {print "regions " $4 "   functions " $7 "   LINES " $10 "  <- the threshold is on this one"}' /tmp/volant-coverage.txt
 
 # Mutation score over the files this recipe is pointed at. Each mutant is a small edit to the
 # source that the tests must notice; a mutant nothing catches is an assertion that could not have

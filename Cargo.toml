@@ -44,7 +44,7 @@ insta = { version = "1", features = ["filters"] }
 libc = "0.2"
 minijinja = { version = "2", features = ["preserve_order"] }
 regex = "1"
-saphyr = "0.0.12"
+saphyr = "0.1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 shlex = "2"

@@ -66,6 +66,10 @@ fn volant_within_full(
     stdin_line: Option<&str>,
     envs: &[(&str, &str)],
 ) -> Output {
+    assert!(
+        path.is_none() || replace_path.is_none(),
+        "path and replace_path both set: replace_path silently wins, dropping path's fixture"
+    );
     let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
     command
         .args(args)

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) - 2026-09-19
+
+### Other
+
+- make the coverage floor fail the recipe again ([#137](https://github.com/lorica-labs/volant/pull/137))
+- *(vars)* share the inventory-wide values across hosts ([#134](https://github.com/lorica-labs/volant/pull/134))
+- *(executor)* say why in one line and move the rest out ([#133](https://github.com/lorica-labs/volant/pull/133))
+- *(executor)* split the runner into modules ([#132](https://github.com/lorica-labs/volant/pull/132))
+- *(executor)* give the host driver its own context ([#131](https://github.com/lorica-labs/volant/pull/131))
+- *(executor)* hold the coordinator state in one place ([#130](https://github.com/lorica-labs/volant/pull/130))
+- *(executor)* drop a guard nothing depends on ([#129](https://github.com/lorica-labs/volant/pull/129))
+- add a mutation recipe and the checks it found missing ([#128](https://github.com/lorica-labs/volant/pull/128))
+- declare workspace lints and name each allowance ([#123](https://github.com/lorica-labs/volant/pull/123))
+
 ## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) - 2026-09-16
 
 ### Added

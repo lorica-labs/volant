@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.5...volant-agent-v0.1.0-alpha.6) - 2026-09-19
+
+### Other
+
+- *(executor)* say why in one line and move the rest out ([#133](https://github.com/lorica-labs/volant/pull/133))
+- declare workspace lints and name each allowance ([#123](https://github.com/lorica-labs/volant/pull/123))
+
 ## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.4...volant-agent-v0.1.0-alpha.5) - 2026-09-16
 
 ### Added

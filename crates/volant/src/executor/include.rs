@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 use volant_protocol::TaskResult;
 
-use crate::compile::{Compiled, IncludeKind, IncludeRequest, IncludeTarget, Step};
+use crate::compile::{Compiled, IncludeKind, IncludeParams, IncludeRequest, IncludeTarget, Step};
 use crate::playbook::PlayTask;
 use crate::stats::Outcome;
 use crate::template::Templar;
@@ -28,7 +28,7 @@ pub(super) struct IncludeGroup {
     /// The loop item's label, for the `=> (item=...)` the line carries.
     pub(super) label: Option<String>,
     /// What the statement hands down to everything it brought in.
-    pub(super) params: Map<String, Value>,
+    pub(super) params: IncludeParams,
     /// The steps, blocks, roles and handlers the statement brought in, numbered from zero.
     pub(super) expanded: Compiled,
 }
@@ -164,18 +164,22 @@ fn include_request(
     // stops there - `tags` do not descend, `when` is evaluated for the statement alone, `no_log`
     // censors its own line and not the tasks behind it, `become` and `environment` are refused
     // at load time.
-    let mut vars = step
-        .include_params
-        .as_deref()
-        .cloned()
-        .unwrap_or_else(Map::new);
+    let mut vars = step.include_params.as_deref().cloned().unwrap_or_default();
     // Rendered from what the statement wrote, not read back out of the host's merged scope: the
     // scope resolves a name the host also carries a fact for to the **fact**, and the whole point
     // of the measurement above is that an include's own value wins there.
+    //
+    // A render that read a name from a managed host hands back that host's text: the name goes
+    // down with the value, so the steps below treat it as the data it is.
     for (key, raw) in &task.vars {
-        match templar.render_value(raw, &item.vars) {
-            Ok(value) => {
-                vars.insert(key.clone(), value);
+        match templar.render_value_tainted(raw, &item.vars) {
+            Ok((value, tainted)) => {
+                if tainted {
+                    vars.untrusted.insert(key.clone());
+                } else {
+                    vars.untrusted.remove(key);
+                }
+                vars.values.insert(key.clone(), value);
             }
             Err(err) => {
                 return Err(TaskResult::failed_with(format!("Task failed: {}", err.0)));
@@ -184,9 +188,12 @@ fn include_request(
     }
     if item.element.is_some() {
         if let Some(value) = item.vars.get(&task.loop_var) {
-            vars.insert(task.loop_var.clone(), value.clone());
+            if item.vars.untrusted.contains(&task.loop_var) {
+                vars.untrusted.insert(task.loop_var.clone());
+            }
+            vars.values.insert(task.loop_var.clone(), value.clone());
         }
-        vars.insert(
+        vars.values.insert(
             "ansible_loop_var".into(),
             Value::String(task.loop_var.clone()),
         );

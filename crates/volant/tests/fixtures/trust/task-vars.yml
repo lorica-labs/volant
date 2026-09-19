@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Read a file whose text looks like a template
+      command: cat {{ payload }}
+      register: motd
+    - name: Show it through a task variable
+      debug:
+        msg: "{{ line }}"
+      vars:
+        line: "{{ motd.stdout }}"

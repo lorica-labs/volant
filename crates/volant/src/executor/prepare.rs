@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
-use crate::compile::{Compiled, Step};
+use crate::compile::{Compiled, IncludeParams, Step};
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::render::ansible_json;
@@ -200,7 +200,7 @@ pub(super) fn host_vars(
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
     role: Option<usize>,
-    include_params: Option<&Map<String, Value>>,
+    include_params: Option<&IncludeParams>,
     live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
@@ -212,7 +212,7 @@ pub(super) fn host_vars(
     // What an include handed down joins the role parameters rather than the task variables:
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
-    for (key, value) in include_params.into_iter().flatten() {
+    for (key, value) in include_params.iter().flat_map(|p| &p.values) {
         role_params.insert(key.clone(), value.clone());
     }
     let scope = Scope {
@@ -232,7 +232,14 @@ pub(super) fn host_vars(
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
         let shared = store.shared_values(&scope);
-        let untrusted = store.untrusted_of(host);
+        let mut untrusted = store.untrusted_of(host);
+        // What an include handed down is already rendered, so its provenance cannot be read off
+        // the store: it travelled with the values.
+        untrusted.extend(
+            include_params
+                .iter()
+                .flat_map(|p| p.untrusted.iter().cloned()),
+        );
         let untrusted_hosts = store.untrusted_hosts();
         (
             store.for_host(host, &scope),
@@ -243,8 +250,10 @@ pub(super) fn host_vars(
         )
     };
     // The merged map carries this host's facts, so the names that came from a managed host
-    // travel into the resolution below and are left there exactly as they arrived.
-    let map = templar.resolve_vars(Vars {
+    // travel into the resolution below and are left there exactly as they arrived. The set comes
+    // back wider than it went in: a `vars:` of the play, of a block or of the task itself built
+    // from a registered value is data too, and this resolution is the only place that can tell.
+    let (map, untrusted) = templar.resolve_vars_tainted(Vars {
         map: &raw,
         hostvars: Some(&hostvars),
         shared: Some(&shared),
@@ -408,9 +417,11 @@ pub(super) fn prepare(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),
             );
-            // Variables naming the loop variable could not resolve before it was bound.
-            let resolved = templar.resolve_vars(&vars);
+            // Variables naming the loop variable could not resolve before it was bound. One of
+            // them may be built from the item, so this pass widens the set the same way.
+            let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);
             vars.map = resolved;
+            vars.untrusted = untrusted;
         }
         let label = match (&element, &task.loop_label) {
             (None, _) => None,

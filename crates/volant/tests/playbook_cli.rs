@@ -5666,3 +5666,79 @@ fn a_fact_read_through_hostvars_is_never_evaluated() {
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A task variable built from a registered result is data as well. The name the playbook wrote
+/// never went through the fact store, so the only place its provenance can be learnt is the
+/// resolution that built it, and that is a pass the task's own arguments are rendered after.
+///
+/// `vars:` on a task feeding a registered value into `debug` is an everyday idiom, and it is a
+/// plain playbook: no include, no role, nothing exotic.
+///
+/// What would make this red: the set of names a resolution pass turned into data staying inside
+/// `resolve_vars` instead of travelling out with the map it resolved.
+#[test]
+fn a_task_variable_built_from_a_result_is_never_evaluated() {
+    let (dir, marker) = trust_dir("task-vars", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("payload.txt").display()),
+            &fixture("trust/task-vars.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        !marker.exists(),
+        "the lookup a task variable carried ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("lookup('pipe'"),
+        "the raw text should be shown as data:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What an include statement hands down is data when the value it was built from was. The
+/// statement's `vars:` are rendered on the driver and travel to the included steps as text, so
+/// the names among them that came from a host travel with them.
+///
+/// The included file need not even read the name: the merged map of every step the statement
+/// brought in is resolved as a whole.
+///
+/// What would make this red: `include_params` arriving with no record of which of its names were
+/// rendered from a managed host's output.
+#[test]
+fn an_include_parameter_built_from_a_result_is_never_evaluated() {
+    let (dir, marker) = trust_dir("include-params", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("payload.txt").display()),
+            &fixture("trust/include-params.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        !marker.exists(),
+        "the lookup an include parameter carried ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("lookup('pipe'"),
+        "the raw text should be shown as data:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

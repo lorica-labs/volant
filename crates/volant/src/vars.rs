@@ -137,6 +137,9 @@ pub struct VarStore {
     /// The same view completed with a host the inventory does not carry - an implicit
     /// `localhost` - one map per such host. There is normally at most one of them in a run.
     hostvars_with: BTreeMap<String, Arc<Map<String, Value>>>,
+    /// The hosts that hold at least one untrusted name, built on demand and dropped by the same
+    /// rule as `hostvars`: every write that can change it already goes through `set_fact`.
+    untrusted_hosts: Option<Arc<BTreeSet<String>>>,
     /// The inventory-wide values, with the three host lists they were built from. `groups` is
     /// fixed for the run, but the lists come from the coordinator's last published progress and
     /// move whenever a host drops out, so the map is good for one triple and no longer.
@@ -213,6 +216,7 @@ impl VarStore {
             forks: crate::config::DEFAULT_FORKS,
             hostvars: None,
             hostvars_with: BTreeMap::new(),
+            untrusted_hosts: None,
             shared: None,
         })
     }
@@ -255,7 +259,8 @@ impl VarStore {
     /// The name is data from here on, and a template that reads it is not rendered again.
     pub fn set_untrusted_fact(&mut self, host: &str, key: &str, value: Value) {
         // After, not before: `set_fact` clears the name, because a write from an author-side
-        // source gives the trust back.
+        // source gives the trust back. The cache `set_fact` dropped covers this write too,
+        // because nothing can read it between the two lines.
         self.set_fact(host, key, value);
         self.untrusted
             .entry(host.to_string())
@@ -267,17 +272,23 @@ impl VarStore {
         self.untrusted.get(host).cloned().unwrap_or_default()
     }
 
-    /// Hosts holding at least one untrusted name, for the `hostvars[other]` path. Rebuilt on each
-    /// call: the map has one entry per host that ever registered something, and a task reads it
-    /// once, so caching it would buy a clone and cost an invalidation rule.
-    pub fn untrusted_hosts(&self) -> Arc<BTreeSet<String>> {
-        Arc::new(
+    /// Hosts holding at least one untrusted name, for the `hostvars[other]` path. Read once per
+    /// host and per task, under the store's lock, so it is kept rather than rebuilt: the set is
+    /// the size of the inventory and every rebuild allocated a string per host inside the
+    /// critical section. Dropped by `forget_hostvars`, which every write to the facts calls.
+    pub fn untrusted_hosts(&mut self) -> Arc<BTreeSet<String>> {
+        if let Some(hosts) = &self.untrusted_hosts {
+            return Arc::clone(hosts);
+        }
+        let hosts: Arc<BTreeSet<String>> = Arc::new(
             self.untrusted
                 .iter()
                 .filter(|(_, names)| !names.is_empty())
                 .map(|(host, _)| host.clone())
                 .collect(),
-        )
+        );
+        self.untrusted_hosts = Some(Arc::clone(&hosts));
+        hosts
     }
 
     /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
@@ -384,6 +395,7 @@ impl VarStore {
     fn forget_hostvars(&mut self) {
         self.hostvars = None;
         self.hostvars_with.clear();
+        self.untrusted_hosts = None;
     }
 
     /// The `hostvars` view every host of this run renders against, as one shared map: templates

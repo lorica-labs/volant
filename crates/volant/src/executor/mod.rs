@@ -269,7 +269,7 @@ fn load_play_vars_files(
                 untrusted_hosts,
             )
         };
-        let resolved = state.templar.resolve_vars(Vars {
+        let (resolved, untrusted) = state.templar.resolve_vars_tainted(Vars {
             map: &raw,
             hostvars: None,
             shared: Some(&shared),

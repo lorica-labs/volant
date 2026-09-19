@@ -13,6 +13,7 @@
 //! and the driver tells the coordinator about every index it steps over, so a step left out is
 //! a step the recap can still account for.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -205,6 +206,20 @@ impl Default for Origin {
     }
 }
 
+/// What an include statement hands down, with the provenance of each name beside the values.
+///
+/// The values are rendered on the driver, against the variables of the item that asked for the
+/// include, and travel to the steps below as text. A name rendered from a managed host's output
+/// is data, and the text it holds is whatever that host wrote: without this set travelling with
+/// the values, the merged map of every step the statement brought in resolves it as if the
+/// playbook had written it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IncludeParams {
+    pub values: Map<String, Value>,
+    /// The names in `values` whose render read something that came from a managed host.
+    pub untrusted: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Step {
     pub kind: StepKind,
@@ -229,7 +244,7 @@ pub(crate) struct Step {
     /// `vars:` written on a `roles:` entry loses to that fact. So they go in at the role-parameter
     /// layer, above the facts and under `-e`, and they accumulate: an include inside an include
     /// hands its parent's down with its own.
-    pub include_params: Option<Arc<Map<String, Value>>>,
+    pub include_params: Option<Arc<IncludeParams>>,
     /// The hosts this step runs for, when it was spliced in for some of them and not all.
     ///
     /// `None` is every host, which is what the compilation produces. A step an include brought in
@@ -1159,7 +1174,7 @@ pub(crate) struct IncludeRequest {
     pub what: String,
     /// The variables the statement hands to everything it brings in: its own `vars:`, the loop
     /// variable of the item that asked for it and `ansible_loop_var` beside it.
-    pub vars: Map<String, Value>,
+    pub vars: IncludeParams,
     /// The item's display label, which the `included:` line carries as `=> (item=...)`.
     pub label: Option<String>,
 }
@@ -1175,7 +1190,8 @@ impl IncludeRequest {
     pub fn key(&self) -> String {
         serde_json::json!({
             "what": &self.what,
-            "vars": sorted(&self.vars),
+            "vars": sorted(&self.vars.values),
+            "untrusted": &self.vars.untrusted,
             "label": &self.label,
         })
         .to_string()
@@ -1271,7 +1287,7 @@ pub(crate) fn expand_include(
 pub(crate) struct Grafted {
     pub expanded: Compiled,
     /// What the statement handed down, for every step of this expansion.
-    pub params: Map<String, Value>,
+    pub params: IncludeParams,
     /// The hosts whose own statement asked for it.
     pub hosts: Arc<[String]>,
 }

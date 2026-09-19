@@ -29,18 +29,26 @@ def main() -> int:
     for i, case in enumerate(cases):
         # A case naming `untrusted` needs those variables to have come from the host rather than
         # from the playbook, which is what the reference decides trust on. Each one is read out of
-        # a file by `command` and carried through `set_fact`: a literal in the task's own text
-        # would be rendered by the reference before the command ever ran.
+        # a file by `command`: a literal in the task's own text would be rendered by the reference
+        # before the command ever ran.
+        #
+        # The register carries the case's number and the case's own `vars:` alias it under the
+        # name cases.yml wrote. A register outlives the task that set it, so a name written plain
+        # would stay defined for every case after this one, and a later case expecting it to be
+        # undefined would read this stale value and record the wrong reference answer.
+        case_vars = dict(case.get("vars") or {})
         for name, text in case.get("untrusted", {}).items():
             payloads[f"{i}-{name}"] = text
+            register = f"raw_{i}_{name}"
             tasks.append({
                 "name": f"setup {i} {name}",
                 "command": "cat {{ payload_dir }}/" + f"{i}-{name}.txt",
-            } | {"register": f"raw_{name}"})
-            tasks.append({"name": f"carry {i} {name}", "set_fact": {name: f"{{{{ raw_{name}.stdout }}}}"}})
+                "register": register,
+            })
+            case_vars[name] = f"{{{{ {register}.stdout }}}}"
         task = {"name": f"case {i}", "ignore_errors": True}
-        if "vars" in case:
-            task["vars"] = case["vars"]
+        if case_vars:
+            task["vars"] = case_vars
         if "when" in case:
             task["debug"] = {"msg": "ran"}
             task["when"] = case["when"]

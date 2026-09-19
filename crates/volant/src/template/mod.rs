@@ -43,7 +43,8 @@ impl std::error::Error for TemplateError {}
 pub(crate) type Tainted = Arc<AtomicBool>;
 
 /// The name `Context` answers with the render's taint sink. Two colons cannot appear in a Jinja
-/// identifier, so no playbook can name it, read it or shadow it.
+/// identifier, so no playbook can write it as a variable or shadow it; `lookup('vars', ...)`
+/// reaches it, and hands back an object whose only method marks the render as data.
 pub(crate) const TAINT_KEY: &str = "volant::tainted";
 
 #[derive(Debug)]
@@ -402,16 +403,31 @@ impl Templar {
     /// facts, so a registered value whose text looks like an expression would be evaluated here,
     /// one task before anything even reads it.
     pub fn resolve_vars<'a>(&self, vars: impl Into<Vars<'a>>) -> Map<String, Value> {
+        self.resolve_vars_tainted(vars).0
+    }
+
+    /// `resolve_vars`, with the names that are data once it is done: the ones it was given plus
+    /// the ones a pass turned into data by rendering them from one of those.
+    ///
+    /// The second half is the part a caller cannot work out for itself. A task's own `vars:` are
+    /// resolved here and read nowhere else, so a name the playbook wrote over a registered value
+    /// has no entry anywhere to be looked up by: unless this set travels out with the map, the
+    /// arguments rendered against that map read the payload as author content and evaluate it.
+    pub fn resolve_vars_tainted<'a>(
+        &self,
+        vars: impl Into<Vars<'a>>,
+    ) -> (Map<String, Value>, BTreeSet<String>) {
         let vars = vars.into();
+        let given = || vars.untrusted.cloned().unwrap_or_default();
         // Most maps hold no template at all: walking them once is far cheaper than the two
         // clones a pass costs.
         if !vars.map.values().any(holds_template) {
-            return vars.map.clone();
+            return (vars.map.clone(), given());
         }
         // The names the store knows about, and the ones a pass turns into data as it goes: a
         // value rendered from a managed host's name, or from a file read at run time, is data
         // from that pass on and the passes after this one leave it alone.
-        let mut untrusted = vars.untrusted.cloned().unwrap_or_default();
+        let mut untrusted = given();
         let mut current = vars.map.clone();
         for _ in 0..5 {
             // One context for the whole pass: every value of the map renders against the same
@@ -446,7 +462,7 @@ impl Templar {
                 break;
             }
         }
-        current
+        (current, untrusted)
     }
 
     fn render_value_lenient(

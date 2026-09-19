@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Read a file whose text looks like a template
+      command: cat {{ payload }}
+      register: motd
+    - name: Hand it down to an included file
+      include_tasks: include-shows-param.yml
+      vars:
+        banner: "{{ motd.stdout }}"

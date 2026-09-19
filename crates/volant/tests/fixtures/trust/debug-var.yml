@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Read a file whose text is a bare expression
+      command: cat {{ payload }}
+      register: r
+    - name: Name the variable to show from the result
+      debug:
+        var: "{{ r.stdout }}"
+      ignore_errors: true
+    - name: Name it from a loop item
+      debug:
+        var: "{{ item }}"
+      loop: "{{ r.stdout_lines }}"
+      ignore_errors: true

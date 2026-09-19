@@ -5519,6 +5519,14 @@ fn trust_dir(name: &str, hosts: &str) -> (std::path::PathBuf, std::path::PathBuf
         format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display()),
     )
     .expect("the payload");
+    // The same expression without the markers around it. A string a `debug: var:` names is
+    // compiled as an expression rather than rendered as a template, so the payload that reaches
+    // that site carries no braces at all.
+    std::fs::write(
+        dir.join("bare.txt"),
+        format!("lookup('pipe', 'touch {}')", marker.display()),
+    )
+    .expect("the bare payload");
     std::fs::write(dir.join("inv.ini"), hosts).expect("an inventory");
     (dir, marker)
 }
@@ -5738,6 +5746,136 @@ fn an_include_parameter_built_from_a_result_is_never_evaluated() {
     assert!(
         stdout.contains("lookup('pipe'"),
         "the raw text should be shown as data:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so
+/// a value that arrived from a managed host must never reach it. Every other guard in this
+/// release stops a *second* render; this site takes what a render already produced and hands it
+/// back as source text, which is a different mechanism and needs a different stop.
+///
+/// Measured on ansible-core 2.19.12: both the plain form and the loop form fail the task with
+/// `Task failed: Error while resolving `var` expression: Encountered untrusted template or
+/// expression.`, so the refusal is the reference's answer and not this engine's invention.
+///
+/// The payload has no `{{ }}` around it, because an expression is what this site compiles. The
+/// marker's absence is the assertion; the sentence on the terminal is only the shape of the
+/// refusal.
+///
+/// What would make this red: rendering a task's arguments without keeping which of them read a
+/// managed host, which is what `render_value` alone gives.
+#[test]
+fn a_variable_named_by_a_result_is_never_evaluated() {
+    let (dir, marker) = trust_dir("debug-var", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("bare.txt").display()),
+            &fixture("trust/debug-var.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        !marker.exists(),
+        "the expression a result named ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout
+            .matches("Encountered untrusted template or expression")
+            .count(),
+        2,
+        "both the plain form and the loop form should be refused:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The negative direction of the promotion: a map holding an author variable **and** a
+/// registered value promotes only the second. Without it nothing proves the promotion does not
+/// over-fire, because a map with no untrusted name in it cannot tell an over-wide set from a
+/// right one.
+///
+/// The author variable names the loop variable, so it cannot resolve until the item is bound
+/// and it is the *second* resolution that has to render it. That is the only shape where an
+/// over-wide promotion shows: a name already rendered by the pass that promoted it keeps its
+/// value whatever the set says.
+///
+/// What would make this red: promoting any name beyond the ones whose own render read a managed
+/// host - the greeting would then stay `greet {{ item }}` instead of reaching `greet a`. The
+/// other half of the same assertion is the marker: the registered value is still text.
+#[test]
+fn an_author_chain_beside_a_result_still_renders() {
+    let (dir, marker) = trust_dir("mixed-chain", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("payload.txt").display()),
+            &fixture("trust/mixed-chain.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        !marker.exists(),
+        "the lookup beside the author chain ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(r#""msg": "greet a and {{ lookup('pipe'"#),
+        "the author variable should reach the item while the result stays text:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other two lookups that read at run time. `lookup('file', ...)` was already data; a
+/// command's output and an environment variable are the same thing arriving by another door, and
+/// an engine that renders them again runs whatever they hold.
+///
+/// Measured on ansible-core 2.19.12: `pipe`, `env` and `file` all hand back a string the engine
+/// refuses to template a second time, each showing the `{{ 1 + 1 }}` its source held.
+///
+/// What would make this red: tainting only the `file` arm of the lookup, which is where this
+/// release started.
+#[test]
+fn what_a_lookup_read_at_run_time_is_never_evaluated() {
+    let (dir, marker) = trust_dir("lookup-run-time", "h1 ansible_connection=local\n");
+    let payload = std::fs::read_to_string(dir.join("payload.txt")).expect("the payload");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("payload.txt").display()),
+            &fixture("trust/lookup-run-time.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        &[("VOLANT_TRUST_PROBE", payload.trim_end())],
+    );
+    assert!(
+        !marker.exists(),
+        "the lookup in what was read at run time ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.matches("lookup('pipe'").count(),
+        2,
+        "both the command's output and the environment value should be shown as data:\n{stdout}"
     );
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     let _ = std::fs::remove_dir_all(&dir);

@@ -22,6 +22,12 @@ use crate::vars::{HostVars, VarStore, load_vars_file};
 use super::prepare::{Item, display};
 use super::{CANCEL_GRACE, LinkKey, RunOptions, as_bool_value, python_type};
 
+/// What a `debug: var:` naming a value that came from a managed host reports. The reference's
+/// own sentence, measured on ansible-core 2.19.12 against `var: "{{ r.stdout }}"` and against
+/// `var: "{{ item }}"` over a registered list: both fail the task with this `msg`, the second
+/// once per item.
+const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.";
+
 /// `include_vars`, run where every other controller-side module runs.
 ///
 /// Measured on ansible-core 2.19.12: a file that is there sets each of its keys as a fact and
@@ -161,6 +167,14 @@ pub(super) fn run_local(
                 return TaskResult(r);
             }
             if let Some(var) = item.args.get("var").and_then(Value::as_str) {
+                // `var` is the one argument this engine reads back as source text: it names an
+                // expression and that expression is compiled here. A value a managed host put
+                // there is data, and compiling data is how a remote string runs code on the
+                // controller. Refused with the reference's own sentence, measured on
+                // ansible-core 2.19.12 for both the plain form and the loop form.
+                if item.args_untrusted.contains("var") {
+                    return TaskResult::failed_with(UNTRUSTED_VAR);
+                }
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
                     Err(e) => r.insert(
@@ -843,6 +857,7 @@ mod tests {
                 element: None,
                 label: None,
                 args: Map::new(),
+                args_untrusted: std::collections::BTreeSet::new(),
                 vars: HostVars::default(),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -899,6 +914,7 @@ mod tests {
                     "provided_arguments": provided,
                     "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
                 })),
+                args_untrusted: std::collections::BTreeSet::new(),
                 vars: hvars(host),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -1049,6 +1065,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,

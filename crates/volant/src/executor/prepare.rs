@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rendering one task for one host: variables, escalation, environment and loop items.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
@@ -296,6 +296,10 @@ pub(super) struct Item {
     pub(super) element: Option<Value>,
     pub(super) label: Option<String>,
     pub(super) args: Map<String, Value>,
+    /// The arguments whose render read a value that came from a managed host. Only the ones the
+    /// engine reads back as source text consult it; everything else treats an argument as the
+    /// data it is and ships it to the agent.
+    pub(super) args_untrusted: BTreeSet<String>,
     /// Variables in force for this item, for `changed_when`, `failed_when` and local modules.
     pub(super) vars: HostVars,
     /// The variables the module runs with, this item's layers merged and rendered. Per item
@@ -440,15 +444,19 @@ pub(super) fn prepare(
                 break;
             }
         }
-        let args = if skipped.is_some() {
-            Map::new()
+        // Rendered argument by argument rather than as one value, because a few arguments are
+        // read back as engine input rather than as data - the name a `debug: var:` compiles -
+        // and the render is the only place that can say which of them came from a host.
+        let (args, args_untrusted) = if skipped.is_some() {
+            (Map::new(), BTreeSet::new())
         } else {
-            let mut rendered = templar.render_value(&Value::Object(task.args.clone()), &vars)?;
+            let (map, untrusted) = templar.render_map_tainted(&task.args, &vars)?;
+            let mut rendered = Value::Object(map);
             remove_omit(&mut rendered);
             let Value::Object(map) = rendered else {
                 unreachable!("an object renders to an object")
             };
-            map
+            (map, untrusted)
         };
         // A skipped item runs nothing, so a layer it could not render is not its problem: the
         // reference does not evaluate `environment` for a task a `when` left out.
@@ -461,6 +469,7 @@ pub(super) fn prepare(
             element,
             label,
             args,
+            args_untrusted,
             vars,
             environment,
             skipped,

@@ -338,6 +338,35 @@ impl Templar {
         Ok((out, any))
     }
 
+    /// `render_value` over a map, keeping the answer **per key**: the names whose own render
+    /// read a managed host come back beside the rendered map.
+    ///
+    /// A task's arguments are mostly data, and data is what a rendered value should be. A few
+    /// of them are not: an argument the engine reads back as source text - the name a
+    /// `debug: var:` compiles - is engine input, and the only moment its provenance exists is
+    /// the render that produced it. One answer for the whole map would refuse an argument the
+    /// playbook wrote because a sibling argument came from a host.
+    pub fn render_map_tainted<'a>(
+        &self,
+        map: &Map<String, Value>,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<(Map<String, Value>, BTreeSet<String>), TemplateError> {
+        let (ctx, tainted) = context_of(vars.into());
+        let mut out = Map::new();
+        let mut untrusted = BTreeSet::new();
+        for (key, value) in map {
+            let mut any = false;
+            out.insert(
+                key.clone(),
+                self.render_value_in(value, &ctx, &tainted, &mut any)?,
+            );
+            if any {
+                untrusted.insert(key.clone());
+            }
+        }
+        Ok((out, untrusted))
+    }
+
     fn render_value_in(
         &self,
         value: &Value,
@@ -402,12 +431,9 @@ impl Templar {
     /// half of the barrier `render_in` holds: the merged map a task renders against carries the
     /// facts, so a registered value whose text looks like an expression would be evaluated here,
     /// one task before anything even reads it.
-    pub fn resolve_vars<'a>(&self, vars: impl Into<Vars<'a>>) -> Map<String, Value> {
-        self.resolve_vars_tainted(vars).0
-    }
-
-    /// `resolve_vars`, with the names that are data once it is done: the ones it was given plus
-    /// the ones a pass turned into data by rendering them from one of those.
+    ///
+    /// The names that are data once it is done travel out with the map: the ones it was given
+    /// plus the ones a pass turned into data by rendering them from one of those.
     ///
     /// The second half is the part a caller cannot work out for itself. A task's own `vars:` are
     /// resolved here and read nowhere else, so a name the playbook wrote over a registered value
@@ -631,9 +657,11 @@ mod tests {
     #[test]
     fn resolve_vars_chains_references_and_leaves_broken_ones_alone() {
         let t = Templar::new(std::env::temp_dir());
-        let resolved = t.resolve_vars(&vars(
-            json!({"a": "{{ b }}", "b": "{{ c }}!", "c": "x", "bad": "{{ missing }}"}),
-        ));
+        let resolved = t
+            .resolve_vars_tainted(&vars(
+                json!({"a": "{{ b }}", "b": "{{ c }}!", "c": "x", "bad": "{{ missing }}"}),
+            ))
+            .0;
         assert_eq!(resolved["a"], json!("x!"));
         assert_eq!(resolved["c"], json!("x"));
         assert_eq!(resolved["bad"], json!("{{ missing }}"));

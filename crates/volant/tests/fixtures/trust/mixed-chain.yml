@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    greeting: "greet {{ item }}"
+  tasks:
+    - name: Read a file whose text looks like a template
+      command: cat {{ payload }}
+      register: motd
+    - name: An author variable and a result in the same map
+      debug:
+        msg: "{{ greeting }} and {{ carried }}"
+      vars:
+        carried: "{{ motd.stdout }}"
+      loop:
+        - a

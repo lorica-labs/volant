@@ -1,0 +1,13 @@
+{
+  "_ansible_no_log": false,
+  "action": "file",
+  "changed": true,
+  "dest": "/tmp/volant15-golden/golden-file",
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "mode": "0644",
+  "owner": "<golden-generator-account>",
+  "size": 0,
+  "state": "file",
+  "uid": 999999999
+}

@@ -1,0 +1,31 @@
+{
+  "_ansible_no_log": false,
+  "action": "apt",
+  "cache_update_time": 1789878766,
+  "cache_updated": false,
+  "changed": true,
+  "diff": {},
+  "stderr": "",
+  "stderr_lines": [],
+  "stdout": "NOTE: This is only a simulation!\n      apt-get needs root privileges for real execution.\n      Keep also in mind that locking is deactivated,\n      so don't depend on the relevance to the real current situation!\nReading package lists...\nBuilding dependency tree...\nReading state information...\nSolving dependencies...\nThe following package was automatically installed and is no longer required:\n  pollinate\nUse 'apt autoremove' to remove it.\nSuggested packages:\n  filters cowsay-off\nThe following NEW packages will be installed:\n  cowsay\n0 upgraded, 1 newly installed, 0 to remove and 36 not upgraded.\nInst cowsay (3.03+dfsg2-8build1 Ubuntu:26.04/resolute [all])\nConf cowsay (3.03+dfsg2-8build1 Ubuntu:26.04/resolute [all])\n",
+  "stdout_lines": [
+    "NOTE: This is only a simulation!",
+    "      apt-get needs root privileges for real execution.",
+    "      Keep also in mind that locking is deactivated,",
+    "      so don't depend on the relevance to the real current situation!",
+    "Reading package lists...",
+    "Building dependency tree...",
+    "Reading state information...",
+    "Solving dependencies...",
+    "The following package was automatically installed and is no longer required:",
+    "  pollinate",
+    "Use 'apt autoremove' to remove it.",
+    "Suggested packages:",
+    "  filters cowsay-off",
+    "The following NEW packages will be installed:",
+    "  cowsay",
+    "0 upgraded, 1 newly installed, 0 to remove and 36 not upgraded.",
+    "Inst cowsay (3.03+dfsg2-8build1 Ubuntu:26.04/resolute [all])",
+    "Conf cowsay (3.03+dfsg2-8build1 Ubuntu:26.04/resolute [all])"
+  ]
+}

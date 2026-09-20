@@ -1,0 +1,19 @@
+{
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "backup": "",
+  "changed": true,
+  "diff": [
+    {
+      "after": "",
+      "after_header": "/tmp/volant15-golden/golden-line (content)",
+      "before": "",
+      "before_header": "/tmp/volant15-golden/golden-line (content)"
+    },
+    {
+      "after_header": "/tmp/volant15-golden/golden-line (file attributes)",
+      "before_header": "/tmp/volant15-golden/golden-line (file attributes)"
+    }
+  ],
+  "msg": "line added"
+}

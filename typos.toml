@@ -1,2 +1,8 @@
 [files]
-extend-exclude = ["CHANGELOG.md", "Cargo.lock", "target/", "docs/book/"]
+extend-exclude = [
+  "CHANGELOG.md",
+  "Cargo.lock",
+  "target/",
+  "docs/book/",
+  "crates/volant/tests/golden/python-modules/",
+]

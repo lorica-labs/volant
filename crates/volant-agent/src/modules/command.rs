@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `command`, `shell` and `raw`: run a program and report rc, stdout and stderr like Ansible.
 
+use std::cell::Cell;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -143,6 +144,9 @@ pub(crate) fn execute(
     // Read before the handle moves into the reaping thread below. The child was started with
     // `process_group(0)`, so this is also the group's id, and the group keeps that id for as long
     // as it has members: killing by it still reaches descendants after the leader has been reaped.
+    // Once the group is empty the id can in principle be handed to an unrelated group, and the
+    // kills below would then reach it; that needs a full pid wraparound between the reap and the
+    // kill a few microseconds later, and the window is accepted rather than guarded.
     let pid = child.id();
     // Drain stdout and stderr on their own threads before writing stdin: the child may
     // start writing output while it is still reading input, and if nobody is reading
@@ -170,6 +174,22 @@ pub(crate) fn execute(
         });
     }
 
+    // `cancelled` has a side effect: it is a `try_recv` on the control channel, so it pops the
+    // cancellation message and answers `true` exactly **once**. The wait below and each of the two
+    // readers ask it, and every one of them has to get the same answer, so the first `true` is
+    // latched here and the rest of this function asks the latch.
+    let latch = {
+        let seen = Cell::new(false);
+        // `cancelled` here is still the argument: the binding below only shadows it afterwards.
+        move || {
+            if !seen.get() && cancelled() {
+                seen.set(true);
+            }
+            seen.get()
+        }
+    };
+    let cancelled: &dyn Fn() -> bool = &latch;
+
     let deadline = timeout.map(|t| Instant::now() + t);
     let status = loop {
         let left = match deadline {
@@ -188,7 +208,12 @@ pub(crate) fn execute(
         };
         match done.recv_timeout(left) {
             Ok(Ok(status)) => break status,
-            Ok(Err(err)) => return Run::Done(spawn_failure(display, chdir, &err)),
+            // `wait` failed, so the process's fate is as unknown as it is on the disconnected
+            // arm below: kill the group rather than leave it running behind a failed task.
+            Ok(Err(err)) => {
+                kill_group(pid);
+                return Run::Done(spawn_failure(display, chdir, &err));
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if cancelled() {
                     kill_group(pid);
@@ -209,7 +234,8 @@ pub(crate) fn execute(
     let rc = exit_code(status);
     // The readers wait under what is left of the same deadline. A descendant that outlived the
     // process it was forked from still holds these pipes, and waiting for it here is what used to
-    // carry a task well past its timeout and then report success.
+    // carry a task well past its timeout and then report success. Both calls run before the match,
+    // and the `else` asks a third time, which is what the latch above is for.
     let (Some(mut stdout), Some(mut stderr)) = (
         collect(&stdout, deadline, cancelled),
         collect(&stderr, deadline, cancelled),
@@ -271,7 +297,13 @@ fn collect(
 ) -> Option<String> {
     loop {
         let left = match deadline {
-            Some(d) => d.checked_duration_since(Instant::now())?.min(CANCEL_POLL),
+            Some(d) => match d.checked_duration_since(Instant::now()) {
+                Some(left) => left.min(CANCEL_POLL),
+                // Past the deadline, but the reader may already have sent: the wait loop can
+                // break with most of a `CANCEL_POLL` of the deadline spent, so take what is in
+                // the channel rather than report an expiry over output that is complete.
+                None => return rx.try_recv().ok(),
+            },
             None => CANCEL_POLL,
         };
         match rx.recv_timeout(left) {
@@ -865,6 +897,39 @@ mod tests {
             survivors.stdout.is_empty(),
             "grandchild survived: {}",
             String::from_utf8_lossy(&survivors.stdout)
+        );
+    }
+
+    /// The cancellation predicate consumes what it reports: in the agent it is a `try_recv` on
+    /// the control channel, so the `Cancel` is popped and the answer is `true` exactly once. Here
+    /// the shell exits at once and leaves a descendant holding the pipes, so the process wait is
+    /// over before anything is cancelled and the flag is first seen by a *reader*, which is the
+    /// path the other cancellation tests never take. The predicate waits out the process so the
+    /// reader is the one that asks, and answers `true` a single time.
+    ///
+    /// What would make this red: asking the predicate again below the first `true` -- the second
+    /// reader would then be told the task is fine and wait for a pipe nobody will close, so the
+    /// run never comes back and the bounded `recv_timeout` fails instead of the `matches!`. The
+    /// bound is this test's own deadline: `execute` runs on a thread precisely so a regression
+    /// that never returns is a failure here rather than a hang the harness has to cut off.
+    #[test]
+    fn a_cancellation_seen_by_one_reader_is_seen_by_the_rest() {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let started = Instant::now();
+            let taken = Cell::new(false);
+            let run = execute(
+                &args(json!({"_raw_params": "sleep 10 & exit 0"})),
+                true,
+                &Context::default(),
+                &|| started.elapsed() > Duration::from_millis(300) && !taken.replace(true),
+            );
+            let _ = tx.send(matches!(run, Run::Cancelled));
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(true),
+            "the run did not end cancelled: a reader lost the cancellation"
         );
     }
 

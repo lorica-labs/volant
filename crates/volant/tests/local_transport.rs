@@ -68,6 +68,7 @@ async fn runs_a_batch_through_the_local_transport() {
             ignore_errors: false,
             timeout: None,
             environment: BTreeMap::default(),
+            payload: None,
         }],
     })
     .await
@@ -116,6 +117,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
             ignore_errors: false,
             timeout: None,
             environment: BTreeMap::default(),
+            payload: None,
         }],
     })
     .await
@@ -156,6 +158,7 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
             ignore_errors: false,
             timeout: None,
             environment: BTreeMap::default(),
+            payload: None,
         }],
     })
     .await

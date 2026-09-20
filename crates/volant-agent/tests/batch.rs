@@ -15,6 +15,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         ignore_errors,
         timeout: None,
         environment: BTreeMap::default(),
+        payload: None,
     }
 }
 

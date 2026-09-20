@@ -665,6 +665,7 @@ pub(super) fn protocol_task(task: &PlayTask, item: &Item) -> Task {
         ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
         timeout: task.timeout,
         environment: item.environment.clone(),
+        payload: None,
     }
 }
 
@@ -709,7 +710,7 @@ pub(super) async fn run_agent_batch(
             // place the `no_log` policy can see it. `FromAgent::Log` carries no task index, so
             // the caller decides for the whole batch.
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
-            Ok(Some(FromAgent::Ready { .. })) => {}
+            Ok(Some(FromAgent::Ready { .. } | FromAgent::BlobState { .. })) => {}
             Ok(None) => break Err("agent stopped before the batch finished".to_string()),
             Err(err) => break Err(format!("reading from the agent: {err}")),
         }

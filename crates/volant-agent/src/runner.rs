@@ -69,6 +69,8 @@ fn is_cancelled(
                 ToAgent::Hello { .. } => "hello",
                 ToAgent::RunBatch { .. } => "run_batch",
                 ToAgent::Cancel { .. } => "cancel",
+                ToAgent::HasBlob { .. } => "has_blob",
+                ToAgent::PutBlob { .. } => "put_blob",
             };
             eprintln!("volant-agent: ignoring unexpected {kind} during batch {id}");
             false

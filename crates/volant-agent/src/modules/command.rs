@@ -912,6 +912,13 @@ mod tests {
     /// run never comes back and the bounded `recv_timeout` fails instead of the `matches!`. The
     /// bound is this test's own deadline: `execute` runs on a thread precisely so a regression
     /// that never returns is a failure here rather than a hang the harness has to cut off.
+    ///
+    /// How it can stop proving anything, so a pass on a loaded machine is not over-read: the gate
+    /// below assumes the shell is reaped before it opens. If a machine ever took longer than that
+    /// to spawn and reap `exit 0`, the wait loop would take the first `true` and this would
+    /// duplicate `cancellation_kills_the_program` rather than exercise the reader path. It
+    /// degrades to proving less; it cannot go red for that reason. The measured reap is about
+    /// 3 ms against a gate of 300, so the degradation needs a hundredfold regression.
     #[test]
     fn a_cancellation_seen_by_one_reader_is_seen_by_the_rest() {
         let (tx, rx) = mpsc::channel();

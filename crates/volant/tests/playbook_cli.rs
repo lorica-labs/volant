@@ -6660,12 +6660,35 @@ fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(4), "{stderr}{stdout}");
     assert!(
-        stderr.contains("argument 'expand_argument_vars' is not supported yet on 'command'"),
+        stderr.contains(
+            "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"
+        ),
         "the refusal did not name the argument:\n{stderr}"
     );
     assert!(
         !stdout.contains("PLAY ["),
         "a host was reached before the refusal:\n{stdout}"
+    );
+}
+
+/// The same argument set to `false` asks for exactly what this release does - it expands nothing -
+/// so the task runs. A refusal that reads the name and not the value stops a playbook that was
+/// byte-identical under both engines, while the value that really diverges is the default, which
+/// nobody writes and nothing can catch.
+///
+/// The assertion is the program's own output, not the exit code: `/bin/echo $HOME` succeeds
+/// either way, and only the five characters it printed say which engine expanded anything.
+///
+/// What would make this red: the refusal firing on the name, which exits 4 before connecting.
+#[test]
+fn asking_for_the_expansion_this_release_does_not_do_runs() {
+    let out = volant(&["playbook", &fixture("module-argument-expansion-off.yml")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}{stdout}");
+    assert!(
+        stdout.contains(r#""msg": "printed=$HOME""#),
+        "the argument the task asked for is not what the program was given:\n{stdout}"
     );
 }
 

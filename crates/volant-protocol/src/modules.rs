@@ -5,6 +5,8 @@
 
 use std::fmt::Write as _;
 
+use serde_json::Value;
+
 /// What one module does with one of its arguments.
 ///
 /// A module being in [`NATIVE_MODULES`] says it runs; it says nothing about the rest of its API,
@@ -12,11 +14,45 @@ use std::fmt::Write as _;
 /// what the playbook asked for. The status is per argument so that neither answer is a guess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgStatus {
-    /// Read, and acted on the way the reference acts on it.
+    /// Read, and the value decides what runs.
+    ///
+    /// It says the argument is read, not that it is coerced the way the reference coerces it.
+    /// `chdir`, `creates` and `removes` are `type='path'` there, which expands `~` and `$VAR`
+    /// before the value is used, and this release takes the value as it is written.
     Honoured,
+    /// The reference accepts the name on this module and acts on it nowhere, which is what this
+    /// release does with it too - `executable` on `command`, where no shell runs for it to
+    /// select. Nothing to promise and nothing to refuse, so it is out of the generated page.
+    Inert,
     /// The reference has it and this release does not do what it asks for. Named by the
     /// pre-flight, before the first connection, rather than accepted and forgotten.
-    Refused,
+    ///
+    /// The value carried is the one that is refused, the way `check_mode` is refused for `true`
+    /// and runs for `false`: the other value asks for what this release already does, and
+    /// refusing that would stop a playbook the two engines agreed on. `None` refuses the name
+    /// whatever the value says.
+    Refused(Option<bool>),
+}
+
+/// A value read the way the reference reads an argument declared `type='bool'`.
+///
+/// Measured on ansible-core 2.19.12, whose own refusal lists the spellings it takes: `0, 1, 'n',
+/// 'on', 'true', 'f', 'false', 'y', 'yes', 'no', '0', '1', 't', 'off'`, case folded, and a string
+/// outside that set fails the task there. `Value::as_bool` sees none of them, so an argument
+/// written `"false"` - which a whole-expression template produces on its own - used to read back
+/// as the default and do the opposite of what it says.
+pub fn arg_bool(value: &Value) -> Option<bool> {
+    let text = match value {
+        Value::Bool(b) => return Some(*b),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.to_ascii_lowercase(),
+        _ => return None,
+    };
+    match text.as_str() {
+        "y" | "yes" | "on" | "1" | "1.0" | "true" | "t" => Some(true),
+        "n" | "no" | "off" | "0" | "0.0" | "false" | "f" => Some(false),
+        _ => None,
+    }
 }
 
 /// One argument of one module, and what this release does with it.
@@ -60,69 +96,77 @@ pub struct ModuleSpec {
 /// `_raw_params` for every free-form task and `_uses_shell` marks the shell semantics, and the
 /// reference accepts both by name. `cmd` is the ordinary spelling of the same command line.
 ///
-/// `shell` shares this list because the reference shares the module.
-const COMMAND_ARGS: &[ModuleArg] = &[
-    ModuleArg {
-        name: "_raw_params",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "_uses_shell",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "argv",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "chdir",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "cmd",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "creates",
-        status: ArgStatus::Honoured,
-    },
-    // Read only where the reference reads it, which is the `shell` path: the reference's
-    // `command` accepts the name and runs no shell for it to select.
-    ModuleArg {
-        name: "executable",
-        status: ArgStatus::Honoured,
-    },
-    // Measured: it decides whether the arguments handed to the program have their shell
-    // variables expanded first - `/bin/echo $HOME` prints the home directory by default and the
-    // two characters `$HOME` when it is off. This release expands nothing, so accepting the
-    // argument would answer one of its two values correctly and the other silently wrong.
-    ModuleArg {
-        name: "expand_argument_vars",
-        status: ArgStatus::Refused,
-    },
-    ModuleArg {
-        name: "removes",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "stdin",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "stdin_add_newline",
-        status: ArgStatus::Honoured,
-    },
-    ModuleArg {
-        name: "strip_empty_ends",
-        status: ArgStatus::Honoured,
-    },
-];
+/// `shell` shares these names because the reference shares the module. One status differs, so
+/// the names are written once and the difference is the argument: `executable` is the shell
+/// `shell` hands its line to, and on `command` the reference starts no shell for it to select.
+const fn command_args(executable: ArgStatus) -> [ModuleArg; 12] {
+    [
+        ModuleArg {
+            name: "_raw_params",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "_uses_shell",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "argv",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "chdir",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "cmd",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "creates",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "executable",
+            status: executable,
+        },
+        // Measured: it decides whether the arguments handed to the program have their shell
+        // variables expanded first - `/bin/echo $HOME` prints the home directory by default and the
+        // five characters `$HOME` when it is off. This release expands nothing, which is what `false`
+        // asks for, so only `true` is refused: refusing `false` would stop a playbook that ran the
+        // same under both engines, and it is the default - the value nobody writes - that diverges.
+        ModuleArg {
+            name: "expand_argument_vars",
+            status: ArgStatus::Refused(Some(true)),
+        },
+        ModuleArg {
+            name: "removes",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "stdin",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "stdin_add_newline",
+            status: ArgStatus::Honoured,
+        },
+        ModuleArg {
+            name: "strip_empty_ends",
+            status: ArgStatus::Honoured,
+        },
+    ]
+}
+
+/// The list `command` answers with: `executable` is accepted and does nothing, there as here.
+const COMMAND_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Inert);
+/// The same names, with the one argument `shell` reads and `command` does not.
+const SHELL_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Honoured);
 
 pub const COMMAND: ModuleSpec = ModuleSpec {
     name: "command",
     free_form: true,
     summary: "Run a program directly, without a shell.",
-    args: COMMAND_ARGS,
+    args: &COMMAND_ARGS,
     validated_as: Some("ansible.legacy.command"),
 };
 pub const RAW: ModuleSpec = ModuleSpec {
@@ -139,7 +183,7 @@ pub const SHELL: ModuleSpec = ModuleSpec {
     name: "shell",
     free_form: true,
     summary: "Run a command line through a shell, `sh` unless `executable` names another.",
-    args: COMMAND_ARGS,
+    args: &SHELL_ARGS,
     validated_as: Some("ansible.legacy.command"),
 };
 
@@ -342,15 +386,28 @@ pub fn is_known(module: &str) -> bool {
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads. An argument Ansible has and this release does not act on is named under the table instead.\n\n| Module | Free-form arguments | Arguments | What it does |\n|---|---|---|---|\n",
+        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads. The list under the table names the arguments Ansible has and this release refuses.\n\n| Module | Free-form arguments | Arguments | What it does |\n|---|---|---|---|\n",
     );
     // The internal keys carry the command line itself rather than being written in a playbook,
     // so they are in the registry and out of the page.
-    let public = |m: &ModuleSpec, want: ArgStatus| {
+    let honoured = |m: &ModuleSpec| {
         m.args
             .iter()
-            .filter(|a| a.status == want && !a.name.starts_with('_'))
+            .filter(|a| a.status == ArgStatus::Honoured && !a.name.starts_with('_'))
             .map(|a| format!("`{}`", a.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // A refusal tied to one value names that value: the other one is what this release does.
+    let refused = |m: &ModuleSpec| {
+        m.args
+            .iter()
+            .filter(|a| !a.name.starts_with('_'))
+            .filter_map(|a| match a.status {
+                ArgStatus::Refused(Some(v)) => Some(format!("`{}: {v}`", a.name)),
+                ArgStatus::Refused(None) => Some(format!("`{}`", a.name)),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -363,31 +420,27 @@ pub fn documentation_table() -> String {
                 if m.free_form { "yes" } else { "no" }
             );
             if args {
-                let honoured = public(m, ArgStatus::Honoured);
+                let read = honoured(m);
                 let _ = write!(
                     out,
                     " {} |",
-                    if honoured.is_empty() {
-                        "-"
-                    } else {
-                        honoured.as_str()
-                    }
+                    if read.is_empty() { "-" } else { read.as_str() }
                 );
             }
             let _ = writeln!(out, " {} |", m.summary);
         }
     };
     rows(NATIVE_MODULES, true, &mut out);
-    let refused: String = NATIVE_MODULES
+    let notes: String = NATIVE_MODULES
         .iter()
         .filter_map(|m| {
-            let names = public(m, ArgStatus::Refused);
+            let names = refused(m);
             (!names.is_empty()).then(|| format!("- `{}`: {names}\n", m.name))
         })
         .collect();
-    if !refused.is_empty() {
-        out.push_str("\nVolant refuses these by name, before the run reaches a host:\n\n");
-        out.push_str(&refused);
+    if !notes.is_empty() {
+        out.push_str("\nVolant refuses these before the run reaches a host:\n\n");
+        out.push_str(&notes);
     }
     out.push_str(
         "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
@@ -398,6 +451,8 @@ pub fn documentation_table() -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -557,14 +612,97 @@ mod tests {
             );
         }
         // Measured on ansible-core 2.19.12, through `args:` on both modules: one module name,
-        // one list. The ad-hoc path validates nothing, because `free_form` swallows the whole
-        // line into `_raw_params`.
-        assert_eq!(COMMAND.args, SHELL.args, "the reference shares the module");
+        // one list of names, and one refusal. The ad-hoc path validates nothing, because
+        // `free_form` swallows the whole line into `_raw_params`.
+        let names = |m: &ModuleSpec| m.args.iter().map(|a| a.name).collect::<Vec<_>>();
+        let refused = |m: &ModuleSpec| {
+            m.args
+                .iter()
+                .filter(|a| matches!(a.status, ArgStatus::Refused(_)))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(&COMMAND),
+            names(&SHELL),
+            "the reference shares the module"
+        );
+        assert_eq!(refused(&COMMAND), refused(&SHELL));
         assert_eq!(SHELL.validated_as, Some("ansible.legacy.command"));
         assert_eq!(
             RAW.validated_as, None,
             "raw's action plugin never validates an argument"
         );
+    }
+
+    /// `executable` names the shell a command line is handed to, so it means something only where
+    /// a shell runs. The reference accepts it on `command` and starts no shell there, and so does
+    /// this release - which is parity, not a gap, and so belongs in neither column of the page.
+    ///
+    /// What would make this red: `command` claiming to read it, which the generated page then
+    /// tells an operator, who writes it and gets no shell, no refusal and no hint why.
+    #[test]
+    fn executable_is_read_only_where_a_shell_runs() {
+        let status = |m: &ModuleSpec| {
+            m.args
+                .iter()
+                .find(|a| a.name == "executable")
+                .map(|a| a.status)
+        };
+        assert_eq!(status(&COMMAND), Some(ArgStatus::Inert));
+        assert_eq!(status(&SHELL), Some(ArgStatus::Honoured));
+        assert_eq!(status(&RAW), Some(ArgStatus::Honoured));
+        let page = documentation_table();
+        let row = |name: &str| {
+            page.lines()
+                .find(|l| l.starts_with(&format!("| `{name}` |")))
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(!row("command").contains("executable"), "{}", row("command"));
+        assert!(row("shell").contains("`executable`"), "{}", row("shell"));
+    }
+
+    /// The spellings the reference takes for an argument declared `type='bool'`, read from its
+    /// own refusal of a value outside the set and measured task by task: `"false"`, `"no"`, `0`
+    /// and `"Off"` all turn the argument off there.
+    ///
+    /// What would make this red: reading the value with `Value::as_bool`, which answers `None`
+    /// for every spelling but a YAML boolean and leaves the caller on its default - so a task
+    /// asking for the opposite of the default gets the default and reports success.
+    #[test]
+    fn a_boolean_argument_reads_every_spelling_the_reference_takes() {
+        for yes in [
+            json!(true),
+            json!("true"),
+            json!("True"),
+            json!("YES"),
+            json!("t"),
+            json!("on"),
+            json!(1),
+            json!(1.0),
+        ] {
+            assert_eq!(arg_bool(&yes), Some(true), "{yes}");
+        }
+        for no in [
+            json!(false),
+            json!("false"),
+            json!("no"),
+            json!("Off"),
+            json!("f"),
+            json!(0),
+            json!("0"),
+        ] {
+            assert_eq!(arg_bool(&no), Some(false), "{no}");
+        }
+        for neither in [
+            json!("maybe"),
+            json!(2),
+            json!(null),
+            json!([true]),
+            json!(""),
+        ] {
+            assert_eq!(arg_bool(&neither), None, "{neither}");
+        }
     }
 
     #[test]

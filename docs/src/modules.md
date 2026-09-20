@@ -4,18 +4,18 @@ These are the modules Volant runs. A playbook naming any other module is refused
 
 ## On the agent
 
-The agent runs these on the host, without Python. The arguments column lists what each module reads. An argument Ansible has and this release does not act on is named under the table instead.
+The agent runs these on the host, without Python. The arguments column lists what each module reads. The list under the table names the arguments Ansible has and this release refuses.
 
 | Module | Free-form arguments | Arguments | What it does |
 |---|---|---|---|
-| `command` | yes | `argv`, `chdir`, `cmd`, `creates`, `executable`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a program directly, without a shell. |
+| `command` | yes | `argv`, `chdir`, `cmd`, `creates`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a program directly, without a shell. |
 | `raw` | yes | `executable` | Run a command line through the remote shell, with no module machinery around it. |
 | `shell` | yes | `argv`, `chdir`, `cmd`, `creates`, `executable`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a command line through a shell, `sh` unless `executable` names another. |
 
-Volant refuses these by name, before the run reaches a host:
+Volant refuses these before the run reaches a host:
 
-- `command`: `expand_argument_vars`
-- `shell`: `expand_argument_vars`
+- `command`: `expand_argument_vars: true`
+- `shell`: `expand_argument_vars: true`
 
 ## On the controller
 

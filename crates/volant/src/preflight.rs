@@ -266,22 +266,35 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
 /// The internal keys need no exemption. `_raw_params` carries the command line of every free-form
 /// task and `_uses_shell` carries the shell semantics, and the reference lists both among the
 /// parameters it accepts, so both are in the registry with everything else.
+///
+/// A refusal the registry ties to one value fires on that value alone, the way `check_mode` is
+/// refused for `true` and runs for `false`. A value this cannot read - a template, rendered per
+/// host long after the pre-flight has run, and `{{ omit }}` among them - is left to run rather
+/// than refused on a guess, because a guess here stops a playbook before it reaches a host.
 fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
     let Some(spec) = volant_protocol::modules::native(&task.module) else {
         return Ok(());
     };
-    for key in task.args.keys() {
-        if spec
+    for (key, value) in &task.args {
+        let Some(ArgStatus::Refused(guard)) = spec
             .args
             .iter()
-            .any(|a| a.name == key.as_str() && a.status == ArgStatus::Refused)
+            .find(|a| a.name == key.as_str())
+            .map(|a| a.status)
+        else {
+            continue;
+        };
+        if let Some(refused) = guard
+            && volant_protocol::modules::arg_bool(value) != Some(refused)
         {
-            bail!(
-                "task '{}': argument '{key}' is not supported yet on '{}'",
-                task.name,
-                task.module
-            );
+            continue;
         }
+        let with = guard.map(|v| format!(" with '{v}'")).unwrap_or_default();
+        bail!(
+            "task '{}': argument '{key}' is not supported yet{with} on '{}'",
+            task.name,
+            task.module
+        );
     }
     Ok(())
 }
@@ -620,23 +633,33 @@ mod tests {
     /// this engine's message and this engine's code where the reference has its own; the refusal
     /// dropped, which lets the task reach an agent that ignores the argument and reports success;
     /// or `_raw_params` refused, which refuses every free-form task there is.
+    ///
+    /// The value decides, and `expand_argument_vars` is the one argument where it does. `false`
+    /// asks for the expansion this release does not do, so the task runs; `true` asks for the one
+    /// it cannot do, so the task is refused. Reading the name alone refused a playbook the two
+    /// engines agreed on, and `"yes"` is here because the reference reads that spelling too.
     #[test]
     fn a_module_argument_this_release_does_not_honour_is_refused_by_name() {
         for module in ["command", "ansible.legacy.shell"] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      {module}: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"
-            ));
-            assert!(
-                text.contains(&format!(
-                    "argument 'expand_argument_vars' is not supported yet on '{module}'"
-                )),
-                "{text}"
-            );
+            for value in ["true", "\"yes\"", "1"] {
+                let text = refusal(&format!(
+                    "- hosts: all\n  tasks:\n    - name: T\n      {module}: /bin/echo $HOME\n      args:\n        expand_argument_vars: {value}\n"
+                ));
+                assert!(
+                    text.contains(&format!(
+                        "argument 'expand_argument_vars' is not supported yet with 'true' on '{module}'"
+                    )),
+                    "{value}: {text}"
+                );
+            }
         }
         for body in [
             "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        no_such_arg: 1\n",
             "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        chdir: /tmp\n        stdin_add_newline: false\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      raw: /bin/true\n      args:\n        expand_argument_vars: false\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      raw: /bin/true\n      args:\n        expand_argument_vars: true\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"{{ omit }}\"\n",
         ] {
             let pb = parse(body, "x.yml").unwrap();
             assert!(check(&pb).is_ok(), "{body}");

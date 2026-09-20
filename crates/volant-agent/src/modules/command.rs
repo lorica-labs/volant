@@ -177,8 +177,8 @@ pub(crate) fn execute(
     // Drain stdout and stderr on their own threads before writing stdin: the child may
     // start writing output while it is still reading input, and if nobody is reading
     // that output yet, both sides block once a pipe buffer fills up. Writing stdin from
-    // its own thread, joined below, keeps that write off the thread that has to reach
-    // the cancellation check further down.
+    // its own thread, waited on below under the same deadline as the readers, keeps that
+    // write off the thread that has to reach the cancellation check further down.
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     // A channel rather than a `JoinHandle`, for the same reason as the readers: a descendant that

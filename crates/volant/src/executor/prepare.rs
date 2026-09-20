@@ -9,7 +9,6 @@ use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
 use crate::compile::{Compiled, IncludeParams, Step};
-use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError, Vars};
@@ -42,11 +41,6 @@ pub(super) struct PlayPlan {
     pub(super) all_play_hosts: Vec<String>,
     pub(super) r#become: Option<bool>,
     pub(super) become_user: Option<String>,
-    /// Every host the inventory resolved, by name, for `delegate_to` to look one up in. The
-    /// whole inventory rather than the play's own hosts: measured on ansible-core 2.19.12, a
-    /// play over h1 and h2 delegates to h3 without h3 being in the play at all, and h3 stays
-    /// out of the recap.
-    pub(super) inventory: Arc<HashMap<String, Host>>,
 }
 
 impl PlayPlan {
@@ -286,8 +280,14 @@ pub(super) enum Prepared {
     /// The host is the delegate when the task has one, and that is the host the link is opened
     /// to, keyed by, and reused from: measured on ansible-core 2.19.12, a task delegated away
     /// from a host nothing can reach runs perfectly well, so the delegating host's own
-    /// connection is never opened for it.
-    Remote(Vec<Item>, Option<Escalation>, Option<Host>),
+    /// connection is never opened for it. The delegate travels with its own effective
+    /// variables, which are what its connection is built from; the task's own host needs none
+    /// here, since every item already carries them.
+    Remote(
+        Vec<Item>,
+        Option<Escalation>,
+        Option<(String, Map<String, Value>)>,
+    ),
 }
 
 /// One loop item (or the whole task when there is no loop), rendered.
@@ -478,10 +478,33 @@ pub(super) fn prepare(
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
     }
-    let delegate = delegate_for(task, &base, templar)?.map(|name| delegate_host(&name, plan));
+    let delegate = delegate_for(task, &base, templar)?;
     if is_local(&task.module) {
-        return Ok(Prepared::Local(items, delegate.map(|d| d.name)));
+        return Ok(Prepared::Local(items, delegate));
     }
+    // A delegate's variables come back merged under the full precedence, like any host's: its
+    // connection is decided by `-e ansible_connection=local`, by a `group_vars` file and by the
+    // task's own `vars:` exactly as the delegating host's is. Measured on ansible-core 2.19.12:
+    // a `delegate_to` naming a host the inventory has never heard of is connected to rather than
+    // refused - `delegate_to: nosuch` reports `fatal: [h1 -> nosuch]: UNREACHABLE!` with ssh's
+    // own resolution error and exits 4 - so an unknown name is an ssh target of that name, not a
+    // load-time error. The implicit spellings get their local connection from
+    // `VarStore::for_host`, which is where every host's view is built and where the delegating
+    // host's own implicit `localhost` gets it too.
+    let delegate = delegate.map(|name| {
+        let vars = host_vars(
+            &name,
+            plan,
+            &task.vars,
+            step.role,
+            step.include_params.as_deref(),
+            live,
+            templar,
+            store,
+        )
+        .map;
+        (name, vars)
+    });
     // From the delegating host's own variables, measured on ansible-core 2.19.12:
     // `ansible_become_user` under a `delegate_to` still reads the value the **delegating**
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
@@ -527,28 +550,6 @@ fn delegate_for(
         raw.clone()
     };
     Ok(Some(name).filter(|n| !n.is_empty()))
-}
-
-/// The host a `delegate_to` names: the inventory's own entry when it has one, an implicit host
-/// otherwise.
-///
-/// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
-/// inventory runs locally (`changed: [h1 -> localhost]`), `127.0.0.1` does the same, and a name
-/// the inventory has never heard of is **connected to** rather than refused - `delegate_to:
-/// nosuch` reports `fatal: [h1 -> nosuch]: UNREACHABLE!` with ssh's own resolution error and
-/// exits 4. So an unknown name is an ssh target of that name, not a load-time error.
-fn delegate_host(name: &str, plan: &PlayPlan) -> Host {
-    if let Some(host) = plan.inventory.get(name) {
-        return host.clone();
-    }
-    let mut vars = BTreeMap::new();
-    if matches!(name, "localhost" | "127.0.0.1" | "::1") {
-        vars.insert("ansible_connection".to_string(), json!("local"));
-    }
-    Host {
-        name: name.to_string(),
-        vars,
-    }
 }
 
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
@@ -614,7 +615,6 @@ mod tests {
             play_vars: Map::new(),
             vars_files: HashMap::new(),
             all_play_hosts: Vec::new(),
-            inventory: Arc::new(HashMap::new()),
             r#become: None,
             become_user: None,
         }
@@ -832,7 +832,8 @@ mod tests {
     }
 
     /// A delegate is the inventory's own host when it has one, the local host for the three
-    /// implicit spellings, and an ssh target of that name otherwise.
+    /// implicit spellings, and an ssh target of that name otherwise -- and its variables come
+    /// back merged the way any host's do, so its connection obeys the same precedence.
     ///
     /// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
     /// inventory runs locally, and `delegate_to: nosuch` is connected to rather than refused -
@@ -843,31 +844,47 @@ mod tests {
     /// machine the controller is already on.
     #[test]
     fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
-        let mut plan = plan();
-        let mut known = Host {
-            name: "h3".into(),
-            vars: BTreeMap::new(),
+        let inventory = crate::inventory::Inventory::parse_ini(
+            "h3 ansible_host=10.0.0.3
+",
+        )
+        .expect("an inventory");
+        let store = Mutex::new(
+            VarStore::new(&inventory, None, std::path::Path::new("."), Map::new())
+                .expect("a var store"),
+        );
+        let templar = Templar::new(std::env::temp_dir());
+        let live = Progress::default();
+        let plan = plan();
+        let of = |name: &str| {
+            host_vars(
+                name,
+                &plan,
+                &Map::new(),
+                None,
+                None,
+                &live,
+                &templar,
+                &store,
+            )
+            .map
         };
-        known.vars.insert("ansible_host".into(), json!("10.0.0.3"));
-        plan.inventory = Arc::new(HashMap::from([("h3".to_string(), known)]));
 
-        let found = delegate_host("h3", &plan);
-        assert_eq!(found.vars.get("ansible_host"), Some(&json!("10.0.0.3")));
+        assert_eq!(of("h3").get("ansible_host"), Some(&json!("10.0.0.3")));
 
         for name in ["localhost", "127.0.0.1", "::1"] {
-            let implicit = delegate_host(name, &plan);
-            assert_eq!(implicit.name, name);
             assert_eq!(
-                implicit.vars.get("ansible_connection"),
+                of(name).get("ansible_connection"),
                 Some(&json!("local")),
                 "{name}"
             );
         }
 
-        let stranger = delegate_host("nosuch", &plan);
-        assert_eq!(stranger.name, "nosuch");
-        assert!(
-            stranger.vars.is_empty(),
+        let stranger = of("nosuch");
+        assert_eq!(stranger.get("ansible_connection"), None);
+        assert_eq!(
+            stranger.get("ansible_host"),
+            None,
             "an unknown name is an ssh target of that name, not a refusal"
         );
     }

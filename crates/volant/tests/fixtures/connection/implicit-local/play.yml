@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: On the controller, whatever the group file says
+      command: true

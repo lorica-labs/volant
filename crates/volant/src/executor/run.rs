@@ -12,7 +12,6 @@ use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{Compiled, Step};
-use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::stats::Outcome;
 use crate::template::{Templar, TemplateError};
@@ -728,16 +727,19 @@ pub(super) fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool
     }
 }
 
-/// The connection for the next batch, under `key`'s target user: the one kept from an earlier
-/// play if its agent still answers, a fresh one otherwise. A kept connection gets exactly one
-/// liveness check per play, and a failed check exactly one reconnection; a failed reconnection
-/// is the host's `UNREACHABLE`.
+/// The connection for the next batch, under `key`'s target user and over `key`'s transport: the
+/// one kept from an earlier play if its agent still answers, a fresh one otherwise. A kept
+/// connection gets exactly one liveness check per play, and a failed check exactly one
+/// reconnection; a failed reconnection is the host's `UNREACHABLE`.
+///
+/// The transport comes in on the key rather than being resolved here, so the connection a batch
+/// opens and the identity it is filed under can never be built from two different views of the
+/// host's variables.
 pub(super) async fn reuse_or_connect<'a>(
     links: &'a mut HashMap<LinkKey, AgentLink>,
     checked: &mut HashSet<LinkKey>,
     key: &LinkKey,
     escalation: Option<&Escalation>,
-    host: &Host,
     agents: &AgentSource,
     options: &RunOptions,
 ) -> Result<&'a mut AgentLink, ConnectError> {
@@ -764,7 +766,7 @@ pub(super) async fn reuse_or_connect<'a>(
         }
     }
     if !links.contains_key(key) {
-        let link = match connect(host, agents, &options.defaults, escalation).await {
+        let link = match connect(&key.transport, agents, &options.defaults, escalation).await {
             Ok(link) => link,
             Err(ConnectError::Unreachable(msg)) => {
                 return Err(ConnectError::Unreachable(match stale {
@@ -801,13 +803,11 @@ pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<
 /// run cannot reach and comes back as `ConnectError::Unreachable`, except a `sudo` that refused,
 /// which comes back as `ConnectError::Become` because the host itself answered.
 async fn connect(
-    host: &Host,
+    transport: &Transport,
     agents: &AgentSource,
     defaults: &ConnectionDefaults,
     escalation: Option<&Escalation>,
 ) -> Result<AgentLink, ConnectError> {
-    let transport = Transport::for_host(host, defaults)
-        .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
     let mut link = transport.connect(agents, escalation).await?;
     let timeout = defaults.connect_timeout;
     tokio::time::timeout(timeout, link.handshake())

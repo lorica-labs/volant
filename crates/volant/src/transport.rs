@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::bail;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -82,14 +82,14 @@ fn redacted(password: Option<&String>) -> &'static str {
 pub const MISSING_SUDO_PASSWORD: &str = "Missing sudo password";
 pub const INCORRECT_SUDO_PASSWORD: &str = "Incorrect sudo password";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {
     /// Run the agent on the controller machine itself.
     Local,
     Ssh(SshTarget),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SshTarget {
     pub address: String,
     pub port: Option<u16>,
@@ -152,34 +152,46 @@ fn bootstrap_probe_ran(probe: &Captured) -> bool {
 }
 
 impl Transport {
-    pub fn for_host(host: &Host, defaults: &ConnectionDefaults) -> anyhow::Result<Transport> {
-        let text = |key: &str| {
-            host.vars
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        };
+    /// The connection one host uses, read from its effective variables: the merged view under
+    /// the full precedence rather than the inventory object. `ansible_connection` and its
+    /// neighbours are ordinary variables, so an extra var, a `group_vars` file loaded beside the
+    /// playbook, a task's own `vars:` and a `set_fact` all reach here, and they are read again
+    /// for every task - measured on ansible-core 2.19.12, a `set_fact` of `ansible_host` in the
+    /// middle of a play is the address the next task connects to.
+    pub fn for_vars(
+        host_name: &str,
+        vars: &Map<String, Value>,
+        defaults: &ConnectionDefaults,
+    ) -> anyhow::Result<Transport> {
+        let text = |key: &str| vars.get(key).and_then(Value::as_str).map(str::to_string);
         match text("ansible_connection").as_deref().unwrap_or("ssh") {
             "local" => Ok(Transport::Local),
             "ssh" => Ok(Transport::Ssh(SshTarget {
-                address: text("ansible_host").unwrap_or_else(|| host.name.clone()),
-                port: port_of(host),
+                address: text("ansible_host").unwrap_or_else(|| host_name.to_string()),
+                port: port_of(vars),
                 user: text("ansible_user").or_else(|| defaults.remote_user.clone()),
                 private_key: text("ansible_ssh_private_key_file")
                     .map(PathBuf::from)
                     .or_else(|| defaults.private_key.clone()),
-                common_args: split_args(host, "ansible_ssh_common_args")?,
-                extra_args: split_args(host, "ansible_ssh_extra_args")?,
+                common_args: split_args(host_name, vars, "ansible_ssh_common_args")?,
+                extra_args: split_args(host_name, vars, "ansible_ssh_extra_args")?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
                 remote_tmp: text("ansible_remote_tmp")
                     .unwrap_or_else(|| defaults.remote_tmp.clone()),
             })),
-            other => bail!(
-                "host '{}': connection '{other}' is not supported",
-                host.name
-            ),
+            other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }
+    }
+
+    /// The same, from the inventory object's own variables alone. Nothing on the run's own path
+    /// calls it: the executor passes the host's effective map and the pre-flight in `cli.rs`
+    /// builds its own, both through `for_vars`. What is left is the shorthand the transport's
+    /// own tests are written against, and that is the point of keeping it - those tests read an
+    /// inventory `Host` and were not touched when the resolution moved onto the effective view,
+    /// so they are the evidence that the move changed no rule.
+    pub fn for_host(host: &Host, defaults: &ConnectionDefaults) -> anyhow::Result<Transport> {
+        Self::for_vars(&host.name, &as_map(&host.vars), defaults)
     }
 
     pub async fn connect(
@@ -493,16 +505,26 @@ fn unreachable_message(stderr: &str, offered: Option<&str>) -> String {
 /// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
 /// rather than dropped: silently connecting without a `ProxyJump` or `ProxyCommand` the
 /// inventory asked for can reach a different machine than the operator meant.
-fn split_args(host: &Host, key: &str) -> anyhow::Result<Vec<String>> {
-    let Some(text) = host.vars.get(key).and_then(Value::as_str) else {
+fn split_args(
+    host_name: &str,
+    vars: &Map<String, Value>,
+    key: &str,
+) -> anyhow::Result<Vec<String>> {
+    let Some(text) = vars.get(key).and_then(Value::as_str) else {
         return Ok(Vec::new());
     };
     shlex::split(text).ok_or_else(|| {
         anyhow::anyhow!(
-            "host '{}': {key} has unbalanced quotes and cannot be turned into ssh options: {text}",
-            host.name
+            "host '{host_name}': {key} has unbalanced quotes and cannot be turned into ssh options: {text}"
         )
     })
+}
+
+/// An inventory object's variables in the shape the effective view has. The two sides of the
+/// engine keep different maps - the inventory is ordered by name, a host's merged view is a
+/// JSON object - and only the paths with no effective view in hand pay this copy.
+fn as_map(vars: &std::collections::BTreeMap<String, Value>) -> Map<String, Value> {
+    vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
 /// One remote path as a single shell word. A leading `~` or `~user` stays bare, up to and
@@ -525,8 +547,8 @@ fn single_quoted(text: &str) -> String {
 }
 
 /// `ansible_port`, whether the inventory typed it as a number or quoted it as a string.
-fn port_of(host: &Host) -> Option<u16> {
-    let value = host.vars.get("ansible_port")?;
+fn port_of(vars: &Map<String, Value>) -> Option<u16> {
+    let value = vars.get("ansible_port")?;
     match value {
         Value::Number(_) => value.as_u64().and_then(|p| u16::try_from(p).ok()),
         Value::String(s) => s.trim().parse().ok(),
@@ -1650,5 +1672,42 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("carrier_pigeon"));
+    }
+
+    /// Two ssh identities of one name are two links. The name and the escalated user are equal
+    /// here and only the port differs, so the key can only tell them apart through the whole
+    /// `SshTarget` -- which is what tells a task that asked for port 2223 from one that asked
+    /// for 2222.
+    ///
+    /// What would make this red: a hand-written `Hash` or `PartialEq` on `SshTarget` skipping a
+    /// field. Nothing else in the repository holds the derive in place, and a skipped `port`,
+    /// `user` or `private_key` would send the second task down the first one's link.
+    #[test]
+    fn two_ports_of_one_host_are_two_keys() {
+        use crate::executor::LinkKey;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let key = |port| LinkKey {
+            host: "node".to_string(),
+            become_user: None,
+            transport: Transport::for_vars(
+                "node",
+                json!({"ansible_host": "10.0.0.5", "ansible_port": port})
+                    .as_object()
+                    .expect("an object"),
+                &defaults(),
+            )
+            .expect("an ssh transport"),
+        };
+        let digest = |k: &LinkKey| {
+            let mut h = DefaultHasher::new();
+            k.hash(&mut h);
+            h.finish()
+        };
+
+        assert_ne!(key(2222), key(2223));
+        assert_ne!(digest(&key(2222)), digest(&key(2223)));
+        assert_eq!(key(2222), key(2222));
     }
 }

@@ -164,7 +164,6 @@ pub(super) async fn run_batch(
     hosts: &[Host],
     all: &[String],
     vars_files: &HashMap<String, Vec<Map<String, Value>>>,
-    inventory: Arc<HashMap<String, Host>>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -185,7 +184,6 @@ pub(super) async fn run_batch(
         all_play_hosts: all.to_vec(),
         r#become: play.r#become,
         become_user: play.become_user.clone(),
-        inventory,
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);

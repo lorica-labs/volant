@@ -242,7 +242,7 @@ impl Inventory {
             }
             return out;
         }
-        if term == "localhost" || term == "127.0.0.1" {
+        if is_localhost(term) {
             return vec![term.to_string()];
         }
         res.unmatched.push(term.to_string());
@@ -513,6 +513,14 @@ fn section_name(section: &Section) -> &str {
     match section {
         Section::Hosts(n) | Section::Children(n) | Section::Vars(n) => n,
     }
+}
+
+/// The three names ansible-core 2.19.12 conjures a host for when the inventory has none of that
+/// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
+/// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
+/// read both here and by the store that gives such a host its local connection.
+pub fn is_localhost(name: &str) -> bool {
+    matches!(name, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn implicit_localhost(name: &str) -> Host {
@@ -879,6 +887,48 @@ env=prod
             inv.resolve("all").hosts.is_empty(),
             "implicit localhost is not part of all"
         );
+    }
+
+    /// A pattern naming the controller gets an implicit host with a local connection, for the
+    /// two spellings a host pattern can carry. `::1` is the third spelling and cannot arrive
+    /// here; see the test below.
+    ///
+    /// What would make this red: `is_localhost` losing a spelling, or the resolver's call to it
+    /// going away. Either sends the pattern back to matching nothing, which is a run that warns,
+    /// runs no task and still exits 0 - indistinguishable from a run that did the work.
+    #[test]
+    fn every_spelling_of_the_controller_resolves_to_an_implicit_local_host() {
+        let inv = Inventory::empty();
+        for name in ["localhost", "127.0.0.1"] {
+            let res = inv.resolve(name);
+            assert_eq!(res.hosts.len(), 1, "{name} matched nothing");
+            assert_eq!(res.hosts[0].name, name);
+            assert_eq!(
+                res.hosts[0].vars["ansible_connection"],
+                json!("local"),
+                "{name} is the controller"
+            );
+            assert!(res.unmatched.is_empty(), "{name}: {:?}", res.unmatched);
+        }
+    }
+
+    /// A known divergence, pinned so it cannot drift in silence. `:` is Ansible's own pattern
+    /// separator, so `split_terms` cuts `::1` into two empty terms and `1` before `is_localhost`
+    /// can ever see it - `hosts: "::1"` selects nothing here. Measured on ansible-core 2.19.12,
+    /// the reference runs the same play as `changed: [::1]` on the controller.
+    ///
+    /// `is_localhost` still names all three spellings, and the other two callers - the delegate
+    /// lookup and the implicit host's connection variable - do reach it with `::1`, which is why
+    /// the divergence is confined to a play's own host pattern.
+    ///
+    /// What would make this red: `split_terms` learning to keep an address-shaped term whole.
+    /// That is the fix, and whoever makes it should delete this test rather than update it.
+    #[test]
+    fn an_ipv6_controller_pattern_is_cut_by_the_pattern_separator() {
+        assert_eq!(split_terms("::1"), ["", "", "1"]);
+        let res = Inventory::empty().resolve("::1");
+        assert!(res.hosts.is_empty(), "{:?}", names(&res.hosts));
+        assert_eq!(res.unmatched, ["1"]);
     }
 
     #[test]

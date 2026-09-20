@@ -90,6 +90,7 @@ pub struct AgentLink {
     frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
     child: Child,
     blobs: BlobMemory,
+    interpreters: Vec<String>,
 }
 
 /// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
@@ -134,6 +135,7 @@ impl AgentLink {
             frames: rx,
             child,
             blobs: BlobMemory::default(),
+            interpreters: Vec::new(),
         })
     }
 
@@ -161,6 +163,16 @@ impl AgentLink {
     /// The payloads this link has already asked about. Lives here so it dies with the link.
     pub fn blobs(&mut self) -> &mut BlobMemory {
         &mut self.blobs
+    }
+
+    /// The Python interpreters the agent behind this link reported at the handshake, as absolute
+    /// paths, best first.
+    ///
+    /// Empty means **this agent reported none**, which is not the same as this host having none:
+    /// an agent older than the field says nothing about interpreters and looks identical on the
+    /// wire to a host with no Python at all. Anything refusing on this has to say so that way.
+    pub fn interpreters(&self) -> &[String] {
+        &self.interpreters
     }
 
     fn stdin(&mut self) -> &mut ChildStdin {
@@ -196,7 +208,15 @@ impl AgentLink {
                 .await
                 .context("waiting for the agent to answer")?
             {
-                Some(FromAgent::Ready { protocol, .. }) if protocol == PROTOCOL_VERSION => {
+                Some(FromAgent::Ready {
+                    protocol,
+                    interpreters,
+                    ..
+                }) if protocol == PROTOCOL_VERSION => {
+                    // Taken on every handshake, the liveness check on a kept link included, so a
+                    // host whose Python changed under a link that survived a play is read as it
+                    // is now rather than as it was when the link was opened.
+                    self.interpreters = interpreters;
                     return Ok(());
                 }
                 Some(FromAgent::Ready {

@@ -655,6 +655,100 @@ pub(super) fn conditional_error(err: &TemplateError) -> String {
     format!("Task failed: Error while evaluating conditional: {}", err.0)
 }
 
+/// The variables of the host a task's module actually runs on: the delegate's when the task has
+/// one, the task's own host's otherwise.
+///
+/// One expression, used for the connection and for the interpreter both, because they have to be
+/// the same host: a link opened to the delegate and an interpreter read off the delegating host
+/// runs a module on one machine under the Python of another, which is a failure only a path that
+/// does not exist on both would show.
+pub(super) fn running_host_vars<'a>(
+    delegate: Option<&'a (String, Map<String, Value>)>,
+    items: &'a [Item],
+) -> &'a Map<String, Value> {
+    delegate.map_or(&items[0].vars.map, |(_, vars)| vars)
+}
+
+/// The interpreter a playbook asked for, if it asked one of them: `ansible_python_interpreter`
+/// off the variables of the host the module will run on.
+///
+/// Four values are not interpreters at all. `auto`, `auto_legacy`, `auto_silent` and
+/// `auto_legacy_silent` are ansible-core's way of **asking for discovery** - `auto` is its own
+/// default and `auto_silent` is the usual way an inventory silences the discovery warning - so
+/// they mean nobody named an interpreter and the agent's list governs. Sent as paths they would
+/// fail every Python task of the group that set one, at rc 127, naming `auto_silent` as a file.
+///
+/// A blank value is unset too, the way a blank `ansible_remote_tmp` already is: a playbook
+/// writing `"{{ py_override | default('') }}"` asked for nothing, and an empty path would have
+/// the host trying to start nothing and naming nothing when it failed.
+pub(super) fn requested_interpreter(vars: &Map<String, Value>) -> Option<String> {
+    vars.get("ansible_python_interpreter")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|asked| {
+            !asked.is_empty()
+                && !matches!(
+                    *asked,
+                    "auto" | "auto_legacy" | "auto_silent" | "auto_legacy_silent"
+                )
+        })
+        .map(str::to_string)
+}
+
+/// The Python interpreter a host runs a module under, or the failure its tasks report instead.
+///
+/// `ansible_python_interpreter` is the playbook's own choice and is used exactly as written,
+/// whether or not the agent found it. The list the agent reports is the **auto-discovery** list -
+/// the eight names the reference looks for on `PATH` - so it governs the choice nobody made and
+/// nothing else. Reading it as an allow-list would refuse `/opt/python3.12/bin/python`, a real
+/// interpreter the agent never probes for and the reference runs without comment.
+///
+/// An explicit interpreter that turns out not to be there is the host's to discover, by trying to
+/// start it: measured on ansible-core 2.19.12, `ansible_python_interpreter=/nonexistent` is a task
+/// failure at rc 127 carrying `The module interpreter '/nonexistent' was not found.` - a failure
+/// of the task, notably not an `UNREACHABLE`, and one that needs the host to produce it.
+pub(super) fn chosen_interpreter(
+    named: Option<&str>,
+    reported: &[String],
+) -> Result<String, TaskResult> {
+    match named {
+        Some(named) => Ok(named.to_string()),
+        // Worded as what it is. The controller uploads the agent it shipped with, so an agent
+        // that predates the interpreter list reports none exactly as a host with no Python does,
+        // and a sentence claiming the host has no Python would send the operator looking in the
+        // wrong place.
+        None => reported.first().cloned().ok_or_else(|| {
+            TaskResult::failed_with(
+                "the agent on this host reported no python interpreter, so this controller has nothing to run a module under",
+            )
+        }),
+    }
+}
+
+/// What one step's tasks travel with: its payload under the interpreter chosen for this host, or
+/// the failure they report instead of being sent.
+///
+/// A step with no payload travels as it always did. A step with one, on a host whose interpreter
+/// could not be chosen, fails on that - per task, so a `rescue:` or an `ignore_errors` still
+/// does its work. A payload with no interpreter chosen at all is a controller bug and says so
+/// rather than sending a payload the agent cannot run.
+pub(super) fn python_for<'a>(
+    payload: Option<&'a ModulePayload>,
+    interpreter: Option<&'a Result<String, TaskResult>>,
+) -> Result<Option<(&'a ModulePayload, &'a str)>, TaskResult> {
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    match interpreter {
+        Some(Ok(path)) => Ok(Some((payload, path.as_str()))),
+        Some(Err(failure)) => Err(failure.clone()),
+        None => Err(TaskResult::failed_with(format!(
+            "the module payload {} was built for this task with no interpreter chosen for the host",
+            payload.blob
+        ))),
+    }
+}
+
 /// One item of one task, as the agent is asked to run it.
 ///
 /// `python` is the module's half of a payload together with the interpreter chosen for the host
@@ -682,20 +776,22 @@ pub(super) fn protocol_task(
     }
 }
 
-/// What a blob handshake needs of a link: the memory the link carries, and the two directions
-/// of the wire.
+/// What running a batch needs of a link: the memory the link carries, the two directions of the
+/// wire, and the way a batch is stopped.
 ///
-/// A trait rather than the link itself so the handshake can be tested against an agent that
-/// answers what a test scripted. The three ways it goes wrong - a payload refused, a payload
+/// A trait rather than the link itself so a batch can be run against an agent that answers what
+/// a test scripted - a real link is a child process, which is why none of this was testable. The three ways it goes wrong - a payload refused, a payload
 /// sent twice, a batch sent for a payload nobody confirmed - are all failures nothing else
 /// would show until a host ran the wrong thing.
-pub(super) trait BlobChannel {
+pub(super) trait AgentChannel {
     fn memory(&mut self) -> &mut BlobMemory;
     async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()>;
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
+    /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
+    async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
 }
 
-impl BlobChannel for AgentLink {
+impl AgentChannel for AgentLink {
     fn memory(&mut self) -> &mut BlobMemory {
         self.blobs()
     }
@@ -707,6 +803,10 @@ impl BlobChannel for AgentLink {
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
         self.recv().await
     }
+
+    async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {
+        self.cancel(id, grace).await
+    }
 }
 
 /// Makes sure the agent behind this link holds the payload named `hash`, sending it only when
@@ -717,7 +817,7 @@ impl BlobChannel for AgentLink {
 /// going up again for every batch of a play. A refusal is remembered as a refusal, so the
 /// batches behind it fail on what the agent said rather than sending the same rejected payload
 /// again.
-pub(super) async fn ensure_blob<C: BlobChannel>(
+pub(super) async fn ensure_blob<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
@@ -762,7 +862,7 @@ pub(super) async fn ensure_blob<C: BlobChannel>(
 /// Anything else the agent says on the way is either a line to show or a message that does not
 /// belong to this exchange; an answer about another payload is the streams having desynchronised,
 /// which is a hard error rather than something to read as a yes.
-async fn blob_state<C: BlobChannel>(
+async fn blob_state<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
@@ -786,7 +886,22 @@ async fn blob_state<C: BlobChannel>(
                 ));
             }
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
-            Ok(Some(_)) => {}
+            // A frame belonging to a batch, read while a blob question is outstanding, means the
+            // two streams are out of step: skipping it would leave the next batch's answers
+            // being read as this question's, and a stale `BlobState` behind it would pass for a
+            // yes. Latent until something runs two batches over a link whose first did not
+            // finish - which is what this pull request adds paths for.
+            Ok(Some(FromAgent::TaskResult { batch, index, .. })) => {
+                return Err(format!(
+                    "the agent sent the result of task {index} of batch {batch} while asked about the module payload {hash}"
+                ));
+            }
+            Ok(Some(FromAgent::BatchDone { batch, .. })) => {
+                return Err(format!(
+                    "the agent ended batch {batch} while asked about the module payload {hash}"
+                ));
+            }
+            Ok(Some(FromAgent::Ready { .. })) => {}
             Ok(None) => {
                 return Err(format!(
                     "the agent stopped while being asked about the module payload {hash}"
@@ -823,7 +938,7 @@ pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<
 /// What has to be true of the host before a batch goes out: it holds every payload the batch
 /// names.
 ///
-/// Called by [`run_agent_batch`] and written over [`BlobChannel`] rather than over the link, so
+/// Called by [`run_agent_batch`] and written over [`AgentChannel`] rather than over the link, so
 /// the call itself can be tested: deleting it, or asking only when *every* task carries a
 /// payload instead of when *any* does, is a change that otherwise leaves a green suite and ships
 /// a batch the host cannot run.
@@ -831,7 +946,7 @@ pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<
 /// A batch that names no payload asks nothing. A batch that names one asks for it once per link,
 /// and is refused here rather than by the agent, where a payload nobody sent reads as the
 /// module's own failure.
-async fn blob_preflight<C: BlobChannel>(
+async fn blob_preflight<C: AgentChannel>(
     link: &mut C,
     host: &str,
     tasks: &[Task],
@@ -846,6 +961,23 @@ async fn blob_preflight<C: BlobChannel>(
     payloads_confirmed(tasks, link.memory())
 }
 
+/// What a batch reports when the payload it needs could not be put on the host.
+///
+/// Every task of it fails, carrying the storing error, and the batch ends as a **failure** rather
+/// than as a transport error. The difference is the whole point: a transport error makes the
+/// driver call the host unreachable and leave the run with no task line at all, which says
+/// something false about a host whose native tasks would run perfectly well, and steps over the
+/// `rescue:` and the `ignore_errors` an author wrote for exactly this.
+fn blob_failure(
+    err: String,
+    tasks: usize,
+) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+    (
+        vec![Some(TaskResult::failed_with(err)); tasks],
+        Ok(BatchOutcome::Failed { at: 0 }),
+    )
+}
+
 /// Sends one batch to the agent and collects what comes back, by position in `tasks`.
 ///
 /// Anything the agent asked to show on the way lands in `logs`, already prefixed with the host,
@@ -854,8 +986,8 @@ async fn blob_preflight<C: BlobChannel>(
     clippy::too_many_arguments,
     reason = "the batch, the link it goes over and the blob it needs there first"
 )]
-pub(super) async fn run_agent_batch(
-    link: &mut AgentLink,
+pub(super) async fn run_agent_batch<C: AgentChannel>(
+    link: &mut C,
     host: &str,
     id: u64,
     tasks: Vec<Task>,
@@ -866,20 +998,20 @@ pub(super) async fn run_agent_batch(
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
     let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
     if let Err(err) = blob_preflight(link, host, &tasks, blob, logs).await {
-        return (received, Err(err));
+        return blob_failure(err, received.len());
     }
-    if let Err(err) = link.send(&ToAgent::RunBatch { id, tasks }).await {
+    if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
     }
     let ended = loop {
         let msg = tokio::select! {
-            msg = link.recv() => msg,
+            msg = link.answer() => msg,
             res = stop.changed(), if !*stop_broken => {
                 if res.is_err() {
                     *stop_broken = true;
                     continue;
                 }
-                link.cancel(id, CANCEL_GRACE).await;
+                link.stop_batch(id, CANCEL_GRACE).await;
                 break Ok(BatchOutcome::Cancelled { at: 0 });
             }
         };
@@ -1336,6 +1468,9 @@ mod tests {
         sent: Vec<ToAgent>,
         answers: std::collections::VecDeque<FromAgent>,
         memory: BlobMemory,
+        /// Whether a fake that has run out of answers holds the line open instead of closing it,
+        /// which is what a real agent busy with a batch does.
+        hangs_when_empty: bool,
     }
 
     impl FakeAgent {
@@ -1344,6 +1479,7 @@ mod tests {
                 sent: Vec::new(),
                 answers: answers.into(),
                 memory: BlobMemory::default(),
+                hangs_when_empty: false,
             }
         }
 
@@ -1355,7 +1491,7 @@ mod tests {
         }
     }
 
-    impl BlobChannel for FakeAgent {
+    impl AgentChannel for FakeAgent {
         fn memory(&mut self) -> &mut BlobMemory {
             &mut self.memory
         }
@@ -1366,7 +1502,16 @@ mod tests {
         }
 
         async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
-            Ok(self.answers.pop_front())
+            match self.answers.pop_front() {
+                Some(answer) => Ok(Some(answer)),
+                None if self.hangs_when_empty => std::future::pending().await,
+                None => Ok(None),
+            }
+        }
+
+        async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
+            self.sent.push(ToAgent::Cancel { id });
+            true
         }
     }
 
@@ -1422,6 +1567,285 @@ mod tests {
             .expect_err("the refusal is remembered");
         assert_eq!(again, err);
         assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+    }
+
+    /// The module runs where the link goes, so its interpreter is read off that host: the
+    /// delegate's variables when the task is delegated.
+    ///
+    /// What would make this red: the delegating host's map read instead, which is what the
+    /// expression looks like it could be simplified to. A task `delegate_to: build-host`, where
+    /// `build-host` carries its own `ansible_python_interpreter`, would then run its module on
+    /// `build-host` under the delegating host's Python - rc 127 if that path is not there, and
+    /// silently the wrong Python if it is.
+    #[test]
+    fn the_interpreter_comes_from_the_host_the_module_runs_on() {
+        let mut item = bare_item();
+        item.vars = hvars(json!({"ansible_python_interpreter": "/usr/bin/python3"}));
+        let items = [item];
+        assert_eq!(
+            requested_interpreter(running_host_vars(None, &items)),
+            Some("/usr/bin/python3".to_string())
+        );
+        let delegate = (
+            "build-host".to_string(),
+            vars(json!({"ansible_python_interpreter": "/opt/py311/bin/python"})),
+        );
+        assert_eq!(
+            requested_interpreter(running_host_vars(Some(&delegate), &items)),
+            Some("/opt/py311/bin/python".to_string())
+        );
+    }
+
+    /// The four discovery modes are not interpreters, and neither is a blank value.
+    ///
+    /// What would make this red: `auto_silent` sent as a path. It is the usual way an inventory
+    /// silences the discovery warning, and `auto` is ansible-core's own default, so a group that
+    /// sets one would have every Python task on every host in it fail at rc 127 naming
+    /// `auto_silent` as a file, where the reference discovers an interpreter and runs. A blank
+    /// value is the same shape - `"{{ py_override | default('') }}"` asked for nothing - and is
+    /// filtered the way a blank `ansible_remote_tmp` already is.
+    #[test]
+    fn the_discovery_modes_and_a_blank_value_mean_nobody_named_one() {
+        for mode in ["auto", "auto_legacy", "auto_silent", "auto_legacy_silent"] {
+            assert_eq!(
+                requested_interpreter(&vars(json!({ "ansible_python_interpreter": mode }))),
+                None,
+                "{mode} is a discovery mode, not a path"
+            );
+        }
+        assert_eq!(
+            requested_interpreter(&vars(json!({"ansible_python_interpreter": "   "}))),
+            None
+        );
+        assert_eq!(
+            requested_interpreter(&vars(
+                json!({"ansible_python_interpreter": " /usr/bin/python3 "})
+            )),
+            Some("/usr/bin/python3".to_string())
+        );
+    }
+
+    /// A run told to stop asks the agent to stop the batch it is running.
+    ///
+    /// What would make this red: the cancel never sent - an operator's interruption then leaves
+    /// the agent running the batch to completion on the host while the controller walks away, so
+    /// the run reports as stopped and the host keeps changing.
+    #[tokio::test]
+    async fn a_stopped_run_asks_the_agent_to_stop_the_batch() {
+        let (stop_tx, mut stop) = watch::channel(false);
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(Vec::new());
+        agent.hangs_when_empty = true;
+        stop_tx.send(true).expect("the receiver is alive");
+        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+        let (_, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            3,
+            tasks,
+            None,
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert!(
+            matches!(ended, Ok(BatchOutcome::Cancelled { .. })),
+            "{ended:?}"
+        );
+        assert!(
+            agent
+                .sent
+                .iter()
+                .any(|msg| matches!(msg, ToAgent::Cancel { id: 3 })),
+            "{:?}",
+            agent.sent
+        );
+    }
+
+    /// What the playbook asked for is read under the name the reference uses, off the map of
+    /// the host the module will run on.
+    ///
+    /// What would make this red: another key, which silently ignores every
+    /// `ansible_python_interpreter` a playbook sets and runs modules under the agent's first
+    /// candidate instead.
+    #[test]
+    fn the_asked_for_interpreter_is_read_under_the_reference_name() {
+        assert_eq!(requested_interpreter(&vars(json!({}))), None);
+        assert_eq!(
+            requested_interpreter(&vars(json!({"ansible_python_interpreter": "/opt/py"}))),
+            Some("/opt/py".to_string())
+        );
+    }
+
+    /// The interpreter a Python task runs under: the playbook's own choice when it made one,
+    /// and otherwise the best of what the agent found on the host.
+    ///
+    /// What would make this red: the reported list preferred over the variable, which runs a
+    /// module under an interpreter the playbook explicitly did not ask for.
+    #[test]
+    fn the_playbook_interpreter_wins_over_what_the_agent_found() {
+        let found = [
+            "/usr/bin/python3.12".to_string(),
+            "/usr/bin/python3".to_string(),
+        ];
+        assert_eq!(
+            chosen_interpreter(None, &found).expect("the best of the two"),
+            "/usr/bin/python3.12"
+        );
+        assert_eq!(
+            chosen_interpreter(Some("/usr/bin/python3"), &found)
+                .expect("what the playbook asked for"),
+            "/usr/bin/python3"
+        );
+    }
+
+    /// An interpreter the playbook named is used as given, found by the agent or not.
+    ///
+    /// What would make this red: the reported list read as an allow-list. It is the
+    /// **auto-discovery** list - eight names looked for on `PATH` - so a real interpreter
+    /// somewhere it never looks, `/opt/python3.12/bin/python`, is not in it and would be refused
+    /// although the reference runs it happily. The measured rc 127 and
+    /// `The module interpreter ... was not found.` belong to an interpreter that is not there at
+    /// all, which is a thing only the host can find out, by trying to start it.
+    #[test]
+    fn an_explicit_interpreter_is_used_as_given() {
+        assert_eq!(
+            chosen_interpreter(
+                Some("/opt/python3.12/bin/python"),
+                &["/usr/bin/python3".to_string()]
+            )
+            .expect("the playbook named it, so it travels"),
+            "/opt/python3.12/bin/python"
+        );
+    }
+
+    /// A host whose agent reported no interpreter fails its Python tasks saying that the agent
+    /// reported none.
+    ///
+    /// What would make this red: a sentence claiming the host has no Python. An agent older than
+    /// the interpreter list reports none exactly as a host with none does - the controller
+    /// uploads the agent it shipped with, so the two are the same bytes on the wire - and an
+    /// operator sent to look at the host's Python would find it there and be none the wiser.
+    #[test]
+    fn a_host_whose_agent_reported_no_interpreter_says_so_that_way() {
+        let failure = chosen_interpreter(None, &[]).expect_err("nothing to run a module under");
+        let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            msg.contains("the agent on this host reported no python"),
+            "{msg}"
+        );
+        assert!(failure.failed(), "{failure:?}");
+    }
+
+    /// The two halves of a payload meet here or the step does not travel.
+    ///
+    /// What would make this red: a step sent with a payload and no interpreter chosen, which
+    /// asks the agent to run a module under nothing, or a step whose interpreter could not be
+    /// chosen sent anyway - both of which report the agent's confusion instead of the reason.
+    #[test]
+    fn a_step_travels_with_both_halves_of_its_payload_or_not_at_all() {
+        let module = module_payload("ab");
+        let chosen = Ok("/usr/bin/python3".to_string());
+        let (payload, interpreter) = python_for(Some(&module), Some(&chosen))
+            .expect("both halves are in hand")
+            .expect("a payload to send");
+        assert_eq!(payload.blob, "ab");
+        assert_eq!(interpreter, "/usr/bin/python3");
+
+        assert!(
+            python_for(None, None).expect("a native step").is_none(),
+            "a step with no payload travels as it always did"
+        );
+
+        let refused: Result<String, TaskResult> = Err(TaskResult::failed_with(
+            "The module interpreter was not found.",
+        ));
+        let failure = python_for(Some(&module), Some(&refused))
+            .expect_err("the interpreter could not be chosen");
+        assert!(failure.failed(), "{failure:?}");
+
+        let bug = python_for(Some(&module), None).expect_err("a payload with no choice made");
+        let msg = bug.0.get("msg").and_then(Value::as_str).unwrap_or("");
+        assert!(msg.contains("ab"), "{msg}");
+    }
+
+    /// A payload that could not be stored fails every task of the batch and leaves the host
+    /// where it was.
+    ///
+    /// Driven through `run_agent_batch` itself, because the shape of the answer is the whole
+    /// finding: what would make this red is the storing error handed back as a batch error, which
+    /// the driver reads as the host being unreachable - no task line at all, no `rescue:`, no
+    /// `ignore_errors`, and a recap counting `unreachable` for a host whose native tasks would
+    /// have run perfectly well. The batch must also not go out: a host that could not be given
+    /// the payload has nothing to run.
+    #[tokio::test]
+    async fn a_payload_that_could_not_be_stored_fails_the_tasks_and_not_the_host() {
+        let (_stop_tx, mut stop) = watch::channel(false);
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
+        let tasks = vec![
+            protocol_task(
+                &task("ping"),
+                &bare_item(),
+                Some((&module_payload("ab"), "/usr/bin/python3")),
+            ),
+            protocol_task(&task("command"), &bare_item(), None),
+        ];
+        let (received, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            1,
+            tasks,
+            Some(&union_named("ab")),
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert_eq!(received.len(), 2);
+        for slot in &received {
+            let result = slot.as_ref().expect("every task of the batch reports");
+            assert!(result.failed(), "{result:?}");
+            let msg = result.0.get("msg").and_then(Value::as_str).unwrap_or("");
+            assert!(msg.contains("ab"), "{msg}");
+        }
+        assert!(
+            matches!(ended, Ok(BatchOutcome::Failed { .. })),
+            "the host stays reachable: {ended:?}"
+        );
+        assert!(
+            !agent
+                .sent
+                .iter()
+                .any(|msg| matches!(msg, ToAgent::RunBatch { .. })),
+            "a batch went out for a payload the host has not got: {:?}",
+            agent.sent
+        );
+    }
+
+    /// A frame belonging to a batch, read while a blob question is outstanding, stops the
+    /// exchange rather than being skipped.
+    ///
+    /// What would make this red: skipping it, which reads the next frame as the answer to this
+    /// question - here a `present: true` that belongs to nothing - and runs a batch against a
+    /// host that holds no payload.
+    #[tokio::test]
+    async fn a_batch_frame_during_a_blob_question_is_the_stream_out_of_step() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![
+            FromAgent::BatchDone {
+                batch: 7,
+                outcome: BatchOutcome::Completed,
+            },
+            state("ab", true),
+        ]);
+        let err = ensure_blob(&mut agent, "h1", "ab", "UEsD", &mut logs)
+            .await
+            .expect_err("the streams are out of step");
+        assert!(err.contains('7'), "{err}");
     }
 
     fn union_named(hash: &str) -> Union {

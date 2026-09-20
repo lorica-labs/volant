@@ -3406,8 +3406,9 @@ fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
 /// stay. The `debug` at the end shows that an `environment` on a controller-side task changes
 /// nothing for `lookup('env', ...)`.
 ///
-/// The warning's text is a recorded divergence: the reference prints the whole layer stack as a
-/// Python list, this prints the value it could not read.
+/// The warning quotes the whole layer stack the way the reference quotes it, as a Python list
+/// of the **raw** layers: measured, `['{{ secret }}']` for a one-layer stack, so nothing that
+/// was rendered from a variable reaches the line.
 ///
 /// What would make this red: the play's layer lost (`" templated"`), `42` sent as a number (the
 /// agent refuses the shape), or a layer that is not a mapping failing the task.
@@ -3428,7 +3429,9 @@ fn environment_layers_merge_with_the_task_winning() {
     assert!(text.contains(r#""e.stdout": "play templated""#), "{text}");
     assert!(text.contains(r#""n.stdout": "42""#), "{text}");
     assert!(
-        errors.contains(r#"[WARNING]: could not parse environment value, skipping: "notadict""#),
+        errors.contains(
+            "could not parse environment value, skipping: [{'PLAY_ENV': 'play'}, 'notadict']"
+        ),
         "the warning goes to stderr: {errors}"
     );
     assert!(
@@ -6566,4 +6569,42 @@ fn a_pattern_creates_is_resolved_against_chdir() {
     );
     assert_eq!(out.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `no_log` covers every event a task produces, not only its result. A diagnostic that goes
+/// straight to stderr is still that task speaking, and the policy has to reach it.
+///
+/// Both streams are grepped, because the warning this triggers is written to stderr while the
+/// censored result is written to stdout: a test reading one of them would pass while the value
+/// is on the other. `CANARY-7f3a9c` is a fixture string, not a credential.
+///
+/// The warning itself is **not** blanked: measured on ansible-core 2.19.12, a task whose
+/// `environment` does not render to a mapping warns with the raw source of the whole stack of
+/// layers, `['{{ secret }}']`, brackets included, and that text holds nothing the playbook did
+/// not already say out loud.
+///
+/// What would make this red: `prepare` printing the rendered value, which is what it did -- the
+/// censorship policy could not reach a write it never saw.
+#[test]
+fn no_log_covers_the_environment_warning() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("nolog/environment.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stdout.contains("CANARY-7f3a9c") && !stderr.contains("CANARY-7f3a9c"),
+        "the secret reached the terminal:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("[WARNING]: could not parse environment value, skipping: ['{{ secret }}']"),
+        "the warning did not report the source the reference reports:\nstderr:\n{stderr}"
+    );
+    assert_eq!(out.status.code(), Some(0));
 }

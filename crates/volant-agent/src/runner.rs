@@ -61,7 +61,16 @@ fn is_cancelled(
     match control.try_recv() {
         Ok(Ok(ToAgent::Cancel { id: cancelled })) => cancelled == id,
         Ok(Ok(other)) => {
-            eprintln!("volant-agent: ignoring unexpected message during batch {id}: {other:?}");
+            // The message's kind, never its contents. The agent's stderr is inherited straight
+            // from the controller's, so a `RunBatch` printed whole here would put every
+            // argument of every task of that batch on the operator's terminal - and the agent
+            // is the one party that cannot know which task said `no_log`.
+            let kind = match other {
+                ToAgent::Hello { .. } => "hello",
+                ToAgent::RunBatch { .. } => "run_batch",
+                ToAgent::Cancel { .. } => "cancel",
+            };
+            eprintln!("volant-agent: ignoring unexpected {kind} during batch {id}");
             false
         }
         Ok(Err(err)) => {

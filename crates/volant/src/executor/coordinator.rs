@@ -104,6 +104,20 @@ pub(super) enum Event {
         name: String,
         left: u32,
     },
+    /// One `[WARNING]` a step produced: an `environment` layer that did not render to a mapping,
+    /// or a line the agent asked to show while the step's batch was running. Queued behind the
+    /// same key as that step's results so it reads where the step reads, and carrying `censored`
+    /// so the `no_log` policy reaches it the way it reaches a result.
+    ///
+    /// `censored` is false for the `environment` warning, which quotes the playbook's own source
+    /// and never a rendered value, and is the batch's `no_log` for an agent line - see
+    /// [`Renderer::warning`](crate::render::Renderer::warning).
+    Warning {
+        host: String,
+        index: usize,
+        message: String,
+        censored: bool,
+    },
     /// What `host` asked for at the include step `index`, already read and compiled. Empty when
     /// every item was skipped or failed to resolve, which still has to be said: the coordinator
     /// splices at every include point whether or not anybody asked for anything, and a driver
@@ -343,11 +357,15 @@ pub(super) async fn run_batch(
                     }
                     // Queued behind the same key as a result, rather than printed on arrival,
                     // so a host racing ahead cannot put its banner above the step before it.
-                    Some(event @ (Event::Banner { .. } | Event::Retrying { .. })) => {
+                    Some(
+                        event @ (Event::Banner { .. }
+                        | Event::Retrying { .. }
+                        | Event::Warning { .. }),
+                    ) => {
                         let (host, index) = match &event {
-                            Event::Banner { host, index } | Event::Retrying { host, index, .. } => {
-                                (host.clone(), *index)
-                            }
+                            Event::Banner { host, index }
+                            | Event::Retrying { host, index, .. }
+                            | Event::Warning { host, index, .. } => (host.clone(), *index),
                             _ => unreachable!(),
                         };
                         pending.entry((host, index)).or_default().push(event);
@@ -561,7 +579,7 @@ pub(super) async fn run_batch(
             // has already ended, because every host of the batch has left it. There is nothing
             // left to splice the steps in for, and nothing left to run them.
             Event::Include { .. } => {}
-            event @ (Event::Result { .. } | Event::Retrying { .. }) => {
+            event @ (Event::Result { .. } | Event::Retrying { .. } | Event::Warning { .. }) => {
                 report_result(event, stats, out);
             }
         }
@@ -602,6 +620,9 @@ fn shows_a_line(event: &Event) -> bool {
         // A retry line is the first thing a retried task prints, and the reference shows the
         // task's banner above it: a task whose every attempt is still to come has no result yet.
         Event::Banner { .. } | Event::Retrying { .. } => true,
+        // `Event::Warning` falls here with the rest: a warning goes to stderr, beside the
+        // display rather than in it, so it never conjures the banner of a step that shows
+        // nothing on stdout.
         _ => false,
     }
 }
@@ -646,6 +667,13 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     } = &event
     {
         out.retrying(host, name, *left);
+        return;
+    }
+    if let Event::Warning {
+        message, censored, ..
+    } = &event
+    {
+        out.warning(message, *censored);
         return;
     }
     let Event::Result {

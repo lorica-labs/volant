@@ -416,6 +416,7 @@ pub(super) async fn drive_host(
                 let asked = if masked_out || handlers_only || follower {
                     Vec::new()
                 } else {
+                    let mut warnings = Vec::new();
                     let (groups, shown) = resolve_include(
                         &c,
                         step,
@@ -426,7 +427,18 @@ pub(super) async fn drive_host(
                         &templar,
                         &store,
                         &options.defaults,
+                        &mut warnings,
                     );
+                    for message in warnings {
+                        let _ = tx
+                            .send(Event::Warning {
+                                host: name.clone(),
+                                index: pos,
+                                message,
+                                censored: false,
+                            })
+                            .await;
+                    }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     if let Some(result) =
                         report_include(&tx, &name, pos, task, &shown, rescuable, groups.is_empty())
@@ -539,7 +551,8 @@ pub(super) async fn drive_host(
             // measured on ansible-core 2.19.12, `register: o` under `run_once: true` on h1
             // reads back as `o.stdout` on h2 as well. Every other step writes for its own host.
             let register_hosts: Vec<String> = fact_targets(task, &name, &live.live_hosts);
-            match prepare(
+            let mut warnings = Vec::new();
+            let prepared = prepare(
                 step,
                 &name,
                 &plan,
@@ -547,7 +560,22 @@ pub(super) async fn drive_host(
                 &templar,
                 &store,
                 &options.defaults,
-            ) {
+                &mut warnings,
+            );
+            // Not censored: measured on ansible-core 2.19.12, the one warning `prepare` can
+            // raise quotes the playbook's own `environment` source and never a rendered value,
+            // and the reference leaves it in plain sight under `no_log`.
+            for message in warnings {
+                let _ = tx
+                    .send(Event::Warning {
+                        host: name.clone(),
+                        index: pos,
+                        message,
+                        censored: false,
+                    })
+                    .await;
+            }
+            match prepared {
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;
@@ -916,6 +944,14 @@ pub(super) async fn drive_host(
             // Whether `received` already holds results the conditions have been applied to. The
             // retry loop has to apply them itself, since `until` reads what they decided.
             let mut decided = false;
+            // Lines the agent asked to show while this batch ran. `FromAgent::Log` carries no
+            // task index, so they are shown under the batch's own `no_log`: with the strict
+            // barrier a batch is one task and that is exact, and under `[volant] batching` it
+            // errs towards hiding.
+            let mut logs: Vec<String> = Vec::new();
+            let censored = batch
+                .iter()
+                .any(|(index, _)| c.steps[*index].task.censors());
             let ended = if let Some(retry) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
@@ -944,6 +980,7 @@ pub(super) async fn drive_host(
                             vec![protocol_task(task, item)],
                             &mut driver.stop,
                             &mut driver.stop_broken,
+                            &mut logs,
                         )
                         .await;
                         let raw = flat.pop().flatten();
@@ -1008,6 +1045,7 @@ pub(super) async fn drive_host(
                     tasks,
                     &mut driver.stop,
                     &mut driver.stop_broken,
+                    &mut logs,
                 )
                 .await;
                 for (k, result) in flat.into_iter().enumerate() {
@@ -1017,6 +1055,18 @@ pub(super) async fn drive_host(
                 }
                 ended
             };
+            // Queued under the batch's first step, in front of the results it belongs with,
+            // rather than written as it arrived: the coordinator owns everything a task shows.
+            for message in logs.drain(..) {
+                let _ = tx
+                    .send(Event::Warning {
+                        host: name.clone(),
+                        index: batch[0].0,
+                        message,
+                        censored,
+                    })
+                    .await;
+            }
             // Report every task of the batch in order; tasks the agent never reached after a
             // failure are not reported at all, as in Ansible. Whether `undecided` was actually
             // reported is tracked rather than assumed, because the agent can end the batch `Ok`

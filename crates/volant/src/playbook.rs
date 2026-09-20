@@ -380,9 +380,10 @@ fn shown(node: &Yaml) -> String {
 
 /// A `serde_json::Value` printed the way Python's own `repr` renders it, since that is what
 /// ansible-core's error messages quote a structured value with: strings single-quoted, `null` as
-/// `None`, booleans capitalized, everything else bare. Used only by [`shown`], for the sequence
-/// and mapping shapes `to_json` already knows how to walk.
-fn python_repr(value: &Value) -> String {
+/// `None`, booleans capitalized, everything else bare. Used by [`shown`], for the sequence and
+/// mapping shapes `to_json` already knows how to walk, and by the `environment` warning, which
+/// quotes the raw stack of layers the same way.
+pub(crate) fn python_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),

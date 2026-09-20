@@ -138,7 +138,10 @@ pub async fn run_play(
     let batches =
         crate::compile::batches(&hosts, play.serial.as_ref(), &state.templar, &play_vars)?;
     if play.gather_facts {
-        out.warning("gather_facts is not available in this release; continuing without facts");
+        out.warning(
+            "gather_facts is not available in this release; continuing without facts",
+            false,
+        );
     }
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let playbook_dir = state
@@ -298,7 +301,10 @@ fn load_play_vars_files(
                 // named the wrong cause and let a broken playbook exit 0.
                 Err(err) if err.is_undefined() => {
                     if warned.insert(raw) {
-                        out.warning("skipping vars_files item due to an undefined variable");
+                        out.warning(
+                            "skipping vars_files item due to an undefined variable",
+                            false,
+                        );
                     }
                     continue;
                 }

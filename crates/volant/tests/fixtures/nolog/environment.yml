@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    secret: "CANARY-7f3a9c"
+  tasks:
+    - name: An environment that is not a mapping
+      command: /bin/true
+      no_log: true
+      environment: "{{ secret }}"

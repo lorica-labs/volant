@@ -15,7 +15,7 @@ Volant runs your existing playbooks, roles and inventories unchanged, and runs t
 Every release on the [releases page](https://github.com/lorica-labs/volant/releases) carries one archive per platform. An archive holds the controller `volant`, its `volant-playbook` alias, the agent for the machine you run on, and the two Linux musl agents the controller uploads to the hosts it manages. One download covers a first run:
 
 ```sh
-tag=v0.1.0-alpha.5   # whichever release you want
+tag=TAG   # the tag you picked from the releases page
 curl -fsSL "https://github.com/lorica-labs/volant/releases/download/$tag/volant-x86_64-unknown-linux-musl.tar.xz" | tar -xJ
 cd volant-x86_64-unknown-linux-musl
 ```

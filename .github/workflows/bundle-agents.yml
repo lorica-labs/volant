@@ -63,9 +63,19 @@ jobs:
           : > pairs.txt
           for archive in volant-*.tar.xz; do
             case "$archive" in volant-agent-*) continue ;; esac
-            before="$(sha256sum "$archive" | cut -d' ' -f1)"
             dir="${archive%.tar.xz}"
             triple="${dir#volant-}"
+            # The digest to replace is the one the release records, not the one the file
+            # that came down has. An upload that dies halfway leaves the two apart, and
+            # reading the record is what lets a second run finish the job instead of
+            # hunting for a digest nothing mentions any more.
+            before="$(cut -d' ' -f1 < "$archive.sha256")"
+            # --strip-components=1 drops whatever sits at the root of the archive, so an
+            # archive that grows a file there stops the job rather than losing it.
+            if [ "$(tar -tJf "$archive" | cut -d/ -f1 | sort -u)" != "$dir" ]; then
+              echo "$archive holds more than the directory $dir, which the repack would drop" >&2
+              exit 1
+            fi
             rm -rf repack
             mkdir -p "repack/$dir"
             tar -xJf "$archive" -C "repack/$dir" --strip-components=1
@@ -87,7 +97,7 @@ jobs:
           # shipping an installer that no longer matches its archive.
           records=(sha256.sum dist-manifest.json volant-installer.sh volant-*.tar.xz.sha256)
           while read -r before after; do
-            found="$(grep -o "$before" "${records[@]}" | wc -l)"
+            found="$(grep -o "$before" "${records[@]}" | wc -l || true)"
             if [ "$found" -ne 4 ]; then
               echo "expected 4 records of $before, found $found" >&2
               exit 1
@@ -109,9 +119,13 @@ jobs:
         run: |
           set -euo pipefail
           cd work
+          # The archives go up first and the records that describe them second, so the
+          # release never holds a digest for an asset it does not carry yet. Either upload
+          # can still die halfway; the step above reads the records rather than the files,
+          # so a second run picks either half up and finishes it.
+          gh release upload "$TAG" --repo "$REPO" --clobber volant-*.tar.xz
           gh release upload "$TAG" --repo "$REPO" --clobber \
-            volant-*.tar.xz volant-*.tar.xz.sha256 sha256.sum volant-installer.sh \
-            dist-manifest.json
+            volant-*.tar.xz.sha256 sha256.sum volant-installer.sh dist-manifest.json
 
       # The archive is unpacked into an empty directory and VOLANT_AGENT_DIR is removed from
       # the environment: the controller has to find its agents beside itself, in what was

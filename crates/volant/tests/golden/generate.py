@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,7 +99,151 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
-    return inventory() or listings()
+    # python_modules() is the newest and most environment-sensitive of the three: it is the only
+    # one that can fail on a contributor's machine (apt) or on a stale checkout of this file. It
+    # goes last so a failure there cannot also cost the two pre-existing, unrelated goldens.
+    return inventory() or listings() or python_modules()
+
+
+# A fixed, non-temporary path: `stat`, `file` and `lineinfile` all read or write under it, and
+# `file`/`lineinfile` are idempotent in a way that would leak into their recorded result if the
+# directory carried anything over from a previous run (lineinfile's "line added" becomes "no
+# change" once the line is already there), so python_modules() clears it before every run rather
+# than only creating it once.
+PYTHON_MODULES_TMP = "/tmp/volant15-golden"
+STAT_TARGET = os.path.join(PYTHON_MODULES_TMP, "golden-stat-target")
+STAT_TARGET_CONTENT = "golden stat fixture\n"
+
+# Values that identify the machine that ran the generator rather than anything a module
+# returned. file's owner/group/uid/gid and stat's pw_name/gr_name/uid/gid all name the account
+# that happened to run the generator, which must never appear in the repository (stat's, unlike
+# /etc/hostname's, is not root: STAT_TARGET is a file this script itself creates, so it is owned
+# by whoever ran it). The placeholders keep the type ansible actually returns (str for the two
+# name keys, int for the two id keys), because the Rust comparison these fixtures feed checks
+# these keys by presence and type rather than by value.
+ACCOUNT_NAME_PLACEHOLDER = "<golden-generator-account>"
+ACCOUNT_ID_PLACEHOLDER = 999999999
+
+
+def _redact_account(container, name_keys, id_keys):
+    for key in name_keys:
+        if key in container:
+            container[key] = ACCOUNT_NAME_PLACEHOLDER
+    for key in id_keys:
+        if key in container:
+            container[key] = ACCOUNT_ID_PLACEHOLDER
+
+
+def python_modules():
+    """Record raw results from selected Python modules on localhost."""
+    modules = [
+        {"name": "ping", "module": "ping", "args": {}},
+        # /etc/hostname's own checksum is sha1(hostname), a confirmable hash of an
+        # infrastructure host name; STAT_TARGET is written by this script with fixed content, so
+        # the checksum is reproducible on every machine and identifies nothing.
+        {"name": "stat", "module": "stat", "args": {"path": STAT_TARGET}},
+        {
+            "name": "file",
+            "module": "file",
+            # An explicit mode, not the umask-dependent default: without it the recorded value
+            # names the generating account's umask rather than anything the module did.
+            "args": {"path": f"{PYTHON_MODULES_TMP}/golden-file", "state": "touch", "mode": "0644"},
+        },
+        {
+            "name": "lineinfile",
+            "module": "lineinfile",
+            "args": {"path": f"{PYTHON_MODULES_TMP}/golden-line", "line": "hello", "create": True},
+        },
+        {
+            "name": "apt",
+            "module": "apt",
+            # A package that is not installed, in check mode: needs no root (nothing is written,
+            # by construction of check mode) and pins that the module actually consulted the apt
+            # cache and found the target absent (`changed: true`). `name=bash, state=present`
+            # records `changed: false` on every Debian host because bash is always already
+            # there, which is the emptiest possible result: a Volant `apt` that consults nothing
+            # and hands back `{"changed": false}` would pass that comparison green. ignore_errors
+            # plus check_mode below turn any failure here (no apt/apt_pkg bindings, an empty
+            # package cache) into the same "skip this one module" path a missing apt-get takes,
+            # rather than into a failed generation.
+            "args": {"name": "cowsay", "state": "present"},
+            "task_extra": {"check_mode": True, "ignore_errors": True},
+        },
+    ]
+
+    tasks = []
+    for m in modules:
+        task = {"name": m["name"], m["module"]: m["args"]}
+        task.update(m.get("task_extra", {}))
+        tasks.append(task)
+    play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": tasks}]
+    env = dict(
+        os.environ,
+        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        ANSIBLE_NOCOLOR="1",
+        # An explicit interpreter, not just a quiet discovery mode: `auto_silent` still leaves
+        # ansible_facts.discovered_interpreter_python naming this machine's python, it only
+        # silences the warning that goes with it (measured). Naming the interpreter outright
+        # skips discovery altogether, so neither the warning nor the fact is ever produced, and
+        # this generator has one less machine-specific value to filter out after the fact. Every
+        # host this generator supports already needs apt, so it already needs to be Debian
+        # family, where this path is the system python.
+        ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
+    )
+    shutil.rmtree(PYTHON_MODULES_TMP, ignore_errors=True)
+    os.makedirs(PYTHON_MODULES_TMP, exist_ok=True)
+    with open(STAT_TARGET, "w", encoding="utf-8") as f:
+        f.write(STAT_TARGET_CONTENT)
+    playbook = os.path.join(PYTHON_MODULES_TMP, "python-modules.yml")
+    with open(playbook, "w", encoding="utf-8") as f:
+        yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    run = subprocess.run(
+        ["ansible-playbook", "-i", "localhost,", playbook],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        print(
+            f"ansible-playbook exited {run.returncode} while recording the python modules",
+            file=sys.stderr,
+        )
+        if run.stderr:
+            print(run.stderr, file=sys.stderr)
+        return 1
+    report = json.loads(run.stdout)
+    outcomes = {task["task"]["name"]: task["hosts"]["localhost"] for task in report["plays"][0]["tasks"]}
+    destination = os.path.join(HERE, "python-modules")
+    os.makedirs(destination, exist_ok=True)
+    recorded = 0
+    for m in modules:
+        name = m["name"]
+        outcome = outcomes[name]
+        if name == "apt" and outcome.get("failed"):
+            print(f"apt is not usable here: {outcome.get('msg', 'unknown error')}", file=sys.stderr)
+            stale = os.path.join(destination, "apt.json")
+            if os.path.exists(stale):
+                os.remove(stale)
+                print(
+                    "removed the stale apt.json so a later contributor does not read it as "
+                    "verified against this reference",
+                    file=sys.stderr,
+                )
+            else:
+                print("no apt.json to remove; nothing was recorded for apt", file=sys.stderr)
+            continue
+        result = dict(outcome)
+        result.pop("invocation", None)
+        _redact_account(result, ("owner", "group"), ("uid", "gid"))
+        stat_info = result.get("stat")
+        if isinstance(stat_info, dict):
+            _redact_account(stat_info, ("pw_name", "gr_name"), ("uid", "gid"))
+        with open(os.path.join(destination, f"{name}.json"), "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False, sort_keys=True)
+            f.write("\n")
+        recorded += 1
+    print(f"python module goldens recorded: {recorded}/{len(modules)} modules")
+    return 0
 
 
 HOMONYM_WARNING = "Found both group and host with same name"

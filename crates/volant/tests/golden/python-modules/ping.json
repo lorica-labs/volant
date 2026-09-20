@@ -1,0 +1,6 @@
+{
+  "_ansible_no_log": false,
+  "action": "ping",
+  "changed": false,
+  "ping": "pong"
+}

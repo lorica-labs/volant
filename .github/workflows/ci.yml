@@ -136,4 +136,29 @@ jobs:
       - name: Show the sshd log
         if: failure()
         run: sudo cat /tmp/sshd.log
+      - name: Install the controller Python
+        run: |
+          set -euo pipefail
+          if command -v uv >/dev/null 2>&1; then
+            uv venv .venv
+            uv pip install --python .venv/bin/python ansible-core==2.19.12
+          else
+            python3 -m venv .venv
+            .venv/bin/python -m pip install ansible-core==2.19.12
+          fi
+          echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+      - name: Check the host and controller Pythons are distinct
+        run: |
+          set -euo pipefail
+          echo "controller: $VOLANT_PYTHON"
+          echo "host:       /usr/bin/python3"
+          test "$(command -v python3)" = "/usr/bin/python3"
+          test "$VOLANT_PYTHON" != "/usr/bin/python3"
+          "$VOLANT_PYTHON" -c 'import ansible; print("controller ansible-core", ansible.__version__)'
+          /usr/bin/python3 -c 'import sys; print("host python", sys.version.split()[0])'
+          if /usr/bin/python3 -c 'import ansible' 2>/dev/null; then
+            echo "/usr/bin/python3 has ansible-core; the ssh job cannot prove the module_utils came from the blob" >&2
+            exit 1
+          fi
+          echo "host python has no ansible-core, as required"
       - run: just ssh-test

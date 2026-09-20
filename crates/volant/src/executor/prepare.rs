@@ -42,6 +42,9 @@ pub(super) struct PlayPlan {
     pub(super) all_play_hosts: Vec<String>,
     pub(super) r#become: Option<bool>,
     pub(super) become_user: Option<String>,
+    /// The module payloads this run sends, built once before the first connection. Shared rather
+    /// than copied: it is the base64 of a 631 KB zip and every host of every batch reads it.
+    pub(super) python: Option<Arc<crate::python::Union>>,
 }
 
 impl PlayPlan {
@@ -542,7 +545,24 @@ pub(super) fn prepare(
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
     // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation = become_for(task, plan, &base, defaults, templar)?;
-    Ok(Prepared::Remote(items, escalation, delegate, None))
+    // The module's half of the payload, when this module is one the run built one for. The
+    // interpreter is not here: it is the host's, and no link to it exists yet.
+    //
+    // A Python module the union does not hold is one nothing could have named when the union was
+    // built - a dynamic include resolves its file while the play runs - and it travels with no
+    // payload, which the batch refuses by name rather than sending.
+    let payload = plan.python.as_ref().and_then(|union| {
+        union
+            .modules
+            .get(volant_protocol::modules::short_name(&task.module))
+            .map(|facts| {
+                Box::new(ModulePayload {
+                    blob: union.hash.clone(),
+                    facts: facts.clone(),
+                })
+            })
+    });
+    Ok(Prepared::Remote(items, escalation, delegate, payload))
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what
@@ -609,6 +629,7 @@ pub(super) fn display(v: &Value) -> String {
 mod tests {
     use super::super::testing::{hvars, task};
     use super::*;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     /// Each shape below was run through `ansible-core 2.19.12` as a `debug: msg=` argument
@@ -640,6 +661,78 @@ mod tests {
         );
     }
 
+    /// A task naming a module the run built a payload for is prepared with that payload's
+    /// module half; a native task is prepared with none.
+    ///
+    /// What would make this red: the payload attached by anything other than the module's own
+    /// short name - a task would then travel with another module's facts, and the agent would
+    /// import one module out of the blob while running another's arguments. Or attached to every
+    /// task, which sends a payload with `command`.
+    #[test]
+    fn a_task_is_prepared_with_the_payload_built_for_its_module() {
+        let mut facts = BTreeMap::new();
+        facts.insert(
+            "lineinfile".to_string(),
+            crate::python::ModuleFacts {
+                module_fqn: "ansible.modules.lineinfile".into(),
+                profile: "legacy".into(),
+                rlimit_nofile: 0,
+                extensions: Map::new(),
+            },
+        );
+        let union = Arc::new(crate::python::Union {
+            hash: "ab".into(),
+            zip_b64: "UEsDBA==".into(),
+            modules: facts,
+        });
+        let payload_of = |module: &str| {
+            let mut plan = plan();
+            plan.python = Some(Arc::clone(&union));
+            let inventory = crate::inventory::Inventory::parse_ini(
+                "h1
+",
+            )
+            .expect("an inventory");
+            let store = Mutex::new(
+                VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+            );
+            let mut step = Step {
+                kind: crate::compile::StepKind::Task,
+                task: task(module),
+                block: None,
+                section: crate::compile::Section::Body,
+                role: None,
+                origin: Arc::new(crate::compile::Origin::default()),
+                include_params: None,
+                hosts: None,
+            };
+            step.task.args.insert("path".into(), json!("/tmp/x"));
+            let mut warnings = Vec::new();
+            let prepared = prepare(
+                &step,
+                "h1",
+                &plan,
+                &Progress::default(),
+                &Templar::new(PathBuf::from(".")),
+                &store,
+                &defaults(),
+                &mut warnings,
+            )
+            .expect("the task renders");
+            match prepared {
+                Prepared::Remote(_, _, _, payload) => payload,
+                _ => panic!("{module} is a remote task"),
+            }
+        };
+        let built = payload_of("lineinfile").expect("the run built one for it");
+        assert_eq!(built.blob, "ab");
+        assert_eq!(built.facts.module_fqn, "ansible.modules.lineinfile");
+        assert!(
+            payload_of("command").is_none(),
+            "a module this release runs itself travels without a payload"
+        );
+    }
+
     fn plan() -> PlayPlan {
         PlayPlan {
             plan: watch::channel(Arc::new(Compiled::default())).1,
@@ -649,6 +742,7 @@ mod tests {
             all_play_hosts: Vec::new(),
             r#become: None,
             become_user: None,
+            python: None,
         }
     }
 
@@ -882,8 +976,7 @@ mod tests {
         )
         .expect("an inventory");
         let store = Mutex::new(
-            VarStore::new(&inventory, None, std::path::Path::new("."), Map::new())
-                .expect("a var store"),
+            VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
         );
         let templar = Templar::new(std::env::temp_dir());
         let live = Progress::default();

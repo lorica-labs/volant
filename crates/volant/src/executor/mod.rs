@@ -78,6 +78,10 @@ pub struct RunState {
     /// Agents kept alive between plays, the way Ansible keeps its ssh connections open. Only
     /// the connecting user's own link per host is kept; see `keep_links`.
     pub links: HashMap<LinkKey, AgentLink>,
+    /// The module payloads this run sends, built once before the first connection from every
+    /// Python module the compiled plays name. `None` for a run of native tasks alone, which is
+    /// why a controller without ansible-core still runs those.
+    pub python: Option<Arc<crate::python::Union>>,
 }
 
 impl RunState {

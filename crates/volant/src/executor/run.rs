@@ -655,6 +655,33 @@ pub(super) fn conditional_error(err: &TemplateError) -> String {
     format!("Task failed: Error while evaluating conditional: {}", err.0)
 }
 
+/// One step's items, as the tasks to send and the results of those that cannot be sent at all.
+///
+/// The results go in here rather than at the call site so that they cannot be dropped there: an
+/// item that cannot travel and reports nothing leaves the driver with no result for it, and a
+/// step with no results at all is a step the run reports **no line for** - it finishes `ok`,
+/// counts nothing, and says nothing about a task that never ran. That is this project's worst
+/// failure, and this function is where it is kept shut.
+pub(super) fn step_tasks(
+    task: &PlayTask,
+    items: &[Item],
+    python: &Result<Option<(&ModulePayload, &str)>, TaskResult>,
+    results: &mut [Option<TaskResult>],
+) -> Vec<(usize, Task)> {
+    let mut out = Vec::new();
+    for (ii, item) in items.iter().enumerate() {
+        // A skipped item already has its result and never had a task.
+        if item.skipped.is_some() {
+            continue;
+        }
+        match python {
+            Ok(python) => out.push((ii, protocol_task(task, item, *python))),
+            Err(failure) => results[ii] = Some(failure.clone()),
+        }
+    }
+    out
+}
+
 /// The variables of the host a task's module actually runs on: the delegate's when the task has
 /// one, the task's own host's otherwise.
 ///
@@ -733,10 +760,21 @@ pub(super) fn chosen_interpreter(
 /// does its work. A payload with no interpreter chosen at all is a controller bug and says so
 /// rather than sending a payload the agent cannot run.
 pub(super) fn python_for<'a>(
+    module: &str,
     payload: Option<&'a ModulePayload>,
     interpreter: Option<&'a Result<String, TaskResult>>,
 ) -> Result<Option<(&'a ModulePayload, &'a str)>, TaskResult> {
     let Some(payload) = payload else {
+        // A module that runs through the payload path, on a task that carries none, is a module
+        // nothing could have named when the run built its blob: a dynamic include reads the file
+        // it names while the play runs. Refused by name rather than sent as if it were native,
+        // which the agent would answer with an unknown module and the operator would read as a
+        // typo.
+        if crate::python::is_python_module(module) {
+            return Err(TaskResult::failed_with(format!(
+                "module '{module}' needs a python payload, and this run built none for it: only the modules the compiled plays named are in the blob"
+            )));
+        }
         return Ok(None);
     };
     match interpreter {
@@ -1569,6 +1607,64 @@ mod tests {
         assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
     }
 
+    /// An item that cannot be sent still reports, so the step gets a task line.
+    ///
+    /// What would make this red: the failure dropped instead of written into the item's slot.
+    /// The driver then has no result for that item, the reporting loop breaks on the first
+    /// `None`, the step is reported **not at all**, the empty batch comes back `Completed`, and
+    /// the play finishes `ok` having run nothing - no line, no failure, nothing in the recap.
+    /// That is the failure this whole engine is written against.
+    #[test]
+    fn an_item_that_cannot_be_sent_still_reports() {
+        let items = [bare_item(), bare_item()];
+        let refused: Result<Option<(&ModulePayload, &str)>, TaskResult> = Err(
+            TaskResult::failed_with("The module interpreter was not found."),
+        );
+        let mut results = vec![None, None];
+        let sent = step_tasks(&task("ping"), &items, &refused, &mut results);
+        assert!(sent.is_empty(), "nothing can be sent: {sent:?}");
+        for slot in &results {
+            let result = slot.as_ref().expect("every item of the step reports");
+            assert!(result.failed(), "{result:?}");
+        }
+    }
+
+    /// A step that can be sent leaves the results alone and carries every item that is not
+    /// skipped, keyed by its own index.
+    ///
+    /// What would make this red: a skipped item counted in, which sends a task the `when` left
+    /// out, or the index lost, which files an item's result under another item.
+    #[test]
+    fn a_step_that_travels_carries_the_items_that_are_not_skipped() {
+        let mut items = [bare_item(), bare_item()];
+        items[0].skipped = Some(TaskResult::default());
+        let mut results = vec![None, None];
+        let sent = step_tasks(&task("command"), &items, &Ok(None), &mut results);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].0, 1, "the item's own index travels with it");
+        assert!(results.iter().all(Option::is_none), "{results:?}");
+    }
+
+    /// A module that needs a payload and has none is refused by name rather than sent.
+    ///
+    /// What would make this red: the task sent as if it were native, which the agent answers
+    /// with its unknown-module sentence - read by an operator as a typo in a module name that is
+    /// spelled perfectly. A dynamic include names its file while the play runs, so a module only
+    /// it mentions is not in the blob this run built before connecting.
+    #[test]
+    fn a_module_with_no_payload_built_for_it_is_refused_by_name() {
+        let failure = python_for("lineinfile", None, None)
+            .expect_err("nothing was built for a module the union never saw");
+        let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
+        assert!(msg.contains("lineinfile"), "{msg}");
+        assert!(msg.contains("python payload"), "{msg}");
+        assert!(
+            python_for("command", None, None)
+                .expect("a native module needs none")
+                .is_none()
+        );
+    }
+
     /// The module runs where the link goes, so its interpreter is read off that host: the
     /// delegate's variables when the task is delegated.
     ///
@@ -1748,25 +1844,28 @@ mod tests {
     fn a_step_travels_with_both_halves_of_its_payload_or_not_at_all() {
         let module = module_payload("ab");
         let chosen = Ok("/usr/bin/python3".to_string());
-        let (payload, interpreter) = python_for(Some(&module), Some(&chosen))
+        let (payload, interpreter) = python_for("ping", Some(&module), Some(&chosen))
             .expect("both halves are in hand")
             .expect("a payload to send");
         assert_eq!(payload.blob, "ab");
         assert_eq!(interpreter, "/usr/bin/python3");
 
         assert!(
-            python_for(None, None).expect("a native step").is_none(),
+            python_for("command", None, None)
+                .expect("a native step")
+                .is_none(),
             "a step with no payload travels as it always did"
         );
 
         let refused: Result<String, TaskResult> = Err(TaskResult::failed_with(
             "The module interpreter was not found.",
         ));
-        let failure = python_for(Some(&module), Some(&refused))
+        let failure = python_for("ping", Some(&module), Some(&refused))
             .expect_err("the interpreter could not be chosen");
         assert!(failure.failed(), "{failure:?}");
 
-        let bug = python_for(Some(&module), None).expect_err("a payload with no choice made");
+        let bug =
+            python_for("ping", Some(&module), None).expect_err("a payload with no choice made");
         let msg = bug.0.get("msg").and_then(Value::as_str).unwrap_or("");
         assert!(msg.contains("ab"), "{msg}");
     }

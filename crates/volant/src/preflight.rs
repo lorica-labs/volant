@@ -288,15 +288,26 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         );
     }
     if !is_known(&task.module) {
-        // Two different messages for two different situations. A module ansible-core ships and
-        // this release has not written yet will arrive; a name no collection has never will,
-        // and the operator has a typo to fix. The reference's own sentence carries the second.
+        // A module ansible-core ships, that this release runs neither natively nor on the
+        // controller, and that the arm above did not take: it runs through the warm Python path,
+        // built on the controller and sent to the agent as a payload. Accepted here, and the run
+        // refuses before the first connection if the controller cannot build payloads at all.
+        //
+        // What is left below is a name no collection has: the operator has a typo to fix, and
+        // the reference's own sentence carries it.
         if is_builtin(&task.module) {
-            bail!(
-                "task '{}': module '{}' is not available in this release",
-                task.name,
-                task.module
-            );
+            // Asked rather than spelled out a second time. The set that reaches a host is
+            // `python::is_python_module` and nothing else, so a name held back there - the fact
+            // modules, today - is refused here in the same breath rather than admitted before
+            // the first connection and then failing per host for want of a payload.
+            if !crate::python::is_python_module(&task.module) {
+                bail!(
+                    "task '{}': module '{}' is not available in this release",
+                    task.name,
+                    task.module
+                );
+            }
+            return check_arguments(task);
         }
         bail!(
             "task '{}': couldn't resolve module/action '{}'. This often indicates a misspelling, missing collection, or incorrect module path.",
@@ -385,13 +396,20 @@ mod tests {
     /// The three module states, each in its own words. What would make this red: the builtin
     /// arm answering with the typo sentence or the other way round, which is what a collapsed
     /// `is_builtin` produces.
+    ///
+    /// A builtin this release does not run itself is no longer refused at all: it has a path now,
+    /// through the payload the controller builds for it. The three states are "this release runs
+    /// it", "the reference runs it through an action plugin" and "nobody has that name".
     #[test]
     fn the_three_module_states_are_told_apart() {
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      lineinfile: path=/tmp/x\n");
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Later\n      lineinfile: path=/tmp/x\n",
+            "x.yml",
+        )
+        .unwrap();
         assert!(
-            text.contains("module 'lineinfile' is not available in this release"),
-            "{text}"
+            check(&pb).is_ok(),
+            "a builtin this release does not run itself has a payload path now"
         );
         let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n");
         assert!(
@@ -406,12 +424,48 @@ mod tests {
         assert!(check(&pb).is_ok(), "an implemented module passes");
     }
 
+    /// A module whose only product is facts is still refused before the first connection, and the
+    /// pre-flight reads that from `python::is_python_module` rather than deciding it again.
+    ///
+    /// What would make this red: the payload path admitting them. Nothing merges a result's
+    /// `ansible_facts` into the variable store, so `setup` would report `ok` on every host and
+    /// the next task reading `ansible_facts.*` would fail on an undefined variable - a run the
+    /// pre-flight accepted, broken halfway through, which is the family this pre-flight exists to
+    /// close. Red the other way if the two expressions drift: a name held back in
+    /// `is_python_module` and still admitted here fails per host for want of a payload instead.
+    #[test]
+    fn a_module_that_only_gathers_facts_is_still_refused() {
+        for module in [
+            "setup",
+            "package_facts",
+            "service_facts",
+            "mount_facts",
+            "getent",
+        ] {
+            assert!(
+                !crate::python::is_python_module(module),
+                "{module} has no payload path while its facts are dropped"
+            );
+            let text = refusal(&format!(
+                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: a=b\n"
+            ));
+            assert!(
+                text.contains(&format!(
+                    "module '{module}' is not available in this release"
+                )),
+                "{text}"
+            );
+        }
+    }
+
     /// A module the reference runs through an action plugin is refused by that name, before the
     /// first connection, and not as a module this release has merely not written yet.
     ///
-    /// What would make this red: the arm placed after `is_builtin`, which would answer `package`
-    /// with "not available in this release" and promise a payload that can never be the right
-    /// one - the plugin picks the host's package manager, and the module alone does not.
+    /// What would make this red: the arm placed after `is_builtin`, which sends `package`
+    /// through `is_python_module` - false, because the plugin backs it - and so answers it with
+    /// the "not available in this release" sentence the arm below prints, losing the one word
+    /// that tells the operator where the behaviour lives. The plugin picks the host's package
+    /// manager, and the module alone does not.
     #[test]
     fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
         let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      package: name=bash\n");

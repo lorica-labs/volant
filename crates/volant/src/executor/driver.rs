@@ -27,8 +27,8 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
-    protocol_task, python_for, record_registered, requested_interpreter, retry_plan,
-    reuse_or_connect, run_agent_batch, run_local, running_host_vars, until_holds,
+    python_for, record_registered, requested_interpreter, retry_plan, reuse_or_connect,
+    run_agent_batch, run_local, running_host_vars, step_tasks, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -976,30 +976,28 @@ pub(super) async fn drive_host(
                     .map(|item| retry_name(task, &item.vars, &templar))
                     .collect();
                 let mut outcome = Ok(BatchOutcome::Completed);
+                // Once for the step, never once per item: the payload and the interpreter are
+                // read off the step and the host, and nothing about an item can change either.
+                let chosen = payloads
+                    .get(index)
+                    .map(|(_, asked)| chosen_interpreter(asked.as_deref(), link.interpreters()));
+                let python = python_for(
+                    &task.module,
+                    payloads.get(index).map(|(module, _)| &**module),
+                    chosen.as_ref(),
+                );
+                // The same helper the batched path uses, for the same reason: a step that cannot
+                // travel - no interpreter for its payload, or no payload for a module that needs
+                // one - reports that per item from one place. Reported nowhere, an item leaves
+                // its result `None`, the reporting loop below reads that as a host it never
+                // reached, and the play finishes `ok` having run nothing.
+                //
                 // Item by item, in order, each one's attempts finished before the next one
                 // starts: measured on ansible-core 2.19.12 with a two-item loop whose first item
                 // passed and whose second needed two attempts - the retry lines of the second
                 // sit between the two result lines, so the items do not retry together.
-                'items: for (ii, item) in items.iter().enumerate() {
-                    if item.skipped.is_some() {
-                        continue;
-                    }
-                    let chosen = payloads.get(index).map(|(_, asked)| {
-                        chosen_interpreter(asked.as_deref(), link.interpreters())
-                    });
-                    let python = match python_for(
-                        payloads.get(index).map(|(module, _)| &**module),
-                        chosen.as_ref(),
-                    ) {
-                        Ok(python) => python,
-                        // The interpreter this item's module would have run under is not there,
-                        // so the item fails on that and the ones behind it are still tried - the
-                        // same shape a module's own failure has.
-                        Err(failure) => {
-                            received[0][ii] = Some(failure);
-                            continue 'items;
-                        }
-                    };
+                'items: for (ii, built) in step_tasks(task, items, &python, &mut received[0]) {
+                    let item = &items[ii];
                     let mut attempt = 0;
                     loop {
                         attempt += 1;
@@ -1008,8 +1006,8 @@ pub(super) async fn drive_host(
                             link,
                             &name,
                             batch_id,
-                            vec![protocol_task(task, item, python)],
-                            None,
+                            vec![built.clone()],
+                            plan.python.as_deref(),
                             &mut driver.stop,
                             &mut driver.stop_broken,
                             &mut logs,
@@ -1070,23 +1068,16 @@ pub(super) async fn drive_host(
                         chosen_interpreter(asked.as_deref(), link.interpreters())
                     });
                     let python = python_for(
+                        &task.module,
                         payloads.get(index).map(|(module, _)| &**module),
                         chosen.as_ref(),
                     );
-                    for (ii, item) in items.iter().enumerate() {
-                        if item.skipped.is_some() {
-                            continue;
-                        }
-                        // A step whose payload has no interpreter to run under does not travel:
-                        // each of its items carries that failure back, and the rest of the batch
-                        // goes out as it would have.
-                        match &python {
-                            Ok(python) => {
-                                tasks.push(protocol_task(task, item, *python));
-                                origin.push((bi, ii));
-                            }
-                            Err(failure) => received[bi][ii] = Some(failure.clone()),
-                        }
+                    // A step that cannot travel - no interpreter for its payload, or no payload
+                    // for a module that needs one - reports that per item, from inside
+                    // `step_tasks`, and the rest of the batch goes out as it would have.
+                    for (ii, built) in step_tasks(task, items, &python, &mut received[bi]) {
+                        tasks.push(built);
+                        origin.push((bi, ii));
                     }
                 }
                 let (flat, ended) = run_agent_batch(
@@ -1094,7 +1085,7 @@ pub(super) async fn drive_host(
                     &name,
                     batch_id,
                     tasks,
-                    None,
+                    plan.python.as_deref(),
                     &mut driver.stop,
                     &mut driver.stop_broken,
                     &mut logs,

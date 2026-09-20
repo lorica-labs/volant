@@ -60,6 +60,69 @@ pub struct Union {
     pub modules: BTreeMap<String, ModuleFacts>,
 }
 
+/// The modules whose only product is facts, held out of the payload path until a result's
+/// `ansible_facts` reaches the variable store.
+///
+/// Nothing merges them today: a task's result becomes a variable only under `register:`, so
+/// `setup` would connect, upload the blob, run, report `ok` on every host, and drop everything it
+/// gathered. The next task reading `ansible_facts.distribution` - or gating on it in a `when:` -
+/// then fails per host on an undefined variable, which is a playbook the pre-flight accepted and
+/// the run broke halfway through. Refused before the first connection instead, until the change
+/// that gathers facts admits them deliberately.
+const FACT_MODULES: &[&str] = &[
+    "getent",
+    "mount_facts",
+    "package_facts",
+    "service_facts",
+    "setup",
+];
+
+/// Whether this module runs through the warm Python path.
+///
+/// A module ansible-core ships that this release runs neither on the agent nor on the controller,
+/// and that the reference does not run through an action plugin. The first two say there is no
+/// native path for it; the third says sending the module alone would run something that is not
+/// what the playbook asked for, which is why those twenty names stay refused rather than joining
+/// this set.
+///
+/// **One definition, read by the pre-flight as well as by the driver.** The pre-flight arm that
+/// lets a module reach a host calls this, so a name added or removed here cannot be admitted
+/// before the first connection and then refused per host - a startup refusal silently turned
+/// into a failure on every host by a change that looks local.
+pub fn is_python_module(module: &str) -> bool {
+    use volant_protocol::modules::{
+        import_module, include_module, is_builtin, is_known, short_name,
+    };
+
+    is_builtin(module)
+        && !is_known(module)
+        // The statements and the pseudo-module this engine answers itself. They are builtin
+        // module names and nothing ansible-core would build a payload for: an `include_tasks`
+        // sent to a host as a payload would ask the agent to run the statement the compiler
+        // exists to resolve, and `meta` asks the engine for something rather than the host.
+        && import_module(module).is_none()
+        && include_module(module).is_none()
+        && short_name(module) != crate::playbook::META
+        && !crate::action_plugins::is_action_backed(module)
+        && !FACT_MODULES.contains(&short_name(module))
+}
+
+/// One union blob for a whole run, or `None` when no task of it needs one.
+///
+/// Built once, before the first connection, under a helper that lives no longer than the build:
+/// ansible-core caches a module's zip by name inside one process, which is what makes building
+/// five modules in one call cost one cold build and four warm ones.
+///
+/// An error here is a refusal the operator reads instead of a run that starts, connects, and
+/// then cannot run its first Python task.
+pub fn union_for(modules: &std::collections::BTreeSet<String>) -> anyhow::Result<Option<Union>> {
+    if modules.is_empty() {
+        return Ok(None);
+    }
+    let names: Vec<String> = modules.iter().cloned().collect();
+    PythonBuilder::start()?.union(&names).map(Some)
+}
+
 /// What a task needs of a payload before it knows which host it is going to.
 ///
 /// A payload has two halves with two different lifetimes. This is the module's: the blob that
@@ -485,6 +548,51 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("empty"), "{err}");
+    }
+
+    /// Which modules go through the payload path: what ansible-core ships, minus what this
+    /// release runs itself, minus what the reference runs through an action plugin.
+    ///
+    /// What would make this red: the action-plugin names let in, which would send `package` or
+    /// `template` as a module and run something the playbook did not ask for - the plugin is
+    /// where their behaviour lives. Or a name this release already runs let in, which would ship
+    /// a payload for `command` and stop running it natively.
+    #[test]
+    fn the_payload_path_takes_what_nothing_else_runs() {
+        for through in ["lineinfile", "stat", "ping", "apt", "ansible.builtin.file"] {
+            assert!(is_python_module(through), "{through}");
+        }
+        for native in [
+            "command",
+            "shell",
+            "raw",
+            "debug",
+            "set_fact",
+            "include_vars",
+        ] {
+            assert!(!is_python_module(native), "{native} runs here already");
+        }
+        for plugin in ["package", "service", "template", "copy", "assert"] {
+            assert!(
+                !is_python_module(plugin),
+                "{plugin} needs its action plugin"
+            );
+        }
+        assert!(
+            !is_python_module("community.general.lineinfile"),
+            "another collection's module is not ours to build"
+        );
+    }
+
+    /// A run that names no Python module builds nothing, so a controller without ansible-core
+    /// runs native playbooks exactly as before.
+    ///
+    /// What would make this red: the helper started for every run, which would refuse every
+    /// playbook on a machine that has no ansible-core - including the ones that never needed it.
+    #[test]
+    fn a_run_with_no_python_module_builds_nothing() {
+        let none = union_for(&std::collections::BTreeSet::new()).expect("nothing to build");
+        assert!(none.is_none());
     }
 
     /// The blob is named by the hash of the zip's own bytes, which is the name the agent

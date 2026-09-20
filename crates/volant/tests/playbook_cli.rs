@@ -7101,3 +7101,127 @@ fn shell_executable_selects_the_interpreter() {
         "the shell reported no version, so it was not bash:\n{stdout}"
     );
 }
+
+/// A fake controller-side Python, so the wiring below is proved without an ansible-core on the
+/// machine running the tests -- and without the 631 KB the real helper would build.
+///
+/// It answers the one request the controller makes and then holds its end of the pipe open: the
+/// controller writes the request before it reads the answer, and a helper that had already exited
+/// would break that write instead of answering it. Every start appends a line to `starts.log`,
+/// which is what counts them.
+fn fake_python(dir: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let answer = br#"{"zip_b64":"UEsDBA==","modules":{"lineinfile":{"module_fqn":"ansible.modules.lineinfile","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#;
+    let len = u32::try_from(answer.len()).unwrap().to_be_bytes();
+    let mut frame = len.to_vec();
+    frame.extend_from_slice(answer);
+    std::fs::write(dir.join("answer.bin"), &frame).unwrap();
+    let script = dir.join("python");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$2\" = 'import ansible' ]; then exit 0; fi\n\
+             echo start >> '{dir}/starts.log'\n\
+             cat '{dir}/answer.bin'\n\
+             cat > /dev/null\n",
+            dir = dir.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Every `.zip` the agent cached under `remote_tmp`, whatever uid the cache directory carries.
+fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(remote_tmp) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for dir in entries.flatten() {
+        let Ok(files) = std::fs::read_dir(dir.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if file.path().extension().is_some_and(|e| e == "zip") {
+                out.push(file.path());
+            }
+        }
+    }
+    out
+}
+
+/// A playbook naming a Python module reaches its hosts carrying the payload this run built for
+/// it, and the helper that built it starts **once for the whole run**.
+///
+/// Four tasks over two hosts, and the proof is what is left behind: one line in `starts.log`, and
+/// the helper's own four bytes cached under each host's `remote_tmp` by the agent that received
+/// them.
+///
+/// What would make this red, and each of these survived the whole library suite before it was
+/// written: `cli.rs` keeping the union out of the run state, which leaves every Python task
+/// failing with "this run built none for it" and nothing on disk; the driver passing `None` where
+/// the blob belongs, which fails the batch before a byte goes out; and a helper started per host,
+/// per batch or per task, which writes two, two and four lines instead of one -- the real one
+/// costs a cold ansible-core build, so the count is the measurement, not a tidiness.
+#[test]
+fn a_run_builds_one_payload_and_sends_it_to_every_host() {
+    let dir = std::env::temp_dir().join(format!("volant-pypayload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let remote_tmp = dir.join("tmp");
+    std::fs::create_dir_all(&remote_tmp).unwrap();
+    let python = fake_python(&dir);
+    std::fs::write(
+        dir.join("hosts.ini"),
+        format!(
+            "[web]\nalpha ansible_connection=local ansible_remote_tmp={tmp}\nbeta ansible_connection=local ansible_remote_tmp={tmp}\n",
+            tmp = remote_tmp.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("py.yml"),
+        "- hosts: web\n  gather_facts: false\n  tasks:\n    - lineinfile: path=/tmp/volant-a line=a\n    - lineinfile: path=/tmp/volant-b line=b\n",
+    )
+    .unwrap();
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &dir.join("hosts.ini").display().to_string(),
+            &dir.join("py.yml").display().to_string(),
+        ],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python.display().to_string() as &str),
+            // The local agent inherits this run's environment, and `VOLANT_REMOTE_TMP` is where
+            // it caches a payload: the blob lands under this directory instead of the shared one.
+            ("VOLANT_REMOTE_TMP", &remote_tmp.display().to_string()),
+        ],
+    );
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        text.contains("PLAY ["),
+        "the pre-flight refused a module that has a payload path:\n{text}"
+    );
+    assert!(
+        !text.contains("built none for it"),
+        "the run reached its hosts with no payload for a module it built one for:\n{text}"
+    );
+    let starts = std::fs::read_to_string(dir.join("starts.log")).unwrap_or_default();
+    assert_eq!(
+        starts.lines().count(),
+        1,
+        "one helper for the run, not one per host, batch or task:\n{starts}"
+    );
+    let blobs = cached_blobs(&remote_tmp);
+    assert_eq!(blobs.len(), 1, "one payload cached, got {blobs:?}\n{text}");
+    assert_eq!(
+        std::fs::read(&blobs[0]).unwrap(),
+        b"PK\x03\x04",
+        "the bytes the helper handed over are the bytes the host holds"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

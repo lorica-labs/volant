@@ -39,6 +39,7 @@ unnested_or_patterns = "warn"
 anstream = "1"
 anstyle = "1"
 anyhow = "1"
+blake3 = "1.8"
 clap = { version = "4", features = ["derive"] }
 insta = { version = "1", features = ["filters"] }
 libc = "0.2"

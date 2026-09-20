@@ -11,7 +11,11 @@ use serde_json::{Map, Value};
 /// 3 added `Task.environment`: a task now carries the variables its module runs with, and an
 /// agent that does not know the field would run the command without them - which is the "accepted
 /// then ignored" shape this project refuses.
-pub const PROTOCOL_VERSION: u32 = 3;
+///
+/// 4 added the blob messages and `Task.payload`: a Python module travels as a content-addressed
+/// zip sent once per run, and a task names the payload it needs rather than carrying it. An
+/// agent that did not know the field would treat a Python task as an unknown module.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Controller to agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +31,16 @@ pub enum ToAgent {
     },
     Cancel {
         id: u64,
+    },
+    /// Is this payload already in the agent's cache? Answered by [`FromAgent::BlobState`].
+    HasBlob {
+        hash: String,
+    },
+    /// The payload itself, base64 exactly as `modify_module` produced it. The agent verifies the
+    /// hash against the decoded bytes before the blob can be used.
+    PutBlob {
+        hash: String,
+        zip_b64: String,
     },
 }
 
@@ -51,6 +65,13 @@ pub enum FromAgent {
     Log {
         level: LogLevel,
         message: String,
+    },
+    /// Whether the agent holds this payload, after a `has_blob` asked or a `put_blob` landed.
+    /// `present: false` after a `put_blob` means the payload was refused; the `log` before it
+    /// says why.
+    BlobState {
+        hash: String,
+        present: bool,
     },
 }
 
@@ -94,6 +115,27 @@ pub struct Task {
     /// the task's are merged and rendered there, so the agent only sets what it is handed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub environment: BTreeMap<String, String>,
+    /// Present when this task is a Python module rather than a native one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<PythonPayload>,
+}
+
+/// A module payload already on the host, named by the blake3 hash of the zip it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonPayload {
+    /// Lowercase hex blake3 of the decoded zip. Names the blob and is verified before use.
+    pub blob: String,
+    /// `ansible.modules.ping`, as `modify_module` reports it.
+    pub module_fqn: String,
+    /// `legacy` on 2.19.12; the serialisation profile the module was built for.
+    pub profile: String,
+    /// `rlimit_nofile` from the wrapper; 0 means leave the limit alone.
+    pub rlimit_nofile: u64,
+    /// The wrapper's `extensions`; `{}` on 2.19.12.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extensions: Map<String, Value>,
+    /// Absolute path of the interpreter the agent must run this under.
+    pub interpreter: String,
 }
 
 /// A module result, in the free-form shape Ansible modules return.
@@ -172,6 +214,7 @@ mod tests {
                 ignore_errors: true,
                 timeout: None,
                 environment,
+                payload: None,
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
@@ -204,6 +247,67 @@ mod tests {
             serde_json::from_str(r#"{"module":"raw","environment":{"A":"1"}}"#).unwrap();
         assert_eq!(task.environment["A"], "1");
         assert!(serde_json::to_string(&task).unwrap().contains(r#""A":"1""#));
+    }
+
+    /// A Python task carries the reference of its payload and nothing of the payload itself, and
+    /// a native task carries no payload field at all.
+    ///
+    /// What would make this red: `payload` serialised on every task, which puts a null on each of
+    /// the thousands of native tasks a real playbook sends; or the zip travelling inside `Task`,
+    /// which would re-send 631 KB once per task instead of once per run.
+    #[test]
+    fn a_python_task_carries_a_payload_reference_and_a_native_one_carries_none() {
+        let native: Task = serde_json::from_str(r#"{"module":"command"}"#).unwrap();
+        assert_eq!(native.payload, None);
+        assert!(!serde_json::to_string(&native).unwrap().contains("payload"));
+
+        let task: Task = serde_json::from_str(
+            r#"{"module":"ping","payload":{"blob":"abc123","module_fqn":"ansible.modules.ping",
+            "profile":"legacy","rlimit_nofile":0,"interpreter":"/usr/bin/python3.12"}}"#,
+        )
+        .unwrap();
+        let payload = task.payload.expect("a python task carries one");
+        assert_eq!(payload.blob, "abc123");
+        assert_eq!(payload.module_fqn, "ansible.modules.ping");
+        assert_eq!(payload.profile, "legacy");
+        assert_eq!(payload.rlimit_nofile, 0);
+        assert!(payload.extensions.is_empty());
+        assert_eq!(payload.interpreter, "/usr/bin/python3.12");
+    }
+
+    /// The three blob messages round-trip under the snake_case tag every other message uses.
+    #[test]
+    fn the_blob_messages_round_trip() {
+        let put = ToAgent::PutBlob {
+            hash: "ff".into(),
+            zip_b64: "UEsDBA==".into(),
+        };
+        let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&put).unwrap()).unwrap();
+        assert_eq!(back, put);
+        assert!(
+            serde_json::to_string(&put)
+                .unwrap()
+                .starts_with(r#"{"type":"put_blob""#)
+        );
+
+        let has = ToAgent::HasBlob { hash: "ff".into() };
+        let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&has).unwrap()).unwrap();
+        assert_eq!(back, has);
+
+        let state = FromAgent::BlobState {
+            hash: "ff".into(),
+            present: true,
+        };
+        let back: FromAgent = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(back, state);
+    }
+
+    /// The version moves with the shape. An agent that does not know `payload` would run a Python
+    /// task as an unknown module and report it failed, which is the honest failure; an agent that
+    /// does not know `put_blob` would discard the frame and then fail every task of the batch.
+    #[test]
+    fn the_protocol_version_is_four() {
+        assert_eq!(PROTOCOL_VERSION, 4);
     }
 
     #[test]

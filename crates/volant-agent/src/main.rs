@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant agent: runs task batches on a managed host, talking frames on stdin and stdout.
 
+mod blobs;
 mod clock;
 mod modules;
 mod runner;
@@ -24,6 +25,7 @@ fn main() {
 }
 
 fn serve() -> io::Result<()> {
+    let remote_tmp = blobs::remote_tmp();
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
     // while a task is running.
     let (tx, rx) = mpsc::channel::<io::Result<ToAgent>>();
@@ -81,6 +83,42 @@ fn serve() -> io::Result<()> {
             }
             ToAgent::RunBatch { id, tasks } => runner::run_batch(id, &tasks, &rx, &mut send)?,
             ToAgent::Cancel { .. } => {}
+            // Answered from the bytes, not from a file of that name: see the head of `blobs.rs`.
+            // A cache this agent cannot trust is a log and a `false`, never a silent one.
+            ToAgent::HasBlob { hash } => {
+                let present = match blobs::holds(&remote_tmp, &hash) {
+                    Ok(present) => present,
+                    Err(err) => {
+                        send(&FromAgent::Log {
+                            level: LogLevel::Error,
+                            message: format!("looking for payload {hash}: {err}"),
+                        })?;
+                        false
+                    }
+                };
+                send(&FromAgent::BlobState { hash, present })?;
+            }
+            // A refused payload is answered, never left silent: the controller waits for this
+            // state before it sends the batch that needs the payload, and the log is the only
+            // place the reason survives.
+            ToAgent::PutBlob { hash, zip_b64 } => {
+                match blobs::store(&remote_tmp, &hash, &zip_b64) {
+                    Ok(_) => send(&FromAgent::BlobState {
+                        hash,
+                        present: true,
+                    })?,
+                    Err(err) => {
+                        send(&FromAgent::Log {
+                            level: LogLevel::Error,
+                            message: format!("storing payload {hash}: {err}"),
+                        })?;
+                        send(&FromAgent::BlobState {
+                            hash,
+                            present: false,
+                        })?;
+                    }
+                }
+            }
         }
     }
     Ok(())

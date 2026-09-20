@@ -542,6 +542,12 @@ fn as_map(vars: &std::collections::BTreeMap<String, Value>) -> Map<String, Value
 /// into several words or run anything. That bare segment cannot be quoted without stopping the
 /// shell from expanding it, so this depends on [`validate_remote_tmp`] having already refused
 /// everything between the `~` and the first `/` that is not a user name.
+///
+/// That validator runs at every source `remote_tmp` has: `Config::load` for `[defaults]` and for
+/// `ANSIBLE_REMOTE_TMP`, and [`Transport::for_vars`] for a host's own `ansible_remote_tmp`, which
+/// is where a `group_vars`, a task's `vars:`, a `set_fact` or a `-e` arrives. A fourth source
+/// added without a fourth call is how this guarantee rots, so the list is here rather than left
+/// to a grep.
 fn shell_word(path: &str) -> String {
     let Some(rest) = path.strip_prefix('~') else {
         return single_quoted(path);

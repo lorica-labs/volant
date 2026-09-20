@@ -6400,6 +6400,58 @@ fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    // The refusal says which host and which value, because a run of two hundred hosts that only
+    // says a `remote_tmp` was refused sends its operator looking through the inventory by hand.
+    // Both streams, because this one travels as an `UNREACHABLE` line on stdout while a refusal
+    // read from the configuration goes to stderr - reading one of them would pass while the text
+    // was on the other.
+    let shown = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(shown.contains("node"), "the refusal names no host: {shown}");
+    assert!(
+        shown.contains("~$(id)/x"),
+        "the refusal names no value: {shown}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other half of the guard, and the one the exit-code test above cannot see: a user name
+/// still reaches the wire **bare**, because the remote shell is the only thing that can expand
+/// it. The recorded command line is the assertion.
+///
+/// What would make this red: `shell_word` single-quoting the tilde segment along with the rest.
+/// Every run would then cache the agent in a directory literally named `~root`, and a test that
+/// only read the exit code would stay green while every real host broke.
+#[test]
+fn an_ordinary_tilde_user_reaches_the_ssh_command_line_bare() {
+    let (dir, log) = fake_ssh_recording(
+        "remote-tmp-bare-tilde",
+        "node ansible_connection=ssh ansible_host=192.0.2.1 ansible_remote_tmp=~root/x\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/local-override.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[],
+    );
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        recorded.contains("~root/"),
+        "the tilde did not reach the command line unquoted: {recorded}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !recorded.contains("'~root"),
+        "the tilde was quoted, so the remote shell cannot expand it: {recorded}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

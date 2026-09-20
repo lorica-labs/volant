@@ -114,19 +114,50 @@ ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only --no-tests=fail -E 'test(/^ssh_/)'
 
+# The commit the bench corpus is pinned to, so the thing being timed cannot change under the
+# recipe. Refreshed by hand with `git ls-remote https://github.com/ansible-lockdown/UBUNTU22-CIS
+# HEAD`; note the date beside it when it moves.
+CORPUS_SHA := "fad97b54d843eaffc4b7790686cc88bbcbb2330e"   # ansible-lockdown/UBUNTU22-CIS, taken 2026-09-20
+
 # Time the compilation of a real 900-task role next to ansible-playbook, which has to be on PATH.
-# The role is cloned under target/. Both sides only list the tasks; nothing runs on any host.
+# The role is cloned under target/ at a fixed commit, fetched again only when that commit is
+# missing locally, so a developer offline with the corpus already checked out is not forced back
+# online. Checked out with --force: the corpus lives under target/ and is disposable, so a stray
+# edit left over from chasing a listing difference should not wedge the recipe on a git error
+# instead of landing back on the pinned commit. Both sides only list the tasks; nothing runs on
+# any host. The runs alternate and are compared every round, so a machine that warms up or
+# throttles during the recipe, or a listing that only disagrees on an early round, cannot go
+# unnoticed. This is a script, not a plain multi-line recipe, because a plain recipe hands each
+# line to its own shell: the `cd target/corpus` would not reach the next line, and the alternating
+# `for` loop cannot span lines without one. `set -e` needs to reach inside that loop too, so an
+# engine that fails mid-round stops the recipe instead of leaving a stale file for the comparison.
+# Times ansible-playbook and volant against the same pinned role, failing on a differing listing.
 bench-compile:
+    #!/usr/bin/env bash
+    set -euo pipefail
     command -v ansible-playbook > /dev/null || { echo "ansible-playbook is not on PATH"; exit 1; }
     /usr/bin/time -f '%e' true 2> /dev/null || { echo "GNU /usr/bin/time is not installed"; exit 1; }
     mkdir -p target/corpus/roles
-    test -d target/corpus/roles/ubuntu22_cis || git clone -q --depth 1 https://github.com/ansible-lockdown/UBUNTU22-CIS target/corpus/roles/ubuntu22_cis
+    if [ ! -d target/corpus/roles/ubuntu22_cis ]; then
+      git clone -q https://github.com/ansible-lockdown/UBUNTU22-CIS target/corpus/roles/ubuntu22_cis
+    fi
+    git -C target/corpus/roles/ubuntu22_cis cat-file -e {{CORPUS_SHA}}^{commit} 2>/dev/null \
+      || git -C target/corpus/roles/ubuntu22_cis fetch -q origin {{CORPUS_SHA}}
+    git -C target/corpus/roles/ubuntu22_cis checkout -q --force {{CORPUS_SHA}}
     printf -- '- hosts: localhost\n  gather_facts: false\n  roles: [ubuntu22_cis]\n' > target/corpus/site.yml
     printf -- 'localhost ansible_connection=local\n' > target/corpus/inv.ini
-    cd target/corpus && for i in 1 2 3; do /usr/bin/time -f 'ansible-playbook %e s  %M KB' env ANSIBLE_ROLES_PATH=roles ansible-playbook -i inv.ini --list-tasks site.yml > ansible.txt; done
     cargo build --release -p volant
-    cd target/corpus && for i in 1 2 3; do /usr/bin/time -f 'volant           %e s  %M KB' env ANSIBLE_ROLES_PATH=roles ../release/volant playbook -i inv.ini --list-tasks site.yml > volant.txt; done
-    cd target/corpus && diff volant.txt ansible.txt > /dev/null && echo "listings identical" || echo "listings differ: diff target/corpus/volant.txt target/corpus/ansible.txt"
+    cd target/corpus
+    export ANSIBLE_ROLES_PATH=roles
+    for i in 1 2 3; do
+      /usr/bin/time -f 'ansible-playbook %e s  %M KB' ansible-playbook -i inv.ini --list-tasks site.yml > ansible.txt
+      /usr/bin/time -f 'volant           %e s  %M KB' ../release/volant playbook -i inv.ini --list-tasks site.yml > volant.txt
+      if ! diff volant.txt ansible.txt > /dev/null; then
+        echo "listings differ: diff target/corpus/volant.txt target/corpus/ansible.txt"
+        exit 1
+      fi
+    done
+    echo "listings identical"
 
 # Run the end-to-end playbook against the machine named by VOLANT_TARGET_HOST (never in CI)
 e2e-target: agent-musl

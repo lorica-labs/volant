@@ -22,7 +22,7 @@ just setup
 
 The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them out and `just ssh-test` runs them on their own. That recipe wants an sshd listening on `localhost` and `VOLANT_SSH_TEST_KEY` pointing at a private key this account accepts; a throwaway key appended to your own `authorized_keys` does the job. The tests talk to `localhost` and to nothing else, which is why CI can run them unchanged.
 
-`just bench-compile` times how long Volant and `ansible-playbook` each take to turn a large role into a task list. It clones the `ansible-lockdown/UBUNTU22-CIS` role, which is MIT licensed, into `target/`, and it needs `ansible-playbook` on your PATH. Both sides only list the tasks, so neither connects to a host. The recipe times three runs each, then diffs the two listings and prints `listings identical` when they agree.
+`just bench-compile` times how long Volant and `ansible-playbook` each take to turn a large role into a task list. It clones the `ansible-lockdown/UBUNTU22-CIS` role, which is MIT licensed, into `target/` at a commit pinned in the recipe, and it needs `ansible-playbook` on your PATH. Both sides only list the tasks, so neither connects to a host. The recipe alternates three runs of each engine, diffing the two listings after every round: it prints `listings identical` and exits 0 when all three agree, or fails with `listings differ` on the first round that does not.
 
 ## Workflow
 

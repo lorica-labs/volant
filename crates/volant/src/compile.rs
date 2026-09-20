@@ -1220,6 +1220,13 @@ pub(crate) enum IncludeTarget {
 /// not even accepted on one - ansible-core 2.19.12 refuses them at load time with `'environment'
 /// is not a valid attribute for a TaskInclude`. The play's own layer still reaches them, measured:
 /// `--tags <a play tag>` runs a task an `include_tasks` brought in.
+///
+/// **An `Err` from here is one host's task failure**, rescuable and `ignore_errors`-able, because
+/// the single caller turns it into that. The pre-flight over the spliced content at the end relies
+/// on it: a refusal has to read as the statement failing for this host, not as the run stopping.
+/// A new caller that is not a run-time splice would break that and would also pull the pre-flight
+/// into a path it must stay out of - listing and syntax-checking never refuse, so a playbook can
+/// be read ahead of the release that runs it.
 pub(crate) fn expand_include(
     base: &Compiled,
     parent: &Step,
@@ -1259,7 +1266,7 @@ pub(crate) fn expand_include(
             builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
         }
     }
-    Ok(Compiled {
+    let expanded = Compiled {
         steps: builder.steps,
         blocks: builder.blocks,
         roles: builder.roles,
@@ -1268,7 +1275,12 @@ pub(crate) fn expand_include(
         inherited,
         search: base.search.clone(),
         selection: base.selection.clone(),
-    })
+    };
+    // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
+    // before anything is spliced, so what a file this release cannot execute gets is the
+    // statement's own failure rather than a keyword read and then dropped.
+    crate::preflight::check_spliced(&expanded)?;
+    Ok(expanded)
 }
 
 /// Puts the expansions of one include step into the running play, at `at`, and answers with the

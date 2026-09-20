@@ -22,7 +22,7 @@ The dangerous half of a flattening is the step nobody runs, since an index skipp
 
 Two kinds of step have successors nobody knows at compile time: a handler flush, which depends on what the run notified, and a dynamic include, whose file is named by variables the host has not rendered yet. Both are splice points. The splice inserts the new steps where the statement stood and grows the spans that already covered it, and the coordinator publishes a splice at every splice point, an empty one included. A host waits there until that publication arrives, because a host that walks past an insert holds an index the insert has moved, and the step behind it then runs twice.
 
-The pre-flight runs once, over that compilation, so it sees only the steps the compiler laid out. Whatever a dynamic include splices in during the run was not there to be checked, and a module or keyword this release refuses can therefore be reached after the play has started rather than before the first connection. A statically imported file is compiled with the rest and is checked with it.
+The pre-flight runs once, over that compilation, so it sees only the steps the compiler laid out. What a dynamic include reads while the play runs goes through the same check before it is spliced in. By then the hosts are connected and earlier tasks have run, so a module or keyword this release refuses can no longer stop the run before it starts. It fails the statement for the host that asked instead, the way a role nobody can find already does, and a `rescue` around the statement can take it. A statically imported file is compiled with the rest and is checked with it.
 
 ## Reaching a host over SSH
 

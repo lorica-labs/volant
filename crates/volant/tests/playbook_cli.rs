@@ -4972,6 +4972,86 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     }
 }
 
+/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in,
+/// stops the statement instead of being read and dropped.
+///
+/// The pre-flight runs once, over the compilation, and a dynamic include reads its file while the
+/// play runs, so nothing used to look at what arrived. The assertion is the marker's absence, not
+/// the sentence on the terminal: a run that printed a refusal while still having run `touch` would
+/// pass a snapshot and fail this.
+///
+/// Two keywords rather than one, because the hole is the whole `Support::Preflight` class and not
+/// `check_mode`. `check_mode: true` is the sharp one - the task the operator asked to have only
+/// described runs for real - and `throttle` stands for the rest of the table.
+///
+/// **A deliberate divergence from ansible-core 2.19.12**, which has a check mode and skips the
+/// task. Refusing is the honest answer while the mode does not exist; running for real is not.
+///
+/// What would make this red: the spliced steps reaching the run unchecked, which creates the
+/// marker and reports success; the refusal arriving without naming the keyword, which leaves the
+/// operator to guess which line to fix; or the statement failing before it resolves its file,
+/// which would refuse every include there is - the test above is the other half of that.
+#[test]
+fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
+    for (kind, keyword, sentence) in [
+        (
+            "check-mode",
+            "check_mode: true",
+            "keyword 'check_mode' is not supported yet with 'true'",
+        ),
+        (
+            "throttle",
+            "throttle: 1",
+            "keyword 'throttle' is not supported yet",
+        ),
+    ] {
+        let dir = probe_dir(&format!("spliced-{kind}"));
+        let marker = dir.join("marker");
+        std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+        std::fs::write(
+            dir.join("play.yml"),
+            "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Bring in a file\n      include_tasks: inc.yml\n",
+        )
+        .expect("the play");
+        std::fs::write(
+            dir.join("inc.yml"),
+            format!(
+                "- name: Runs for real\n  command: touch {}\n  {keyword}\n",
+                marker.display()
+            ),
+        )
+        .expect("the included file");
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                dir.join("inv.ini").to_str().expect("a path"),
+                dir.join("play.yml").to_str().expect("a path"),
+            ],
+            PROBE_DEADLINE,
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!marker.exists(), "{kind}: the task ran anyway:\n{text}");
+        assert_eq!(out.status.code(), Some(2), "{kind}: {text}");
+        assert!(
+            text.contains(&format!("task 'Runs for real': {sentence}")),
+            "{kind}: {text}"
+        );
+        assert!(
+            !text.contains("TASK [Runs for real]"),
+            "{kind}: nothing behind the statement ran: {text}"
+        );
+        assert!(
+            text.contains("failed=1"),
+            "{kind}: the statement failed for the host that asked: {text}"
+        );
+    }
+}
+
 /// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this
 /// release has no layer to put the keywords it carries on. Both an unknown key and `apply` are
 /// caught before the first connection, the same as every other include and import statement.

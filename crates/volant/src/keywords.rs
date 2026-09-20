@@ -80,8 +80,9 @@ const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
 /// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
 /// and another about the task under it.
 const CHECK_MODE_MISSING: &str = "only `false` is accepted, and it is honoured by running for real; \
-    `true` is refused by name before the first connection, because this release has no check mode; \
-    inside a file a dynamic include pulls in there is no such refusal, and the task runs for real";
+    `true` is refused by name, because this release has no check mode: before the first connection \
+    when the playbook itself writes it, and at the statement that read the file when a dynamic \
+    include brought it in";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
@@ -378,12 +379,12 @@ pub fn documentation() -> String {
     let mut out = String::from(
         "# Keywords\n\nEvery play, block and task keyword ansible-core 2.19 knows, and what this \
          release does with each one.\n\nA playbook is loaded against the whole grammar, so it \
-         parses here as it parses there. What this release cannot execute is refused by name \
-         before the first connection, rather than accepted and then ignored. The pre-flight \
-         reads the play as it was compiled, so a keyword written only inside a file that a \
-         dynamic `include_tasks` or `include_role` pulls in never reaches it. One that would \
-         have been refused is accepted and then ignored instead, and the run can report success \
-         without having done what the playbook asked. \
+         parses here as it parses there. What this release cannot execute is refused by name, \
+         rather than accepted and then ignored. A keyword the playbook writes is refused before \
+         the first connection. A file that a dynamic `include_tasks` or `include_role` names is \
+         read when a host reaches the statement, so a keyword written there is refused at that \
+         moment instead: the statement fails for the host that asked, a `rescue` around it can \
+         take that failure, and nothing in the file runs. \
          What `import_tasks` and `import_role` name is compiled with the play and checked with \
          it.\n\nA keyword carries a status per place it can be written:\n\n- `runs`: this release honours it, or \
          refuses by name the one value it cannot do.\n- `partial`: it is accepted and answered, \

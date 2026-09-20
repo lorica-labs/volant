@@ -2,7 +2,7 @@
 
 Every play, block and task keyword ansible-core 2.19 knows, and what this release does with each one.
 
-A playbook is loaded against the whole grammar, so it parses here as it parses there. What this release cannot execute is refused by name before the first connection, rather than accepted and then ignored. The pre-flight reads the play as it was compiled, so a keyword written only inside a file that a dynamic `include_tasks` or `include_role` pulls in never reaches it. One that would have been refused is accepted and then ignored instead, and the run can report success without having done what the playbook asked. What `import_tasks` and `import_role` name is compiled with the play and checked with it.
+A playbook is loaded against the whole grammar, so it parses here as it parses there. What this release cannot execute is refused by name, rather than accepted and then ignored. A keyword the playbook writes is refused before the first connection. A file that a dynamic `include_tasks` or `include_role` names is read when a host reaches the statement, so a keyword written there is refused at that moment instead: the statement fails for the host that asked, a `rescue` around it can take that failure, and nothing in the file runs. What `import_tasks` and `import_role` name is compiled with the play and checked with it.
 
 A keyword carries a status per place it can be written:
 
@@ -108,7 +108,7 @@ A keyword below is accepted wherever the grid says `partial`, and answered the s
 
 | Keyword | What is missing |
 |---|---|
-| `check_mode` | only `false` is accepted, and it is honoured by running for real; `true` is refused by name before the first connection, because this release has no check mode; inside a file a dynamic include pulls in there is no such refusal, and the task runs for real |
+| `check_mode` | only `false` is accepted, and it is honoured by running for real; `true` is refused by name, because this release has no check mode: before the first connection when the playbook itself writes it, and at the statement that read the file when a dynamic include brought it in |
 | `gather_facts` | `true`, the default, is warned about before the first task and `false` is accepted in silence; no facts are gathered either way, so `ansible_*` facts are absent whichever value is written |
 
 ## Handlers

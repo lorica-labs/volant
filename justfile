@@ -93,6 +93,22 @@ agent-musl:
     mkdir -p target/agents
     cp target/x86_64-unknown-linux-musl/release/volant-agent target/agents/volant-agent-x86_64-unknown-linux-musl
 
+# Unpack a published archive into an empty directory and run one task from it. `just` runs
+# recipes under `bash -uc`, without pipefail (see line 1), so this one is a script with the
+# options it needs. `env -u VOLANT_AGENT_DIR` and the empty directory are the test: the
+# controller has to find its agent in what was downloaded, beside itself.
+smoke tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    cd "$work"
+    curl -fsSL -O "https://github.com/lorica-labs/volant/releases/download/{{tag}}/volant-x86_64-unknown-linux-musl.tar.xz"
+    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz --strip-components=1
+    printf 'h1 ansible_connection=local\n' > inv.ini
+    printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
+    env -u VOLANT_AGENT_DIR ./volant playbook -i inv.ini site.yml
+
 # Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING)
 ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }

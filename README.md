@@ -12,17 +12,50 @@ Volant runs your existing playbooks, roles and inventories unchanged, and runs t
 
 ## Installation
 
-Pre-built binaries will be published with every release:
+Every release on the [releases page](https://github.com/lorica-labs/volant/releases) carries one archive per platform. An archive holds the controller `volant`, its `volant-playbook` alias, the agent for the machine you run on, and the two Linux musl agents the controller uploads to the hosts it manages. One download covers a first run:
 
 ```sh
-cargo binstall volant
+tag=TAG   # the tag you picked from the releases page
+curl -fsSL "https://github.com/lorica-labs/volant/releases/download/$tag/volant-x86_64-unknown-linux-musl.tar.xz" | tar -xJ
+cd volant-x86_64-unknown-linux-musl
 ```
 
-Until then, build from source with a recent stable Rust toolchain:
+The controller looks for its agents in the directory its own executable sits in. Keep them together: move the directory as a whole, and link to `volant` from somewhere on your `PATH` rather than copying it out.
+
+### A first run, here
+
+```sh
+printf 'localhost ansible_connection=local\n' > inventory.ini
+printf -- '- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: id -un\n' > site.yml
+./volant playbook -i inventory.ini site.yml
+```
+
+```text
+PLAY [localhost] ***************************************************************
+
+TASK [command] *****************************************************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+### A first run over ssh
+
+The host needs an sshd and an account you can log into. It needs no Python and nothing installed by hand: the controller uploads the agent with the first task and caches it there for the next run. What you need on this side is the key:
+
+```sh
+printf 'web1 ansible_host=192.0.2.10 ansible_user=deploy ansible_ssh_private_key_file=/home/you/.ssh/id_ed25519\n' > inventory.ini
+./volant playbook -i inventory.ini site.yml
+```
+
+### From source
 
 ```sh
 cargo install --git https://github.com/lorica-labs/volant volant
 ```
+
+This installs the controller alone, and so do `cargo binstall volant` and the shell installer: all three copy `volant` and `volant-playbook` and leave the agents behind. A controller with no agent beside it fails on its first task. Point `VOLANT_AGENT_DIR` at a directory that holds `volant-agent` and `volant-agent-<target triple>`, for instance an unpacked release archive, or work from a checkout, where `cargo build` leaves the agent next to the controller it just built.
 
 ## Promises
 

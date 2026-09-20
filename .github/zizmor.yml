@@ -5,6 +5,12 @@ rules:
   excessive-permissions:
     ignore:
       - release.yml
+  secrets-inherit:
+    ignore:
+      - release.yml
+  self-repository:
+    ignore:
+      - release.yml
   template-injection:
     ignore:
       - release.yml

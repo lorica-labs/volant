@@ -22,3 +22,13 @@ github-attestations = true
 cargo-dist-version = "0.32.0"
 # Whether to install an updater program
 install-updater = false
+# Every controller archive carries both Linux musl agents, so what a user downloads can run a
+# task without a second download. dist builds one target per job and none of the three other
+# jobs can link a musl binary, so the agents go in afterwards: see bundle-agents.yml, which
+# repacks the archives, rewrites the digests that name them and attests what it uploaded.
+post-announce-jobs = ["./bundle-agents"]
+
+[dist.github-custom-job-permissions.bundle-agents]
+attestations = "write"
+contents = "write"
+id-token = "write"

@@ -60,23 +60,6 @@ pub struct Union {
     pub modules: BTreeMap<String, ModuleFacts>,
 }
 
-/// The modules whose only product is facts, held out of the payload path until a result's
-/// `ansible_facts` reaches the variable store.
-///
-/// Nothing merges them today: a task's result becomes a variable only under `register:`, so
-/// `setup` would connect, upload the blob, run, report `ok` on every host, and drop everything it
-/// gathered. The next task reading `ansible_facts.distribution` - or gating on it in a `when:` -
-/// then fails per host on an undefined variable, which is a playbook the pre-flight accepted and
-/// the run broke halfway through. Refused before the first connection instead, until the change
-/// that gathers facts admits them deliberately.
-const FACT_MODULES: &[&str] = &[
-    "getent",
-    "mount_facts",
-    "package_facts",
-    "service_facts",
-    "setup",
-];
-
 /// Whether this module runs through the warm Python path.
 ///
 /// A module ansible-core ships that this release runs neither on the agent nor on the controller,
@@ -89,6 +72,12 @@ const FACT_MODULES: &[&str] = &[
 /// lets a module reach a host calls this, so a name added or removed here cannot be admitted
 /// before the first connection and then refused per host - a startup refusal silently turned
 /// into a failure on every host by a change that looks local.
+///
+/// The five modules whose only product is facts - `setup`, `getent`, `package_facts`,
+/// `service_facts` and `mount_facts` - were held out of this set while nothing merged a result's
+/// `ansible_facts` into the variable store, because they would have reported `ok` and left the
+/// next task reading `ansible_facts.*` undefined. `record_facts` merges them now, so they are in
+/// it.
 pub fn is_python_module(module: &str) -> bool {
     use volant_protocol::modules::{
         import_module, include_module, is_builtin, is_known, short_name,
@@ -104,7 +93,6 @@ pub fn is_python_module(module: &str) -> bool {
         && include_module(module).is_none()
         && short_name(module) != crate::playbook::META
         && !crate::action_plugins::is_action_backed(module)
-        && !FACT_MODULES.contains(&short_name(module))
 }
 
 /// One union blob for a whole run, or `None` when no task of it needs one.
@@ -120,7 +108,33 @@ pub fn union_for(modules: &std::collections::BTreeSet<String>) -> anyhow::Result
         return Ok(None);
     }
     let names: Vec<String> = modules.iter().cloned().collect();
-    PythonBuilder::start()?.union(&names).map(Some)
+    PythonBuilder::start()
+        .map_err(|err| no_builder(&err, &names))?
+        .union(&names)
+        .map(Some)
+}
+
+/// The sentence a run that gathers facts and nothing else gets on top of [`refusal_for`].
+///
+/// `gather_facts` is on unless a play turns it off, so this refusal is the first thing a playbook
+/// of native tasks alone meets on a controller with no ansible-core - and the way out it wants is
+/// not the one the refusal names. An operator who has never installed ansible-core, and who never
+/// asked for a Python module, should not have to work out that the play keyword is what put one
+/// in the run.
+const GATHERING_ONLY: &str = "This run needs ansible-core only to gather facts, so writing \
+                              `gather_facts: false` on the play is the other way out";
+
+/// The refusal an operator reads when the controller cannot build payloads, widened with the way
+/// out that exists only when gathering facts is the whole reason one was wanted.
+///
+/// Said only when it is true: a run naming `lineinfile` needs ansible-core whatever the play says
+/// about facts, and pointing that operator at `gather_facts: false` sends them to try something
+/// that cannot work.
+fn no_builder(err: &anyhow::Error, modules: &[String]) -> anyhow::Error {
+    match modules {
+        [only] if only == "setup" => anyhow::anyhow!("{err:#}. {GATHERING_ONLY}"),
+        _ => anyhow::anyhow!("{err:#}"),
+    }
 }
 
 /// What a task needs of a payload before it knows which host it is going to.
@@ -421,6 +435,29 @@ mod tests {
         assert!(err.contains("/usr/bin/python3"), "{err}");
         assert!(err.contains("ansible-core"), "{err}");
         assert!(err.contains("VOLANT_PYTHON"), "{err}");
+    }
+
+    /// A run that wanted ansible-core only to gather facts is told the way out that costs
+    /// nothing, and a run that wanted it for a module the playbook named is not.
+    ///
+    /// What would make this red: the sentence left as it was. `gather_facts` is on unless a play
+    /// turns it off, so this refusal is what a playbook of native tasks alone now meets on a
+    /// controller with no ansible-core, and "install ansible-core" is the expensive half of the
+    /// answer. Red the other way if the hint is unconditional: an operator whose playbook names
+    /// `lineinfile` would be sent to write `gather_facts: false` and find the run refused all the
+    /// same.
+    #[test]
+    fn a_run_that_only_gathers_is_told_it_can_stop_gathering() {
+        let base = anyhow::anyhow!("{}", refusal_for("python3"));
+        let only = format!("{:#}", no_builder(&base, &["setup".to_string()]));
+        assert!(only.contains("gather_facts: false"), "{only}");
+        assert!(only.contains("VOLANT_PYTHON"), "{only}");
+        let also = format!(
+            "{:#}",
+            no_builder(&base, &["lineinfile".to_string(), "setup".to_string()])
+        );
+        assert!(!also.contains("gather_facts"), "{also}");
+        assert!(also.contains("ansible-core"), "{also}");
     }
 
     /// `VOLANT_PYTHON` is the only candidate when it is set, so a path that does not exist is

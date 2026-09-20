@@ -39,7 +39,7 @@ This page is generated from the tables in the source, so it cannot drift from th
 | `fact_path` | refused | not accepted | not accepted |
 | `failed_when` | not accepted | not accepted | runs |
 | `force_handlers` | runs | not accepted | not accepted |
-| `gather_facts` | partial | not accepted | not accepted |
+| `gather_facts` | runs | not accepted | not accepted |
 | `gather_subset` | refused | not accepted | not accepted |
 | `gather_timeout` | refused | not accepted | not accepted |
 | `handlers` | runs | not accepted | not accepted |
@@ -109,7 +109,6 @@ A keyword below is accepted wherever the grid says `partial`, and answered the s
 | Keyword | What is missing |
 |---|---|
 | `check_mode` | only `false` is accepted, and it is honoured by running for real; `true` is refused by name, because this release has no check mode: before the first connection when the playbook itself writes it, and at the statement that read the file when a dynamic include brought it in |
-| `gather_facts` | `true`, the default, is warned about before the first task and `false` is accepted in silence; no facts are gathered either way, so `ansible_*` facts are absent whichever value is written |
 
 ## Handlers
 

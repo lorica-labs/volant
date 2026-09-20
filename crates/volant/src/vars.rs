@@ -274,6 +274,44 @@ impl VarStore {
             .insert(key.to_string());
     }
 
+    /// Merges the `ansible_facts` a module returned into one host's facts, under both the names
+    /// the reference gives them.
+    ///
+    /// Each key lands flat, prefixed with `ansible_`, **and** under `ansible_facts` as the module
+    /// spelled it. Measurement 10 of plan 1.5 is what settles the pair: `gather_facts: true`
+    /// followed by a `set_fact: ansible_hostname: SHADOWED` leaves both readable, the flat name
+    /// masked and `ansible_facts.hostname` still holding what the host reported. So the two are
+    /// separate names and a later write to one leaves the other alone. Writing only the flat half
+    /// breaks
+    /// `ansible_facts['hostname']`, which is how playbooks that survived the injection being
+    /// turned off read a fact.
+    ///
+    /// The namespace is merged rather than replaced: a run gathers with `setup` and then asks
+    /// `package_facts` for more, and the second must not drop what the first found.
+    ///
+    /// Untrusted, every one of them, and this is the entry point that makes that true for a whole
+    /// module result at once. They are a managed host's own words - a hostname the host chose, a
+    /// package name it printed - so a template in a value is text from here on.
+    pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) {
+        let mut namespace = self
+            .facts
+            .get(host)
+            .and_then(|f| f.get("ansible_facts"))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (key, value) in facts {
+            let flat = if key.starts_with("ansible_") {
+                key.clone()
+            } else {
+                format!("ansible_{key}")
+            };
+            self.set_untrusted_fact(host, &flat, value.clone());
+            namespace.insert(key.clone(), value.clone());
+        }
+        self.set_untrusted_fact(host, "ansible_facts", Value::Object(namespace));
+    }
+
     pub fn untrusted_of(&self, host: &str) -> BTreeSet<String> {
         self.untrusted.get(host).cloned().unwrap_or_default()
     }

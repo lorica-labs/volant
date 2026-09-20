@@ -305,6 +305,13 @@ pub(crate) struct Compiled {
     /// The tag selection this run was narrowed to, for the same reason: the tasks an include
     /// brings in are filtered by `--tags` the way the compiled ones were.
     pub selection: TagSelection,
+    /// Whether `steps[0]` is the `Gathering Facts` step the play's `gather_facts` put there
+    /// rather than anything the playbook wrote.
+    ///
+    /// It runs and reports like every other task - the reference shows its banner, counts it `ok`
+    /// in the recap and lets `--skip-tags always` drop it - and it is left out of the four
+    /// listings alone, which is where the reference leaves it out too.
+    pub gathers: bool,
 }
 
 impl Compiled {
@@ -1106,6 +1113,44 @@ pub(crate) fn compile(
         run_once: play.run_once,
         ..PlayTask::empty()
     };
+    // `gather_facts` is the play's own first task and nothing else: the reference's `setup`
+    // module, run through the ordinary Python path, whose `ansible_facts` the driver writes as a
+    // managed host's own words. Laid out here, as `steps[0]`, rather than run beside the play:
+    // the pre-flight then reads it, the run builds it a payload with every other module the play
+    // names, and its result comes back through the one road a result becomes a variable by.
+    //
+    // `always` is what the reference tags it, so `--tags deploy` still gathers and
+    // `--skip-tags always` still does not. The play's own keywords come down through `empty` like
+    // any other task's, except `run_once`: facts are the host's own, and gathering them once for
+    // the batch would write one host's hostname onto every host of it.
+    let gather = PlayTask {
+        name: "Gathering Facts".to_string(),
+        named: true,
+        module: "ansible.builtin.setup".to_string(),
+        tags: {
+            let mut tags = empty.tags.clone();
+            tags.push("always".to_string());
+            tags.sort();
+            tags.dedup();
+            tags
+        },
+        run_once: None,
+        ..empty.clone()
+    };
+    let gathers = play.gather_facts && selection.selects(&gather.tags);
+    if gathers {
+        let origin = builder.origin();
+        builder.steps.push(Step {
+            kind: StepKind::Task,
+            task: gather,
+            block: None,
+            section: Section::Body,
+            role: None,
+            origin,
+            include_params: None,
+            hosts: None,
+        });
+    }
     // A flush point closes each of the three sections. Measured on ansible-core 2.19.12: the
     // implicit ones are after `pre_tasks`, after the roles and `tasks` **together**, and after
     // `post_tasks`, and what they run counts `ok`/`changed` in the recap like any other task.
@@ -1163,6 +1208,7 @@ pub(crate) fn compile(
         inherited: empty,
         search: search.clone(),
         selection: selection.clone(),
+        gathers,
     })
 }
 
@@ -1275,6 +1321,9 @@ pub(crate) fn expand_include(
         inherited,
         search: base.search.clone(),
         selection: base.selection.clone(),
+        // An expansion is spliced into a play that has already gathered, so it never carries a
+        // gather step of its own.
+        gathers: false,
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
     // before anything is spliced, so what a file this release cannot execute gets is the
@@ -1606,6 +1655,12 @@ fn seek(c: &Compiled, from: usize, entered: &[usize]) -> usize {
 /// measured, `--list-tasks` on a playbook full of handlers shows the `meta` a playbook wrote and
 /// not one handler. The step is engine structure rather than something the playbook says.
 pub(crate) fn listed(c: &Compiled, index: usize) -> bool {
+    // The implicit `Gathering Facts` step is run and reported like any other task and listed like
+    // none of them: measured, the reference shows no such line in `--list-tasks` and no `always`
+    // in `TASK TAGS`, for a play whose `gather_facts` is on by default.
+    if c.gathers && index == 0 {
+        return false;
+    }
     match c.steps[index].kind {
         StepKind::Flush { explicit: false } | StepKind::Handler(_) => return false,
         _ => {}
@@ -1754,8 +1809,15 @@ mod tests {
         );
     }
 
+    /// Compiles the first play with the tag selection given, and **without** gathering facts, so
+    /// the indices every test below reads are the ones the playbook wrote.
+    ///
+    /// `gather_facts` defaults to on, and it lays a step at index 0, so leaving it on here would
+    /// shift the whole list by one and say nothing about the layout these tests are about.
+    /// `a_play_that_gathers_facts_opens_with_the_setup_module` is the one that turns it back on.
     fn selected(text: &str, selection: &TagSelection) -> Compiled {
-        let pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
+        let mut pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
+        pb.plays[0].gather_facts = false;
         compile(&pb.plays[0], &RoleSearch::default(), selection).unwrap_or_else(|e| panic!("{e:#}"))
     }
 
@@ -2733,6 +2795,46 @@ mod tests {
         assert_eq!(resolve_notify(&c, "twice"), [0, 2]);
         assert_eq!(resolve_notify(&c, "listening"), [2]);
         assert!(resolve_notify(&c, "nobody").is_empty());
+    }
+
+    /// A play that gathers facts opens with the reference's `setup`, and that step is listed
+    /// nowhere.
+    ///
+    /// What would make this red: no step at all, which is the release that warned and gathered
+    /// nothing - a playbook reading `ansible_facts.*` then fails per host on an undefined
+    /// variable. Red the other way if the step is listed: measured on ansible-core 2.19.12,
+    /// `--list-tasks` on a play that gathers shows no `Gathering Facts` line and `TASK TAGS`
+    /// carries no `always` from it.
+    ///
+    /// `always` is what makes `--tags deploy` still gather, and `--skip-tags always` the one way
+    /// to drop it, which is the pair the two selections below pin.
+    #[test]
+    fn a_play_that_gathers_facts_opens_with_the_setup_module() {
+        let text = "- hosts: all\n  tasks:\n    - name: body\n      command: \"true\"\n";
+        let pb = parse(text, "x.yml").expect("a playbook");
+        let gathering = |selection: &TagSelection| {
+            compile(&pb.plays[0], &RoleSearch::default(), selection).expect("a compiled play")
+        };
+        let c = gathering(&selection(&[], &[]));
+        assert!(c.gathers, "the play asked for facts");
+        assert_eq!(c.steps[0].task.module, "ansible.builtin.setup");
+        assert_eq!(c.steps[0].task.name, "Gathering Facts");
+        assert_eq!(c.steps[0].kind, StepKind::Task);
+        assert!(!listed(&c, 0), "the reference lists no gather step");
+        assert!(
+            c.steps[0].task.run_once.is_none(),
+            "facts are the host's own, so the step never runs once for the batch"
+        );
+
+        let tagged = gathering(&selection(&["deploy"], &[]));
+        assert!(tagged.gathers, "`always` survives a tag selection");
+        let skipped = gathering(&selection(&[], &["always"]));
+        assert!(!skipped.gathers, "`--skip-tags always` drops the gather");
+        assert_ne!(skipped.steps[0].task.module, "ansible.builtin.setup");
+
+        let c = compiled(text);
+        assert!(!c.gathers, "`gather_facts: false` gathers nothing");
+        assert_eq!(c.steps[0].task.name, "body");
     }
 
     /// The three flush points close the three sections, and neither they nor a handler are

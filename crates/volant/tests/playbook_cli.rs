@@ -78,7 +78,13 @@ fn volant_within_full(
         .env_remove("ANSIBLE_ROLES_PATH")
         .env_remove("ANSIBLE_RUN_TAGS")
         .env_remove("ANSIBLE_SKIP_TAGS")
-        .env_remove("VOLANT_BATCHING");
+        .env_remove("VOLANT_BATCHING")
+        // The controller's own Python, which a play that gathers facts needs: taken from the
+        // machine rather than from whatever virtualenv the developer running the suite happens
+        // to have active, so a run reads the same here and on CI. A test that wants a particular
+        // interpreter names it through `envs`, which is applied below and wins.
+        .env_remove("VIRTUAL_ENV")
+        .env_remove("VOLANT_PYTHON");
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -789,6 +795,19 @@ fn fake_sudo(name: &str, body: &str) -> std::path::PathBuf {
     let sudo = dir.join("sudo");
     std::fs::write(&sudo, body).unwrap();
     std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+/// A `python3` on `PATH` with no ansible-core behind it, so a probe that needs the controller to
+/// have none reads the same on a machine that has one.
+fn fake_python3_without_ansible(name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let python = dir.join("python3");
+    std::fs::write(&python, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
     dir
 }
 
@@ -3699,16 +3718,19 @@ const RUNS_PROBES: &[RunsProbe] = &[
         2,
         "nosuchuser-volant-probe",
     ),
-    // `gather_facts: true` is answered rather than obeyed: this release gathers no facts and
-    // says so before the first task, which is the difference between a keyword handled and a
-    // keyword ignored.
+    // `gather_facts: true` is obeyed now rather than answered: the play opens with the
+    // reference's `setup`, which the controller builds before the first connection. A controller
+    // that cannot build it refuses the run, and that refusal is the observable - it exists only
+    // because the play asked for facts, and the same playbook writing `false` exits 0 on the same
+    // machine. The probe puts a `python3` with no ansible-core in front of whatever this machine
+    // has, so the row reads the same either way.
     runs(
         "play",
         "gather_facts",
         "- hosts: localhost\n  gather_facts: true\n  tasks:\n    - command: echo hi\n",
         &[],
-        0,
-        "gather_facts is not available in this release",
+        4,
+        "no Python interpreter with ansible-core",
     ),
     // The recap, not the banner: `PLAY [localhost]` is `name` falling back to `hosts`, so it
     // would still read the same if `hosts` never reached the inventory. A host only reaches the
@@ -4245,6 +4267,7 @@ fn is_become_user_probe(probe: &RunsProbe) -> bool {
 fn every_runs_keyword_changes_something_observable() {
     let dir = probe_dir("runs");
     let sudo_dir = fake_sudo("runs-become-user", FAKE_SUDO_FOR_BECOME_USER);
+    let no_ansible = fake_python3_without_ansible("runs-gather-facts");
     // The role the `play.roles` row reads, beside the playbook where the reference looks first.
     std::fs::create_dir_all(dir.join("roles/probe_role/tasks")).expect("the probe role is written");
     std::fs::write(
@@ -4263,7 +4286,11 @@ fn every_runs_keyword_changes_something_observable() {
                 .expect("the probe's vars file is written");
         }
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
-        let path = is_become_user_probe(probe).then_some(sudo_dir.as_path());
+        let path = match (is_become_user_probe(probe), probe.kw) {
+            (true, _) => Some(sudo_dir.as_path()),
+            (_, "gather_facts") => Some(no_ansible.as_path()),
+            _ => None,
+        };
         // `serial` needs more than one host to cut a batch out of, `run_once` needs a second
         // host to hand its result to, and `delegate_to` needs a second host to run on. They run
         // against an inventory of two written beside the probe rather than against the implicit
@@ -4297,6 +4324,7 @@ fn every_runs_keyword_changes_something_observable() {
     );
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
     std::fs::remove_dir_all(&sudo_dir).expect("the fake sudo directory is removed");
+    std::fs::remove_dir_all(&no_ansible).expect("the fake python directory is removed");
 }
 
 /// A loop variable named after one of the values the whole inventory shares renders the item,

@@ -27,8 +27,8 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
-    python_for, record_registered, requested_interpreter, retry_plan, reuse_or_connect,
-    run_agent_batch, run_local, running_host_vars, step_tasks, until_holds,
+    python_for, record_facts, record_registered, requested_interpreter, retry_plan,
+    reuse_or_connect, run_agent_batch, run_local, running_host_vars, step_tasks, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1141,12 +1141,17 @@ pub(super) async fn drive_host(
                     break;
                 }
                 let live = driver.progress.borrow().live_hosts.clone();
-                record_registered(
-                    &mut store.lock().expect("vars lock"),
-                    task,
-                    &fact_targets(task, &name, &live),
-                    &results,
-                );
+                let targets = fact_targets(task, &name, &live);
+                {
+                    // One lock for both: a reader between them would see a host that had
+                    // registered a result without holding the facts that came in it.
+                    let mut vars = store.lock().expect("vars lock");
+                    record_registered(&mut vars, task, &targets, &results);
+                    // Only here, and never on the `run_local` path above: this is where a
+                    // managed host's own words arrive, and `set_fact` writes its own facts with
+                    // the trust each of them earned.
+                    record_facts(&mut vars, &targets, &results);
+                }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
                 let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
                 let retried_names: &[String] = if bi == 0 { &names } else { &[] };

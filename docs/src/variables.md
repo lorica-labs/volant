@@ -12,7 +12,7 @@
 8. Play `vars_files`
 9. A role's `vars/main.yml`
 10. Task `vars`
-11. Facts set by `register` and `set_fact`
+11. Facts gathered from the host, and facts set by `register` and `set_fact`
 12. A role's parameters (a free key on a role entry)
 13. `--extra-vars`
 
@@ -23,7 +23,7 @@ A fixed set of magic variables is added on top of every host's view and always w
 
 `ansible_play_hosts` and `ansible_play_hosts_all` name the play, while `ansible_play_batch` and `play_hosts` name the current [`serial` batch](playbooks.md#serial), which is what the reference reports there. Inside a `rescue`, `ansible_failed_task` and `ansible_failed_result` are set as facts on the host that failed.
 
-`hostvars` holds what the inventory, `--extra-vars` and `set_fact` produced for each host, without the other host's own play or task variables, and it is rebuilt whenever a fact changes. No facts are gathered from remote hosts yet, so that is all a cross-host lookup can see. Every host of a run reads one shared map rather than a copy of its own, so a task naming `hostvars` costs a lookup and not a copy of the inventory.
+`hostvars` holds what the inventory, `--extra-vars`, `set_fact` and the gathered facts produced for each host, without the other host's own play or task variables, and it is rebuilt whenever a fact changes. Every host of a run reads one shared map rather than a copy of its own, so a task naming `hostvars` costs a lookup and not a copy of the inventory.
 
 ## Conditions and loops
 
@@ -63,11 +63,19 @@ The grain is the variable, not the string. Ansible tags each string object, so a
 
 For the modules whose arguments these variables and templates feed, see the [native module table](modules.md).
 
+## Facts
+
+A play gathers facts unless it writes `gather_facts: false`. Volant runs the reference's own `setup` module for that. It is built on the controller with the other Python modules the run names, so a controller without ansible-core refuses the run before the first connection instead of carrying on without facts.
+
+What comes back is readable under two names. Each key is there flat with an `ansible_` prefix, as `ansible_hostname`, and inside `ansible_facts` spelled as the module wrote it, as `ansible_facts.hostname`. They are separate variables, so a later `set_fact` of `ansible_hostname` shadows the flat one and leaves `ansible_facts.hostname` alone. Ansible behaves the same way.
+
+Gathered facts are a managed host's own words, so they arrive untrusted: a template inside one stays text and is never rendered.
+
 ## Not there yet
 
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
 - Collections. Roles load from the standard search paths; a collection does not.
-- `gather_facts` is accepted but gathers nothing: a play that asks for facts is warned and carries on without them, and a play that writes `false` runs as it does in Ansible. The `setup` module does not exist yet, so no `ansible_*` fact beyond the magic variables above is ever defined.
+- `gather_subset` and `gather_timeout`: refused by name, so a play that gathers facts gets the full set.
 - Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
 - Methods on a mapping. `{{ hostvars.keys() }}` renders in Ansible and fails here, because the templating engine underneath has no `keys` on a map yet. `dict2items` is the way round it.
 - Resolving variables costs more than linearly in the size of the inventory, and two rounds of sharing have taken most of that cost out. Sharing `hostvars` came first: a task reads one host's entry out of a map every host shares, instead of copying every host's variables, which took 56% off the part of the cost that grows with the square of the inventory. Sharing the inventory-wide magic variables came next: `groups` and the play's live host lists are built once per batch and read from there, rather than written into every host's variables for every task. That took another 31% off the same part and 43% off the part that grows with the inventory alone, for a 200-host run about 1.5 times faster. What is left of the bend has not been measured; the next suspect is the bookkeeping each host copies at every step. Nothing in a playbook, an inventory or `ansible.cfg` changes any of this — it is the engine's own cost, not something a run can be written around. Measured on a debug build over twenty local tasks, after 0.1.0-alpha.5: 50 hosts 0.16 s, 100 hosts 0.50 s, 200 hosts 1.45 s. Read those as the shape of the curve rather than as timings you should see.

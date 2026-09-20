@@ -141,12 +141,6 @@ pub async fn run_play(
     };
     let batches =
         crate::compile::batches(&hosts, play.serial.as_ref(), &state.templar, &play_vars)?;
-    if play.gather_facts {
-        out.warning(
-            "gather_facts is not available in this release; continuing without facts",
-            false,
-        );
-    }
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let playbook_dir = state
         .vars

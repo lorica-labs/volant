@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ask for no expansion, which is what this release already does
+      command: /bin/echo $HOME
+      args:
+        expand_argument_vars: false
+      register: literal
+    - name: Report what the program was given
+      debug:
+        msg: "printed={{ literal.stdout }}"

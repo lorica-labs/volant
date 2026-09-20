@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
-use volant_protocol::modules::COMMAND;
+use volant_protocol::modules::{COMMAND, arg_bool};
 
 use super::{Context, Module, Run, glob};
 use crate::clock;
@@ -33,37 +33,63 @@ pub(crate) fn execute(
     cancelled: &dyn Fn() -> bool,
 ) -> Run {
     let timeout = ctx.timeout;
-    let uses_shell = uses_shell
-        || args
-            .get("_uses_shell")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    // Every boolean here is read the way the reference reads one, spellings and all: `"false"`,
+    // `"no"` and `0` turn the argument off there, and `Value::as_bool` sees none of them.
+    let uses_shell = uses_shell || args.get("_uses_shell").and_then(arg_bool).unwrap_or(false);
     let strip_empty_ends = args
         .get("strip_empty_ends")
-        .and_then(Value::as_bool)
+        .and_then(arg_bool)
         .unwrap_or(true);
     let chdir = args.get("chdir").and_then(Value::as_str);
-    let stdin_data = args
-        .get("stdin")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    // Measured on ansible-core 2.19.12: the newline is appended without looking at what the value
+    // already ends with, so a value that ends in one gets a second.
+    let stdin_data = args.get("stdin").and_then(Value::as_str).map(|s| {
+        if args
+            .get("stdin_add_newline")
+            .and_then(arg_bool)
+            .unwrap_or(true)
+        {
+            format!("{s}\n")
+        } else {
+            s.to_string()
+        }
+    });
 
     let raw = args
         .get("_raw_params")
         .or_else(|| args.get("cmd"))
         .and_then(Value::as_str)
         .map_or("", str::trim);
-    let argv: Vec<String> = match args.get("argv").and_then(Value::as_array) {
+    // Measured on ansible-core 2.19.12: an `argv` on `shell` runs the way it runs on `command` -
+    // the list is the process and no shell is started for it, and the task reports the list as
+    // its `cmd`. A `shell:` written as a mapping carrying only `argv` used to be refused here as
+    // "no command given", against a reference that runs it.
+    let from_argv = args.get("argv").and_then(Value::as_array);
+    let argv: Vec<String> = match from_argv {
         Some(list) => list
             .iter()
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect(),
-        None if uses_shell => vec!["sh".into(), "-c".into(), raw.to_string()],
+        // `executable` is the shell the line is handed to, and selecting it is the whole point of
+        // writing the argument: `sh` is a fallback, not the answer to every task.
+        None if uses_shell && !raw.is_empty() => vec![
+            args.get("executable")
+                .and_then(Value::as_str)
+                .unwrap_or("sh")
+                .to_string(),
+            "-c".into(),
+            raw.to_string(),
+        ],
+        None if uses_shell => Vec::new(),
         None => shlex::split(raw).unwrap_or_default(),
     };
-    let display: Value = if uses_shell { json!(raw) } else { json!(argv) };
-    if argv.is_empty() || (uses_shell && raw.is_empty()) {
+    let display: Value = if uses_shell && from_argv.is_none() {
+        json!(raw)
+    } else {
+        json!(argv)
+    };
+    if argv.is_empty() {
         return Run::Done(TaskResult::failed_with("no command given"));
     }
 
@@ -444,6 +470,71 @@ mod tests {
             Run::Done(r) => r,
             Run::Cancelled => panic!("unexpected cancellation"),
         }
+    }
+
+    /// `stdin_add_newline` decides whether the value written to the child ends in a newline, and
+    /// its default is to add one. Measured on ansible-core 2.19.12 with `od -c`: the newline is
+    /// appended without looking at what the value already ends with, so `"ab\n"` reaches the
+    /// child as four bytes under the default and three with the argument off.
+    ///
+    /// What would make this red: the argument accepted and dropped, which is what this release
+    /// did -- every command reading standard input got one byte less than the reference gave it,
+    /// and a reader waiting for a line never saw one. Or the value read with `Value::as_bool`,
+    /// which sees a YAML boolean and nothing else: `"false"` then falls back to the default and
+    /// writes the byte the task asked it not to, measured at 2 bytes against the reference's 2
+    /// and this release's 3.
+    #[test]
+    fn stdin_add_newline_decides_the_last_byte_written() {
+        let bytes = |stdin: Value, add: Option<Value>| {
+            let mut a = args(json!({"_raw_params": "wc -c", "stdin": stdin}));
+            if let Some(add) = add {
+                a.insert("stdin_add_newline".into(), add);
+            }
+            done(execute(&a, false, &Context::default(), &|| false)).0["stdout"]
+                .as_str()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        assert_eq!(bytes(json!("ab"), None), "3");
+        assert_eq!(bytes(json!("ab\n"), None), "4", "appended unconditionally");
+        assert_eq!(bytes(json!("ab"), Some(json!(false))), "2");
+        assert_eq!(bytes(json!("ab\n"), Some(json!(false))), "3");
+        for off in [json!("false"), json!("no"), json!("Off"), json!(0)] {
+            assert_eq!(bytes(json!("ab"), Some(off.clone())), "2", "{off}");
+        }
+        assert_eq!(bytes(json!("ab"), Some(json!("yes"))), "3");
+    }
+
+    /// An `argv` on the shell path runs the list itself, which is what the reference does with
+    /// it: `shell:` written as a mapping carrying `argv` and no command line prints its output
+    /// there, and reports the list as the task's `cmd`.
+    ///
+    /// What would make this red: the empty-command guard reading the free-form line while an
+    /// `argv` sits next to it, which failed the task with "no command given" against a reference
+    /// that ran it. A `shell` with neither still has nothing to run, and still says so.
+    #[test]
+    fn an_argv_runs_on_the_shell_path_and_nothing_still_fails() {
+        let r = done(execute(
+            &args(json!({"argv": ["echo", "hi"]})),
+            true,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(
+            r.0.get("stdout").and_then(Value::as_str).map(str::trim),
+            Some("hi"),
+            "the list never ran: {:?}",
+            r.0
+        );
+        assert_eq!(r.0["cmd"], json!(["echo", "hi"]));
+        let empty = done(execute(
+            &args(json!({"_raw_params": "  "})),
+            true,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(empty.0["msg"], json!("no command given"));
     }
 
     #[test]

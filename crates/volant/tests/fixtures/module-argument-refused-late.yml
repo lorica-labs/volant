@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    expand: true
+  tasks:
+    - name: Ask for an expansion through a value the pre-flight cannot read
+      command: /bin/echo $HOME
+      args:
+        expand_argument_vars: "{{ expand }}"
+    - name: Never reached
+      command: echo unreachable

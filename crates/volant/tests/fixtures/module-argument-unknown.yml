@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Name an argument no engine has
+      command: /bin/true
+      args:
+        no_such_arg: 1

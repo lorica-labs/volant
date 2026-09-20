@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.5...volant-agent-v0.1.0-alpha.6) - 2026-09-20
+
+### Added
+
+- *(modules)* declare which arguments each native module honours ([#145](https://github.com/lorica-labs/volant/pull/145))
+
+### Fixed
+
+- *(preflight)* check what a dynamic include splices in ([#155](https://github.com/lorica-labs/volant/pull/155))
+- *(command)* hold the deadline over the stdin write ([#154](https://github.com/lorica-labs/volant/pull/154))
+- *(command)* keep the deadline over the child and its streams ([#144](https://github.com/lorica-labs/volant/pull/144))
+- *(executor)* show every event a task produces through the renderer ([#143](https://github.com/lorica-labs/volant/pull/143))
+- *(command)* resolve creates and removes where the command runs ([#142](https://github.com/lorica-labs/volant/pull/142))
+
+### Other
+
+- send the ssh quickstart to the host it names ([#152](https://github.com/lorica-labs/volant/pull/152))
+- say what this release expands and when links close ([#150](https://github.com/lorica-labs/volant/pull/150))
+- say what this release runs and what it only partly answers ([#148](https://github.com/lorica-labs/volant/pull/148))
+- ship the Linux agents inside every controller archive ([#147](https://github.com/lorica-labs/volant/pull/147))
+- *(executor)* say why in one line and move the rest out ([#133](https://github.com/lorica-labs/volant/pull/133))
+- declare workspace lints and name each allowance ([#123](https://github.com/lorica-labs/volant/pull/123))
+
 ## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.4...volant-agent-v0.1.0-alpha.5) - 2026-09-16
 
 ### Added

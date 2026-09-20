@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) - 2026-09-20
+
+### Added
+
+- *(modules)* declare which arguments each native module honours ([#145](https://github.com/lorica-labs/volant/pull/145))
+- *(executor)* put a barrier in front of every linear task ([#140](https://github.com/lorica-labs/volant/pull/140))
+
+### Fixed
+
+- *(preflight)* check what a dynamic include splices in ([#155](https://github.com/lorica-labs/volant/pull/155))
+- *(command)* hold the deadline over the stdin write ([#154](https://github.com/lorica-labs/volant/pull/154))
+- *(transport)* refuse a remote_tmp whose tilde part is not a user name ([#146](https://github.com/lorica-labs/volant/pull/146))
+- *(command)* keep the deadline over the child and its streams ([#144](https://github.com/lorica-labs/volant/pull/144))
+- *(executor)* show every event a task produces through the renderer ([#143](https://github.com/lorica-labs/volant/pull/143))
+- *(command)* resolve creates and removes where the command runs ([#142](https://github.com/lorica-labs/volant/pull/142))
+- *(transport)* resolve the connection from effective host variables ([#141](https://github.com/lorica-labs/volant/pull/141))
+- *(template)* treat module results as data, never as templates ([#139](https://github.com/lorica-labs/volant/pull/139))
+
+### Other
+
+- follow the branch ref, not just .git/HEAD ([#153](https://github.com/lorica-labs/volant/pull/153))
+- send the ssh quickstart to the host it names ([#152](https://github.com/lorica-labs/volant/pull/152))
+- say what this release expands and when links close ([#150](https://github.com/lorica-labs/volant/pull/150))
+- say what this release runs and what it only partly answers ([#148](https://github.com/lorica-labs/volant/pull/148))
+- ship the Linux agents inside every controller archive ([#147](https://github.com/lorica-labs/volant/pull/147))
+- make the coverage floor fail the recipe again ([#137](https://github.com/lorica-labs/volant/pull/137))
+- *(vars)* share the inventory-wide values across hosts ([#134](https://github.com/lorica-labs/volant/pull/134))
+- *(executor)* say why in one line and move the rest out ([#133](https://github.com/lorica-labs/volant/pull/133))
+- *(executor)* split the runner into modules ([#132](https://github.com/lorica-labs/volant/pull/132))
+- *(executor)* give the host driver its own context ([#131](https://github.com/lorica-labs/volant/pull/131))
+- *(executor)* hold the coordinator state in one place ([#130](https://github.com/lorica-labs/volant/pull/130))
+- *(executor)* drop a guard nothing depends on ([#129](https://github.com/lorica-labs/volant/pull/129))
+- add a mutation recipe and the checks it found missing ([#128](https://github.com/lorica-labs/volant/pull/128))
+- declare workspace lints and name each allowance ([#123](https://github.com/lorica-labs/volant/pull/123))
+
 ## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) - 2026-09-16
 
 ### Added

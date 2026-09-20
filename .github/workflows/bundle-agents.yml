@@ -28,7 +28,7 @@ jobs:
       contents: write
       id-token: write
     env:
-      GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
       PLAN: ${{ inputs.plan }}
       REPO: ${{ github.repository }}
       TAG_INPUT: ${{ inputs.tag }}
@@ -126,6 +126,14 @@ jobs:
           gh release upload "$TAG" --repo "$REPO" --clobber volant-*.tar.xz
           gh release upload "$TAG" --repo "$REPO" --clobber \
             volant-*.tar.xz.sha256 sha256.sum volant-installer.sh dist-manifest.json
+
+      # Immutable releases are on for this repository, which locks a release's assets the
+      # moment it is published. release.yml therefore creates a draft, and this is where it
+      # stops being one: after the archives have been repacked and attested, and before the
+      # smoke tests below, which fetch over the public download URL a draft does not have.
+      - name: Publish the release
+        if: ${{ inputs.plan != '' }}
+        run: gh release edit "$TAG" --repo "$REPO" --draft=false
 
       # The archive is unpacked into an empty directory and VOLANT_AGENT_DIR is removed from
       # the environment: the controller has to find its agents beside itself, in what was

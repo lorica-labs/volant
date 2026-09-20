@@ -705,6 +705,57 @@ fn an_unparsable_forks_in_ansible_cfg_is_refused_with_the_reference_s_code() {
     assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
 }
 
+/// A `remote_tmp` whose `~user` part holds anything but a user name is refused when the
+/// configuration is read, before a connection is opened.
+///
+/// The assertion is the exit code and the value in the message: exit 5 is what an unusable
+/// configuration value gets, measured in the 1.4 plan, and naming the value is what lets an
+/// operator find it.
+///
+/// What would make this red: `shell_word` leaving the segment bare and nothing checking it,
+/// which is what this release does -- the substitution reaches the remote shell.
+#[test]
+fn a_remote_tmp_with_a_substitution_in_its_home_part_is_refused() {
+    let out = volant_within_env(
+        &["playbook", &fixture("cfg/site.yml")],
+        DEFAULT_DEADLINE,
+        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-remote-tmp.cfg"))],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
+    assert!(stderr.contains("~$(id)/x"), "{stderr}");
+    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
+}
+
+/// The other direction, and the one that says the rule is not simply "refuse every tilde": `~`,
+/// `~root` and `~some.user-1` are user names and still reach the remote shell bare, which is the
+/// only thing that can expand them. Read from `ANSIBLE_REMOTE_TMP` rather than a fixture per
+/// value, since only the value under test changes.
+///
+/// What would make this red: a validator refusing every `~`, which would break the default
+/// `remote_tmp` and every inventory that sets one.
+#[test]
+fn an_ordinary_tilde_user_is_still_passed_through() {
+    for value in ["~", "~root", "~some.user-1"] {
+        let out = volant_within_env(
+            &["playbook", &fixture("cfg/site.yml")],
+            DEFAULT_DEADLINE,
+            &[
+                ("ANSIBLE_CONFIG", &fixture("cfg/ansible.cfg")),
+                ("ANSIBLE_REMOTE_TMP", value),
+            ],
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "'{value}': {}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// The reference reports the run's own `forks` through `ansible_forks`, whatever the host
 /// count; a fixed five would have lied as soon as `-f` existed.
 #[test]
@@ -6290,6 +6341,118 @@ fn fake_ssh(name: &str, inventory: &str) -> (std::path::PathBuf, std::path::Path
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).expect("make it run");
     std::fs::write(dir.join("inv.ini"), inventory).expect("an inventory");
     (dir, marker)
+}
+
+/// Like `fake_ssh`, but keeps every invocation's whole argv instead of a bare marker: task 8's
+/// proof needs to inspect what actually reached the remote command line, not just that ssh ran.
+fn fake_ssh_recording(name: &str, inventory: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("bin")).expect("a bin dir");
+    let log = dir.join("ssh.log");
+    let ssh = dir.join("bin/ssh");
+    std::fs::write(
+        &ssh,
+        format!("#!/bin/sh\necho \"$@\" >> {}\nexit 255\n", log.display()),
+    )
+    .expect("the fake ssh");
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).expect("make it run");
+    std::fs::write(dir.join("inv.ini"), inventory).expect("an inventory");
+    (dir, log)
+}
+
+/// The effect asserted directly, since an exit code alone cannot tell a refusal from a
+/// connection that failed for some other reason: whatever reaches the fake `ssh`'s recorded
+/// command line, none of it carries the `$(` of a command substitution.
+///
+/// What would make this red: `shell_word` leaving `~$(id)/x` bare and nothing checking a
+/// host's own `ansible_remote_tmp`, so the substitution rides the probe command straight into
+/// the recorded line.
+#[test]
+fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
+    let (dir, log) = fake_ssh_recording(
+        "remote-tmp-substitution",
+        "node ansible_connection=ssh ansible_host=192.0.2.1 ansible_remote_tmp=~$(id)/x\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/local-override.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[],
+    );
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        !recorded.contains("$("),
+        "the substitution reached the ssh command line: {recorded}\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "a host refused for its own remote_tmp is unreachable, not failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The refusal says which host and which value, because a run of two hundred hosts that only
+    // says a `remote_tmp` was refused sends its operator looking through the inventory by hand.
+    // Both streams, because this one travels as an `UNREACHABLE` line on stdout while a refusal
+    // read from the configuration goes to stderr - reading one of them would pass while the text
+    // was on the other.
+    let shown = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(shown.contains("node"), "the refusal names no host: {shown}");
+    assert!(
+        shown.contains("~$(id)/x"),
+        "the refusal names no value: {shown}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other half of the guard, and the one the exit-code test above cannot see: a user name
+/// still reaches the wire **bare**, because the remote shell is the only thing that can expand
+/// it. The recorded command line is the assertion.
+///
+/// What would make this red: `shell_word` single-quoting the tilde segment along with the rest.
+/// Every run would then cache the agent in a directory literally named `~root`, and a test that
+/// only read the exit code would stay green while every real host broke.
+#[test]
+fn an_ordinary_tilde_user_reaches_the_ssh_command_line_bare() {
+    let (dir, log) = fake_ssh_recording(
+        "remote-tmp-bare-tilde",
+        "node ansible_connection=ssh ansible_host=192.0.2.1 ansible_remote_tmp=~root/x\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/local-override.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[],
+    );
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        recorded.contains("~root/"),
+        "the tilde did not reach the command line unquoted: {recorded}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !recorded.contains("'~root"),
+        "the tilde was quoted, so the remote shell cannot expand it: {recorded}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A connection variable is an ordinary variable: an extra var that says `local` beats the

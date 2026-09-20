@@ -177,8 +177,17 @@ impl Transport {
                 extra_args: split_args(host_name, vars, "ansible_ssh_extra_args")?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
-                remote_tmp: text("ansible_remote_tmp")
-                    .unwrap_or_else(|| defaults.remote_tmp.clone()),
+                remote_tmp: match text("ansible_remote_tmp") {
+                    Some(tmp) => {
+                        validate_remote_tmp(&tmp)
+                            .map_err(|e| anyhow::anyhow!("host '{host_name}': {e}"))?;
+                        tmp
+                    }
+                    // The default already went through the same check when the configuration
+                    // that produced it was loaded; a host variable is the one source that
+                    // reaches here unchecked.
+                    None => defaults.remote_tmp.clone(),
+                },
             })),
             other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }
@@ -530,7 +539,15 @@ fn as_map(vars: &std::collections::BTreeMap<String, Value>) -> Map<String, Value
 /// One remote path as a single shell word. A leading `~` or `~user` stays bare, up to and
 /// including the first `/`, so the remote shell, the only thing that can, expands it; the rest
 /// is single-quoted, so a `remote_tmp` holding a space or a shell metacharacter cannot split
-/// into several words or run anything.
+/// into several words or run anything. That bare segment cannot be quoted without stopping the
+/// shell from expanding it, so this depends on [`validate_remote_tmp`] having already refused
+/// everything between the `~` and the first `/` that is not a user name.
+///
+/// That validator runs at every source `remote_tmp` has: `Config::load` for `[defaults]` and for
+/// `ANSIBLE_REMOTE_TMP`, and [`Transport::for_vars`] for a host's own `ansible_remote_tmp`, which
+/// is where a `group_vars`, a task's `vars:`, a `set_fact` or a `-e` arrives. A fourth source
+/// added without a fourth call is how this guarantee rots, so the list is here rather than left
+/// to a grep.
 fn shell_word(path: &str) -> String {
     let Some(rest) = path.strip_prefix('~') else {
         return single_quoted(path);
@@ -540,6 +557,31 @@ fn shell_word(path: &str) -> String {
         // Just `~` or `~user`, with nothing after it to hold a space or a metacharacter.
         None => path.to_string(),
     }
+}
+
+/// The characters a user name may hold in the `~user` part of a remote path. Everything else --
+/// a space, a quote, a `$`, a backtick -- would reach the remote shell unquoted, because that
+/// segment is the one thing `shell_word` cannot quote: quoting it would stop the shell from
+/// expanding it, which is the only reason it is there.
+fn is_home_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')
+}
+
+/// Refuses a `remote_tmp` whose `~user` part -- up to the first `/`, or the whole value if there
+/// is none -- holds anything but a user name. A value with no leading `~` at all is untouched:
+/// `shell_word` single-quotes it whole, so nothing there reaches the shell unquoted.
+pub(crate) fn validate_remote_tmp(value: &str) -> anyhow::Result<()> {
+    let Some(rest) = value.strip_prefix('~') else {
+        return Ok(());
+    };
+    let user = rest.split('/').next().unwrap_or("");
+    if user.chars().all(is_home_char) {
+        return Ok(());
+    }
+    bail!(
+        "remote_tmp '{value}': only a user name may follow '~', because that part reaches the \
+         remote shell unquoted"
+    )
 }
 
 fn single_quoted(text: &str) -> String {
@@ -1618,6 +1660,19 @@ mod tests {
             String::from_utf8_lossy(&probe.stderr)
         );
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The other direction, and the one that says the rule is not simply "refuse every tilde":
+    /// `~`, `~root` and `~some.user-1` are user names and still reach the remote shell bare,
+    /// which is the only thing that can expand them.
+    ///
+    /// What would make this red: a validator refusing every `~`, which would break the default
+    /// `remote_tmp` and every inventory that sets one.
+    #[test]
+    fn an_ordinary_tilde_user_is_still_passed_through() {
+        for value in ["~", "~root", "~some.user-1"] {
+            assert!(validate_remote_tmp(value).is_ok(), "{value}");
+        }
     }
 
     #[test]

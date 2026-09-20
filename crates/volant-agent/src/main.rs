@@ -3,6 +3,7 @@
 
 mod blobs;
 mod clock;
+mod interpreter;
 mod modules;
 mod runner;
 
@@ -79,6 +80,7 @@ fn serve() -> io::Result<()> {
                     protocol: PROTOCOL_VERSION,
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     arch: std::env::consts::ARCH.to_string(),
+                    interpreters: interpreter::discover(),
                 })?;
             }
             ToAgent::RunBatch { id, tasks } => runner::run_batch(id, &tasks, &rx, &mut send)?,

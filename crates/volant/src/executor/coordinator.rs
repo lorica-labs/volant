@@ -198,6 +198,7 @@ pub(super) async fn run_batch(
         all_play_hosts: all.to_vec(),
         r#become: play.r#become,
         become_user: play.become_user.clone(),
+        python: state.python.clone(),
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);

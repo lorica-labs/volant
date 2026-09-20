@@ -20,7 +20,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, playbook, preflight};
+use crate::{agent, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -212,6 +212,30 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
             preflight::check_steps(play)?;
         }
     }
+    // Every Python module the compiled plays name, built into one payload before the first
+    // connection. Here rather than per play: one helper start, one union, and a controller that
+    // cannot build payloads at all refuses the run now - with the interpreters it tried - instead
+    // of connecting and failing the first Python task of the first play.
+    //
+    // A run of native tasks alone names no Python module, builds nothing, and needs no
+    // ansible-core on the controller.
+    let python_modules: std::collections::BTreeSet<String> = compiled
+        .iter()
+        .flatten()
+        .flat_map(|play| play.steps.iter())
+        .map(|step| step.task.module.as_str())
+        .chain(
+            compiled
+                .iter()
+                .flatten()
+                .flat_map(|play| play.handlers.iter())
+                .map(|handler| handler.task.module.as_str()),
+        )
+        .filter(|module| python::is_python_module(module))
+        .map(|module| volant_protocol::modules::short_name(module).to_string())
+        .collect();
+    let python = python::union_for(&python_modules).map_err(|e| Refusal::or(4, e))?;
+
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
     // Escalating with `sudo` because `su` is not implemented would run the task under rules the
@@ -314,6 +338,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         failed_hosts: HashSet::new(),
         verbosity: args.verbose,
         links: HashMap::new(),
+        python: python.map(Arc::new),
     };
 
     // A controller with no local agent can still drive remote hosts, so the local agent only

@@ -47,6 +47,7 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 The host needs an sshd and an account you can log into. It needs no Python and nothing installed by hand: the controller uploads the agent with the first task and caches it there for the next run. What you need on this side is the key:
 
 ```sh
+# the address, the account and the key are yours to fill in
 printf 'web1 ansible_host=192.0.2.10 ansible_user=deploy ansible_ssh_private_key_file=/home/you/.ssh/id_ed25519\n' > inventory.ini
 printf -- '- hosts: web1\n  gather_facts: false\n  tasks:\n    - command: id -un\n' > site.yml
 ./volant playbook -i inventory.ini site.yml

@@ -302,3 +302,16 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-bundle-agents:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/bundle-agents.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
+    permissions:
+      "attestations": "write"
+      "contents": "write"
+      "id-token": "write"

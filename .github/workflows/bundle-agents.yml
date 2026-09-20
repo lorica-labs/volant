@@ -1,0 +1,162 @@
+# Puts both Linux agents inside every controller archive of a release, then downloads what a
+# user downloads and runs one task with it. Called by release.yml after the release is
+# announced; `workflow_dispatch` runs the smoke test alone against any published tag.
+name: Bundle agents
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist plan of the release being published.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: A published release tag to smoke-test.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAN: ${{ inputs.plan }}
+      REPO: ${{ github.repository }}
+      TAG_INPUT: ${{ inputs.tag }}
+    steps:
+      - name: Name the release to work on
+        run: |
+          set -euo pipefail
+          tag="${TAG_INPUT:-}"
+          if [ -z "$tag" ]; then
+            tag="$(printf '%s' "$PLAN" | jq -r .announcement_tag)"
+          fi
+          test -n "$tag" && test "$tag" != null
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Put both Linux agents in every controller archive
+        if: ${{ inputs.plan != '' }}
+        run: |
+          set -euo pipefail
+          mkdir work
+          cd work
+          gh release download "$TAG" --repo "$REPO" \
+            --pattern 'volant-*.tar.xz' --pattern 'volant-*.tar.xz.sha256' \
+            --pattern 'sha256.sum' --pattern 'volant-installer.sh' \
+            --pattern 'dist-manifest.json'
+          for agent in volant-agent-*.tar.xz; do
+            triple="${agent#volant-agent-}"
+            triple="${triple%.tar.xz}"
+            mkdir -p "agents/$triple"
+            tar -xJf "$agent" -C "agents/$triple" --strip-components=1
+            test -x "agents/$triple/volant-agent"
+          done
+          : > pairs.txt
+          for archive in volant-*.tar.xz; do
+            case "$archive" in volant-agent-*) continue ;; esac
+            before="$(sha256sum "$archive" | cut -d' ' -f1)"
+            dir="${archive%.tar.xz}"
+            triple="${dir#volant-}"
+            rm -rf repack
+            mkdir -p "repack/$dir"
+            tar -xJf "$archive" -C "repack/$dir" --strip-components=1
+            # The agent this controller runs a local task with is named plainly, and the two
+            # it uploads to a Linux host carry their target triple. An archive for a target
+            # dist builds no agent for would leave the first one missing, so it fails here.
+            cp "agents/$triple/volant-agent" "repack/$dir/volant-agent"
+            for musl in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+              cp "agents/$musl/volant-agent" "repack/$dir/volant-agent-$musl"
+            done
+            (cd repack && tar -cJf "../$archive" "$dir")
+            printf '%s %s\n' "$before" "$(sha256sum "$archive" | cut -d' ' -f1)" >> pairs.txt
+          done
+          # Every sha256 of a controller archive is written down four times: in its own
+          # .sha256 file, in sha256.sum, in dist-manifest.json, and in the shell installer,
+          # which refuses to install an archive whose digest it does not recognise. Repacking
+          # invalidates all four, so each one is rewritten here and the count is asserted: a
+          # record dist stops writing, or starts writing twice, fails this job rather than
+          # shipping an installer that no longer matches its archive.
+          records=(sha256.sum dist-manifest.json volant-installer.sh volant-*.tar.xz.sha256)
+          while read -r before after; do
+            found="$(grep -o "$before" "${records[@]}" | wc -l)"
+            if [ "$found" -ne 4 ]; then
+              echo "expected 4 records of $before, found $found" >&2
+              exit 1
+            fi
+            sed -i "s/$before/$after/g" "${records[@]}"
+          done < pairs.txt
+          sha256sum -c --quiet ./*.tar.xz.sha256
+
+      - name: Attest the archives that ship
+        if: ${{ inputs.plan != '' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            work/volant-*.tar.xz
+            !work/volant-agent-*.tar.xz
+
+      - name: Replace them on the release
+        if: ${{ inputs.plan != '' }}
+        run: |
+          set -euo pipefail
+          cd work
+          gh release upload "$TAG" --repo "$REPO" --clobber \
+            volant-*.tar.xz volant-*.tar.xz.sha256 sha256.sum volant-installer.sh \
+            dist-manifest.json
+
+      # The archive is unpacked into an empty directory and VOLANT_AGENT_DIR is removed from
+      # the environment: the controller has to find its agents beside itself, in what was
+      # downloaded, or these two runs fail. That is the whole point of the job above.
+      - name: A published archive runs a local task on its own
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          curl -fsSL -O "https://github.com/$REPO/releases/download/$TAG/volant-x86_64-unknown-linux-musl.tar.xz"
+          tar -xJf volant-x86_64-unknown-linux-musl.tar.xz --strip-components=1
+          printf 'h1 ansible_connection=local\n' > inv.ini
+          printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
+          env -u VOLANT_AGENT_DIR ./volant playbook -i inv.ini site.yml
+
+      - name: Start an sshd that accepts a throwaway key
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openssh-server
+          sudo ssh-keygen -A
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -E /tmp/sshd.log
+          # sshd reads authorized_keys under the home directory in the passwd database, which
+          # is not always the one $HOME names.
+          home="$(getent passwd "$(id -un)" | cut -d: -f6)"
+          mkdir -p "$home/.ssh"
+          chmod 700 "$home/.ssh"
+          ssh-keygen -q -t ed25519 -N "" -f "$home/.ssh/volant_smoke_key"
+          cat "$home/.ssh/volant_smoke_key.pub" >> "$home/.ssh/authorized_keys"
+          chmod 600 "$home/.ssh/authorized_keys"
+          ssh -i "$home/.ssh/volant_smoke_key" -o BatchMode=yes \
+            -o StrictHostKeyChecking=accept-new localhost true
+          echo "SMOKE_KEY=$home/.ssh/volant_smoke_key" >> "$GITHUB_ENV"
+
+      - name: A published archive runs a task over ssh on its own
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          curl -fsSL -O "https://github.com/$REPO/releases/download/$TAG/volant-x86_64-unknown-linux-musl.tar.xz"
+          tar -xJf volant-x86_64-unknown-linux-musl.tar.xz --strip-components=1
+          printf 'h1 ansible_host=localhost ansible_user=%s ansible_ssh_private_key_file=%s\n' \
+            "$(id -un)" "$SMOKE_KEY" > inv.ini
+          printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
+          env -u VOLANT_AGENT_DIR ./volant playbook -i inv.ini site.yml
+
+      - name: Show the sshd log
+        if: failure()
+        run: sudo cat /tmp/sshd.log

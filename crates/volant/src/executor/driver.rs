@@ -944,14 +944,18 @@ pub(super) async fn drive_host(
             // Whether `received` already holds results the conditions have been applied to. The
             // retry loop has to apply them itself, since `until` reads what they decided.
             let mut decided = false;
-            // Lines the agent asked to show while this batch ran. `FromAgent::Log` carries no
-            // task index, so they are shown under the batch's own `no_log`: with the strict
-            // barrier a batch is one task and that is exact, and under `[volant] batching` it
-            // errs towards hiding.
+            // Lines the agent asked to show while this batch ran. They are shown in full, even
+            // under `no_log`, for the same reason the `environment` warning is: every emitter of
+            // `FromAgent::Log` carries transport or protocol text and none can carry task data -
+            // the agent's own `main.rs` writes two of them before a batch exists, and `runner.rs`
+            // writes the third about a frame it could not read, naming the message kind alone.
+            //
+            // Hiding them would only make a broken control channel say
+            // `the output has been hidden...` where it used to say why, which is the one moment
+            // an operator most needs the cause. `FromAgent::Log` carries no task index, so the
+            // day one of them can quote a task this becomes the batch's own `no_log` - exact
+            // under the strict barrier, erring towards hiding under `[volant] batching`.
             let mut logs: Vec<String> = Vec::new();
-            let censored = batch
-                .iter()
-                .any(|(index, _)| c.steps[*index].task.censors());
             let ended = if let Some(retry) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
@@ -1063,7 +1067,7 @@ pub(super) async fn drive_host(
                         host: name.clone(),
                         index: batch[0].0,
                         message,
-                        censored,
+                        censored: false,
                     })
                     .await;
             }

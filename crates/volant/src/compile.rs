@@ -1259,7 +1259,7 @@ pub(crate) fn expand_include(
             builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
         }
     }
-    Ok(Compiled {
+    let expanded = Compiled {
         steps: builder.steps,
         blocks: builder.blocks,
         roles: builder.roles,
@@ -1268,7 +1268,12 @@ pub(crate) fn expand_include(
         inherited,
         search: base.search.clone(),
         selection: base.selection.clone(),
-    })
+    };
+    // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
+    // before anything is spliced, so what a file this release cannot execute gets is the
+    // statement's own failure rather than a keyword read and then dropped.
+    crate::preflight::check_spliced(&expanded)?;
+    Ok(expanded)
 }
 
 /// Puts the expansions of one include step into the running play, at `at`, and answers with the

@@ -105,6 +105,45 @@ pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result
     Ok(())
 }
 
+/// What one dynamic `include_tasks` or `include_role` brought in, checked before it is spliced
+/// into the running play.
+///
+/// The two passes above run once, over the compilation, and these two statements read their
+/// content while the play runs - so everything they bring in was never there to be checked, and a
+/// keyword this release refuses was accepted inside an included file and then ignored. That is the
+/// silent skip this module exists to stop, reaching a run by the one door the compilation does not
+/// hold.
+///
+/// It is the same [`check_task`] the two passes use, so a keyword is refused inside an included
+/// file by the sentence it is refused by in the play, and a row added to any table closes both
+/// doors at once. What differs is what happens next. Exit 4 before the first connection is not
+/// available here: hosts are connected and earlier tasks have run. So the refusal fails the
+/// statement for the host that asked, rescuable and `ignore_errors`-able, which is what a role
+/// nobody can find and a file that is not a list of tasks already do at the same place.
+///
+/// The whole expansion is refused rather than the one task carrying the keyword, which is the
+/// granularity the static path has: a keyword written in a file `import_tasks` names refuses the
+/// whole run. Letting the tasks in front of the refused one run first is the half-run the
+/// pre-flight exists to prevent, one level down.
+///
+/// [`check_notify`] is deliberately left out. The expansion is compiled on its own, so the handler
+/// list it carries is not the play's, and a task notifying a handler the play defines would be
+/// refused here for a name that resolves perfectly once grafted.
+pub(crate) fn check_spliced(expanded: &crate::compile::Compiled) -> anyhow::Result<()> {
+    for step in &expanded.steps {
+        // As in `check_steps`: a flush point the compiler put in itself carries no task to judge.
+        if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
+            check_task(&step.task)?;
+        }
+    }
+    // An `include_role` hands its role's handlers to the running play, where they wait for a
+    // flush. Nothing else looks at them either.
+    for handler in &expanded.handlers {
+        check_task(&handler.task)?;
+    }
+    Ok(())
+}
+
 /// Every `notify` on a step or a handler names a handler this play has.
 ///
 /// Measured on ansible-core 2.19.12: a name nothing answers to stops the run with this sentence

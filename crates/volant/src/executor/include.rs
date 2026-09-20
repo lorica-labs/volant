@@ -95,8 +95,9 @@ pub(super) fn resolve_include(
         }
         let result = match include_request(compiled, step, kind, &item, templar) {
             // The file is there and cannot be used: it holds a mapping rather than a list of
-            // tasks, its YAML does not parse, or something inside it names an option this
-            // release refuses. Measured on ansible-core 2.19.12 for the first of those:
+            // tasks, its YAML does not parse, or something inside it names a module, an option
+            // or a keyword this release refuses. Measured on ansible-core 2.19.12 for the first
+            // of those:
             // `fatal: [h1]: FAILED! => {"changed": false, "include": "mapping.yml", "reason":
             // "included task files must contain a list of tasks"}`, exit 2, with a recap.
             Ok(request) => match crate::compile::expand_include(compiled, step, &request) {

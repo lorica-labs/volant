@@ -66,7 +66,8 @@ links rather than anything measured on this page.
 Privilege escalation pays again. Volant bounds open escalated connections with the same `forks`
 permit it bounds working hosts with, and a driver gives both back in front of a wait. By default
 every task is a wait, so a play of six tasks under `become` opens six escalated agents where
-batching opens one.
+batching opens one. [Connections](connections.md#persistent-connections) has the arithmetic and
+what it means for `ulimit -n`.
 
 The rest of the design is unchanged. The connection and the agent live for the whole run, no
 task starts a Python interpreter, and a batch is still one message to one agent. The batch is

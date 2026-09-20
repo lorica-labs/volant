@@ -4,7 +4,7 @@ These are the modules Volant runs. A playbook naming any other module is refused
 
 ## On the agent
 
-The agent runs these on the host, without Python. The arguments column lists what each module reads. The list under the table names the arguments Ansible has and this release refuses.
+The agent runs these on the host, without Python. The arguments column lists what each module reads, and each is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths, which expands `~` and `$VAR` in them before the value is used; this release does not, so `creates: ~/.provisioned` looks for a directory named `~`. No other argument is expanded either. Ansible runs `command: /bin/echo $HOME` with the variable already replaced, and here the program is handed the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding rather than the module. The list under the table names the arguments Ansible has and this release refuses.
 
 | Module | Free-form arguments | Arguments | What it does |
 |---|---|---|---|
@@ -15,7 +15,7 @@ The agent runs these on the host, without Python. The arguments column lists wha
 Volant refuses these before the run reaches a host:
 
 - `command`: `expand_argument_vars: true`
-- `shell`: `expand_argument_vars: true`
+- `shell`: `expand_argument_vars`
 
 ## On the controller
 

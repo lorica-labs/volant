@@ -103,10 +103,11 @@ pub struct ModuleSpec {
 /// `_raw_params` for every free-form task and `_uses_shell` marks the shell semantics, and the
 /// reference accepts both by name. `cmd` is the ordinary spelling of the same command line.
 ///
-/// `shell` shares these names because the reference shares the module. One status differs, so
-/// the names are written once and the difference is the argument: `executable` is the shell
-/// `shell` hands its line to, and on `command` the reference starts no shell for it to select.
-const fn command_args(executable: ArgStatus) -> [ModuleArg; 12] {
+/// `shell` shares these names because the reference shares the module. Two statuses differ, so
+/// the names are written once and the differences are arguments: `executable` is the shell
+/// `shell` hands its line to, and on `command` the reference starts no shell for it to select;
+/// `expand_argument_vars` is a `command` argument the reference does not give `shell` at all.
+const fn command_args(executable: ArgStatus, expand_argument_vars: ArgStatus) -> [ModuleArg; 12] {
     [
         ModuleArg {
             name: "_raw_params",
@@ -139,11 +140,12 @@ const fn command_args(executable: ArgStatus) -> [ModuleArg; 12] {
         // Measured: it decides whether the arguments handed to the program have their shell
         // variables expanded first - `/bin/echo $HOME` prints the home directory by default and the
         // five characters `$HOME` when it is off. This release expands nothing, which is what `false`
-        // asks for, so only `true` is refused: refusing `false` would stop a playbook that ran the
-        // same under both engines, and it is the default - the value nobody writes - that diverges.
+        // asks for, so on `command` only `true` is refused: refusing `false` would stop a playbook
+        // that ran the same under both engines. The default is the value that diverges, and it is
+        // the one nobody writes; `docs/src/modules.md` says so, because no refusal can.
         ModuleArg {
             name: "expand_argument_vars",
-            status: ArgStatus::Refused(Some(true)),
+            status: expand_argument_vars,
         },
         ModuleArg {
             name: "removes",
@@ -165,9 +167,24 @@ const fn command_args(executable: ArgStatus) -> [ModuleArg; 12] {
 }
 
 /// The list `command` answers with: `executable` is accepted and does nothing, there as here.
-const COMMAND_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Inert);
-/// The same names, with the one argument `shell` reads and `command` does not.
-const SHELL_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Honoured);
+const COMMAND_ARGS: [ModuleArg; 12] =
+    command_args(ArgStatus::Inert, ArgStatus::Refused(Some(true)));
+/// The same names, with the argument `shell` reads and `command` does not, and the argument the
+/// reference gives `command` and refuses on `shell`.
+///
+/// Measured on ansible-core 2.19.12: `shell: /bin/echo $HOME` with `expand_argument_vars` set to
+/// either value answers `Unsupported parameters for (shell) module: expand_argument_vars` and
+/// fails the task, while the same line without the argument prints the home directory, because
+/// the shell expands it rather than the module. So a `shell` task diverges here for no value of
+/// this argument, and writing it at all is a playbook the reference refuses: the name is refused
+/// whatever it says, which is the reference's own answer, given before the first connection.
+///
+/// One spelling goes the other way. `expand_argument_vars: "{{ omit }}"` on `shell` takes the
+/// key out of the arguments there and runs the task, while a refusal tied to no value cannot
+/// read a template and refuses it here. It is the only value of the only argument where the two
+/// disagree in that direction, against every literal value where refusing is what the reference
+/// does, and a refusal before the first connection says exactly what it refused.
+const SHELL_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Honoured, ArgStatus::Refused(None));
 
 pub const COMMAND: ModuleSpec = ModuleSpec {
     name: "command",
@@ -393,7 +410,7 @@ pub fn is_known(module: &str) -> bool {
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. That check reads the play as it was compiled, so a module named only inside a file a dynamic `include_tasks` or `include_role` pulls in is met during the run instead: the host is already connected, and the task fails on it rather than the run being refused before the first connection. What `import_tasks` and `import_role` name is compiled with the play and checked with it. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads. The list under the table names the arguments Ansible has and this release refuses.\n\n| Module | Free-form arguments | Arguments | What it does |\n|---|---|---|---|\n",
+        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. That check reads the play as it was compiled, so a module named only inside a file a dynamic `include_tasks` or `include_role` pulls in is met during the run instead: the host is already connected, and the task fails on it rather than the run being refused before the first connection. What `import_tasks` and `import_role` name is compiled with the play and checked with it. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads, and each is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths, which expands `~` and `$VAR` in them before the value is used; this release does not, so `creates: ~/.provisioned` looks for a directory named `~`. No other argument is expanded either. Ansible runs `command: /bin/echo $HOME` with the variable already replaced, and here the program is handed the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding rather than the module. The list under the table names the arguments Ansible has and this release refuses.\n\n| Module | Free-form arguments | Arguments | What it does |\n|---|---|---|---|\n",
     );
     // The internal keys carry the command line itself rather than being written in a playbook,
     // so they are in the registry and out of the page.
@@ -622,18 +639,11 @@ mod tests {
         // one list of names, and one refusal. The ad-hoc path validates nothing, because
         // `free_form` swallows the whole line into `_raw_params`.
         let names = |m: &ModuleSpec| m.args.iter().map(|a| a.name).collect::<Vec<_>>();
-        let refused = |m: &ModuleSpec| {
-            m.args
-                .iter()
-                .filter(|a| matches!(a.status, ArgStatus::Refused(_)))
-                .collect::<Vec<_>>()
-        };
         assert_eq!(
             names(&COMMAND),
             names(&SHELL),
             "the reference shares the module"
         );
-        assert_eq!(refused(&COMMAND), refused(&SHELL));
         assert_eq!(SHELL.validated_as, Some("ansible.legacy.command"));
         assert_eq!(
             RAW.validated_as, None,
@@ -667,6 +677,60 @@ mod tests {
         };
         assert!(!row("command").contains("executable"), "{}", row("command"));
         assert!(row("shell").contains("`executable`"), "{}", row("shell"));
+    }
+
+    /// `expand_argument_vars` is a `command` argument, and the two modules answer for it
+    /// differently because the reference does.
+    ///
+    /// Measured on ansible-core 2.19.12: on `command` the default expands and `false` does not,
+    /// so `true` is the only value that asks for something this release cannot do. On `shell`
+    /// the reference has no such argument at all and fails the task with `Unsupported parameters
+    /// for (shell) module: expand_argument_vars` whatever the value says, while a `shell` line
+    /// with the argument left out expands its variables under both engines, the shell doing it
+    /// rather than the module.
+    ///
+    /// What would make this red: `shell` carrying `command`'s value-tied refusal, which lets
+    /// `expand_argument_vars: false` through on a task the reference refuses; or `command`
+    /// refusing the name, which stops a playbook that ran the same under both engines.
+    #[test]
+    fn expand_argument_vars_is_refused_by_the_value_on_one_module_and_by_name_on_the_other() {
+        let status = |m: &ModuleSpec| {
+            m.args
+                .iter()
+                .find(|a| a.name == "expand_argument_vars")
+                .map(|a| a.status)
+        };
+        assert_eq!(status(&COMMAND), Some(ArgStatus::Refused(Some(true))));
+        assert_eq!(status(&SHELL), Some(ArgStatus::Refused(None)));
+        assert_eq!(status(&RAW), None);
+        let page = documentation_table();
+        assert!(
+            page.contains("- `command`: `expand_argument_vars: true`\n"),
+            "{page}"
+        );
+        assert!(
+            page.contains("- `shell`: `expand_argument_vars`\n"),
+            "{page}"
+        );
+    }
+
+    /// The divergence no refusal can name is the default, so the page has to name it instead.
+    /// This is the argument slice of the same class of gap the refusals close: an argument read
+    /// otherwise than the reference reads it, with the playbook saying nothing about it.
+    ///
+    /// What would make this red: the sentence dropped from the generated page, which leaves an
+    /// operator writing `creates: ~/.provisioned` or `command: mkdir -p $HOME/releases` with
+    /// nothing published to read it against.
+    #[test]
+    fn the_page_says_arguments_are_read_as_written() {
+        let page = documentation_table();
+        for phrase in [
+            "read as the playbook writes it",
+            "expands `~` and `$VAR`",
+            "`command: /bin/echo $HOME`",
+        ] {
+            assert!(page.contains(phrase), "{phrase} is missing from:\n{page}");
+        }
     }
 
     /// The spellings the reference takes for an argument declared `type='bool'`, read from its

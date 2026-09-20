@@ -177,7 +177,14 @@ impl Transport {
                 extra_args: split_args(host_name, vars, "ansible_ssh_extra_args")?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
-                remote_tmp: match text("ansible_remote_tmp") {
+                // Blank reads as unset, which is what the configuration arms do with the same
+                // value: an empty `remote_tmp` puts the agent cache at `/volant-agent-<version>`,
+                // the upload fails on permissions, and the host is reported unreachable over a
+                // directory nobody wrote. Trimmed for the same reason they trim.
+                remote_tmp: match text("ansible_remote_tmp")
+                    .map(|tmp| tmp.trim().to_string())
+                    .filter(|tmp| !tmp.is_empty())
+                {
                     Some(tmp) => {
                         validate_remote_tmp(&tmp)
                             .map_err(|e| anyhow::anyhow!("host '{host_name}': {e}"))?;
@@ -1461,6 +1468,81 @@ mod tests {
             "checking on means ssh defaults: {text}"
         );
         assert_eq!(target.remote_tmp, "/var/tmp/v");
+    }
+
+    /// A host variable is the one source of `remote_tmp` that used to be taken at face value.
+    /// `-e ansible_remote_tmp=` reached `cache_dir()` as an empty path, which puts the agent at
+    /// `/volant-agent-<version>`, so the upload fails on permissions at the filesystem root and
+    /// the host is reported unreachable over a directory the operator never wrote. The file and
+    /// the environment arms already read a blank value as no value; this one now does too.
+    ///
+    /// What would make this red: the blank reaching `SshTarget`, which the assertion on the
+    /// cache path catches wherever the emptiness is finally noticed.
+    #[test]
+    fn a_blank_host_remote_tmp_reads_as_no_value() {
+        for blank in ["", "   "] {
+            let Transport::Ssh(target) =
+                Transport::for_host(&host(json!({ "ansible_remote_tmp": blank })), &defaults())
+                    .unwrap()
+            else {
+                panic!("expected ssh")
+            };
+            assert_eq!(target.remote_tmp, "~/.ansible/tmp", "{blank:?}");
+        }
+        let Transport::Ssh(target) = Transport::for_host(
+            &host(json!({ "ansible_remote_tmp": "  /var/tmp/v  " })),
+            &defaults(),
+        )
+        .unwrap() else {
+            panic!("expected ssh")
+        };
+        assert_eq!(target.remote_tmp, "/var/tmp/v");
+    }
+
+    /// The host-variable table on `docs/src/connections.md` is a hand-written copy of the names
+    /// this module reads, and the page has already outlived one rewrite of `for_vars` without
+    /// anybody opening it. The prose in the second column is not a function of anything the run
+    /// reads, so it stays hand-written; the set of names is, so it is checked here.
+    ///
+    /// Every `ansible_*` literal in this file is a connection variable, which is why the whole
+    /// source is the input rather than one function: a name read by `port_of` or `split_args`
+    /// belongs on that page exactly as much as one read in `for_vars`. The four `become`
+    /// variables under it come from `executor/prepare.rs` and are not in this set.
+    ///
+    /// What would make this red: a connection variable added, renamed or dropped here without
+    /// the page following. A new `ansible_*` literal that is deliberately not read -- a test
+    /// proving one is ignored, say -- is red too, and the answer is to give the page a row
+    /// saying so rather than to loosen this.
+    #[test]
+    fn the_published_host_variables_are_the_ones_this_module_reads() {
+        let source = include_str!("transport.rs");
+        let mut read: Vec<&str> = source
+            .split("\"ansible_")
+            .skip(1)
+            .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
+            .filter(|name| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            })
+            .collect();
+        read.sort_unstable();
+        read.dedup();
+
+        let page = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/connections.md"),
+        )
+        .expect("the connections page is in the repository");
+        let mut published: Vec<&str> = page
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `ansible_"))
+            .filter_map(|rest| rest.split_once('`').map(|(name, _)| name))
+            .filter(|name| !name.starts_with("become"))
+            .collect();
+        published.sort_unstable();
+        published.dedup();
+        assert_eq!(
+            published, read,
+            "docs/src/connections.md and Transport::for_vars disagree about the host variables"
+        );
     }
 
     #[test]

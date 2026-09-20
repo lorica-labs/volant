@@ -61,7 +61,7 @@ This installs the controller alone, and so do `cargo binstall volant` and the sh
 
 ## Promises
 
-- Your playbooks work as they are. There is no conversion step and no new format.
+- Your files stay yours. Ansible's own formats, its variable precedence and its templating, with no conversion step and no new format to learn. What this release cannot execute yet it refuses by name, as the paragraphs above set out.
 - Linux targets over SSH first. Windows and network devices come later.
 - Volant collects no telemetry and makes no network call other than what your playbook asks for.
 

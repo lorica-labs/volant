@@ -1,0 +1,12 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Say nothing about expansion and let the default decide
+      command: /bin/echo $VOLANT_EXPANSION_PROBE
+      register: direct
+    - name: The same line through a shell
+      shell: /bin/echo $VOLANT_EXPANSION_PROBE
+      register: through_a_shell
+    - name: Report what each program was given
+      debug:
+        msg: "command={{ direct.stdout }} shell={{ through_a_shell.stdout }}"

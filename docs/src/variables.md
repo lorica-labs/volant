@@ -48,6 +48,19 @@ On top of MiniJinja's own Jinja2 builtins, Volant adds Ansible's:
 
 A filter, test or lookup outside this list fails by its own name, not silently. Every one of them is checked against `ansible-core` in the golden corpus (`crates/volant/tests/golden`).
 
+## Trusted and untrusted values
+
+A template you wrote is code, and a value a managed host sent back is data. Volant keeps the two apart the way ansible-core 2.19 does, so a string a host controls never runs as a template on the controller.
+
+A variable is untrusted when it came from a host or from a file read during the run: `register`, a module result, a `set_fact`, and `lookup('file')`, `lookup('pipe')` or `lookup('env')`. Everything the playbook itself carries stays trusted, including play and task `vars`, `--extra-vars`, inventory variables, `vars_files` and `include_vars`.
+
+Two things follow, and both are changes from 0.1.0-alpha.5:
+
+- A value that is untrusted renders once. If what comes out looks like a template again, it is left as text rather than rendered a second time, which is what the reference does.
+- `debug: var:` names an expression to evaluate. Given a name that came from a host, the task fails with the reference's own sentence: ``Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.`` Writing the name yourself, as in `debug: var: result.stdout`, is unaffected; it is `debug: var: "{{ from_a_host }}"` that stops.
+
+The grain is the variable, not the string. Ansible tags each string object, so a trusted string survives being passed through a template and loses its trust the moment an expression builds a new one from it. Here a value is untrusted when the render that produced it read something a host contributed, which is the same answer wherever a host took part, and more permissive on a value the playbook computed out of its own text.
+
 For the modules whose arguments these variables and templates feed, see the [native module table](modules.md).
 
 ## Not there yet

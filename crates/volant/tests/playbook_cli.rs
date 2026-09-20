@@ -6642,3 +6642,79 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
         "the run took {elapsed:?}: the deadline did not reach the readers"
     );
 }
+
+/// A module argument the reference has and this release does not act on is refused by its own
+/// name, before anything connects. A table saying a module runs says nothing about the rest of
+/// that module's API, and an argument accepted and then dropped reports success having done
+/// something other than what the playbook asked for.
+///
+/// The assertion is that the refusal comes before the play header: a refusal after `PLAY [` means
+/// a host was already reached, and possibly changed.
+///
+/// What would make this red: the pre-flight not consulting the module's argument list, which lets
+/// the task through to an agent that drops the argument and reports the task green.
+#[test]
+fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
+    let out = volant(&["playbook", &fixture("module-argument-refused.yml")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{stderr}{stdout}");
+    assert!(
+        stderr.contains("argument 'expand_argument_vars' is not supported yet on 'command'"),
+        "the refusal did not name the argument:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("PLAY ["),
+        "a host was reached before the refusal:\n{stdout}"
+    );
+}
+
+/// An argument *neither* engine has is a different mistake, and gets the reference's own answer
+/// for it: the module fails at run time with the reference's sentence and the reference's code,
+/// rather than this engine's pre-flight refusal. Measured on ansible-core 2.19.12, through
+/// `args:` -- the ad-hoc path validates nothing, because `free_form` swallows the whole line.
+///
+/// What would make this red: the two paths collapsed into one, which gives the same code and the
+/// same words to a playbook waiting on this release and a playbook with a typo in it.
+#[test]
+fn an_argument_neither_engine_has_fails_with_the_reference_s_words() {
+    let out = volant(&["playbook", &fixture("module-argument-unknown.yml")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(
+        stdout.contains(
+            "Unsupported parameters for (ansible.legacy.command) module: no_such_arg. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends."
+        ),
+        "the task did not report the reference's sentence:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PLAY ["),
+        "the reference reaches the host and fails the task there:\n{stdout}"
+    );
+}
+
+/// `executable` selects the shell, which is the point of asking for it.
+///
+/// The assertion is what the shell printed, not the exit code: the task succeeded in both engines
+/// before this, and only the output told them apart.
+///
+/// What would make this red: the agent building `sh -c` whatever the task asked for, which is
+/// what this release did -- `$BASH_VERSION` is then empty and the task still reports success.
+#[test]
+fn shell_executable_selects_the_interpreter() {
+    assert!(
+        Path::new("/bin/bash").exists(),
+        "this test needs /bin/bash to tell one shell from another; both CI platforms have it"
+    );
+    let out = volant(&["playbook", &fixture("shell-executable.yml")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let version = stdout
+        .split_once(r#""msg": "version="#)
+        .and_then(|(_, rest)| rest.split('"').next())
+        .unwrap_or_default();
+    assert!(
+        version.contains('.'),
+        "the shell reported no version, so it was not bash:\n{stdout}"
+    );
+}

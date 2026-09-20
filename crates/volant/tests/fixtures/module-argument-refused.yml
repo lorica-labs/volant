@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ask for an expansion this release does not do
+      command: /bin/echo $HOME
+      args:
+        expand_argument_vars: false
+    - name: Never reached
+      command: echo unreachable

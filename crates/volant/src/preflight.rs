@@ -20,7 +20,7 @@
 //! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
 use anyhow::bail;
-use volant_protocol::modules::{import_module, include_module, is_builtin, is_known};
+use volant_protocol::modules::{ArgStatus, import_module, include_module, is_builtin, is_known};
 
 use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
@@ -251,6 +251,37 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.name,
             task.module
         );
+    }
+    check_arguments(task)
+}
+
+/// One task's arguments against the registry of the module it names.
+///
+/// Only an argument the reference **has** and this release does not act on is refused here. A
+/// name neither engine has is left to the reference's own answer, which the agent produces at run
+/// time with the reference's sentence and the reference's code: refusing it here would give the
+/// same words and the same moment to a playbook waiting on this release and a playbook with a
+/// typo in it, and those are different mistakes.
+///
+/// The internal keys need no exemption. `_raw_params` carries the command line of every free-form
+/// task and `_uses_shell` carries the shell semantics, and the reference lists both among the
+/// parameters it accepts, so both are in the registry with everything else.
+fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
+    let Some(spec) = volant_protocol::modules::native(&task.module) else {
+        return Ok(());
+    };
+    for key in task.args.keys() {
+        if spec
+            .args
+            .iter()
+            .any(|a| a.name == key.as_str() && a.status == ArgStatus::Refused)
+        {
+            bail!(
+                "task '{}': argument '{key}' is not supported yet on '{}'",
+                task.name,
+                task.module
+            );
+        }
     }
     Ok(())
 }
@@ -578,6 +609,37 @@ mod tests {
         ] {
             let pb = parse(body, "x.yml").unwrap();
             assert!(check(&pb).is_ok(), "check_mode: false is what we do");
+        }
+    }
+
+    /// An argument the reference has and this release does not act on is refused by its own name,
+    /// on every module whose registry carries it, and an argument neither engine has is left
+    /// alone here so the agent can answer it with the reference's words.
+    ///
+    /// What would make this red: the refusal widened to every unknown name, which gives a typo
+    /// this engine's message and this engine's code where the reference has its own; the refusal
+    /// dropped, which lets the task reach an agent that ignores the argument and reports success;
+    /// or `_raw_params` refused, which refuses every free-form task there is.
+    #[test]
+    fn a_module_argument_this_release_does_not_honour_is_refused_by_name() {
+        for module in ["command", "ansible.legacy.shell"] {
+            let text = refusal(&format!(
+                "- hosts: all\n  tasks:\n    - name: T\n      {module}: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"
+            ));
+            assert!(
+                text.contains(&format!(
+                    "argument 'expand_argument_vars' is not supported yet on '{module}'"
+                )),
+                "{text}"
+            );
+        }
+        for body in [
+            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        no_such_arg: 1\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        chdir: /tmp\n        stdin_add_newline: false\n",
+            "- hosts: all\n  tasks:\n    - name: T\n      raw: /bin/true\n      args:\n        expand_argument_vars: false\n",
+        ] {
+            let pb = parse(body, "x.yml").unwrap();
+            assert!(check(&pb).is_ok(), "{body}");
         }
     }
 

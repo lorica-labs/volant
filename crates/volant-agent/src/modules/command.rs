@@ -43,10 +43,19 @@ pub(crate) fn execute(
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let chdir = args.get("chdir").and_then(Value::as_str);
-    let stdin_data = args
-        .get("stdin")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    // Measured on ansible-core 2.19.12: the newline is appended without looking at what the value
+    // already ends with, so a value that ends in one gets a second.
+    let stdin_data = args.get("stdin").and_then(Value::as_str).map(|s| {
+        if args
+            .get("stdin_add_newline")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+        {
+            format!("{s}\n")
+        } else {
+            s.to_string()
+        }
+    });
 
     let raw = args
         .get("_raw_params")
@@ -59,7 +68,16 @@ pub(crate) fn execute(
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect(),
-        None if uses_shell => vec!["sh".into(), "-c".into(), raw.to_string()],
+        // `executable` is the shell the line is handed to, and selecting it is the whole point of
+        // writing the argument: `sh` is a fallback, not the answer to every task.
+        None if uses_shell => vec![
+            args.get("executable")
+                .and_then(Value::as_str)
+                .unwrap_or("sh")
+                .to_string(),
+            "-c".into(),
+            raw.to_string(),
+        ],
         None => shlex::split(raw).unwrap_or_default(),
     };
     let display: Value = if uses_shell { json!(raw) } else { json!(argv) };
@@ -444,6 +462,33 @@ mod tests {
             Run::Done(r) => r,
             Run::Cancelled => panic!("unexpected cancellation"),
         }
+    }
+
+    /// `stdin_add_newline` decides whether the value written to the child ends in a newline, and
+    /// its default is to add one. Measured on ansible-core 2.19.12 with `od -c`: the newline is
+    /// appended without looking at what the value already ends with, so `"ab\n"` reaches the
+    /// child as four bytes under the default and three with the argument off.
+    ///
+    /// What would make this red: the argument accepted and dropped, which is what this release
+    /// did -- every command reading standard input got one byte less than the reference gave it,
+    /// and a reader waiting for a line never saw one.
+    #[test]
+    fn stdin_add_newline_decides_the_last_byte_written() {
+        let bytes = |stdin: Value, add: Option<bool>| {
+            let mut a = args(json!({"_raw_params": "wc -c", "stdin": stdin}));
+            if let Some(add) = add {
+                a.insert("stdin_add_newline".into(), json!(add));
+            }
+            done(execute(&a, false, &Context::default(), &|| false)).0["stdout"]
+                .as_str()
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        assert_eq!(bytes(json!("ab"), None), "3");
+        assert_eq!(bytes(json!("ab\n"), None), "4", "appended unconditionally");
+        assert_eq!(bytes(json!("ab"), Some(false)), "2");
+        assert_eq!(bytes(json!("ab\n"), Some(false)), "3");
     }
 
     #[test]

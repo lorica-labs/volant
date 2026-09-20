@@ -87,9 +87,13 @@ ci-local:
 # list comes from git, so tracked and new files travel while everything git ignores stays behind.
 # The copy adds and overwrites but never deletes, so a file you removed here still exists over
 # there and can still be compiled; remove it by hand when that matters.
+#
+# VOLANT_REMOTE_DIR names the directory over there, defaulting to `volant`. Set it to work on
+# several branches at once without them sharing a target directory or overwriting each other's
+# sources: one worktree here, one directory there, one name.
 remote +recipe:
-    set -o pipefail; git ls-files -z --cached --others --exclude-standard | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" 'mkdir -p volant && tar -xzf - -C volant'
-    ssh "$VOLANT_DEV_HOST" '. ~/.profile && cd volant && just {{recipe}}'
+    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; git ls-files -z --cached --others --exclude-standard | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir'"
+    dir="${VOLANT_REMOTE_DIR:-volant}"; ssh "$VOLANT_DEV_HOST" ". ~/.profile && cd '$dir' && just {{recipe}}"
 
 # Build the agent as a static musl binary, the only form that can be uploaded to another host
 agent-musl:

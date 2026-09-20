@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
-use volant_protocol::modules::{ModuleSpec, short_name};
+use volant_protocol::modules::{ArgStatus, ModuleSpec, arg_bool, short_name};
 use volant_protocol::{Task, TaskResult};
 
 /// Outcome of running one task.
@@ -54,7 +54,9 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
         environment: task.environment.clone(),
     };
     match MODULES.iter().find(|m| m.spec.name == name) {
-        Some(module) => match unsupported_parameters(module.spec, &task.args) {
+        Some(module) => match unsupported_parameters(module.spec, &task.args)
+            .or_else(|| refused_argument(module.spec, &task.args))
+        {
             Some(msg) => Run::Done(TaskResult::failed_with(msg)),
             None => (module.run)(&task.args, &context, cancelled),
         },
@@ -93,6 +95,38 @@ fn unsupported_parameters(spec: &ModuleSpec, args: &Map<String, Value>) -> Optio
         unknown.join(", "),
         supported.join(", ")
     ))
+}
+
+/// The pre-flight's refusal, arriving late because the value did not exist when the pre-flight
+/// ran, or `None` when nothing in the task asks for what this release cannot do.
+///
+/// This is the **first** of the two refusals, not the second: an argument the reference has and
+/// this release does not act on. `check_arguments` names it before the first connection whenever
+/// it can read the value, and it cannot read a template - which is rendered per host, long after
+/// the pre-flight is over - so it lets one through rather than refusing on a guess. Here the value
+/// exists, so the same list gives the same answer, and the argument no longer reaches a module
+/// that would drop it and report the task green. It also answers for a task spliced in by a
+/// dynamic include, which no pre-flight pass ever sees.
+///
+/// The sentence says where it came from, so the two refusals stay apart on the operator's screen:
+/// this one is a release that is missing something, the other is a name that exists nowhere.
+fn refused_argument(spec: &ModuleSpec, args: &Map<String, Value>) -> Option<String> {
+    args.iter().find_map(|(key, value)| {
+        let ArgStatus::Refused(guard) = spec.args.iter().find(|a| a.name == key.as_str())?.status
+        else {
+            return None;
+        };
+        if let Some(refused) = guard
+            && arg_bool(value) != Some(refused)
+        {
+            return None;
+        }
+        let with = guard.map(|v| format!(" with '{v}'")).unwrap_or_default();
+        Some(format!(
+            "argument '{key}' is not supported yet{with} on '{}'. The host renders this value, so the check before the run could not read it.",
+            spec.name
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -141,6 +175,63 @@ mod tests {
             unsupported_parameters(&RAW, &args(json!({"no_such_arg": 1}))),
             None,
             "raw takes any argument without looking at it"
+        );
+    }
+
+    /// The pre-flight refuses `expand_argument_vars: true` before the first connection, and lets
+    /// `expand_argument_vars: "{{ flag }}"` through because it cannot read a template. The value
+    /// exists here, so the refusal fires here instead of the argument being dropped in silence -
+    /// which is the accepted-then-ignored failure the registry exists to close, arriving inside
+    /// the registry's own subject matter.
+    ///
+    /// It reads the value the way the reference reads a `type='bool'` argument, so the refusal
+    /// covers every spelling of the value it refuses, and the value that asks for what this
+    /// release already does still runs.
+    ///
+    /// What would make this red: nothing checking the rendered value, which prints `$HOME`,
+    /// reports `changed` and exits 0 where the reference prints the home directory; or the
+    /// refusal firing on the name, which fails a task that ran identically under both engines.
+    #[test]
+    fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
+        let args = |v: Value| v.as_object().unwrap().clone();
+        for spec in [&COMMAND, &SHELL] {
+            for refused in [json!(true), json!("true"), json!("YES"), json!(1)] {
+                assert_eq!(
+                    refused_argument(
+                        spec,
+                        &args(json!({"_raw_params": "/bin/echo $HOME", "expand_argument_vars": refused})),
+                    )
+                    .as_deref(),
+                    Some(
+                        format!(
+                            "argument 'expand_argument_vars' is not supported yet with 'true' on '{}'. The host renders this value, so the check before the run could not read it.",
+                            spec.name
+                        )
+                        .as_str()
+                    ),
+                    "{refused}"
+                );
+            }
+            for allowed in [json!(false), json!("no"), json!(0), json!("maybe")] {
+                assert_eq!(
+                    refused_argument(
+                        spec,
+                        &args(json!({"expand_argument_vars": allowed.clone()})),
+                    ),
+                    None,
+                    "{allowed}"
+                );
+            }
+            assert_eq!(
+                refused_argument(spec, &args(json!({"_raw_params": "x", "chdir": "/tmp"}))),
+                None,
+                "an argument this release honours is not refused"
+            );
+        }
+        assert_eq!(
+            refused_argument(&RAW, &args(json!({"expand_argument_vars": true}))),
+            None,
+            "raw has no registry entry for it, and the reference takes it without looking"
         );
     }
 }

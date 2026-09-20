@@ -6671,6 +6671,35 @@ fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     );
 }
 
+/// The same refusal, for a value the pre-flight could not read. A template is rendered per host,
+/// long after the pre-flight is over, so `check_arguments` leaves it alone rather than refusing on
+/// a guess -- and the agent, which has the value, refuses it there instead of dropping it.
+///
+/// Without this the task prints `$HOME`, reports `changed` and exits 0, where the reference prints
+/// the home directory: the accepted-then-silently-ignored divergence the argument registry exists
+/// to close, surviving inside the registry's own subject matter. The run reaches the host first,
+/// so the refusal costs a connection and exits 2 rather than 4.
+///
+/// What would make this red: the agent reading the registry for names alone, which lets the
+/// rendered value through unread; or the refusal borrowing the unknown-argument sentence, which
+/// tells an operator waiting on this release that they have a typo.
+#[test]
+fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
+    let out = volant(&["playbook", &fixture("module-argument-refused-late.yml")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(
+        stdout.contains(
+            "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'. The host renders this value, so the check before the run could not read it."
+        ),
+        "the task did not refuse the value it was handed:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Never reached"),
+        "the play carried on past the refusal:\n{stdout}"
+    );
+}
+
 /// The same argument set to `false` asks for exactly what this release does - it expands nothing -
 /// so the task runs. A refusal that reads the name and not the value stops a playbook that was
 /// byte-identical under both engines, while the value that really diverges is the default, which

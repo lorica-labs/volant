@@ -37,10 +37,12 @@ pub enum ArgStatus {
 /// A value read the way the reference reads an argument declared `type='bool'`.
 ///
 /// Measured on ansible-core 2.19.12, whose own refusal lists the spellings it takes: `0, 1, 'n',
-/// 'on', 'true', 'f', 'false', 'y', 'yes', 'no', '0', '1', 't', 'off'`, case folded, and a string
-/// outside that set fails the task there. `Value::as_bool` sees none of them, so an argument
-/// written `"false"` - which a whole-expression template produces on its own - used to read back
-/// as the default and do the opposite of what it says.
+/// 'on', 'true', 'f', 'false', 'y', 'yes', 'no', '0', '1', 't', 'off'`, and a string outside that
+/// set fails the task there. It normalises with `.lower().strip()`, so the value is case folded
+/// **and** trimmed before it is matched: a trailing newline off a `lookup('file')`, or the space a
+/// template leaves behind, reads the same there as the bare word. `Value::as_bool` sees none of
+/// them, so an argument written `"false"` - which a whole-expression template produces on its own
+/// - used to read back as the default and do the opposite of what it says.
 ///
 /// This is not the set the YAML scalar resolver uses, and the two must not be merged: that one
 /// has no `y`, `n`, `t` or `f`, and matches three fixed capitalisations where this one folds
@@ -50,7 +52,7 @@ pub fn arg_bool(value: &Value) -> Option<bool> {
     let text = match value {
         Value::Bool(b) => return Some(*b),
         Value::Number(n) => n.to_string(),
-        Value::String(s) => s.to_ascii_lowercase(),
+        Value::String(s) => s.trim().to_ascii_lowercase(),
         _ => return None,
     };
     match text.as_str() {
@@ -671,9 +673,14 @@ mod tests {
     /// own refusal of a value outside the set and measured task by task: `"false"`, `"no"`, `0`
     /// and `"Off"` all turn the argument off there.
     ///
+    /// The reference normalises with `.lower().strip()`, so surrounding whitespace is part of no
+    /// spelling: `"false "` is `false` there, and a value coming out of a template or a
+    /// `lookup('file')` carries that whitespace more often than a hand-written one does.
+    ///
     /// What would make this red: reading the value with `Value::as_bool`, which answers `None`
     /// for every spelling but a YAML boolean and leaves the caller on its default - so a task
-    /// asking for the opposite of the default gets the default and reports success.
+    /// asking for the opposite of the default gets the default and reports success; or matching
+    /// the string untrimmed, which does the same to every value with a newline on the end.
     #[test]
     fn a_boolean_argument_reads_every_spelling_the_reference_takes() {
         for yes in [
@@ -685,6 +692,7 @@ mod tests {
             json!("on"),
             json!(1),
             json!(1.0),
+            json!(" true"),
         ] {
             assert_eq!(arg_bool(&yes), Some(true), "{yes}");
         }
@@ -696,6 +704,8 @@ mod tests {
             json!("f"),
             json!(0),
             json!("0"),
+            json!("false "),
+            json!("no\n"),
         ] {
             assert_eq!(arg_bool(&no), Some(false), "{no}");
         }

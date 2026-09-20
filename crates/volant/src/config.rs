@@ -188,7 +188,10 @@ impl Config {
         if let Ok(tmp) = std::env::var("ANSIBLE_REMOTE_TMP")
             && !tmp.trim().is_empty()
         {
-            config.remote_tmp = tmp.trim().to_string();
+            let tmp = tmp.trim();
+            crate::transport::validate_remote_tmp(tmp)
+                .map_err(|e| crate::stats::Refusal::at(5, e))?;
+            config.remote_tmp = tmp.to_string();
         }
         // A zero, and a negative value with it, are kept rather than dropped: the reference
         // refuses them from every source and the single check at startup is what says so
@@ -430,6 +433,8 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             "remote_tmp" => {
                 let tmp = value.trim();
                 if !tmp.is_empty() {
+                    crate::transport::validate_remote_tmp(tmp)
+                        .map_err(|e| crate::stats::Refusal::at(5, e))?;
                     config.remote_tmp = tmp.to_string();
                 }
             }

@@ -10,9 +10,10 @@ use tokio::sync::watch;
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
-use crate::agent::{AgentLink, AgentSource};
+use crate::agent::{AgentLink, AgentSource, BlobMemory};
 use crate::compile::{Compiled, Step};
 use crate::playbook::PlayTask;
+use crate::python::{ModulePayload, Union};
 use crate::stats::Outcome;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, ConnectionDefaults, Escalation, Transport};
@@ -655,7 +656,17 @@ pub(super) fn conditional_error(err: &TemplateError) -> String {
 }
 
 /// One item of one task, as the agent is asked to run it.
-pub(super) fn protocol_task(task: &PlayTask, item: &Item) -> Task {
+///
+/// `python` is the module's half of a payload together with the interpreter chosen for the host
+/// this item is going to. The two arrive as one because this is where the wire payload is built,
+/// and a payload is only ever built where both halves are in hand: the module's half is the same
+/// on every host, the interpreter is not, and one sent under an interpreter nobody chose runs
+/// something other than what was asked for.
+pub(super) fn protocol_task(
+    task: &PlayTask,
+    item: &Item,
+    python: Option<(&ModulePayload, &str)>,
+) -> Task {
     Task {
         module: task.module.clone(),
         args: item.args.clone(),
@@ -665,24 +676,198 @@ pub(super) fn protocol_task(task: &PlayTask, item: &Item) -> Task {
         ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
         timeout: task.timeout,
         environment: item.environment.clone(),
-        payload: None,
+        // One payload for every item of the task: a loop varies the arguments, never the
+        // module, and the arguments travel outside the blob.
+        payload: python.map(|(module, interpreter)| module.under(interpreter)),
     }
+}
+
+/// What a blob handshake needs of a link: the memory the link carries, and the two directions
+/// of the wire.
+///
+/// A trait rather than the link itself so the handshake can be tested against an agent that
+/// answers what a test scripted. The three ways it goes wrong - a payload refused, a payload
+/// sent twice, a batch sent for a payload nobody confirmed - are all failures nothing else
+/// would show until a host ran the wrong thing.
+pub(super) trait BlobChannel {
+    fn memory(&mut self) -> &mut BlobMemory;
+    async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()>;
+    async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
+}
+
+impl BlobChannel for AgentLink {
+    fn memory(&mut self) -> &mut BlobMemory {
+        self.blobs()
+    }
+
+    async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
+        self.send(msg).await
+    }
+
+    async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
+        self.recv().await
+    }
+}
+
+/// Makes sure the agent behind this link holds the payload named `hash`, sending it only when
+/// it does not.
+///
+/// Once per link, never once per batch: the agent answers `has_blob` by hashing the file it
+/// has, so a yes means the bytes are right, and the 631 KB of a union blob has no business
+/// going up again for every batch of a play. A refusal is remembered as a refusal, so the
+/// batches behind it fail on what the agent said rather than sending the same rejected payload
+/// again.
+pub(super) async fn ensure_blob<C: BlobChannel>(
+    link: &mut C,
+    host: &str,
+    hash: &str,
+    zip_b64: &str,
+    logs: &mut Vec<String>,
+) -> Result<(), String> {
+    if let Some(seen) = link.memory().seen(hash) {
+        return seen;
+    }
+    let mut present = blob_state(
+        link,
+        host,
+        hash,
+        &ToAgent::HasBlob { hash: hash.into() },
+        logs,
+    )
+    .await
+    .inspect_err(|err| link.memory().remember(hash, Err(err.clone())))?;
+    if !present {
+        let put = ToAgent::PutBlob {
+            hash: hash.into(),
+            zip_b64: zip_b64.into(),
+        };
+        present = blob_state(link, host, hash, &put, logs)
+            .await
+            .inspect_err(|err| link.memory().remember(hash, Err(err.clone())))?;
+    }
+    let state = if present {
+        Ok(())
+    } else {
+        // The agent logs why on its way to saying no, and that line is already in `logs`.
+        Err(format!(
+            "the agent refused the module payload {hash}; it holds no payload to run this task from"
+        ))
+    };
+    link.memory().remember(hash, state.clone());
+    state
+}
+
+/// Asks one question about a blob and reads the one answer to it.
+///
+/// Anything else the agent says on the way is either a line to show or a message that does not
+/// belong to this exchange; an answer about another payload is the streams having desynchronised,
+/// which is a hard error rather than something to read as a yes.
+async fn blob_state<C: BlobChannel>(
+    link: &mut C,
+    host: &str,
+    hash: &str,
+    msg: &ToAgent,
+    logs: &mut Vec<String>,
+) -> Result<bool, String> {
+    link.ask(msg)
+        .await
+        .map_err(|err| format!("asking the agent about the module payload {hash}: {err}"))?;
+    loop {
+        match link.answer().await {
+            Ok(Some(FromAgent::BlobState {
+                hash: named,
+                present,
+            })) if named == hash => {
+                return Ok(present);
+            }
+            Ok(Some(FromAgent::BlobState { hash: named, .. })) => {
+                return Err(format!(
+                    "the agent answered about the module payload {named} while asked about {hash}"
+                ));
+            }
+            Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(format!(
+                    "the agent stopped while being asked about the module payload {hash}"
+                ));
+            }
+            Err(err) => {
+                return Err(format!(
+                    "reading the agent's answer about the module payload {hash}: {err}"
+                ));
+            }
+        }
+    }
+}
+
+/// Every payload in a batch names a blob this link confirmed.
+///
+/// A task naming anything else is a controller that built a payload and never made sure the
+/// host had it - a bug here, not a fault of the host - so it fails naming the hash instead of
+/// being sent for the agent to fail on, where it would read as the module's own failure.
+pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<(), String> {
+    for task in tasks {
+        if let Some(payload) = &task.payload
+            && !memory.holds(&payload.blob)
+        {
+            return Err(format!(
+                "task '{}' carries the module payload {} which this link never confirmed",
+                task.module, payload.blob
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// What has to be true of the host before a batch goes out: it holds every payload the batch
+/// names.
+///
+/// Called by [`run_agent_batch`] and written over [`BlobChannel`] rather than over the link, so
+/// the call itself can be tested: deleting it, or asking only when *every* task carries a
+/// payload instead of when *any* does, is a change that otherwise leaves a green suite and ships
+/// a batch the host cannot run.
+///
+/// A batch that names no payload asks nothing. A batch that names one asks for it once per link,
+/// and is refused here rather than by the agent, where a payload nobody sent reads as the
+/// module's own failure.
+async fn blob_preflight<C: BlobChannel>(
+    link: &mut C,
+    host: &str,
+    tasks: &[Task],
+    blob: Option<&Union>,
+    logs: &mut Vec<String>,
+) -> Result<(), String> {
+    if let Some(union) = blob
+        && tasks.iter().any(|task| task.payload.is_some())
+    {
+        ensure_blob(link, host, &union.hash, &union.zip_b64, logs).await?;
+    }
+    payloads_confirmed(tasks, link.memory())
 }
 
 /// Sends one batch to the agent and collects what comes back, by position in `tasks`.
 ///
 /// Anything the agent asked to show on the way lands in `logs`, already prefixed with the host,
 /// for the caller to put on the coordinator's queue under this batch's `no_log`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the batch, the link it goes over and the blob it needs there first"
+)]
 pub(super) async fn run_agent_batch(
     link: &mut AgentLink,
     host: &str,
     id: u64,
     tasks: Vec<Task>,
+    blob: Option<&Union>,
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
     let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
+    if let Err(err) = blob_preflight(link, host, &tasks, blob, logs).await {
+        return (received, Err(err));
+    }
     if let Err(err) = link.send(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
     }
@@ -800,6 +985,31 @@ pub(super) async fn reuse_or_connect<'a>(
 ///
 /// Measured on ansible-core 2.19.12: a `run_once` task's `register` and its `set_fact` are both
 /// readable on every host of the batch, not only on the one that ran it.
+/// Writes a task's `register` name for every host the task writes for.
+///
+/// **The one place a task's result becomes a variable**, and it writes untrusted whatever the
+/// module was: native, controller-side, or a Python module whose payload the agent ran. A
+/// result is a managed host's own words, so a template inside one is text and never a template
+/// again - the rule the trust model rests on since the unconditional "a `set_fact` is data"
+/// rule was dropped, which leaves nothing under a site that writes a result the other way.
+///
+/// A task with no `register` writes nothing, which is why the check lives here rather than at
+/// each caller: a caller that forgets it writes nothing instead of writing under an empty name.
+pub(super) fn record_registered(
+    vars: &mut VarStore,
+    task: &PlayTask,
+    targets: &[String],
+    results: &[(Option<Value>, TaskResult)],
+) {
+    let Some(reg) = &task.register else {
+        return;
+    };
+    let value = registered_value(task, results);
+    for target in targets {
+        vars.set_untrusted_fact(target, reg, value.clone());
+    }
+}
+
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
     if task.runs_once() && !live.is_empty() {
         live.to_vec()
@@ -1119,5 +1329,347 @@ mod tests {
         assert_eq!(fact_targets(&t, "h1", &live), ["h1"]);
         t.run_once = Some(true);
         assert_eq!(fact_targets(&t, "h1", &live), live);
+    }
+
+    /// An agent that answers what the test scripted, and remembers what a link remembers.
+    struct FakeAgent {
+        sent: Vec<ToAgent>,
+        answers: std::collections::VecDeque<FromAgent>,
+        memory: BlobMemory,
+    }
+
+    impl FakeAgent {
+        fn answering(answers: Vec<FromAgent>) -> Self {
+            FakeAgent {
+                sent: Vec::new(),
+                answers: answers.into(),
+                memory: BlobMemory::default(),
+            }
+        }
+
+        fn puts(&self) -> usize {
+            self.sent
+                .iter()
+                .filter(|m| matches!(m, ToAgent::PutBlob { .. }))
+                .count()
+        }
+    }
+
+    impl BlobChannel for FakeAgent {
+        fn memory(&mut self) -> &mut BlobMemory {
+            &mut self.memory
+        }
+
+        async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
+            self.sent.push(msg.clone());
+            Ok(())
+        }
+
+        async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
+            Ok(self.answers.pop_front())
+        }
+    }
+
+    fn state(hash: &str, present: bool) -> FromAgent {
+        FromAgent::BlobState {
+            hash: hash.to_string(),
+            present,
+        }
+    }
+
+    /// A payload the agent already holds is not sent again, and a payload it does not hold is
+    /// sent once for the whole link rather than once per batch.
+    ///
+    /// What would make this red: the `has_blob` question dropped, or its answer ignored, either
+    /// of which puts 631 KB on the wire before every batch of every run.
+    #[tokio::test]
+    async fn a_payload_travels_once_per_link() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", true)]);
+        ensure_blob(&mut agent, "h1", "ab", "UEsD", &mut logs)
+            .await
+            .expect("the agent stored it");
+        assert_eq!(agent.puts(), 1);
+        ensure_blob(&mut agent, "h1", "ab", "UEsD", &mut logs)
+            .await
+            .expect("it is already there");
+        assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+
+        let mut held = FakeAgent::answering(vec![state("cd", true)]);
+        ensure_blob(&mut held, "h1", "cd", "UEsD", &mut logs)
+            .await
+            .expect("the agent already holds it");
+        assert_eq!(held.puts(), 0, "{:?}", held.sent);
+    }
+
+    /// A payload the agent refuses fails the batch, and the next batch of that host does not
+    /// send it again blindly.
+    ///
+    /// What would make this red: the refusal forgotten, which re-uploads the same rejected
+    /// payload before every batch for as long as the play lasts, each time failing the same
+    /// way; or the refusal read as success, which runs the batch against a host that holds no
+    /// payload and blames the module for it.
+    #[tokio::test]
+    async fn a_refused_payload_fails_the_batch_and_is_not_sent_again() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
+        let err = ensure_blob(&mut agent, "h1", "ab", "UEsD", &mut logs)
+            .await
+            .expect_err("the agent refused it");
+        assert!(err.contains("ab"), "{err}");
+        let again = ensure_blob(&mut agent, "h1", "ab", "UEsD", &mut logs)
+            .await
+            .expect_err("the refusal is remembered");
+        assert_eq!(again, err);
+        assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+    }
+
+    fn union_named(hash: &str) -> Union {
+        Union {
+            hash: hash.to_string(),
+            zip_b64: "UEsDBA==".to_string(),
+            modules: BTreeMap::new(),
+        }
+    }
+
+    /// A batch holding one Python task among native ones gets the blob before any of it goes
+    /// out, and gets it once.
+    ///
+    /// What would make this red: the pre-flight asking only when every task of the batch carries
+    /// a payload - a batch is a run of tasks with the same connection, not the same module, so
+    /// one Python task among natives is the ordinary case and the one that would go out with
+    /// nothing on the host.
+    #[tokio::test]
+    async fn a_batch_carrying_a_payload_gets_the_blob_before_it_goes_out() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", true)]);
+        let tasks = vec![
+            protocol_task(&task("command"), &bare_item(), None),
+            protocol_task(
+                &task("ping"),
+                &bare_item(),
+                Some((&module_payload("ab"), "/usr/bin/python3")),
+            ),
+        ];
+        blob_preflight(
+            &mut agent,
+            "h1",
+            &tasks,
+            Some(&union_named("ab")),
+            &mut logs,
+        )
+        .await
+        .expect("the blob went first");
+        assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+    }
+
+    /// A batch naming a payload the link never confirmed does not go out at all.
+    ///
+    /// What would make this red: the confirmation dropped from the pre-flight, which sends the
+    /// batch and lets the agent fail on a payload it was never given - a failure the operator
+    /// reads as the module's own.
+    #[tokio::test]
+    async fn a_batch_whose_payload_the_link_never_confirmed_never_goes_out() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(Vec::new());
+        let tasks = vec![protocol_task(
+            &task("ping"),
+            &bare_item(),
+            Some((&module_payload("ab"), "/usr/bin/python3")),
+        )];
+        let err = blob_preflight(&mut agent, "h1", &tasks, None, &mut logs)
+            .await
+            .expect_err("no link confirmed this payload");
+        assert!(err.contains("ab"), "{err}");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+    }
+
+    /// A batch of native tasks asks the agent nothing about blobs, whatever the run has built.
+    #[tokio::test]
+    async fn a_batch_without_a_payload_asks_the_agent_nothing() {
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(Vec::new());
+        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+        blob_preflight(
+            &mut agent,
+            "h1",
+            &tasks,
+            Some(&union_named("ab")),
+            &mut logs,
+        )
+        .await
+        .expect("nothing to ask for");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+    }
+
+    /// A task whose payload names a blob this link never confirmed is a controller bug, and it
+    /// fails naming the hash rather than being sent for the host to fail on.
+    ///
+    /// What would make this red: the batch sent anyway, which asks the agent to run a module
+    /// out of a payload it was never given - a failure that reads as the module's.
+    #[test]
+    fn a_payload_naming_an_unsent_blob_fails_before_the_batch() {
+        let mut memory = BlobMemory::default();
+        let tasks = vec![protocol_task(
+            &task("ping"),
+            &bare_item(),
+            Some((&module_payload("ab"), "/usr/bin/python3")),
+        )];
+        let err = payloads_confirmed(&tasks, &memory).expect_err("nothing was confirmed");
+        assert!(err.contains("ab"), "{err}");
+        memory.remember("ab", Ok(()));
+        payloads_confirmed(&tasks, &memory).expect("the link confirmed it");
+    }
+
+    /// The payload travels with every item of the task that carries it, and with nothing else.
+    #[test]
+    fn a_python_task_carries_its_payload_to_the_agent() {
+        let item = bare_item();
+        let module = module_payload("ab");
+        let built = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
+        assert_eq!(built.payload, Some(payload("ab", "/usr/bin/python3")));
+        assert_eq!(protocol_task(&task("command"), &item, None).payload, None);
+    }
+
+    /// The module's half of a payload is the same on every host; the interpreter is not, and it
+    /// is added where it is chosen.
+    ///
+    /// What would make this red: an interpreter carried along with the module's half, which is a
+    /// payload that can be built before the host has said what it has - and a payload sent with
+    /// an empty or stale interpreter runs the module under something other than what was chosen,
+    /// which is the failure this whole path exists to avoid.
+    #[test]
+    fn one_module_payload_serves_every_interpreter_it_is_sent_under() {
+        let item = bare_item();
+        let module = module_payload("ab");
+        let here = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
+        let there = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3.12")));
+        assert_eq!(
+            here.payload.as_ref().map(|p| p.interpreter.as_str()),
+            Some("/usr/bin/python3")
+        );
+        assert_eq!(
+            there.payload.as_ref().map(|p| p.interpreter.as_str()),
+            Some("/usr/bin/python3.12")
+        );
+        assert_eq!(
+            here.payload.map(|p| p.module_fqn),
+            there.payload.map(|p| p.module_fqn)
+        );
+    }
+
+    fn bare_item() -> Item {
+        Item {
+            element: None,
+            label: None,
+            args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        }
+    }
+
+    fn module_payload(blob: &str) -> ModulePayload {
+        ModulePayload {
+            blob: blob.to_string(),
+            facts: crate::python::ModuleFacts {
+                module_fqn: "ansible.modules.ping".into(),
+                profile: "legacy".into(),
+                rlimit_nofile: 0,
+                extensions: Map::new(),
+            },
+        }
+    }
+
+    fn payload(blob: &str, interpreter: &str) -> volant_protocol::PythonPayload {
+        volant_protocol::PythonPayload {
+            blob: blob.to_string(),
+            module_fqn: "ansible.modules.ping".into(),
+            profile: "legacy".into(),
+            rlimit_nofile: 0,
+            extensions: Map::new(),
+            interpreter: interpreter.into(),
+        }
+    }
+
+    fn one_host_store() -> VarStore {
+        let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
+        VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store")
+    }
+
+    fn registered(store: &mut VarStore, value: Value) {
+        let mut t = task("ping");
+        t.register = Some("probe".into());
+        let results = vec![(None, TaskResult(vars(value)))];
+        record_registered(store, &t, &["h1".to_string()], &results);
+    }
+
+    /// Everything a Python module returns is untrusted, exactly like a native module's result.
+    ///
+    /// What would make this red: the result entered through `set_fact`, which would let a
+    /// managed host put a template in a value and have the controller render it - the hole the
+    /// trust model closed in 1.4c, reopened by a new entry point. There is no backstop under a
+    /// missed site: the rule that every `set_fact` is data was dropped when the taint took over.
+    #[test]
+    fn a_python_module_result_enters_untrusted() {
+        let mut store = one_host_store();
+        registered(&mut store, json!({"changed": false}));
+        assert!(store.untrusted_of("h1").contains("probe"));
+    }
+
+    /// A module that returns a template does not get it rendered. The marker file is the proof.
+    ///
+    /// Unix only: the lookup it runs is a `touch`, and on a Windows checkout the temporary path
+    /// it is given comes back mangled, which drops the marker somewhere else and fails the
+    /// control below. The mechanism is the same on both, and this is the platform the tests run
+    /// on.
+    ///
+    /// What would make this red: the registered value rendered on the way in, which turns any
+    /// managed host into a command execution on the controller. The second half is what keeps
+    /// the first from passing for the wrong reason: the same text written by an author-side
+    /// source does run the lookup, so the marker's absence above is the taint and not a
+    /// `lookup` that does nothing here.
+    #[cfg(unix)]
+    #[test]
+    fn a_template_returned_by_a_python_module_is_never_rendered() {
+        let dir = std::env::temp_dir().join(format!("volant-untrusted-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let templar = Templar::new(PathBuf::from("."));
+        let render = |store: &mut VarStore| {
+            let vars = HostVars {
+                map: store.for_host("h1", &crate::vars::Scope::default()),
+                untrusted: store.untrusted_of("h1"),
+                untrusted_hosts: store.untrusted_hosts(),
+                ..HostVars::default()
+            };
+            templar.render("{{ probe.msg }}", crate::template::Vars::from(&vars))
+        };
+
+        let marker = dir.join("untrusted-marker");
+        let _ = std::fs::remove_file(&marker);
+        let mut store = one_host_store();
+        let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
+        registered(&mut store, json!({ "msg": text }));
+        // Asserted, not discarded: a `record_registered` that wrote nothing would leave
+        // `probe.msg` undefined, the render would fail, and the marker would be absent for a
+        // reason that has nothing to do with the taint. The value has to arrive, and arrive
+        // verbatim.
+        assert_eq!(
+            render(&mut store).expect("the value renders as the text it is"),
+            text
+        );
+        assert!(!marker.exists(), "a module's own output was rendered");
+
+        let author = dir.join("author-marker");
+        let _ = std::fs::remove_file(&author);
+        let mut store = one_host_store();
+        store.set_fact(
+            "h1",
+            "probe",
+            json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())}),
+        );
+        render(&mut store).expect("an author-side template renders");
+        assert!(author.exists(), "the lookup itself does nothing here");
     }
 }

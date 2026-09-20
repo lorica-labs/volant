@@ -89,6 +89,35 @@ pub struct AgentLink {
     stdin: Option<ChildStdin>,
     frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
     child: Child,
+    blobs: BlobMemory,
+}
+
+/// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
+/// the agent confirmed, `Err` for one it refused, with the sentence the refusal failed under.
+///
+/// It belongs to the link and to nothing longer-lived, which is the whole answer to a
+/// connection lost and reopened: the new link is a new `AgentLink` carrying an empty memory, so
+/// its first batch asks again rather than assuming what the link before it was told. A memory
+/// kept per host, or per run, would send a batch that needs a payload to an agent that never
+/// received one.
+#[derive(Debug, Default)]
+pub struct BlobMemory(std::collections::HashMap<String, Result<(), String>>);
+
+impl BlobMemory {
+    /// What this link was told about `hash`, if it has been told anything.
+    pub fn seen(&self, hash: &str) -> Option<Result<(), String>> {
+        self.0.get(hash).cloned()
+    }
+
+    pub fn remember(&mut self, hash: &str, state: Result<(), String>) {
+        self.0.insert(hash.to_string(), state);
+    }
+
+    /// Whether the agent behind this link confirmed holding this payload. A refusal is not a
+    /// hold, which is why this reads the value rather than the key.
+    pub fn holds(&self, hash: &str) -> bool {
+        matches!(self.0.get(hash), Some(Ok(())))
+    }
 }
 
 impl AgentLink {
@@ -104,6 +133,7 @@ impl AgentLink {
             stdin: Some(stdin),
             frames: rx,
             child,
+            blobs: BlobMemory::default(),
         })
     }
 
@@ -126,6 +156,11 @@ impl AgentLink {
                 .context("writing the escalation password")?;
         }
         Ok(link)
+    }
+
+    /// The payloads this link has already asked about. Lives here so it dies with the link.
+    pub fn blobs(&mut self) -> &mut BlobMemory {
+        &mut self.blobs
     }
 
     fn stdin(&mut self) -> &mut ChildStdin {
@@ -261,4 +296,46 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<V
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload).await?;
     Ok(Some(payload))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A link over a process that reads its stdin and says nothing, which is all this needs: the
+    /// memory is asserted, not the protocol.
+    fn link() -> AgentLink {
+        let child = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("cat is on PATH");
+        AgentLink::new(child).expect("a link over it")
+    }
+
+    /// What a link was told about a payload dies with that link, so a connection lost and
+    /// reopened asks again and the blob travels again.
+    ///
+    /// What would make this red: the memory moved anywhere that outlives one link - the map the
+    /// driver keeps its links in, the run's options - which is the tempting way to avoid sending
+    /// 631 KB again after a blip. The host behind the new link would then be sent a batch whose
+    /// payload the agent behind it never received, and its "unknown payload" reads as the module
+    /// failing.
+    ///
+    /// Asserted through `AgentLink` rather than through `BlobMemory::default()`: that a fresh map
+    /// is empty is true of a map kept anywhere, so it says nothing about where this one lives.
+    #[tokio::test]
+    async fn a_new_link_carries_no_memory_of_the_link_before_it() {
+        let mut first = link();
+        first.blobs().remember("ab", Ok(()));
+        assert!(first.blobs().holds("ab"));
+
+        let mut second = link();
+        assert!(
+            second.blobs().seen("ab").is_none(),
+            "a new link inherited what the link before it was told"
+        );
+    }
 }

@@ -10,6 +10,7 @@ use volant_protocol::TaskResult;
 
 use crate::compile::{Compiled, IncludeParams, Step};
 use crate::playbook::{PlayTask, python_repr};
+use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError, Vars};
 use crate::transport::{ConnectionDefaults, Escalation};
@@ -287,6 +288,25 @@ pub(super) enum Prepared {
         Vec<Item>,
         Option<Escalation>,
         Option<(String, Map<String, Value>)>,
+        /// Present when this task is a Python module: the module's half of the payload every
+        /// item of it runs with. One per task rather than one per item, because the module is
+        /// the task's, not the item's - a loop varies the arguments, never the module.
+        ///
+        /// The module's half only. The interpreter is the host's, and this is built before a
+        /// link to that host exists, so what would go in that field here is a guess; the wire
+        /// payload is assembled where the chosen interpreter is in hand. A payload carrying an
+        /// interpreter nobody chose is a module running under something other than what was
+        /// asked for, so it is made unrepresentable rather than filled in later.
+        ///
+        /// `None` for every task this release runs today: a module that needs a payload is
+        /// refused before the first connection, so nothing reaches here carrying one until the
+        /// driver has a union blob to name.
+        ///
+        /// Boxed because it is three strings and a map against the two pointers of the variant
+        /// beside it, and every `Prepared` a run builds - one per task and per host, payload or
+        /// not - would otherwise be that size. Clippy's `large_enum_variant` is denied here and
+        /// says so; unboxing it is not a simplification.
+        Option<Box<ModulePayload>>,
     ),
 }
 
@@ -522,7 +542,7 @@ pub(super) fn prepare(
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
     // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation = become_for(task, plan, &base, defaults, templar)?;
-    Ok(Prepared::Remote(items, escalation, delegate))
+    Ok(Prepared::Remote(items, escalation, delegate, None))
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what

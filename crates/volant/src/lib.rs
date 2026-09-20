@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant controller: loads Ansible content and drives agents.
 
+pub mod action_plugins;
 pub mod agent;
 pub mod cli;
 pub(crate) mod compile;
@@ -11,6 +12,7 @@ pub mod keywords;
 pub(crate) mod listing;
 pub mod playbook;
 pub mod preflight;
+pub mod python;
 pub(crate) mod render;
 pub(crate) mod roles;
 pub(crate) mod stats;

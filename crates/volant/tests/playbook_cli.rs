@@ -6485,3 +6485,89 @@ fn a_host_file_does_move_the_implicit_localhost() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `creates` is resolved where the command would run, not where the agent happens to be. The
+/// directory already holds `marker`, so nothing runs and `should-not-run` never appears.
+///
+/// The assertion is that file's absence. A result that says `skipped` while the command ran
+/// would pass a snapshot and fail this; that is the shape this guard has to have, because what
+/// it protects is a migration or an initialisation running twice. `stdout` also carries
+/// `skipping: [h1]` for the guarded task, which a command that ran instead would never print.
+///
+/// The exact skip text (`Did not run command since 'marker' exists`) is pinned at the module
+/// level instead, in `command.rs`'s own tests: the CLI never shows a skipped task's message body
+/// at any verbosity (`render.rs`, `Outcome::Skipped` carries no tail), which is itself a
+/// pre-existing divergence from the reference unrelated to this guard and out of this task's
+/// scope (see `architecture.md`).
+///
+/// What would make this red: the guard calling `Path::exists` on the bare relative path, which
+/// resolves against the agent's own directory and finds nothing.
+#[test]
+fn a_relative_creates_is_resolved_against_chdir() {
+    let dir = std::env::temp_dir().join(format!("volant-creates-chdir-{}", std::process::id()));
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("a work dir");
+    std::fs::write(work.join("marker"), "").expect("the marker");
+    let inventory = dir.join("inv.ini");
+    std::fs::write(&inventory, "h1 ansible_connection=local\n").expect("an inventory");
+
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            inventory.to_str().expect("a path"),
+            "-e",
+            &format!("workdir={}", work.display()),
+            &fixture("guards/creates-chdir.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !work.join("should-not-run").exists(),
+        "the command ran although its guard said it should not:\n{stdout}"
+    );
+    assert!(stdout.contains("skipping: [h1]"), "{stdout}");
+    assert_eq!(out.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other half of the same fixture: `creates` is a glob, and the pattern is expanded in the
+/// directory the `chdir` names, not in the agent's own directory. `x-1` sits in `work`, matching
+/// `x-*`, so this guard must stop `should-not-run-2` from ever running too. Measurement (m)
+/// settles the message the module itself produces: it quotes the pattern as written (`x-*`),
+/// never the file that matched — pinned in `command.rs`'s own tests, for the reason given above.
+///
+/// What would make this red: a guard that falls back to a literal `Path::exists` for any pattern
+/// it does not resolve, which never matches `x-*` against `x-1` and lets the command run.
+#[test]
+fn a_pattern_creates_is_resolved_against_chdir() {
+    let dir = std::env::temp_dir().join(format!("volant-creates-glob-{}", std::process::id()));
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("a work dir");
+    std::fs::write(work.join("x-1"), "").expect("the match");
+    let inventory = dir.join("inv.ini");
+    std::fs::write(&inventory, "h1 ansible_connection=local\n").expect("an inventory");
+
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            inventory.to_str().expect("a path"),
+            "-e",
+            &format!("workdir={}", work.display()),
+            &fixture("guards/creates-chdir.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !work.join("should-not-run-2").exists(),
+        "the pattern guard let the command run although 'x-1' matches it:\n{stdout}"
+    );
+    assert!(stdout.contains("skipping: [h1]"), "{stdout}");
+    assert_eq!(out.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}

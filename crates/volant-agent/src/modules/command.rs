@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::COMMAND;
 
-use super::{Context, Module, Run};
+use super::{Context, Module, Run, glob};
 use crate::clock;
 
 pub const MODULE: Module = Module {
@@ -65,8 +65,9 @@ pub(crate) fn execute(
         return Run::Done(TaskResult::failed_with("no command given"));
     }
 
+    let guard_base = chdir.map(Path::new);
     if let Some(path) = args.get("creates").and_then(Value::as_str)
-        && Path::new(path).exists()
+        && glob::matches_any(guard_base, path)
     {
         return Run::Done(skipped(
             display,
@@ -75,7 +76,7 @@ pub(crate) fn execute(
         ));
     }
     if let Some(path) = args.get("removes").and_then(Value::as_str)
-        && !Path::new(path).exists()
+        && !glob::matches_any(guard_base, path)
     {
         return Run::Done(skipped(
             display,
@@ -402,6 +403,81 @@ mod tests {
         );
         assert!(!r.changed());
         assert!(r.skipped());
+    }
+
+    /// Measurement (o): a relative `creates` resolves under `chdir`, and the message keeps the
+    /// path exactly as the playbook wrote it, not prefixed by the `chdir` that resolved it.
+    ///
+    /// What would make this red: `Path::new(path).exists()` reading `marker` from the agent's
+    /// own directory instead of from `chdir`, which finds nothing there and lets the command run.
+    #[test]
+    fn a_relative_creates_resolves_under_chdir() {
+        let dir = std::env::temp_dir().join(format!("volant-guard-chdir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("marker"), b"").unwrap();
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "echo never",
+                "chdir": dir.to_str().unwrap(),
+                "creates": "marker",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(r.0["msg"], "Did not run command since 'marker' exists");
+        assert_eq!(r.0["stdout"], "skipped, since marker exists");
+        assert!(!r.changed());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Measurement (p): a glob in `creates` expands inside a directory component too, still
+    /// resolved under `chdir`, and the message still quotes the pattern rather than the match.
+    #[test]
+    fn a_glob_creates_resolves_under_chdir() {
+        let dir = std::env::temp_dir().join(format!("volant-guard-glob-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("marker"), b"").unwrap();
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "echo never",
+                "chdir": dir.to_str().unwrap(),
+                "creates": "s*/marker",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(r.0["msg"], "Did not run command since 's*/marker' exists");
+        assert_eq!(r.0["stdout"], "skipped, since s*/marker exists");
+        assert!(!r.changed());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Measurement (m): an absolute glob is expanded regardless of `chdir`, and the message
+    /// quotes the absolute pattern, not the file that matched it.
+    #[test]
+    fn an_absolute_glob_creates_ignores_chdir() {
+        let dir = std::env::temp_dir().join(format!("volant-guard-abs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("x-1"), b"").unwrap();
+        let pattern = format!("{}/x-*", dir.display());
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "echo never",
+                "chdir": "/definitely/not/here",
+                "creates": pattern,
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(
+            r.0["msg"],
+            format!("Did not run command since '{pattern}' exists")
+        );
+        assert!(!r.changed());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

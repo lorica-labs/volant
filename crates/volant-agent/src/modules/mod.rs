@@ -3,6 +3,7 @@
 //! The list of names lives in `volant_protocol::modules`; this table maps each name to code.
 
 pub mod command;
+mod glob;
 pub mod raw;
 pub mod shell;
 

@@ -51,8 +51,11 @@ pub struct Config {
     /// one of them. Off by default, which is what `linear` means.
     ///
     /// Not a playbook keyword, and never one: a playbook has to stay runnable by the reference
-    /// as written, and the reference has no such keyword. Ansible ignores a section it does not
-    /// know, so one `ansible.cfg` carrying `[volant]` stays valid for both engines.
+    /// as written, and the reference has no such keyword. Measured on ansible-core 2.19.12 with
+    /// a `[volant]` section in the file: `ansible-playbook` runs the play and exits 0 with no
+    /// warning and `ansible-config dump` does not list it, so one `ansible.cfg` drives both
+    /// engines. `ansible-config validate` is the one exception - it answers `Found unknown
+    /// section 'volant'` and exits 1.
     pub batching: bool,
 }
 
@@ -205,7 +208,7 @@ impl Config {
             config.force_handlers = on;
         }
         if let Ok(value) = std::env::var("VOLANT_BATCHING")
-            && let Some(on) = flag(&value)
+            && let Some(on) = switch(&value)
         {
             config.batching = on;
         }
@@ -300,7 +303,7 @@ fn forks(n: i64) -> usize {
 /// `bool_from_str` alone would drop `VOLANT_BATCHING=1`, since YAML 1.1 reads `1` as an integer
 /// and not as a boolean. A configuration file is not YAML, and neither is an environment
 /// variable, so the digit is read here.
-fn flag(value: &str) -> Option<bool> {
+fn switch(value: &str) -> Option<bool> {
     match value.trim() {
         "1" => Some(true),
         "0" => Some(false),
@@ -380,7 +383,7 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
         // does not know: an `ansible.cfg` shared by the two engines stays valid for both.
         if section == "volant" {
             if key.trim() == "batching"
-                && let Some(on) = flag(value)
+                && let Some(on) = switch(value)
             {
                 config.batching = on;
             }

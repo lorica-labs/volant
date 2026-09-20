@@ -29,8 +29,14 @@ or in the environment:
 VOLANT_BATCHING=1 volant playbook -i hosts.ini site.yml
 ```
 
-Ansible skips a section it does not know, so one `ansible.cfg` carrying `[volant]` stays valid
-for both engines.
+Ansible ignores a section it does not know. Measured on ansible-core 2.19.12 with the block
+above in the file: `ansible-playbook` runs the play and exits 0 without a warning, and
+`ansible-config dump` does not list the section. So one `ansible.cfg` can carry `[volant]` and
+still drive both engines.
+
+One command does notice. `ansible-config validate` refuses the file with `Found unknown section
+'volant'` and exits 1. If you run that over a shared `ansible.cfg`, set the option from the
+environment instead.
 
 Turning it on changes the order tasks run in, not what they do. The recap is the same either
 way. What can differ is a dependency the text does not show: with batching on, a host may reach
@@ -39,8 +45,8 @@ expects may not be there yet.
 
 ## What it costs
 
-Measured on one Linux machine, 200 hosts and 20 tasks over local connections, `-f 50`, a release
-build, the median of three runs:
+Measured with Volant 0.1.0-alpha.5 on one Linux machine, 200 hosts and 20 tasks over local
+connections, `-f 50`, a release build, the median of three runs with none discarded:
 
 | Playbook | Default | `batching = true` |
 |---|---|---|
@@ -49,7 +55,12 @@ build, the median of three runs:
 
 The second row is the same number twice because those tasks are synchronisation points under
 either setting. The first row is the price. A playbook with nothing to synchronise now pays what
-the fully synchronised one pays, which on this shape of play is about twice the run.
+the fully synchronised one pays, which on this shape of play is 2.4 times as long.
+
+Both runs connect locally, which is why they are comparable and also what limits them. No task
+here crosses a network, so the gap between the columns is coordination and nothing else. Over
+SSH every task carries a round trip too, and the ratio then follows the latency of your own
+links rather than anything measured on this page.
 
 Privilege escalation pays again. Volant bounds open escalated connections with the same `forks`
 permit it bounds working hosts with, and a driver gives both back in front of a wait. By default

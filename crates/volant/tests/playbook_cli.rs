@@ -6815,6 +6815,48 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
     );
 }
 
+/// The same deadline over the other pipe. A descendant that keeps standard input open without
+/// reading it leaves the write blocked once the pipe buffer is full, and that write is on the
+/// success path: the process has been reaped and both readers have returned end-of-file, so
+/// nothing has killed the group and nothing will until the descendant lets go.
+///
+/// The child of the shell exits at once and the grandchild holds the pipe for three seconds, so a
+/// run that waits for the write comes back at about three seconds reporting success, and a run
+/// that holds the deadline over it comes back at about one reporting the timeout. The megabyte is
+/// what makes the write block at all: anything that fits in a pipe buffer is written and forgotten
+/// before the child is even reaped, which is the ordinary path and stays green.
+///
+/// Elapsed time is asserted here for the same reason as above, with `volant_within` as the net
+/// against a regression that never returns.
+///
+/// What would make this red: joining the writer thread instead of waiting on it under the
+/// deadline. Measured against ansible-core 2.19.12, which fails this task on its timeout and exits
+/// 2; this release reported success and exit 0 after the descendant's three seconds.
+#[test]
+fn a_timeout_covers_a_descendant_holding_stdin() {
+    let started = std::time::Instant::now();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("timeout/stdin-descendant.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let elapsed = started.elapsed();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(
+        stdout.contains(r#""msg": "Task failed: Timed out after 1 second(s).""#),
+        "the task did not report the reference's timeout text:\n{stdout}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(3000),
+        "the run took {elapsed:?}: the deadline did not reach the write to stdin"
+    );
+}
+
 /// A module argument the reference has and this release does not act on is refused by its own
 /// name, before anything connects. A table saying a module runs says nothing about the rest of
 /// that module's API, and an argument accepted and then dropped reports success having done

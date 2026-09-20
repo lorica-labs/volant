@@ -181,12 +181,19 @@ pub(crate) fn execute(
     // the cancellation check further down.
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
-    let stdin_writer = child.stdin.take().map(|mut stdin| {
+    // A channel rather than a `JoinHandle`, for the same reason as the readers: a descendant that
+    // holds the read end open without reading blocks this write once the pipe buffer is full, and
+    // that wait has to be abandonable. It sends the readers' payload type so one bounded wait
+    // serves all three.
+    let stdin_written = child.stdin.take().map(|mut stdin| {
+        let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             if let Some(data) = stdin_data {
                 let _ = stdin.write_all(data.as_bytes());
             }
-        })
+            let _ = tx.send(String::new());
+        });
+        rx
     });
 
     // The end of the process is signalled rather than polled, so a command that returns at once
@@ -258,13 +265,22 @@ pub(crate) fn execute(
         }
     };
     let rc = exit_code(status);
-    // The readers wait under what is left of the same deadline. A descendant that outlived the
-    // process it was forked from still holds these pipes, and waiting for it here is what used to
-    // carry a task well past its timeout and then report success. Both calls run before the match,
-    // and the `else` asks a third time, which is what the latch above is for.
-    let (Some(mut stdout), Some(mut stderr)) = (
+    // All three pipes wait under what is left of the same deadline. A descendant that outlived the
+    // process it was forked from still holds them, and waiting for it here is what used to carry a
+    // task well past its timeout and then report success. Only the endings below kill the group,
+    // and the success path is not one of them: a write left blocked there is never unblocked by an
+    // `EPIPE` that nothing sends. The three calls run before the match, and the `else` asks a
+    // fourth time, which is what the latch above is for.
+    //
+    // A write the deadline cut short reports the timeout, never a success over a truncated stdin -
+    // which is what the reference reports for the same command.
+    let (Some(mut stdout), Some(mut stderr), Some(_)) = (
         collect(&stdout, deadline, cancelled),
         collect(&stderr, deadline, cancelled),
+        // Nothing to wait for when the command was given no `stdin:`: its input is `/dev/null`.
+        stdin_written
+            .as_ref()
+            .map_or(Some(String::new()), |rx| collect(rx, deadline, cancelled)),
     ) else {
         kill_group(pid);
         if cancelled() {
@@ -273,9 +289,6 @@ pub(crate) fn execute(
         let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
         return Run::Done(timed_out(seconds));
     };
-    if let Some(stdin_writer) = stdin_writer {
-        let _ = stdin_writer.join();
-    }
     if strip_empty_ends {
         stdout.truncate(stdout.trim_end_matches(['\r', '\n']).len());
         stderr.truncate(stderr.trim_end_matches(['\r', '\n']).len());
@@ -307,14 +320,14 @@ pub(crate) fn execute(
 /// while something is still running.
 const CANCEL_POLL: Duration = Duration::from_millis(50);
 
-/// Waits for one reader under what is left of the task's deadline, waking on `CANCEL_POLL` to look
-/// at the cancellation flag -- a pipe a descendant holds open has to be abandonable both ways, and
-/// a task without a `timeout:` has only the flag. `None` means the wait ended without the reader:
-/// the caller kills the group, which closes the pipes and ends the thread, and reports whichever
-/// of the two endings applies. What the reader had read is lost, which is what a timed-out or
-/// cancelled task reports anyway.
+/// Waits for one pipe thread under what is left of the task's deadline, waking on `CANCEL_POLL` to
+/// look at the cancellation flag -- a pipe a descendant holds open has to be abandonable both ways,
+/// and a task without a `timeout:` has only the flag. `None` means the wait ended without the
+/// thread: the caller kills the group, which closes the pipes and ends the thread, and reports
+/// whichever of the two endings applies. What a reader had read is lost, which is what a timed-out
+/// or cancelled task reports anyway; the writer sends an empty string and has nothing to lose.
 ///
-/// A reader that disconnected without sending is read as empty output, the way joining a panicked
+/// A thread that disconnected without sending is read as empty output, the way joining a panicked
 /// reader was: turning it into an expiry would report a deadline that was never reached.
 fn collect(
     rx: &mpsc::Receiver<String>,

@@ -1,0 +1,14 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: A guard that must stop this
+      command: touch should-not-run
+      args:
+        chdir: "{{ workdir }}"
+        creates: marker
+
+    - name: A pattern guard that must also stop this
+      command: touch should-not-run-2
+      args:
+        chdir: "{{ workdir }}"
+        creates: "x-*"

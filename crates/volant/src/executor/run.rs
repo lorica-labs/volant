@@ -2312,4 +2312,98 @@ mod tests {
         );
         assert!(!marker.exists(), "a gathered fact was rendered");
     }
+
+    /// `AgentLink`'s `stop_batch` is a one-line forward to `cancel`, and `AgentChannel` is
+    /// `pub(super)`: no integration test file can reach it, only a mock `FakeLink` can, and
+    /// every other test in this module drives the trait through that mock. `cancel` itself is
+    /// proven directly, against a real agent, in `local_transport.rs` - this is the trait's own
+    /// forward, against a real agent, called the way the driver actually calls it.
+    ///
+    /// The link stays open until after the check: `local_transport.rs`'s own
+    /// `dropping_the_link_lets_the_agent_stop_its_task` proves the agent stops everything on its
+    /// own once the connection closes, so a test that dropped the link right after calling
+    /// `stop_batch` could pass for that unrelated reason and prove nothing about the forward.
+    ///
+    /// What would make this red: emptying `AgentLink`'s `stop_batch` body (returning `true`
+    /// without calling `cancel`), which nothing else in this suite would catch.
+    #[tokio::test]
+    async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
+        let marker = format!("40.{}", std::process::id());
+        // The lib test binary lives in target/<profile>/deps/; the workspace's other binaries,
+        // volant-agent included, are built one level up, in target/<profile>/ itself.
+        let exe = std::env::current_exe().expect("this test's own binary path");
+        let agent_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .expect("deps/ has a parent")
+            .to_path_buf();
+        let saved = std::env::var("VOLANT_AGENT_DIR").ok();
+        // SAFETY: nothing else in this process reads or writes this variable concurrently -
+        // `AgentSource::discover` runs synchronously between the two lines that set and restore
+        // it, and nextest gives every test its own process.
+        unsafe {
+            std::env::set_var("VOLANT_AGENT_DIR", &agent_dir);
+        }
+        let source = AgentSource::discover();
+        match saved {
+            Some(v) => unsafe { std::env::set_var("VOLANT_AGENT_DIR", v) },
+            None => unsafe { std::env::remove_var("VOLANT_AGENT_DIR") },
+        }
+
+        let mut vars = BTreeMap::new();
+        vars.insert("ansible_connection".to_string(), json!("local"));
+        let host = crate::inventory::Host {
+            name: "localhost".to_string(),
+            vars,
+        };
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        let transport = Transport::for_host(&host, &defaults).expect("a local transport");
+        let mut link = transport
+            .connect(&source, None)
+            .await
+            .expect("a real agent");
+        link.handshake().await.expect("a real handshake");
+        link.send(&ToAgent::RunBatch {
+            id: 77,
+            tasks: vec![Task {
+                module: "shell".into(),
+                args: json!({"_raw_params": format!("sleep {marker} & wait")})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ignore_errors: false,
+                timeout: None,
+                environment: BTreeMap::default(),
+                payload: None,
+            }],
+        })
+        .await
+        .expect("sending the batch");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // The trait method the driver actually calls, not `cancel` directly.
+        let confirmed = AgentChannel::stop_batch(&mut link, 77, Duration::from_secs(5)).await;
+        assert!(confirmed, "the agent must confirm the cancel");
+
+        let survivors = std::process::Command::new("pgrep")
+            .args(["-f", &marker])
+            .output()
+            .expect("pgrep");
+        assert!(
+            survivors.stdout.is_empty(),
+            "the task kept running on a real agent after the real stop_batch forward: {}",
+            String::from_utf8_lossy(&survivors.stdout)
+        );
+        link.shutdown().await;
+    }
 }

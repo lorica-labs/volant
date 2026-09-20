@@ -998,6 +998,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         args.insert("_raw_params".into(), Value::String(action.to_string()));
         args
     } else if is_known(&module)
+        || crate::python::is_python_module(&module)
         || import_module(&module).is_some()
         || include_module(&module).is_some()
     {
@@ -1503,9 +1504,18 @@ mod tests {
     /// reading a playbook written for a release that has the module.
     #[test]
     fn a_module_name_is_kept_whatever_it_names() {
-        for module in ["nosuchmodule", "file", "community.general.command"] {
+        // `file`'s args are given as `key=value` rather than the free-form `echo a` the other
+        // two accept: it is a python module now read by `module_args` like any other, and
+        // `echo a` is not a valid shorthand for it, matching what the reference would also
+        // refuse. The other two are free-form, so `echo a` becomes their `_raw_params` as
+        // before.
+        for (module, args) in [
+            ("nosuchmodule", "echo a"),
+            ("file", "path=/tmp/x state=touch"),
+            ("community.general.command", "echo a"),
+        ] {
             let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - name: Later\n      {module}: echo a\n"),
+                &format!("- hosts: all\n  tasks:\n    - name: Later\n      {module}: {args}\n"),
                 "x.yml",
             )
             .unwrap_or_else(|e| panic!("{module}: {e:#}"));

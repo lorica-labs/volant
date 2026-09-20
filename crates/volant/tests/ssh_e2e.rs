@@ -14,7 +14,7 @@
 use std::fmt::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -485,6 +485,164 @@ fn ssh_delegate_to_another_inventory_name() {
     assert!(
         !cached(&a_tmp).join("volant-agent").exists(),
         "the delegating host's connection is never opened, so nothing lands in its directory: {shown}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The controller's python and the managed host's must be two distinct interpreters, or a
+/// python task passing here would prove nothing about the claim the whole milestone rests on:
+/// the module_utils travel in the blob, so the host never needs ansible-core. `just ssh-test`
+/// already refuses to run at all when `VOLANT_PYTHON` lacks ansible-core; this guards the other
+/// half, the same way the `ssh` CI job does, so the two sides cannot quietly end up the same
+/// interpreter here.
+fn assert_host_and_controller_pythons_are_distinct() {
+    let controller = std::env::var("VOLANT_PYTHON").expect(
+        "VOLANT_PYTHON names a python with ansible-core; ssh-test checks this before any ssh_* test runs",
+    );
+    assert_ne!(
+        controller, "/usr/bin/python3",
+        "VOLANT_PYTHON must not be the bare interpreter this test relies on being ansible-core-free"
+    );
+    let bare = Command::new("/usr/bin/python3")
+        .args(["-c", "import ansible"])
+        .output()
+        .expect("running /usr/bin/python3");
+    assert!(
+        !bare.status.success(),
+        "/usr/bin/python3 has ansible-core, so this test cannot prove the module_utils came from the blob"
+    );
+}
+
+/// A python module runs over a real ssh and changes the disk. `ping` proves the path, `file`
+/// proves the effect - a module that reported `changed` without touching the filesystem would
+/// pass a ping-only test.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_runs_a_python_module_and_changes_the_disk() {
+    assert_host_and_controller_pythons_are_distinct();
+    let dir = tmp("pythonmodule");
+    let inv = inventory(&dir, &[("box", "")]);
+    let target = dir.join("touched");
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args([
+            "playbook",
+            "-i",
+            &inv,
+            "-e",
+            &format!("target={}", target.display()),
+            &fixture("ssh/python-module.yml"),
+        ])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
+        .output()
+        .unwrap();
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("\"msg\": \"pong\""),
+        "ping did not prove the path: {text}"
+    );
+    assert!(
+        target.exists(),
+        "file did not prove the effect, {} was never created: {text}",
+        target.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A python module's own result is untrusted like any other module's, all the way to the CLI a
+/// user actually runs. The lower-level proof lives in `executor::run`'s own tests, against a
+/// `VarStore` built by hand; nothing before this ran the claim through a real ssh, a real agent
+/// and a real warm python server.
+///
+/// What would make this red: `register` losing the untrusted mark for a python task
+/// specifically, which nothing below the CLI would catch if the mark were applied by module
+/// kind rather than uniformly to every result a managed host returns.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_a_python_module_s_result_is_never_evaluated() {
+    let dir = tmp("pytrust");
+    let inv = inventory(&dir, &[("box", "")]);
+    let marker = dir.join("marker");
+    let payload = dir.join("payload.txt");
+    std::fs::write(
+        &payload,
+        format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display()),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args([
+            "playbook",
+            "-i",
+            &inv,
+            "-e",
+            &format!("payload={}", payload.display()),
+            &fixture("ssh/untrusted-python.yml"),
+        ])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
+        .output()
+        .unwrap();
+    let text = both(&out);
+    assert!(
+        !marker.exists(),
+        "the lookup embedded in a python module's own result ran on the controller:\n{text}"
+    );
+    assert!(
+        text.contains("lookup('pipe'"),
+        "the raw text should be shown as data:\n{text}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `AgentLink::stop_batch` is a one-line forward to `cancel`, and every executor test exercises
+/// the trait through a mock that never calls it: `cancel` itself is proven directly, over a real
+/// agent, in `local_transport.rs`, but nothing before this sent a real Ctrl-C through a real CLI
+/// run and checked that the forward the driver actually calls still reaches the host.
+///
+/// What would make this red: emptying that forward's body, which leaves the whole suite green
+/// everywhere else while a cancelled run keeps its task running on the host it was supposed to
+/// stop.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
+    let dir = tmp("ctrlc");
+    let inv = inventory(&dir, &[("box", "")]);
+    let marker = format!("40.{}", std::process::id());
+    let play = dir.join("sleep.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Sleep\n      shell: \"sleep {marker} & wait\"\n"
+        ),
+    )
+    .unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["playbook", "-i", &inv, &play.display().to_string()])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let killed = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success(), "sending SIGINT to the volant process");
+    let out = child.wait_with_output().unwrap();
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(99), "{text}");
+    let survivors = Command::new("pgrep")
+        .args(["-f", &marker])
+        .output()
+        .unwrap();
+    assert!(
+        survivors.stdout.is_empty(),
+        "the task kept running on the host after Ctrl-C:\n{}\n{text}",
+        String::from_utf8_lossy(&survivors.stdout)
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

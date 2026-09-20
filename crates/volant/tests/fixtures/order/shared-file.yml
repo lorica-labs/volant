@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: First
+      shell: "echo {{ inventory_hostname }}-1 >> {{ trace }}"
+    - name: Second
+      shell: "echo {{ inventory_hostname }}-2 >> {{ trace }}"

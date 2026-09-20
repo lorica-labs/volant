@@ -46,6 +46,17 @@ pub struct Config {
     /// alone. The command line never narrows what the file asked for; it only adds to it.
     pub tags_run: Vec<String>,
     pub tags_skip: Vec<String>,
+    /// `[volant] batching`, or `VOLANT_BATCHING`: whether a host may carry on through the tasks
+    /// between two synchronisation points instead of meeting the other hosts in front of every
+    /// one of them. Off by default, which is what `linear` means.
+    ///
+    /// Not a playbook keyword, and never one: a playbook has to stay runnable by the reference
+    /// as written, and the reference has no such keyword. Measured on ansible-core 2.19.12 with
+    /// a `[volant]` section in the file: `ansible-playbook` runs the play and exits 0 with no
+    /// warning and `ansible-config dump` does not list it, so one `ansible.cfg` drives both
+    /// engines. `ansible-config validate` is the one exception - it answers `Found unknown
+    /// section 'volant'` and exits 1.
+    pub batching: bool,
 }
 
 impl Default for Config {
@@ -66,6 +77,7 @@ impl Default for Config {
             collections_path: default_collections_path(),
             tags_run: Vec::new(),
             tags_skip: Vec::new(),
+            batching: false,
         }
     }
 }
@@ -195,6 +207,11 @@ impl Config {
         {
             config.force_handlers = on;
         }
+        if let Ok(value) = std::env::var("VOLANT_BATCHING")
+            && let Some(on) = switch(&value)
+        {
+            config.batching = on;
+        }
         // Measured: the environment replaces the file's `roles_path` rather than being appended
         // to it, and a relative entry is read against the working directory.
         let from_env = |name: &str| -> Option<Vec<PathBuf>> {
@@ -280,6 +297,20 @@ fn forks(n: i64) -> usize {
     n.max(0) as usize
 }
 
+/// A switch as a configuration line or an environment variable spells one: every word PyYAML
+/// reads as a boolean, and the two digits with them.
+///
+/// `bool_from_str` alone would drop `VOLANT_BATCHING=1`, since YAML 1.1 reads `1` as an integer
+/// and not as a boolean. A configuration file is not YAML, and neither is an environment
+/// variable, so the digit is read here.
+fn switch(value: &str) -> Option<bool> {
+    match value.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        text => crate::yaml::bool_from_str(text),
+    }
+}
+
 /// A negative connection timeout is refused where it is read, rather than clamped.
 ///
 /// Measured on ansible-core 2.19.12: `timeout = -1` is passed straight to `ssh`, which answers
@@ -345,6 +376,16 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                 "run" => config.tags_run = tag_list(value),
                 "skip" => config.tags_skip = tag_list(value),
                 _ => {}
+            }
+            continue;
+        }
+        // Volant's own section, which the reference ignores along with every other section it
+        // does not know: an `ansible.cfg` shared by the two engines stays valid for both.
+        if section == "volant" {
+            if key.trim() == "batching"
+                && let Some(on) = switch(value)
+            {
+                config.batching = on;
             }
             continue;
         }
@@ -421,6 +462,30 @@ mod tests {
     /// can refuse, and the tests that exercise those call `parse` directly.
     fn cfg(text: &str, base: &str) -> Config {
         parse(text, Path::new(base), "ansible.cfg").expect("the sample parses")
+    }
+
+    /// Cross-host batching is off unless a `[volant] batching` line asks for it, and the
+    /// section a shared file carries for the other engine is read here without disturbing
+    /// `[defaults]` around it.
+    ///
+    /// What would make this red: the key read with `bool_from_str` alone, which answers nothing
+    /// for `1` and leaves the option off for the spelling the documentation gives.
+    #[test]
+    fn the_volant_section_carries_the_batching_switch() {
+        assert!(!cfg("[defaults]\nforks = 3\n", ".").batching);
+        assert!(cfg("[volant]\nbatching = true\n", ".").batching);
+        assert!(cfg("[volant]\nbatching = 1\n", ".").batching);
+        assert!(!cfg("[volant]\nbatching = no\n", ".").batching);
+        assert!(!cfg("[volant]\nbatching = 0\n", ".").batching);
+        assert!(!cfg("[volant]\nbatching = maybe\n", ".").batching);
+        // An unknown key in the section is passed over, and the section does not swallow the
+        // one behind it.
+        let c = cfg(
+            "[volant]\nbatching = yes\nsomething_else = 4\n[defaults]\nforks = 9\n",
+            ".",
+        );
+        assert!(c.batching);
+        assert_eq!(c.forks, 9);
     }
 
     #[test]

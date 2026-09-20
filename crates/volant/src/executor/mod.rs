@@ -48,6 +48,10 @@ pub struct RunOptions {
     /// `--force-handlers`, or `[defaults] force_handlers`: whether a host that failed still runs
     /// the handlers it notified. A play saying so itself speaks over this.
     pub force_handlers: bool,
+    /// `[volant] batching`, or `VOLANT_BATCHING`: whether a host may carry on through the tasks
+    /// between two synchronisation points. Off by default, so the hosts of a batch meet in front
+    /// of every task, which is what `linear` means.
+    pub batching: bool,
     /// Flips to `true` once when the user interrupts the run.
     pub stop: watch::Receiver<bool>,
 }

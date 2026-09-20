@@ -41,6 +41,11 @@ pub enum ArgStatus {
 /// outside that set fails the task there. `Value::as_bool` sees none of them, so an argument
 /// written `"false"` - which a whole-expression template produces on its own - used to read back
 /// as the default and do the opposite of what it says.
+///
+/// This is not the set the YAML scalar resolver uses, and the two must not be merged: that one
+/// has no `y`, `n`, `t` or `f`, and matches three fixed capitalisations where this one folds
+/// case. The `bool` filter has a third set of its own. Three readers, three measurements, one
+/// place each.
 pub fn arg_bool(value: &Value) -> Option<bool> {
     let text = match value {
         Value::Bool(b) => return Some(*b),

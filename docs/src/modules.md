@@ -1,6 +1,6 @@
 # Modules
 
-These are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. Everything else waits on the warm Python path.
+These are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. That check reads the play as it was compiled, so a module named only inside a file a dynamic `include_tasks` or `include_role` pulls in is met during the run instead: the host is already connected, and the task fails on it rather than the run being refused before the first connection. What `import_tasks` and `import_role` name is compiled with the play and checked with it. Everything else waits on the warm Python path.
 
 ## On the agent
 

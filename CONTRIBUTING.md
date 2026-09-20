@@ -22,13 +22,13 @@ just setup
 
 The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them out and `just ssh-test` runs them on their own. That recipe wants an sshd listening on `localhost` and `VOLANT_SSH_TEST_KEY` pointing at a private key this account accepts; a throwaway key appended to your own `authorized_keys` does the job. The tests talk to `localhost` and to nothing else, which is why CI can run them unchanged.
 
-`just bench-compile` times how long Volant and `ansible-playbook` each take to turn a large role into a task list. It clones the `ansible-lockdown/UBUNTU22-CIS` role, which is MIT licensed, into `target/`, and it needs `ansible-playbook` on your PATH. Both sides only list the tasks, so neither connects to a host. Volant has no `--list-tasks` option yet, so the recipe prints the reference timings and then fails on the Volant half.
+`just bench-compile` times how long Volant and `ansible-playbook` each take to turn a large role into a task list. It clones the `ansible-lockdown/UBUNTU22-CIS` role, which is MIT licensed, into `target/`, and it needs `ansible-playbook` on your PATH. Both sides only list the tasks, so neither connects to a host. The recipe times three runs each, then diffs the two listings and prints `listings identical` when they agree.
 
 ## Workflow
 
 1. Fork the repository and create a branch from `main`: `feat/…`, `fix/…`, `docs/…`, `ci/…` or `chore/…`.
 2. Keep each pull request to one logical change.
-3. Run `just check` before pushing. It runs exactly what CI runs.
+3. Run `just check` before pushing. It covers formatting, lints and the test suite. CI reports more than that: the `ssh_*` tests, the coverage floor, a musl build, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS. Of those, `just ssh-test` and `just coverage` run here.
 4. Open a pull request against `main`. Its title must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), for example `feat(agent): collect network facts`. The title becomes the commit message when the pull request is squashed.
 5. Add a line under `Unreleased` in `CHANGELOG.md` when the change is visible to users.
 

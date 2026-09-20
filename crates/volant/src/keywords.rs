@@ -9,7 +9,9 @@
 //! `Runs` before its executor exists would be accepted by the loader, waved through by the
 //! pre-flight and then ignored, which is the failure this split exists to prevent. Whoever
 //! implements a keyword flips its row in the same change, and the table's own tests then prove
-//! the new behaviour in both directions.
+//! the new behaviour in both directions. A keyword this release answers without doing the whole
+//! of what the reference does with it is [`Support::Partial`], and carries the sentence the
+//! generated page prints about what is left out.
 //!
 //! The two lists are the reference's own, read out of `Task.fattributes` and
 //! `Play.fattributes` on ansible-core 2.19.12, plus the spellings the reference resolves
@@ -19,13 +21,17 @@
 
 use std::fmt::Write as _;
 
-use Support::{Preflight, Runs};
+use Support::{Partial, Preflight, Runs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
     /// Something in this release honours it: it runs, or it is refused by its own name with
     /// the reference's code when the value asks for what we cannot do.
     Runs,
+    /// Accepted and answered, but not to the whole of what the reference does with it. The
+    /// generated page says what is missing, because "runs" here would let an operator plan
+    /// around a behaviour this release does not have.
+    Partial,
     /// Loaded and kept, so a playbook parses as it does in the reference, then refused by the
     /// pre-flight before the first connection rather than ignored during the run.
     Preflight,
@@ -35,6 +41,9 @@ pub enum Support {
 pub struct Keyword {
     pub name: &'static str,
     pub support: Support,
+    /// What a [`Support::Partial`] row does not do, in the words the generated page prints.
+    /// `None` on every other row.
+    pub missing: Option<&'static str>,
     /// Whether a task carrying this keyword is a synchronisation point: the hosts of the batch
     /// meet in front of it before any of them runs it.
     ///
@@ -52,15 +61,34 @@ const fn kw(name: &'static str, support: Support) -> Keyword {
     Keyword {
         name,
         support,
+        missing: None,
         barrier: false,
     }
 }
+
+/// A keyword this release answers without doing the whole of what the reference does with it.
+/// `missing` is the sentence the generated page prints next to it.
+const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
+    Keyword {
+        name,
+        support: Partial,
+        missing: Some(missing),
+        barrier: false,
+    }
+}
+
+/// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
+/// and another about the task under it.
+const CHECK_MODE_MISSING: &str = "only `false` is accepted, and it is honoured by running for real; \
+    `true` is refused by name before the first connection, because this release has no check mode; \
+    inside a file a dynamic include pulls in there is no such refusal, and the task runs for real";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
     Keyword {
         name,
         support,
+        missing: None,
         barrier: true,
     }
 }
@@ -84,10 +112,10 @@ pub fn is_barrier(name: &str) -> bool {
 ///
 /// `gather_facts` has no row here because it belongs to the play; see [`PLAY_KEYWORDS`].
 ///
-/// `check_mode` runs the way `become_method` and `strategy` do, and only that way: `false` is
-/// what this release does and is honoured, and `true` is refused by the pre-flight naming the
-/// value. It is a `Runs` row because nothing written under it is accepted and then ignored,
-/// not because this release has a check mode.
+/// `check_mode` is partial: `false` is what this release does and is honoured, `true` is refused
+/// by the pre-flight naming the value, and there is no check mode behind either. Nothing written
+/// under it is accepted and then ignored, which is why it is not a `Preflight` row; half of what
+/// the reference does with it is missing, which is why it is not a `Runs` row.
 ///
 /// `until`, `retries` and `delay` run on a task and appear in no other table: the reference's
 /// `Block.fattributes` has none of them, so a block carrying one is refused at load.
@@ -102,7 +130,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("become_method", Runs),
     kw("become_user", Runs),
     kw("changed_when", Runs),
-    kw("check_mode", Runs),
+    partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Preflight),
     kw("connection", Preflight),
     kw("debugger", Preflight),
@@ -166,10 +194,12 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 
 /// Play keywords, alphabetical, as `Play.fattributes` lists them.
 ///
-/// `gather_facts` counts as `Runs` because this release answers it rather than ignoring it: it
-/// warns that facts are not gathered, which is a line the operator reads before the first task,
-/// not a silent skip. `strategy` counts as `Runs` for the same reason: `linear` is what the
-/// engine does, and any other strategy is refused by its own name.
+/// `gather_facts` is partial: a play that asks for facts is warned before its first task that
+/// none are gathered (`executor::run_play`), and a play that writes `false` is accepted in
+/// silence. None are gathered either way, so a playbook that reads an `ansible_*` fact does not
+/// get what the reference would have given it. `strategy`
+/// counts as `Runs`: `linear` is what the engine does, and any other strategy is refused by its
+/// own name.
 ///
 /// `roles`, `pre_tasks` and `post_tasks` run: the compiler reads each role from disk and splices
 /// its tasks, its dependencies and its argument-spec check into the step list, in the section
@@ -192,7 +222,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("become_flags", Preflight),
     kw("become_method", Runs),
     kw("become_user", Runs),
-    kw("check_mode", Runs),
+    partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Preflight),
     kw("connection", Preflight),
     kw("debugger", Preflight),
@@ -200,7 +230,12 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("environment", Runs),
     kw("fact_path", Preflight),
     kw("force_handlers", Runs),
-    kw("gather_facts", Runs),
+    partial_kw(
+        "gather_facts",
+        "`true`, the default, is warned about before the first task and `false` is accepted in \
+         silence; no facts are gathered either way, so `ansible_*` facts are absent whichever \
+         value is written",
+    ),
     kw("gather_subset", Preflight),
     kw("gather_timeout", Preflight),
     kw("handlers", Runs),
@@ -267,7 +302,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("become_method", Runs),
     kw("become_user", Runs),
     kw("block", Runs),
-    kw("check_mode", Runs),
+    partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Preflight),
     kw("connection", Preflight),
     kw("debugger", Preflight),
@@ -327,6 +362,7 @@ pub fn handler_keyword(name: &str) -> Option<&'static Keyword> {
 fn status(table: &[Keyword], name: &str) -> &'static str {
     match table.iter().find(|k| k.name == name) {
         Some(k) if k.support == Runs => "runs",
+        Some(k) if k.support == Partial => "partial",
         Some(_) => "refused",
         None => "not accepted",
     }
@@ -343,9 +379,16 @@ pub fn documentation() -> String {
         "# Keywords\n\nEvery play, block and task keyword ansible-core 2.19 knows, and what this \
          release does with each one.\n\nA playbook is loaded against the whole grammar, so it \
          parses here as it parses there. What this release cannot execute is refused by name \
-         before the first connection, rather than accepted and then ignored. A keyword therefore \
-         carries a status per place it can be written:\n\n- `runs`: this release honours it, or \
-         refuses by name the one value it cannot do.\n- `refused`: it loads, and the run stops \
+         before the first connection, rather than accepted and then ignored. The pre-flight \
+         reads the play as it was compiled, so a keyword written only inside a file that a \
+         dynamic `include_tasks` or `include_role` pulls in never reaches it. One that would \
+         have been refused is accepted and then ignored instead, and the run can report success \
+         without having done what the playbook asked. \
+         What `import_tasks` and `import_role` name is compiled with the play and checked with \
+         it.\n\nA keyword carries a status per place it can be written:\n\n- `runs`: this release honours it, or \
+         refuses by name the one value it cannot do.\n- `partial`: it is accepted and answered, \
+         but not with the whole of what the reference does with it. What is missing is spelled \
+         out under the table.\n- `refused`: it loads, and the run stops \
          before anything connects.\n- `not accepted`: it cannot be written there, and a playbook \
          that writes it there is refused when it is read, as the reference refuses it.\n\nThis \
          page is generated from the tables in the source, so it cannot drift from them. Run `just \
@@ -368,6 +411,28 @@ pub fn documentation() -> String {
             status(TASK_KEYWORDS, name)
         );
     }
+    let mut partial: Vec<(&str, &str)> = [
+        TASK_KEYWORDS,
+        PLAY_KEYWORDS,
+        LOOP_CONTROL_KEYWORDS,
+        BLOCK_KEYWORDS,
+        HANDLER_KEYWORDS,
+    ]
+    .iter()
+    .flat_map(|table| table.iter())
+    .filter_map(|k| k.missing.map(|m| (k.name, m)))
+    .collect();
+    partial.sort_unstable();
+    partial.dedup();
+    out.push_str(
+        "\n## What `partial` leaves out\n\nA keyword below is accepted wherever the grid says \
+         `partial`, and answered the same way in each of those places.\n\n| Keyword | What is \
+         missing |\n|---|---|\n",
+    );
+    for (name, missing) in partial {
+        let _ = writeln!(out, "| `{name}` | {missing} |");
+    }
+
     out.push_str(
         "\n## Handlers\n\nA handler takes every task keyword above, and one of its own.\n\n\
          | Keyword | Status |\n|---|---|\n",
@@ -681,9 +746,10 @@ mod tests {
         assert!(!is_barrier("not_a_real_keyword"));
     }
 
-    /// What would make this red: a keyword added, removed or flipped between `Runs` and
-    /// `Preflight` without regenerating the page, which would leave the site telling operators
-    /// that something works when the pre-flight refuses it, or the other way round.
+    /// What would make this red: a keyword added, removed or flipped between `Runs`, `Partial`
+    /// and `Preflight` without regenerating the page, or a `missing` sentence edited without
+    /// regenerating it, which would leave the site telling operators that something works when
+    /// the pre-flight refuses it, or the other way round.
     #[test]
     fn the_keyword_page_matches_the_tables() {
         let path =

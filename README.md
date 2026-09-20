@@ -4,11 +4,13 @@
 
 # Volant
 
-Fast, drop-in engine for Ansible playbooks.
+Fast engine for Ansible playbooks.
 
-Volant runs your existing playbooks, roles and inventories unchanged, and runs them faster. It uploads a small static agent once per host and sends tasks in batches instead of one SSH round trip each. Collections, Python modules in a warm interpreter and a `plan` command that shows what would change are what the project is building towards.
+Volant reads the playbooks, roles and inventories you already have, in Ansible's own file formats and under its variable precedence and templating. It executes less than it reads, and what it cannot execute it refuses by name. It drives Linux hosts from Linux or macOS, uploads a small static agent once per host and keeps it for the whole run, so no task starts a Python interpreter. Collections, Python modules in a warm interpreter and a `plan` command that shows what would change are what the project is building towards.
 
-**Status: pre-alpha.** A play compiles and runs end to end: `pre_tasks`, roles with their dependencies and argument specs, tasks and `post_tasks`; blocks with `rescue` and `always`; handlers, with `listen`, `meta: flush_handlers` and `--force-handlers`; tags and the four listing commands; `serial` batches; `until` retries; `no_log`; `environment`; `run_once` and `delegate_to`; and `include_tasks`, `include_role` and `include_vars` read while the play runs. Tasks travel over SSH with the agent cached on each host, under Ansible's variable precedence and templating, `become` through `sudo`, `forks` and the full host-pattern grammar. Only the [native modules](docs/src/modules.md) run, and collections, fact gathering and check mode are not there yet; a playbook that needs one of them is refused before the first connection instead of half-run. [Keywords](docs/src/keywords.md) lists what this release executes and what it refuses.
+**Status: pre-alpha.** A play compiles and runs end to end: `pre_tasks`, roles with their dependencies and argument specs, tasks and `post_tasks`; blocks with `rescue` and `always`; handlers, with `listen`, `meta: flush_handlers` and `--force-handlers`; tags and the four listing commands; `serial` batches; `until` retries; `no_log`; `environment`; `run_once` and `delegate_to`; and `include_tasks`, `include_role` and `include_vars` read while the play runs. Tasks travel over SSH with the agent cached on each host, with `become` through `sudo`, `forks` and the full host-pattern grammar.
+
+Seven [modules](docs/src/modules.md) run and no others: `command`, `shell` and `raw` on the host, `debug`, `set_fact`, `include_vars` and `validate_argument_spec` on the controller. Collections, fact gathering and check mode are not there yet. A playbook that names anything else is refused by that name before the first connection rather than half-run. One gap in that promise: the check reads the play as it was compiled, so a module or keyword written only inside a file that a dynamic `include_tasks` or `include_role` pulls in is met during the run, on a host that is already connected. [Keywords](docs/src/keywords.md) lists what this release executes, what it only partly answers and what it refuses.
 
 ## Installation
 

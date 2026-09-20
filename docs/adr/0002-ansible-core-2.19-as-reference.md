@@ -9,7 +9,7 @@ Volant promises to run existing playbooks unchanged. "Unchanged" needs a definit
 
 ## Decision
 
-Volant reproduces the behaviour of ansible-core 2.19. Differences from 2.19 are bugs. Golden tests and the compatibility harness compare against that version. A nightly job also runs against ansible-core's development branch to see changes coming.
+Volant reproduces the behaviour of ansible-core 2.19. Differences from 2.19 are bugs. Golden tests and the compatibility harness compare against that version. A nightly job against ansible-core's development branch, to see changes coming before they land in a release, is planned but has not been built: nothing watches that branch today.
 
 ## Consequences
 

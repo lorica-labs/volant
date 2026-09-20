@@ -69,10 +69,23 @@ pub(crate) fn execute(
     // cannot be entered fails the task here rather than being read as a guard that found
     // nothing under a base that cannot exist. Without this, a typo in `chdir` next to a
     // `removes` turns a cleanup that never happened into a green skip.
-    if let Some(dir) = chdir
-        && let Err(err) = std::fs::metadata(dir)
-    {
-        return Run::Done(spawn_failure(display, chdir, &err));
+    // `metadata` alone is not `chdir`: it succeeds on a regular file, where `chdir` raises
+    // `NotADirectoryError`. A `chdir` typo that lands on a file next to a `removes` would find
+    // nothing under `file/…` and report the cleanup as a green skip.
+    //
+    // A directory the agent cannot search is the one case still left open: `chdir` would fail
+    // with `EACCES` and this passes it through to `spawn`, which reports it. Checking it here
+    // would mean reading the directory, and a `--x` directory is searchable without being
+    // readable - refusing that would be the worse mistake.
+    if let Some(dir) = chdir {
+        match std::fs::metadata(dir) {
+            Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
+            Ok(meta) if !meta.is_dir() => {
+                let err = std::io::Error::from_raw_os_error(libc::ENOTDIR);
+                return Run::Done(spawn_failure(display, chdir, &err));
+            }
+            Ok(_) => {}
+        }
     }
     let guard_base = chdir.map(Path::new);
     // An empty value applies no guard at all, which is what the reference's own `if creates:`
@@ -497,6 +510,38 @@ mod tests {
             r.0["msg"],
             "[Errno 2] No such file or directory: b'/definitely/not/here'"
         );
+    }
+
+    /// A `chdir` that names a regular file fails the task too. `chdir` wants a directory, and
+    /// the reference's `os.chdir` raises `NotADirectoryError` on anything else.
+    ///
+    /// What would make this red: testing only that the path exists. A path typo that lands on a
+    /// file passes `metadata`, the guards then walk `file/cache`, nothing matches, and a cleanup
+    /// that never ran reports `rc: 0` - the same green skip the test above forbids, through the
+    /// other door.
+    #[test]
+    fn a_chdir_that_is_not_a_directory_fails_before_the_guards() {
+        let dir = std::env::temp_dir().join(format!("volant-chdir-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.yml");
+        std::fs::write(&file, "").unwrap();
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "rm -rf cache",
+                "chdir": file.to_str().unwrap(),
+                "removes": "cache",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(!r.skipped(), "a file as chdir was read as a guard decision");
+        assert!(r.failed());
+        // The `rc` and `msg` a bad `chdir` reports are a separate, measured divergence from the
+        // reference, which answers `rc: null` and `Unable to change directory before execution.`
+        // for both a missing directory and a file. This test is about which branch runs, not
+        // about what it says; see `architecture.md`.
     }
 
     /// An empty `creates` applies no guard at all, matching the reference's own `if creates:`.

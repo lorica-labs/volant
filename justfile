@@ -120,11 +120,18 @@ ssh-test: agent-musl
 CORPUS_SHA := "fad97b54d843eaffc4b7790686cc88bbcbb2330e"   # ansible-lockdown/UBUNTU22-CIS, taken 2026-09-20
 
 # Time the compilation of a real 900-task role next to ansible-playbook, which has to be on PATH.
-# The role is cloned under target/ at a fixed commit. Both sides only list the tasks; nothing
-# runs on any host. The runs alternate, so a machine that warms up or throttles during the
-# recipe cannot favour whichever engine went first. `just` runs a recipe under `bash -uc`,
-# without pipefail (see line 1), and a plain multi-line recipe does not stop at the first
-# failing line, so this is a script with the options it needs.
+# The role is cloned under target/ at a fixed commit, fetched again only when that commit is
+# missing locally, so a developer offline with the corpus already checked out is not forced back
+# online. Checked out with --force: the corpus lives under target/ and is disposable, so a stray
+# edit left over from chasing a listing difference should not wedge the recipe on a git error
+# instead of landing back on the pinned commit. Both sides only list the tasks; nothing runs on
+# any host. The runs alternate and are compared every round, so a machine that warms up or
+# throttles during the recipe, or a listing that only disagrees on an early round, cannot go
+# unnoticed. This is a script, not a plain multi-line recipe, because a plain recipe hands each
+# line to its own shell: the `cd target/corpus` would not reach the next line, and the alternating
+# `for` loop cannot span lines without one. `set -e` needs to reach inside that loop too, so an
+# engine that fails mid-round stops the recipe instead of leaving a stale file for the comparison.
+# Times ansible-playbook and volant against the same pinned role, failing on a differing listing.
 bench-compile:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -134,8 +141,9 @@ bench-compile:
     if [ ! -d target/corpus/roles/ubuntu22_cis ]; then
       git clone -q https://github.com/ansible-lockdown/UBUNTU22-CIS target/corpus/roles/ubuntu22_cis
     fi
-    git -C target/corpus/roles/ubuntu22_cis fetch -q origin {{CORPUS_SHA}}
-    git -C target/corpus/roles/ubuntu22_cis checkout -q {{CORPUS_SHA}}
+    git -C target/corpus/roles/ubuntu22_cis cat-file -e {{CORPUS_SHA}}^{commit} 2>/dev/null \
+      || git -C target/corpus/roles/ubuntu22_cis fetch -q origin {{CORPUS_SHA}}
+    git -C target/corpus/roles/ubuntu22_cis checkout -q --force {{CORPUS_SHA}}
     printf -- '- hosts: localhost\n  gather_facts: false\n  roles: [ubuntu22_cis]\n' > target/corpus/site.yml
     printf -- 'localhost ansible_connection=local\n' > target/corpus/inv.ini
     cargo build --release -p volant
@@ -144,11 +152,11 @@ bench-compile:
     for i in 1 2 3; do
       /usr/bin/time -f 'ansible-playbook %e s  %M KB' ansible-playbook -i inv.ini --list-tasks site.yml > ansible.txt
       /usr/bin/time -f 'volant           %e s  %M KB' ../release/volant playbook -i inv.ini --list-tasks site.yml > volant.txt
+      if ! diff volant.txt ansible.txt > /dev/null; then
+        echo "listings differ: diff target/corpus/volant.txt target/corpus/ansible.txt"
+        exit 1
+      fi
     done
-    if ! diff volant.txt ansible.txt > /dev/null; then
-      echo "listings differ: diff target/corpus/volant.txt target/corpus/ansible.txt"
-      exit 1
-    fi
     echo "listings identical"
 
 # Run the end-to-end playbook against the machine named by VOLANT_TARGET_HOST (never in CI)

@@ -2324,11 +2324,13 @@ fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
 
 // The keyword tables, covered in both directions. Every row of `keywords::TASK_KEYWORDS`,
 // `keywords::PLAY_KEYWORDS` and `keywords::LOOP_CONTROL_KEYWORDS` has to do what its `Support`
-// claims: a `Runs` row changes something an operator can see, a `Preflight` row stops the run
-// before anything is printed. The `Runs` list is walked from the tables themselves rather than
-// written out here, so a row added without its proof fails the suite instead of slipping
-// through - which is how a keyword would come to be accepted by the loader, waved past the
-// pre-flight and then ignored, the failure this whole split exists to prevent.
+// claims: a `Runs` row changes something an operator can see, a `Partial` row changes something
+// too and says under the generated table what it leaves out, and a `Preflight` row stops the run
+// before anything is printed. The rows owing a proof are walked from the tables themselves,
+// everything that is not `Preflight`, rather than written out here, so a row added without its
+// proof fails the suite instead of slipping through - which is how a keyword would come to be
+// accepted by the loader, waved past the pre-flight and then ignored, the failure this whole
+// split exists to prevent.
 //
 // The `Preflight` half walks the same tables in `preflight.rs`'s own unit tests, in one
 // process; only "nothing comes out before the refusal" needs a real run, and three fixtures

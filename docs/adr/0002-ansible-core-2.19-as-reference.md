@@ -5,7 +5,7 @@
 
 ## Context
 
-Volant promises to run existing playbooks unchanged. "Unchanged" needs a definition: ansible-core changes behaviour between versions, and 2.19 rewrote templating (data tagging) with some intentional breaks.
+Volant is built to run existing playbooks unchanged. "Unchanged" needs a definition: ansible-core changes behaviour between versions, and 2.19 rewrote templating (data tagging) with some intentional breaks.
 
 ## Decision
 

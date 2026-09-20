@@ -52,6 +52,17 @@ pub enum FromAgent {
         protocol: u32,
         version: String,
         arch: String,
+        /// Absolute paths of the Python interpreters this host has, best first, in the
+        /// reference's own fallback order. Empty when the host has none.
+        ///
+        /// Additive, so it did not move `PROTOCOL_VERSION`: absent on the wire when empty,
+        /// defaulted on the way in, and `FromAgent` denies no unknown field, so either side
+        /// parses the other's `Ready` whichever of the two is older. What makes a mismatch
+        /// unreachable rather than merely survivable is that the controller uploads the agent
+        /// binary it shipped with. An empty list therefore means "this agent reported none",
+        /// which is not quite "this host has none" - a refusal has to be worded as the former.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        interpreters: Vec<String>,
     },
     TaskResult {
         batch: u64,
@@ -187,6 +198,48 @@ mod tests {
         assert_eq!(
             text,
             format!(r#"{{"type":"hello","protocol":{PROTOCOL_VERSION}}}"#)
+        );
+    }
+
+    /// A host with no Python carries no `interpreters` key at all, and a host with one carries
+    /// the list in the order the agent found them.
+    ///
+    /// What would make this red: the field serialised when empty, which puts an empty array in
+    /// every handshake of every host including the ones that never run a Python module; or the
+    /// list re-ordered on the way out, which hands the controller a different best interpreter
+    /// from the one the agent chose.
+    #[test]
+    fn ready_carries_the_interpreters_only_when_the_host_has_some() {
+        let ready = |interpreters: Vec<String>| FromAgent::Ready {
+            protocol: PROTOCOL_VERSION,
+            version: "0.0.0".into(),
+            arch: "x86_64".into(),
+            interpreters,
+        };
+        let empty = serde_json::to_string(&ready(Vec::new())).unwrap();
+        assert!(!empty.contains("interpreters"));
+        assert_eq!(
+            serde_json::from_str::<FromAgent>(&empty).unwrap(),
+            ready(Vec::new()),
+            "a handshake from a host with no Python has to parse, which is the one the empty \
+             list exists for"
+        );
+        let text = serde_json::to_string(&ready(vec![
+            "/usr/bin/python3.12".into(),
+            "/usr/local/bin/python3.9".into(),
+        ]))
+        .unwrap();
+        assert!(
+            text.contains(r#""interpreters":["/usr/bin/python3.12","/usr/local/bin/python3.9"]"#),
+            "{text}"
+        );
+        let back: FromAgent = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            back,
+            ready(vec![
+                "/usr/bin/python3.12".into(),
+                "/usr/local/bin/python3.9".into()
+            ])
         );
     }
 

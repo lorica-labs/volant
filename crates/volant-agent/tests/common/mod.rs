@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::ffi::OsStr;
 use std::io::{BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use volant_protocol::frame::{read_frame, write_frame};
@@ -11,7 +12,13 @@ pub struct Agent {
 }
 
 pub fn spawn_agent() -> Agent {
+    spawn_agent_with_path(&std::env::var_os("PATH").unwrap_or_default())
+}
+
+/// An agent that sees exactly this `PATH`, so a test can decide which interpreters it can find.
+pub fn spawn_agent_with_path(path: &OsStr) -> Agent {
     let mut child = Command::new(env!("CARGO_BIN_EXE_volant-agent"))
+        .env("PATH", path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

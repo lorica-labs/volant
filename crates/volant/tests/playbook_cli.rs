@@ -6608,3 +6608,37 @@ fn no_log_covers_the_environment_warning() {
     );
     assert_eq!(out.status.code(), Some(0));
 }
+
+/// A timeout covers the task, not the first process of it. A descendant holding stdout open keeps
+/// the task running, so the deadline has to reach the readers too.
+///
+/// The elapsed time is the property under test, so it is asserted -- the one place in this suite
+/// where it is. `volant_within` stays around it as the net against a hang: without it a regression
+/// that never returns would sit until the harness's own slow-test timeout.
+///
+/// What would make this red: waiting for the reader threads outside the deadline, which is what
+/// the wait did -- the task ended when the descendant did, and the run reported success.
+#[test]
+fn a_timeout_covers_a_descendant_holding_the_pipes() {
+    let started = std::time::Instant::now();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("inventory.ini"),
+            &fixture("timeout/descendant.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let elapsed = started.elapsed();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    assert!(
+        stdout.contains(r#""msg": "Task failed: Timed out after 1 second(s).""#),
+        "the task did not report the reference's timeout text:\n{stdout}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(2000),
+        "the run took {elapsed:?}: the deadline did not reach the readers"
+    );
+}

@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: A descendant keeps the pipes open
+      shell: "sleep 5 & exit 0"
+      timeout: 1

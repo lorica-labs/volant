@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `command`, `shell` and `raw`: run a program and report rc, stdout and stderr like Ansible.
 
+use std::cell::Cell;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -139,6 +141,13 @@ pub(crate) fn execute(
         Ok(child) => child,
         Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
     };
+    // Read before the handle moves into the reaping thread below. The child was started with
+    // `process_group(0)`, so this is also the group's id, and the group keeps that id for as long
+    // as it has members: killing by it still reaches descendants after the leader has been reaped.
+    // Once the group is empty the id can in principle be handed to an unrelated group, and the
+    // kills below would then reach it; that needs a full pid wraparound between the reap and the
+    // kill a few microseconds later, and the window is accepted rather than guarded.
+    let pid = child.id();
     // Drain stdout and stderr on their own threads before writing stdin: the child may
     // start writing output while it is still reading input, and if nobody is reading
     // that output yet, both sides block once a pipe buffer fills up. Writing stdin from
@@ -154,26 +163,90 @@ pub(crate) fn execute(
         })
     });
 
+    // The end of the process is signalled rather than polled, so a command that returns at once
+    // is noticed at once instead of paying a poll interval.
+    let (done_tx, done) = mpsc::channel();
+    {
+        // `wait` needs the child, so the reaping thread owns the handle and hands the status back.
+        let mut child = child;
+        thread::spawn(move || {
+            let _ = done_tx.send(child.wait());
+        });
+    }
+
+    // `cancelled` has a side effect: it is a `try_recv` on the control channel, so it pops the
+    // cancellation message and answers `true` exactly **once**. The wait below and each of the two
+    // readers ask it, and every one of them has to get the same answer, so the first `true` is
+    // latched here and the rest of this function asks the latch.
+    let latch = {
+        let seen = Cell::new(false);
+        // `cancelled` here is still the argument: the binding below only shadows it afterwards.
+        move || {
+            if !seen.get() && cancelled() {
+                seen.set(true);
+            }
+            seen.get()
+        }
+    };
+    let cancelled: &dyn Fn() -> bool = &latch;
+
     let deadline = timeout.map(|t| Instant::now() + t);
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if cancelled() => {
-                kill_and_wait(&mut child);
-                return Run::Cancelled;
+        let left = match deadline {
+            // `checked_duration_since` gives None once the deadline is behind us, which is the
+            // expiry: a plain subtraction would panic there.
+            Some(d) => match d.checked_duration_since(Instant::now()) {
+                None => {
+                    kill_group(pid);
+                    let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
+                    let _ = done.recv();
+                    return Run::Done(timed_out(seconds));
+                }
+                Some(left) => left.min(CANCEL_POLL),
+            },
+            None => CANCEL_POLL,
+        };
+        match done.recv_timeout(left) {
+            Ok(Ok(status)) => break status,
+            // `wait` failed, so the process's fate is as unknown as it is on the disconnected
+            // arm below: kill the group rather than leave it running behind a failed task.
+            Ok(Err(err)) => {
+                kill_group(pid);
+                return Run::Done(spawn_failure(display, chdir, &err));
             }
-            Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => {
-                kill_and_wait(&mut child);
-                let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
-                return Run::Done(timed_out(seconds));
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancelled() {
+                    kill_group(pid);
+                    let _ = done.recv();
+                    return Run::Cancelled;
+                }
             }
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
+            // The waiting thread died without sending: the process's fate is unknown, which is a
+            // failed task rather than a silent success.
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                kill_group(pid);
+                return Run::Done(TaskResult::failed_with(
+                    "the agent lost track of the command",
+                ));
+            }
         }
     };
     let rc = exit_code(status);
-    let mut stdout = stdout.join().unwrap_or_default();
-    let mut stderr = stderr.join().unwrap_or_default();
+    // The readers wait under what is left of the same deadline. A descendant that outlived the
+    // process it was forked from still holds these pipes, and waiting for it here is what used to
+    // carry a task well past its timeout and then report success. Both calls run before the match,
+    // and the `else` asks a third time, which is what the latch above is for.
+    let (Some(mut stdout), Some(mut stderr)) = (
+        collect(&stdout, deadline, cancelled),
+        collect(&stderr, deadline, cancelled),
+    ) else {
+        kill_group(pid);
+        if cancelled() {
+            return Run::Cancelled;
+        }
+        let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
+        return Run::Done(timed_out(seconds));
+    };
     if let Some(stdin_writer) = stdin_writer {
         let _ = stdin_writer.join();
     }
@@ -203,27 +276,57 @@ pub(crate) fn execute(
     Run::Done(TaskResult(result))
 }
 
-/// Kills the child's process group and waits for it to actually exit, so the caller never
-/// races the kernel's own cleanup. Cancellation and the timeout path both need this.
-fn kill_and_wait(child: &mut std::process::Child) {
-    kill_group(child);
-    let _ = child.wait();
+/// How often the wait wakes up to look at the cancellation flag. The process's own end no longer
+/// costs a wait: the reaping thread signals it. Only a cancellation waits for a tick, and only
+/// while something is still running.
+const CANCEL_POLL: Duration = Duration::from_millis(50);
+
+/// Waits for one reader under what is left of the task's deadline, waking on `CANCEL_POLL` to look
+/// at the cancellation flag -- a pipe a descendant holds open has to be abandonable both ways, and
+/// a task without a `timeout:` has only the flag. `None` means the wait ended without the reader:
+/// the caller kills the group, which closes the pipes and ends the thread, and reports whichever
+/// of the two endings applies. What the reader had read is lost, which is what a timed-out or
+/// cancelled task reports anyway.
+///
+/// A reader that disconnected without sending is read as empty output, the way joining a panicked
+/// reader was: turning it into an expiry would report a deadline that was never reached.
+fn collect(
+    rx: &mpsc::Receiver<String>,
+    deadline: Option<Instant>,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<String> {
+    loop {
+        let left = match deadline {
+            Some(d) => match d.checked_duration_since(Instant::now()) {
+                Some(left) => left.min(CANCEL_POLL),
+                // Past the deadline, but the reader may already have sent: the wait loop can
+                // break with most of a `CANCEL_POLL` of the deadline spent, so take what is in
+                // the channel rather than report an expiry over output that is complete.
+                None => return rx.try_recv().ok(),
+            },
+            None => CANCEL_POLL,
+        };
+        match rx.recv_timeout(left) {
+            Ok(text) => return Some(text),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(String::new()),
+            Err(mpsc::RecvTimeoutError::Timeout) if cancelled() => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
 }
 
-/// Kills the child's whole process group, so pipelines and backgrounded grandchildren go too.
-fn kill_group(child: &std::process::Child) {
+/// Kills a whole process group by its id, so pipelines and backgrounded grandchildren go too.
+fn kill_group(pgid: u32) {
     #[cfg(unix)]
     {
-        // The child was started with `process_group(0)`, so its pid is its pgid.
-        let pgid = child.id() as libc::pid_t;
         // Negative pid targets the group. SIGKILL: the module was already asked to stop.
         unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
+            libc::kill(-(pgid as libc::pid_t), libc::SIGKILL);
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = child;
+        let _ = pgid;
     }
 }
 
@@ -242,7 +345,11 @@ fn exit_code(status: std::process::ExitStatus) -> i64 {
     -1
 }
 
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String> {
+/// Drains a pipe on its own thread and sends what it read. A channel rather than a join handle,
+/// because the deadline has to be able to stop waiting for a reader that a descendant is keeping
+/// open, and `JoinHandle` has no timed join.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut text = String::new();
         if let Some(mut pipe) = pipe {
@@ -250,8 +357,9 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String
             let _ = pipe.read_to_end(&mut bytes);
             text = String::from_utf8_lossy(&bytes).into_owned();
         }
-        text
-    })
+        let _ = tx.send(text);
+    });
+    rx
 }
 
 fn lines(text: &str) -> Value {
@@ -789,6 +897,46 @@ mod tests {
             survivors.stdout.is_empty(),
             "grandchild survived: {}",
             String::from_utf8_lossy(&survivors.stdout)
+        );
+    }
+
+    /// The cancellation predicate consumes what it reports: in the agent it is a `try_recv` on
+    /// the control channel, so the `Cancel` is popped and the answer is `true` exactly once. Here
+    /// the shell exits at once and leaves a descendant holding the pipes, so the process wait is
+    /// over before anything is cancelled and the flag is first seen by a *reader*, which is the
+    /// path the other cancellation tests never take. The predicate waits out the process so the
+    /// reader is the one that asks, and answers `true` a single time.
+    ///
+    /// What would make this red: asking the predicate again below the first `true` -- the second
+    /// reader would then be told the task is fine and wait for a pipe nobody will close, so the
+    /// run never comes back and the bounded `recv_timeout` fails instead of the `matches!`. The
+    /// bound is this test's own deadline: `execute` runs on a thread precisely so a regression
+    /// that never returns is a failure here rather than a hang the harness has to cut off.
+    ///
+    /// How it can stop proving anything, so a pass on a loaded machine is not over-read: the gate
+    /// below assumes the shell is reaped before it opens. If a machine ever took longer than that
+    /// to spawn and reap `exit 0`, the wait loop would take the first `true` and this would
+    /// duplicate `cancellation_kills_the_program` rather than exercise the reader path. It
+    /// degrades to proving less; it cannot go red for that reason. The measured reap is about
+    /// 3 ms against a gate of 300, so the degradation needs a hundredfold regression.
+    #[test]
+    fn a_cancellation_seen_by_one_reader_is_seen_by_the_rest() {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let started = Instant::now();
+            let taken = Cell::new(false);
+            let run = execute(
+                &args(json!({"_raw_params": "sleep 10 & exit 0"})),
+                true,
+                &Context::default(),
+                &|| started.elapsed() > Duration::from_millis(300) && !taken.replace(true),
+            );
+            let _ = tx.send(matches!(run, Run::Cancelled));
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(true),
+            "the run did not end cancelled: a reader lost the cancellation"
         );
     }
 

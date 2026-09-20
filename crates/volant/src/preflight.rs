@@ -22,6 +22,7 @@
 use anyhow::bail;
 use volant_protocol::modules::{ArgStatus, import_module, include_module, is_builtin, is_known};
 
+use crate::action_plugins;
 use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
 use crate::stats::Refusal;
@@ -274,6 +275,18 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    // Before the two sentences below, because a module the reference runs through an action
+    // plugin is not a module waiting on this release to write it: the behaviour a playbook asks
+    // for lives in the plugin, on the controller, and shipping the module alone would run
+    // something else. `package` picks the host's package manager, `template` renders before the
+    // task is sent, and neither is what the payload holds.
+    if action_plugins::is_action_backed(&task.module) {
+        bail!(
+            "task '{}': module '{}' needs an action plugin, which this release does not run yet",
+            task.name,
+            task.module
+        );
+    }
     if !is_known(&task.module) {
         // Two different messages for two different situations. A module ansible-core ships and
         // this release has not written yet will arrive; a name no collection has never will,
@@ -391,6 +404,30 @@ mod tests {
         );
         let pb = parse("- hosts: all\n  tasks:\n    - command: echo hi\n", "x.yml").unwrap();
         assert!(check(&pb).is_ok(), "an implemented module passes");
+    }
+
+    /// A module the reference runs through an action plugin is refused by that name, before the
+    /// first connection, and not as a module this release has merely not written yet.
+    ///
+    /// What would make this red: the arm placed after `is_builtin`, which would answer `package`
+    /// with "not available in this release" and promise a payload that can never be the right
+    /// one - the plugin picks the host's package manager, and the module alone does not.
+    #[test]
+    fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
+        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      package: name=bash\n");
+        assert!(
+            text.contains("module 'package' needs an action plugin"),
+            "{text}"
+        );
+        let text = refusal(
+            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.template: src=a dest=b\n",
+        );
+        assert!(
+            text.contains("module 'ansible.builtin.template' needs an action plugin"),
+            "{text}"
+        );
+        let pb = parse("- hosts: all\n  tasks:\n    - debug: msg=hi\n", "x.yml").unwrap();
+        assert!(check(&pb).is_ok(), "a controller-side module still runs");
     }
 
     /// `until`, `retries` and `delay` are refused on the two dynamic statements, and still run on

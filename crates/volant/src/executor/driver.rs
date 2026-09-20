@@ -16,6 +16,7 @@ use crate::compile::{
 };
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
+use crate::python::ModulePayload;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::VarStore;
@@ -25,8 +26,9 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Retry, conditional_error, fact_targets, failed_task_value, finish, notify, protocol_task,
-    record_registered, retry_plan, reuse_or_connect, run_agent_batch, run_local, until_holds,
+    Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
+    protocol_task, python_for, record_registered, requested_interpreter, retry_plan,
+    reuse_or_connect, run_agent_batch, run_local, running_host_vars, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -255,6 +257,11 @@ pub(super) async fn drive_host(
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
+        // The module payload of each step of the batch that has one, by step. Per task rather
+        // than per item, because the module is the task's: a loop varies the arguments. Empty
+        // for every batch this release runs today, a Python module being refused before the
+        // first connection.
+        let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
         // The escalation every task of the batch shares. A batch is one message to one agent,
         // so it cannot span two target users.
         let mut batch_escalation: Option<Escalation> = None;
@@ -751,7 +758,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Remote(items, escalation, delegate, _payload)) => {
+                Ok(Prepared::Remote(items, escalation, delegate, payload)) => {
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -765,9 +772,7 @@ pub(super) async fn drive_host(
                     // on the machine the first task chose.
                     let delegate_name = delegate.as_ref().map(|(name, _)| name.clone());
                     let target = delegate_name.clone().unwrap_or_else(|| name.clone());
-                    let target_vars = delegate
-                        .as_ref()
-                        .map_or(&items[0].vars.map, |(_, vars)| vars);
+                    let target_vars = running_host_vars(delegate.as_ref(), &items);
                     let transport =
                         match Transport::for_vars(&target, target_vars, &options.defaults) {
                             Ok(transport) => transport,
@@ -819,6 +824,14 @@ pub(super) async fn drive_host(
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty()
                         || batch_retry.is_some();
+                    if let Some(module) = payload {
+                        // Off the same variables the connection was resolved from, which is the
+                        // point: the module runs where the link goes, so its interpreter has to
+                        // come from that host and not from the one delegating the task. What the
+                        // value is worth against the agent's list is settled once the link is up.
+                        let asked = requested_interpreter(target_vars);
+                        payloads.insert(pos, (module, asked));
+                    }
                     batch.push((pos, items));
                     // Where this host goes after a step a `rescue` would catch depends on how that
                     // step ends, so the batch stops here: moving `pos` now would step over that
@@ -971,6 +984,22 @@ pub(super) async fn drive_host(
                     if item.skipped.is_some() {
                         continue;
                     }
+                    let chosen = payloads.get(index).map(|(_, asked)| {
+                        chosen_interpreter(asked.as_deref(), link.interpreters())
+                    });
+                    let python = match python_for(
+                        payloads.get(index).map(|(module, _)| &**module),
+                        chosen.as_ref(),
+                    ) {
+                        Ok(python) => python,
+                        // The interpreter this item's module would have run under is not there,
+                        // so the item fails on that and the ones behind it are still tried - the
+                        // same shape a module's own failure has.
+                        Err(failure) => {
+                            received[0][ii] = Some(failure);
+                            continue 'items;
+                        }
+                    };
                     let mut attempt = 0;
                     loop {
                         attempt += 1;
@@ -979,7 +1008,7 @@ pub(super) async fn drive_host(
                             link,
                             &name,
                             batch_id,
-                            vec![protocol_task(task, item, None)],
+                            vec![protocol_task(task, item, python)],
                             None,
                             &mut driver.stop,
                             &mut driver.stop_broken,
@@ -1033,12 +1062,31 @@ pub(super) async fn drive_host(
                 let mut origin = Vec::new();
                 for (bi, (index, items)) in batch.iter().enumerate() {
                     let task = &c.steps[*index].task;
+                    // Per step, never per batch: a task's own `vars:` may name an interpreter,
+                    // and a batch holds whatever shares a connection, not whatever shares an
+                    // interpreter. Reading the batch's first step for all of them would run one
+                    // task's module under another task's Python.
+                    let chosen = payloads.get(index).map(|(_, asked)| {
+                        chosen_interpreter(asked.as_deref(), link.interpreters())
+                    });
+                    let python = python_for(
+                        payloads.get(index).map(|(module, _)| &**module),
+                        chosen.as_ref(),
+                    );
                     for (ii, item) in items.iter().enumerate() {
                         if item.skipped.is_some() {
                             continue;
                         }
-                        tasks.push(protocol_task(task, item, None));
-                        origin.push((bi, ii));
+                        // A step whose payload has no interpreter to run under does not travel:
+                        // each of its items carries that failure back, and the rest of the batch
+                        // goes out as it would have.
+                        match &python {
+                            Ok(python) => {
+                                tasks.push(protocol_task(task, item, *python));
+                                origin.push((bi, ii));
+                            }
+                            Err(failure) => received[bi][ii] = Some(failure.clone()),
+                        }
                     }
                 }
                 let (flat, ended) = run_agent_batch(

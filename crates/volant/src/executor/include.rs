@@ -42,6 +42,9 @@ pub(super) struct IncludeGroup {
 /// host's** task, which is what lets a `rescue` around the statement take them - measured on
 /// ansible-core 2.19.12, an `include_tasks` in a block's body whose file is missing is rescued
 /// like any other failure - and what lets the other hosts carry on.
+///
+/// `warnings` collects what preparing the statement's own arguments raised, for the caller to
+/// put on the coordinator's queue.
 #[expect(
     clippy::too_many_arguments,
     reason = "the driver's whole context, needed to resolve one include"
@@ -56,8 +59,9 @@ pub(super) fn resolve_include(
     templar: &Templar,
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
+    warnings: &mut Vec<String>,
 ) -> (Vec<IncludeGroup>, Vec<Shown>) {
-    let items = match prepare(step, host, plan, live, templar, store, defaults) {
+    let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
         Ok(
             Prepared::Skipped(items) | Prepared::Local(items, _) | Prepared::Remote(items, _, _),
         ) => items,

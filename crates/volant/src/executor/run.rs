@@ -669,6 +669,9 @@ pub(super) fn protocol_task(task: &PlayTask, item: &Item) -> Task {
 }
 
 /// Sends one batch to the agent and collects what comes back, by position in `tasks`.
+///
+/// Anything the agent asked to show on the way lands in `logs`, already prefixed with the host,
+/// for the caller to put on the coordinator's queue under this batch's `no_log`.
 pub(super) async fn run_agent_batch(
     link: &mut AgentLink,
     host: &str,
@@ -676,6 +679,7 @@ pub(super) async fn run_agent_batch(
     tasks: Vec<Task>,
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
+    logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
     let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
     if let Err(err) = link.send(&ToAgent::RunBatch { id, tasks }).await {
@@ -700,7 +704,11 @@ pub(super) async fn run_agent_batch(
                 }
             }
             Ok(Some(FromAgent::BatchDone { outcome, .. })) => break Ok(outcome),
-            Ok(Some(FromAgent::Log { message, .. })) => eprintln!("[{host}] {message}"),
+            // Collected rather than printed: a line the agent asked to show belongs on the
+            // coordinator's queue with everything else this batch shows, which is the only
+            // place the `no_log` policy can see it. `FromAgent::Log` carries no task index, so
+            // the caller decides for the whole batch.
+            Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
             Ok(Some(FromAgent::Ready { .. })) => {}
             Ok(None) => break Err("agent stopped before the batch finished".to_string()),
             Err(err) => break Err(format!("reading from the agent: {err}")),

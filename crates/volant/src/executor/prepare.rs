@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
 use crate::compile::{Compiled, IncludeParams, Step};
-use crate::playbook::PlayTask;
+use crate::playbook::{PlayTask, python_repr};
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError, Vars};
 use crate::transport::{ConnectionDefaults, Escalation};
@@ -316,10 +316,15 @@ pub(super) struct Item {
 /// Measured on ansible-core 2.19.12: a layer that does not render to a mapping warns on stderr
 /// and is skipped while the task still runs, and the layers around it stay in force. Values are
 /// what Python's `str()` makes of them - `42` is `"42"`, `true` is `"True"`, `null` is `"None"`.
+///
+/// The warning goes into `warnings` rather than onto the terminal: `prepare` runs inside a host
+/// driver, and every line a task puts on the terminal belongs on the coordinator's queue, where
+/// the `no_log` policy can see it.
 fn environment_for(
     task: &PlayTask,
     vars: &HostVars,
     templar: &Templar,
+    warnings: &mut Vec<String>,
 ) -> Result<BTreeMap<String, String>, TemplateError> {
     let mut out = BTreeMap::new();
     for layer in &task.environment {
@@ -330,13 +335,15 @@ fn environment_for(
             TemplateError(format!("Error processing keyword 'environment': {}", e.0))
         })?;
         let Value::Object(map) = rendered else {
-            // Straight to stderr rather than through the renderer: `prepare` runs inside a host
-            // driver, which has no renderer of its own, and every `[WARNING]` this engine prints
-            // goes to stderr anyway.
-            eprintln!(
-                "[WARNING]: could not parse environment value, skipping: {}",
-                ansible_json(&rendered)
-            );
+            // The raw stack of layers, not the rendered one. Measured on ansible-core 2.19.12
+            // with a `no_log` task whose `environment` is `"{{ secret }}"`: the warning reads
+            // `could not parse environment value, skipping: ['{{ secret }}']` - brackets
+            // included, because the whole list is reported, and unrendered, so the secret never
+            // reaches the line. Reporting the rendered value instead put it there.
+            warnings.push(format!(
+                "could not parse environment value, skipping: {}",
+                python_repr(&Value::Array(task.environment.clone()))
+            ));
             continue;
         };
         for (k, v) in map {
@@ -362,6 +369,10 @@ fn environment_value(value: &Value) -> String {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the driver's whole context, plus the warnings the render raises on its way"
+)]
 pub(super) fn prepare(
     step: &Step,
     host: &str,
@@ -370,6 +381,7 @@ pub(super) fn prepare(
     templar: &Templar,
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
+    warnings: &mut Vec<String>,
 ) -> Result<Prepared, TemplateError> {
     let task = &step.task;
     let base = host_vars(
@@ -463,7 +475,7 @@ pub(super) fn prepare(
         let environment = if skipped.is_some() {
             BTreeMap::new()
         } else {
-            environment_for(task, &vars, templar)?
+            environment_for(task, &vars, templar, warnings)?
         };
         items.push(Item {
             element,

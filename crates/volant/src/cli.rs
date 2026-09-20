@@ -453,9 +453,10 @@ fn resolve_limit(
     // pattern, ignoring: web-typo` and then runs on `web1`. Losing it meant a mistyped name
     // silently narrowed the run to nothing it was asked about.
     for unmatched in &resolution.unmatched {
-        out.warning(&format!(
-            "Could not match supplied host pattern, ignoring: {unmatched}"
-        ));
+        out.warning(
+            &format!("Could not match supplied host pattern, ignoring: {unmatched}"),
+            false,
+        );
     }
     let names: HashSet<String> = resolution.hosts.into_iter().map(|h| h.name).collect();
     if names.is_empty() {
@@ -479,13 +480,14 @@ fn play_hosts(
     let resolution = inventory.resolve(&play.hosts);
     for warning in &resolution.warnings {
         if warned.insert(warning.clone()) {
-            out.warning(warning);
+            out.warning(warning, false);
         }
     }
     for pattern in &resolution.unmatched {
-        out.warning(&format!(
-            "Could not match supplied host pattern, ignoring: {pattern}"
-        ));
+        out.warning(
+            &format!("Could not match supplied host pattern, ignoring: {pattern}"),
+            false,
+        );
     }
     match limit {
         Some(allowed) => resolution

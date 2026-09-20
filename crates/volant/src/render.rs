@@ -117,11 +117,19 @@ impl Renderer {
     /// compares stdout alone, and a `[WARNING]` about an unmatched host pattern was landing in
     /// the middle of it. A warning mixed into stdout also reaches anything piping a listing or
     /// a JSON stream into another program, which is the reason the reference separates them.
-    pub fn warning(&mut self, text: &str) {
+    ///
+    /// `censored` is the `no_log` of the task the warning belongs to: a diagnostic a task
+    /// produced is that task speaking, so the policy that hides its result hides this too. It is
+    /// false for every warning the engine writes about itself, and false for the `environment`
+    /// warning as well - measured on ansible-core 2.19.12, that one quotes the playbook's own
+    /// source (`['{{ secret }}']`) rather than a rendered value, so there is nothing in it to
+    /// hide and the reference does not hide it either.
+    pub fn warning(&mut self, text: &str, censored: bool) {
+        let body = if censored { CENSORED } else { text };
         let _ = writeln!(
             anstream::stderr(),
             "{}",
-            self.paint(WARNING, &format!("[WARNING]: {text}"))
+            self.paint(WARNING, &format!("[WARNING]: {body}"))
         );
     }
 

@@ -1,0 +1,11 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: One host records the payload
+      command: cat {{ payload }}
+      register: r
+      when: inventory_hostname == 'h1'
+    - name: The other reads it across hosts
+      debug:
+        msg: "{{ hostvars['h1'].r.stdout }}"
+      when: inventory_hostname == 'h2'

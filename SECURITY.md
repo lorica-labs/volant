@@ -11,3 +11,9 @@ Use GitHub's private vulnerability reporting: open the **Security** tab of this 
 You will get an acknowledgement within 7 days. Once a fix is ready, a security advisory is published with credit to the reporter unless you prefer to stay anonymous.
 
 Please do not open public issues for security problems.
+
+## What counts as a vulnerability here
+
+Volant runs playbooks the way ansible-core does, so some of its bugs are differences in behaviour. A difference that lets data from a managed host act on the controller is not a compatibility bug. Report it here rather than in the issue tracker.
+
+Templating is the clearest case. Text that arrives from a host is data: a command's output, a registered value, a file read at run time. If Volant evaluates that text as a Jinja expression where ansible-core would print it, a host can run code on the machine driving the run. The same reasoning covers a secret that reaches a log or a terminal where `no_log` hides it in the reference, and an argument a host controls reaching a shell.

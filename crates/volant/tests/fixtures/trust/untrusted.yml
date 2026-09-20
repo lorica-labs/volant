@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Read a file whose text looks like a template
+      command: cat {{ payload }}
+      register: r
+    - name: Show it by message
+      debug:
+        msg: "{{ r.stdout }}"
+    - name: Show it by name
+      debug:
+        var: r.stdout
+    - name: Carry it through set_fact
+      set_fact:
+        carried: "{{ r.stdout }}"
+    - name: Show the carried value
+      debug:
+        msg: "{{ carried }}"

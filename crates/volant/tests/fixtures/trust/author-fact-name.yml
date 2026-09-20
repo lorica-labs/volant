@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: A fact the playbook wrote, naming another variable
+      set_fact:
+        which: greeting
+    - name: A fact the playbook wrote, holding a plain string
+      set_fact:
+        greeting: hello
+    - name: Show the variable the first fact names
+      debug:
+        var: "{{ which }}"

@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Show what a command printed
+      debug:
+        msg: "{{ lookup('pipe', 'cat ' ~ payload) }}"
+    - name: Show what the environment held
+      debug:
+        msg: "{{ lookup('env', 'VOLANT_TRUST_PROBE') }}"

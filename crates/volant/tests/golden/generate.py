@@ -25,10 +25,30 @@ def main() -> int:
     with open(os.path.join(HERE, "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
     tasks = []
+    payloads = {}
     for i, case in enumerate(cases):
+        # A case naming `untrusted` needs those variables to have come from the host rather than
+        # from the playbook, which is what the reference decides trust on. Each one is read out of
+        # a file by `command`: a literal in the task's own text would be rendered by the reference
+        # before the command ever ran.
+        #
+        # The register carries the case's number and the case's own `vars:` alias it under the
+        # name cases.yml wrote. A register outlives the task that set it, so a name written plain
+        # would stay defined for every case after this one, and a later case expecting it to be
+        # undefined would read this stale value and record the wrong reference answer.
+        case_vars = dict(case.get("vars") or {})
+        for name, text in case.get("untrusted", {}).items():
+            payloads[f"{i}-{name}"] = text
+            register = f"raw_{i}_{name}"
+            tasks.append({
+                "name": f"setup {i} {name}",
+                "command": "cat {{ payload_dir }}/" + f"{i}-{name}.txt",
+                "register": register,
+            })
+            case_vars[name] = f"{{{{ {register}.stdout }}}}"
         task = {"name": f"case {i}", "ignore_errors": True}
-        if "vars" in case:
-            task["vars"] = case["vars"]
+        if case_vars:
+            task["vars"] = case_vars
         if "when" in case:
             task["debug"] = {"msg": "ran"}
             task["when"] = case["when"]
@@ -39,6 +59,10 @@ def main() -> int:
     env = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json", ANSIBLE_NOCOLOR="1")
     env["VOLANT_GOLDEN_ENV"] = "golden-env-value"
     with tempfile.TemporaryDirectory() as tmp:
+        play[0]["vars"] = {"payload_dir": tmp}
+        for stem, text in payloads.items():
+            with open(os.path.join(tmp, f"{stem}.txt"), "w", encoding="utf-8") as f:
+                f.write(text)
         playbook = os.path.join(tmp, "golden.yml")
         with open(playbook, "w", encoding="utf-8") as f:
             # sort_keys=False for the same reason as the json.dump below: safe_dump sorts every
@@ -49,9 +73,12 @@ def main() -> int:
             f.write("file contents")
         run = subprocess.run(["ansible-playbook", "-i", "localhost,", playbook], env=env, capture_output=True, text=True)
     report = json.loads(run.stdout)
+    # By name rather than by position: a case that needs setup tasks in front of it puts them in
+    # the same play, and zipping would then read one case's answer off another case's task.
+    outcomes = {t["task"]["name"]: t["hosts"]["localhost"] for t in report["plays"][0]["tasks"]}
     results = []
-    for case, task in zip(cases, report["plays"][0]["tasks"]):
-        outcome = task["hosts"]["localhost"]
+    for i, case in enumerate(cases):
+        outcome = outcomes[f"case {i}"]
         entry = {"case": case}
         if outcome.get("skipped"):
             entry["skipped"] = True

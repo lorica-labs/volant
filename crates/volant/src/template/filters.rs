@@ -502,6 +502,19 @@ fn lookup(
 ) -> Result<Value, Error> {
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
     kwargs.assert_all_used()?;
+    // Whatever a lookup read at run time is data: a file's text, a command's output, an
+    // environment variable. Measured on ansible-core 2.19.12, all three come back carrying the
+    // tag that stops the engine templating them again, and the three display the same
+    // `{{ 1 + 1 }}` the file that held it did. `vars` is not one of them: it hands back a value
+    // the context already holds, and reading an untrusted name through it taints on the same
+    // path a bare read does.
+    let taint = || {
+        if let Some(sink) = state.lookup(super::TAINT_KEY)
+            && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
+        {
+            sink.taint();
+        }
+    };
     let mut results = Vec::new();
     for term in terms {
         let term_text = term
@@ -509,6 +522,7 @@ fn lookup(
             .map_or_else(|| term.to_string(), str::to_string);
         let found = match name {
             "env" | "ansible.builtin.env" => {
+                taint();
                 Value::from(std::env::var(&term_text).unwrap_or_default())
             }
             "file" | "ansible.builtin.file" => {
@@ -523,6 +537,7 @@ fn lookup(
                         path.display()
                     ))
                 })?;
+                taint();
                 Value::from(text.trim_end_matches(['\r', '\n']))
             }
             "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {
@@ -537,6 +552,7 @@ fn lookup(
                 },
             },
             "pipe" | "ansible.builtin.pipe" => {
+                taint();
                 let out = std::process::Command::new("sh")
                     .arg("-c")
                     .arg(&term_text)

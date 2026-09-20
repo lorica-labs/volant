@@ -227,3 +227,8 @@
   vars: {d: {b: 1, a: 2, c: 3}}
 - template: "{{ d | dict2items }}"
   vars: {d: {b: 1, a: 2, c: 3}}
+# A value that came from a managed host is data: the reference shows its text and never renders
+# it. `untrusted` names are set up as a `command` the play registers and a `set_fact` built from
+# that register, which is exactly how such a value arrives in a real play.
+- template: "{{ reg }}"
+  untrusted: {reg: "{{ 1 + 1 }}"}

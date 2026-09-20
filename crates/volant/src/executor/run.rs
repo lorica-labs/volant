@@ -22,6 +22,12 @@ use crate::vars::{HostVars, VarStore, load_vars_file};
 use super::prepare::{Item, display};
 use super::{CANCEL_GRACE, LinkKey, RunOptions, as_bool_value, python_type};
 
+/// What a `debug: var:` naming a value that came from a managed host reports. The reference's
+/// own sentence, measured on ansible-core 2.19.12 against `var: "{{ r.stdout }}"` and against
+/// `var: "{{ item }}"` over a registered list: both fail the task with this `msg`, the second
+/// once per item.
+const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.";
+
 /// `include_vars`, run where every other controller-side module runs.
 ///
 /// Measured on ansible-core 2.19.12: a file that is there sets each of its keys as a fact and
@@ -134,9 +140,18 @@ pub(super) fn run_local(
                 if k == "cacheable" {
                     continue;
                 }
+                // Only the values whose own render read a managed host are data. Measured on
+                // ansible-core 2.19.12: a fact the playbook wrote can still name the variable a
+                // `debug: var:` shows, so writing every fact as data would fail a play with no
+                // host value anywhere in it.
+                let from_host = item.args_untrusted.contains(k);
                 let mut vars = store.lock().expect("vars lock");
                 for host in fact_hosts {
-                    vars.set_fact(host, k, v.clone());
+                    if from_host {
+                        vars.set_untrusted_fact(host, k, v.clone());
+                    } else {
+                        vars.set_fact(host, k, v.clone());
+                    }
                 }
                 drop(vars);
                 facts.insert(k.clone(), v.clone());
@@ -161,6 +176,14 @@ pub(super) fn run_local(
                 return TaskResult(r);
             }
             if let Some(var) = item.args.get("var").and_then(Value::as_str) {
+                // `var` is the one argument this engine reads back as source text: it names an
+                // expression and that expression is compiled here. A value a managed host put
+                // there is data, and compiling data is how a remote string runs code on the
+                // controller. Refused with the reference's own sentence, measured on
+                // ansible-core 2.19.12 for both the plain form and the loop form.
+                if item.args_untrusted.contains("var") {
+                    return TaskResult::failed_with(UNTRUSTED_VAR);
+                }
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
                     Err(e) => r.insert(
@@ -372,9 +395,9 @@ fn apply_conditions(
     }
     let mut vars = item.vars.clone();
     if let Some(reg) = &task.register {
-        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
     }
-    vars.insert("result".into(), Value::Object(result.0.clone()));
+    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     if !task.changed_when.is_empty() {
         let changed = all_hold(&task.changed_when, &vars, templar)?;
         result.0.insert("changed".into(), json!(changed));
@@ -616,9 +639,9 @@ pub(super) fn until_holds(
     }
     let mut vars = item.vars.clone();
     if let Some(reg) = &task.register {
-        vars.insert(reg.clone(), Value::Object(result.0.clone()));
+        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
     }
-    vars.insert("result".into(), Value::Object(result.0.clone()));
+    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     all_hold(&retry.until, &vars, templar)
 }
 
@@ -843,6 +866,7 @@ mod tests {
                 element: None,
                 label: None,
                 args: Map::new(),
+                args_untrusted: std::collections::BTreeSet::new(),
                 vars: HostVars::default(),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -899,6 +923,7 @@ mod tests {
                     "provided_arguments": provided,
                     "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
                 })),
+                args_untrusted: std::collections::BTreeSet::new(),
                 vars: hvars(host),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -1049,6 +1074,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,

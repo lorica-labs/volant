@@ -257,20 +257,31 @@ fn load_play_vars_files(
             all_play_hosts: all_play_hosts.to_vec(),
             ..Scope::default()
         };
-        let (raw, shared) = {
+        let (raw, shared, untrusted, untrusted_hosts) = {
             let mut store = state.vars.lock().expect("vars lock");
             let shared = store.shared_values(&scope);
-            (store.for_host(&host.name, &scope), shared)
+            let untrusted = store.untrusted_of(&host.name);
+            let untrusted_hosts = store.untrusted_hosts();
+            (
+                store.for_host(&host.name, &scope),
+                shared,
+                untrusted,
+                untrusted_hosts,
+            )
         };
-        let resolved = state.templar.resolve_vars(Vars {
+        let (resolved, untrusted) = state.templar.resolve_vars_tainted(Vars {
             map: &raw,
             hostvars: None,
             shared: Some(&shared),
+            untrusted: Some(&untrusted),
+            untrusted_hosts: Some(&untrusted_hosts),
         });
         let vars = Vars {
             map: &resolved,
             hostvars: None,
             shared: Some(&shared),
+            untrusted: Some(&untrusted),
+            untrusted_hosts: Some(&untrusted_hosts),
         };
         let mut files = Vec::new();
         for raw in &play.vars_files {

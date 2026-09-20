@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: A file read as data
+      debug:
+        msg: "{{ lookup('file', payload) }}"

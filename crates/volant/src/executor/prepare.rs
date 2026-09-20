@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rendering one task for one host: variables, escalation, environment and loop items.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
-use crate::compile::{Compiled, Step};
+use crate::compile::{Compiled, IncludeParams, Step};
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::render::ansible_json;
@@ -200,7 +200,7 @@ pub(super) fn host_vars(
     plan: &PlayPlan,
     task_vars: &Map<String, Value>,
     role: Option<usize>,
-    include_params: Option<&Map<String, Value>>,
+    include_params: Option<&IncludeParams>,
     live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
@@ -212,7 +212,7 @@ pub(super) fn host_vars(
     // What an include handed down joins the role parameters rather than the task variables:
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
-    for (key, value) in include_params.into_iter().flatten() {
+    for (key, value) in include_params.iter().flat_map(|p| &p.values) {
         role_params.insert(key.clone(), value.clone());
     }
     let scope = Scope {
@@ -226,23 +226,46 @@ pub(super) fn host_vars(
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
-    let (raw, hostvars, shared) = {
+    let (raw, hostvars, shared, untrusted, untrusted_hosts) = {
         let mut store = store.lock().expect("vars lock");
         // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
         let shared = store.shared_values(&scope);
-        (store.for_host(host, &scope), hostvars, shared)
+        let mut untrusted = store.untrusted_of(host);
+        // What an include handed down is already rendered, so its provenance cannot be read off
+        // the store: it travelled with the values.
+        untrusted.extend(
+            include_params
+                .iter()
+                .flat_map(|p| p.untrusted.iter().cloned()),
+        );
+        let untrusted_hosts = store.untrusted_hosts();
+        (
+            store.for_host(host, &scope),
+            hostvars,
+            shared,
+            untrusted,
+            untrusted_hosts,
+        )
     };
-    let map = templar.resolve_vars(Vars {
+    // The merged map carries this host's facts, so the names that came from a managed host
+    // travel into the resolution below and are left there exactly as they arrived. The set comes
+    // back wider than it went in: a `vars:` of the play, of a block or of the task itself built
+    // from a registered value is data too, and this resolution is the only place that can tell.
+    let (map, untrusted) = templar.resolve_vars_tainted(Vars {
         map: &raw,
         hostvars: Some(&hostvars),
         shared: Some(&shared),
+        untrusted: Some(&untrusted),
+        untrusted_hosts: Some(&untrusted_hosts),
     });
     HostVars {
         map,
         hostvars,
         shared,
+        untrusted,
+        untrusted_hosts,
     }
 }
 
@@ -273,6 +296,10 @@ pub(super) struct Item {
     pub(super) element: Option<Value>,
     pub(super) label: Option<String>,
     pub(super) args: Map<String, Value>,
+    /// The arguments whose render read a value that came from a managed host. Only the ones the
+    /// engine reads back as source text consult it; everything else treats an argument as the
+    /// data it is and ships it to the agent.
+    pub(super) args_untrusted: BTreeSet<String>,
     /// Variables in force for this item, for `changed_when`, `failed_when` and local modules.
     pub(super) vars: HostVars,
     /// The variables the module runs with, this item's layers merged and rendered. Per item
@@ -355,10 +382,15 @@ pub(super) fn prepare(
         templar,
         store,
     );
+    // Whether the list this loop walks came from a managed host. A loop over a literal list the
+    // playbook wrote binds author content; one over `{{ r.stdout_lines }}` binds data, and the
+    // items of such a loop are never rendered again.
+    let mut items_from_host = false;
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) => {
-            let rendered = templar.render_value(raw, &base)?;
+            let (rendered, tainted) = templar.render_value_tainted(raw, &base)?;
+            items_from_host = tainted;
             let list = match rendered {
                 Value::Array(items) => items,
                 other => {
@@ -380,14 +412,20 @@ pub(super) fn prepare(
     for element in elements {
         let mut vars = base.clone();
         if let Some(el) = &element {
-            vars.insert(task.loop_var.clone(), el.clone());
+            if items_from_host {
+                vars.insert_untrusted(task.loop_var.clone(), el.clone());
+            } else {
+                vars.insert(task.loop_var.clone(), el.clone());
+            }
             vars.insert(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),
             );
-            // Variables naming the loop variable could not resolve before it was bound.
-            let resolved = templar.resolve_vars(&vars);
+            // Variables naming the loop variable could not resolve before it was bound. One of
+            // them may be built from the item, so this pass widens the set the same way.
+            let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);
             vars.map = resolved;
+            vars.untrusted = untrusted;
         }
         let label = match (&element, &task.loop_label) {
             (None, _) => None,
@@ -406,15 +444,19 @@ pub(super) fn prepare(
                 break;
             }
         }
-        let args = if skipped.is_some() {
-            Map::new()
+        // Rendered argument by argument rather than as one value, because a few arguments are
+        // read back as engine input rather than as data - the name a `debug: var:` compiles -
+        // and the render is the only place that can say which of them came from a host.
+        let (args, args_untrusted) = if skipped.is_some() {
+            (Map::new(), BTreeSet::new())
         } else {
-            let mut rendered = templar.render_value(&Value::Object(task.args.clone()), &vars)?;
+            let (map, untrusted) = templar.render_map_tainted(&task.args, &vars)?;
+            let mut rendered = Value::Object(map);
             remove_omit(&mut rendered);
             let Value::Object(map) = rendered else {
                 unreachable!("an object renders to an object")
             };
-            map
+            (map, untrusted)
         };
         // A skipped item runs nothing, so a layer it could not render is not its problem: the
         // reference does not evaluate `environment` for a task a `when` left out.
@@ -427,6 +469,7 @@ pub(super) fn prepare(
             element,
             label,
             args,
+            args_untrusted,
             vars,
             environment,
             skipped,

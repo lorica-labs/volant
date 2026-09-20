@@ -185,8 +185,8 @@ pub(super) async fn drive_host(
                 let task = &c.steps[index].task;
                 {
                     let mut vars = store.lock().expect("vars lock");
-                    vars.set_fact(&name, "ansible_failed_task", failed_task_value(task));
-                    vars.set_fact(
+                    vars.set_untrusted_fact(&name, "ansible_failed_task", failed_task_value(task));
+                    vars.set_untrusted_fact(
                         &name,
                         "ansible_failed_result",
                         Value::Object(result.0.clone()),
@@ -574,7 +574,7 @@ pub(super) async fn drive_host(
                         let mut vars = store.lock().expect("vars lock");
                         let value = registered_value(task, &results);
                         for target in &register_hosts {
-                            vars.set_fact(target, reg, value.clone());
+                            vars.set_untrusted_fact(target, reg, value.clone());
                         }
                     }
                     let Some(next) = driver.advance(pos).await else {
@@ -681,7 +681,7 @@ pub(super) async fn drive_host(
                         let mut vars = store.lock().expect("vars lock");
                         let value = registered_value(task, &results);
                         for target in &register_hosts {
-                            vars.set_fact(target, reg, value.clone());
+                            vars.set_untrusted_fact(target, reg, value.clone());
                         }
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
@@ -1003,7 +1003,7 @@ pub(super) async fn drive_host(
                     let mut vars = store.lock().expect("vars lock");
                     let value = registered_value(task, &results);
                     for target in fact_targets(task, &name, &live) {
-                        vars.set_fact(&target, reg, value.clone());
+                        vars.set_untrusted_fact(&target, reg, value.clone());
                     }
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();

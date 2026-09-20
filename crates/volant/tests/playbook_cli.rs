@@ -6371,3 +6371,117 @@ fn a_task_that_changes_the_connection_opens_its_own_link() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The same host, the same two tasks, with `[volant] batching` on. Nothing here is a barrier -
+/// neither task registers, loops or reads another host - so both land in one batch, and the
+/// batch is what has to notice that its second task asked for a different machine.
+///
+/// What would make this red: the batch-break condition comparing only the escalated user and
+/// the delegate. One link is then opened from the first task's view, the inventory's `local`,
+/// and the second task runs on the controller although it asked for an ssh to 192.0.2.1 -
+/// silently, exit 0.
+#[test]
+fn a_batch_splits_where_the_connection_changes() {
+    let (dir, marker) = fake_ssh(
+        "task-vars-switch-batched",
+        "node ansible_connection=local\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/task-vars-switch.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[("VOLANT_BATCHING", "1")],
+    );
+    assert!(
+        marker.exists(),
+        "the batch carried the second task over the first task's local connection:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("fatal: [node]: UNREACHABLE!"),
+        "the ssh the second task asked for should have failed and said so:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A name the inventory never carried is an implicit `localhost` and runs on the controller. The
+/// `local` that says so sits at the inventory host var layer, so a `group_vars/all` file beside
+/// the playbook naming `ansible_connection` does not reach it.
+///
+/// Measured on ansible-core 2.19.12: the same play, the same group file, `changed: [localhost]`
+/// and no ssh.
+///
+/// What would make this red: the rule sitting under the group and role layers, which lets a
+/// repository-wide `group_vars/all` send every implicit `localhost` over ssh to an address it
+/// never meant for the controller.
+#[test]
+fn a_group_file_does_not_move_the_implicit_localhost() {
+    let (dir, marker) = fake_ssh("implicit-local-group", "node ansible_connection=local\n");
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/implicit-local/play.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[],
+    );
+    assert!(
+        !marker.exists(),
+        "a group file sent the implicit localhost over ssh:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other side of the same boundary, and the one the reference settles rather than intuition:
+/// a `host_vars/localhost` file beside the playbook is *above* the inventory host var layer, so
+/// it does move the implicit `localhost`.
+///
+/// Measured on ansible-core 2.19.12 with the same file: `fatal: [localhost]: UNREACHABLE!`,
+/// exit 4.
+///
+/// What would make this red: the rule sitting above `host_vars/<host>` files, which would pin
+/// every implicit `localhost` to the controller and swallow the file.
+#[test]
+fn a_host_file_does_move_the_implicit_localhost() {
+    let (dir, marker) = fake_ssh(
+        "implicit-local-host-file",
+        "node ansible_connection=local\n",
+    );
+    let out = volant_within_with_path(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("connection/host-file-wins/play.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+        Some(&dir.join("bin")),
+        &[],
+    );
+    assert!(
+        marker.exists(),
+        "the host file was swallowed by the implicit localhost rule:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -482,8 +482,17 @@ pub(super) fn prepare(
     if is_local(&task.module) {
         return Ok(Prepared::Local(items, delegate));
     }
+    // A delegate's variables come back merged under the full precedence, like any host's: its
+    // connection is decided by `-e ansible_connection=local`, by a `group_vars` file and by the
+    // task's own `vars:` exactly as the delegating host's is. Measured on ansible-core 2.19.12:
+    // a `delegate_to` naming a host the inventory has never heard of is connected to rather than
+    // refused - `delegate_to: nosuch` reports `fatal: [h1 -> nosuch]: UNREACHABLE!` with ssh's
+    // own resolution error and exits 4 - so an unknown name is an ssh target of that name, not a
+    // load-time error. The implicit spellings get their local connection from
+    // `VarStore::for_host`, which is where every host's view is built and where the delegating
+    // host's own implicit `localhost` gets it too.
     let delegate = delegate.map(|name| {
-        let vars = delegate_vars(
+        let vars = host_vars(
             &name,
             plan,
             &task.vars,
@@ -492,7 +501,8 @@ pub(super) fn prepare(
             live,
             templar,
             store,
-        );
+        )
+        .map;
         (name, vars)
     });
     // From the delegating host's own variables, measured on ansible-core 2.19.12:
@@ -540,47 +550,6 @@ fn delegate_for(
         raw.clone()
     };
     Ok(Some(name).filter(|n| !n.is_empty()))
-}
-
-/// The effective variables of the host a `delegate_to` names: the inventory's own entry when it
-/// has one, an implicit host otherwise.
-///
-/// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
-/// inventory runs locally (`changed: [h1 -> localhost]`), `127.0.0.1` does the same, and a name
-/// the inventory has never heard of is **connected to** rather than refused - `delegate_to:
-/// nosuch` reports `fatal: [h1 -> nosuch]: UNREACHABLE!` with ssh's own resolution error and
-/// exits 4. So an unknown name is an ssh target of that name, not a load-time error.
-///
-/// The variables come back merged under the full precedence, like any host's: the delegate's
-/// connection is decided by `-e ansible_connection=local`, by a `group_vars` file and by the
-/// task's own `vars:` exactly as the delegating host's is. The implicit spellings get their
-/// local connection from `VarStore::for_host`, which is where every host's view is built and
-/// where the delegating host's own implicit `localhost` gets it too.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the delegate's view is built from the same sources as the host's own, and host_vars takes them one by one"
-)]
-fn delegate_vars(
-    name: &str,
-    plan: &PlayPlan,
-    task_vars: &Map<String, Value>,
-    role: Option<usize>,
-    include_params: Option<&IncludeParams>,
-    live: &Progress,
-    templar: &Templar,
-    store: &Mutex<VarStore>,
-) -> Map<String, Value> {
-    host_vars(
-        name,
-        plan,
-        task_vars,
-        role,
-        include_params,
-        live,
-        templar,
-        store,
-    )
-    .map
 }
 
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
@@ -888,7 +857,7 @@ mod tests {
         let live = Progress::default();
         let plan = plan();
         let of = |name: &str| {
-            delegate_vars(
+            host_vars(
                 name,
                 &plan,
                 &Map::new(),
@@ -898,6 +867,7 @@ mod tests {
                 &templar,
                 &store,
             )
+            .map
         };
 
         assert_eq!(of("h3").get("ansible_host"), Some(&json!("10.0.0.3")));

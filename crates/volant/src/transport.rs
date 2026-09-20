@@ -184,9 +184,12 @@ impl Transport {
         }
     }
 
-    /// The same, from the inventory object's own variables alone, for a caller with no effective
-    /// view of the host to offer. Nothing on the run's own path is in that position any more;
-    /// what is left is the shorthand the transport's own tests are written against.
+    /// The same, from the inventory object's own variables alone. Nothing on the run's own path
+    /// calls it: the executor passes the host's effective map and the pre-flight in `cli.rs`
+    /// builds its own, both through `for_vars`. What is left is the shorthand the transport's
+    /// own tests are written against, and that is the point of keeping it - those tests read an
+    /// inventory `Host` and were not touched when the resolution moved onto the effective view,
+    /// so they are the evidence that the move changed no rule.
     pub fn for_host(host: &Host, defaults: &ConnectionDefaults) -> anyhow::Result<Transport> {
         Self::for_vars(&host.name, &as_map(&host.vars), defaults)
     }
@@ -1669,5 +1672,42 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("carrier_pigeon"));
+    }
+
+    /// Two ssh identities of one name are two links. The name and the escalated user are equal
+    /// here and only the port differs, so the key can only tell them apart through the whole
+    /// `SshTarget` -- which is what tells a task that asked for port 2223 from one that asked
+    /// for 2222.
+    ///
+    /// What would make this red: a hand-written `Hash` or `PartialEq` on `SshTarget` skipping a
+    /// field. Nothing else in the repository holds the derive in place, and a skipped `port`,
+    /// `user` or `private_key` would send the second task down the first one's link.
+    #[test]
+    fn two_ports_of_one_host_are_two_keys() {
+        use crate::executor::LinkKey;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let key = |port| LinkKey {
+            host: "node".to_string(),
+            become_user: None,
+            transport: Transport::for_vars(
+                "node",
+                json!({"ansible_host": "10.0.0.5", "ansible_port": port})
+                    .as_object()
+                    .expect("an object"),
+                &defaults(),
+            )
+            .expect("an ssh transport"),
+        };
+        let digest = |k: &LinkKey| {
+            let mut h = DefaultHasher::new();
+            k.hash(&mut h);
+            h.finish()
+        };
+
+        assert_ne!(key(2222), key(2223));
+        assert_ne!(digest(&key(2222)), digest(&key(2223)));
+        assert_eq!(key(2222), key(2222));
     }
 }

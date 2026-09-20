@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
-use crate::inventory::Inventory;
+use crate::inventory::{Inventory, is_localhost};
 use crate::template::Vars;
 use crate::yaml;
 
@@ -299,7 +299,8 @@ impl VarStore {
 
     /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
     /// `all`, `group_vars/all` (inventory then playbook), inventory groups by depth and name,
-    /// `group_vars/<group>` (inventory then playbook), inventory host vars, `host_vars/<host>`
+    /// `group_vars/<group>` (inventory then playbook), inventory host vars - an implicit
+    /// `localhost`'s `local` connection among them - `host_vars/<host>`
     /// (inventory then playbook), play vars, vars_files, a role's `vars`, task vars, facts, a
     /// role's parameters, extra vars, then the magic variables.
     ///
@@ -312,19 +313,6 @@ impl VarStore {
     /// a template reads them from there first, which is the place in the order they had here.
     pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
         let mut vars = Map::new();
-        // A name the inventory never carried is an implicit `localhost`, which connects locally.
-        // It sits under everything else on purpose: an inventory entry of that name arrives with
-        // `host_base` just below, and an extra var or a play's `vars:` speaks over it the way it
-        // does on any other host. Measured on ansible-core 2.19.12 through `delegate_to:
-        // localhost` with no `localhost` in the inventory, which runs on the controller.
-        if !self.inventory_vars.contains_key(host)
-            && matches!(host, "localhost" | "127.0.0.1" | "::1")
-        {
-            vars.insert(
-                "ansible_connection".into(),
-                Value::String("local".to_string()),
-            );
-        }
         extend(&mut vars, &scope.role_defaults);
         extend(&mut vars, &self.host_base(host));
         extend(&mut vars, &scope.play_vars);
@@ -382,6 +370,18 @@ impl VarStore {
         // Inventory host vars must beat `group_vars/<group>` files: re-apply them on top.
         if let Some(host_only) = self.host_line_vars.get(host) {
             extend(&mut vars, host_only);
+        }
+        // A name the inventory never carried is an implicit `localhost`, which connects locally.
+        // The reference sets it on the host object, that is at the inventory host var layer, and
+        // that is where it sits here: measured on ansible-core 2.19.12, a `group_vars/all` file
+        // and a role `defaults/` naming `ansible_connection` both lose to it and the play runs
+        // `changed: [localhost]`, while a `host_vars/localhost` file, the play's `vars:` and an
+        // extra var each beat it and send the play over ssh.
+        if !self.inventory_vars.contains_key(host) && is_localhost(host) {
+            vars.insert(
+                "ansible_connection".into(),
+                Value::String("local".to_string()),
+            );
         }
         for files in &self.host_files {
             if let Some(h) = files.get(host) {

@@ -242,7 +242,7 @@ impl Inventory {
             }
             return out;
         }
-        if term == "localhost" || term == "127.0.0.1" {
+        if is_localhost(term) {
             return vec![term.to_string()];
         }
         res.unmatched.push(term.to_string());
@@ -513,6 +513,14 @@ fn section_name(section: &Section) -> &str {
     match section {
         Section::Hosts(n) | Section::Children(n) | Section::Vars(n) => n,
     }
+}
+
+/// The three names ansible-core 2.19.12 conjures a host for when the inventory has none of that
+/// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
+/// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
+/// read both here and by the store that gives such a host its local connection.
+pub fn is_localhost(name: &str) -> bool {
+    matches!(name, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn implicit_localhost(name: &str) -> Host {

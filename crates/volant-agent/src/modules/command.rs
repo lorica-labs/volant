@@ -4,6 +4,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -139,6 +140,10 @@ pub(crate) fn execute(
         Ok(child) => child,
         Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
     };
+    // Read before the handle moves into the reaping thread below. The child was started with
+    // `process_group(0)`, so this is also the group's id, and the group keeps that id for as long
+    // as it has members: killing by it still reaches descendants after the leader has been reaped.
+    let pid = child.id();
     // Drain stdout and stderr on their own threads before writing stdin: the child may
     // start writing output while it is still reading input, and if nobody is reading
     // that output yet, both sides block once a pipe buffer fills up. Writing stdin from
@@ -154,26 +159,68 @@ pub(crate) fn execute(
         })
     });
 
+    // The end of the process is signalled rather than polled, so a command that returns at once
+    // is noticed at once instead of paying a poll interval.
+    let (done_tx, done) = mpsc::channel();
+    {
+        // `wait` needs the child, so the reaping thread owns the handle and hands the status back.
+        let mut child = child;
+        thread::spawn(move || {
+            let _ = done_tx.send(child.wait());
+        });
+    }
+
     let deadline = timeout.map(|t| Instant::now() + t);
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if cancelled() => {
-                kill_and_wait(&mut child);
-                return Run::Cancelled;
+        let left = match deadline {
+            // `checked_duration_since` gives None once the deadline is behind us, which is the
+            // expiry: a plain subtraction would panic there.
+            Some(d) => match d.checked_duration_since(Instant::now()) {
+                None => {
+                    kill_group(pid);
+                    let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
+                    let _ = done.recv();
+                    return Run::Done(timed_out(seconds));
+                }
+                Some(left) => left.min(CANCEL_POLL),
+            },
+            None => CANCEL_POLL,
+        };
+        match done.recv_timeout(left) {
+            Ok(Ok(status)) => break status,
+            Ok(Err(err)) => return Run::Done(spawn_failure(display, chdir, &err)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancelled() {
+                    kill_group(pid);
+                    let _ = done.recv();
+                    return Run::Cancelled;
+                }
             }
-            Ok(None) if deadline.is_some_and(|d| Instant::now() >= d) => {
-                kill_and_wait(&mut child);
-                let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
-                return Run::Done(timed_out(seconds));
+            // The waiting thread died without sending: the process's fate is unknown, which is a
+            // failed task rather than a silent success.
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                kill_group(pid);
+                return Run::Done(TaskResult::failed_with(
+                    "the agent lost track of the command",
+                ));
             }
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
         }
     };
     let rc = exit_code(status);
-    let mut stdout = stdout.join().unwrap_or_default();
-    let mut stderr = stderr.join().unwrap_or_default();
+    // The readers wait under what is left of the same deadline. A descendant that outlived the
+    // process it was forked from still holds these pipes, and waiting for it here is what used to
+    // carry a task well past its timeout and then report success.
+    let (Some(mut stdout), Some(mut stderr)) = (
+        collect(&stdout, deadline, cancelled),
+        collect(&stderr, deadline, cancelled),
+    ) else {
+        kill_group(pid);
+        if cancelled() {
+            return Run::Cancelled;
+        }
+        let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
+        return Run::Done(timed_out(seconds));
+    };
     if let Some(stdin_writer) = stdin_writer {
         let _ = stdin_writer.join();
     }
@@ -203,27 +250,51 @@ pub(crate) fn execute(
     Run::Done(TaskResult(result))
 }
 
-/// Kills the child's process group and waits for it to actually exit, so the caller never
-/// races the kernel's own cleanup. Cancellation and the timeout path both need this.
-fn kill_and_wait(child: &mut std::process::Child) {
-    kill_group(child);
-    let _ = child.wait();
+/// How often the wait wakes up to look at the cancellation flag. The process's own end no longer
+/// costs a wait: the reaping thread signals it. Only a cancellation waits for a tick, and only
+/// while something is still running.
+const CANCEL_POLL: Duration = Duration::from_millis(50);
+
+/// Waits for one reader under what is left of the task's deadline, waking on `CANCEL_POLL` to look
+/// at the cancellation flag -- a pipe a descendant holds open has to be abandonable both ways, and
+/// a task without a `timeout:` has only the flag. `None` means the wait ended without the reader:
+/// the caller kills the group, which closes the pipes and ends the thread, and reports whichever
+/// of the two endings applies. What the reader had read is lost, which is what a timed-out or
+/// cancelled task reports anyway.
+///
+/// A reader that disconnected without sending is read as empty output, the way joining a panicked
+/// reader was: turning it into an expiry would report a deadline that was never reached.
+fn collect(
+    rx: &mpsc::Receiver<String>,
+    deadline: Option<Instant>,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<String> {
+    loop {
+        let left = match deadline {
+            Some(d) => d.checked_duration_since(Instant::now())?.min(CANCEL_POLL),
+            None => CANCEL_POLL,
+        };
+        match rx.recv_timeout(left) {
+            Ok(text) => return Some(text),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(String::new()),
+            Err(mpsc::RecvTimeoutError::Timeout) if cancelled() => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
 }
 
-/// Kills the child's whole process group, so pipelines and backgrounded grandchildren go too.
-fn kill_group(child: &std::process::Child) {
+/// Kills a whole process group by its id, so pipelines and backgrounded grandchildren go too.
+fn kill_group(pgid: u32) {
     #[cfg(unix)]
     {
-        // The child was started with `process_group(0)`, so its pid is its pgid.
-        let pgid = child.id() as libc::pid_t;
         // Negative pid targets the group. SIGKILL: the module was already asked to stop.
         unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
+            libc::kill(-(pgid as libc::pid_t), libc::SIGKILL);
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = child;
+        let _ = pgid;
     }
 }
 
@@ -242,7 +313,11 @@ fn exit_code(status: std::process::ExitStatus) -> i64 {
     -1
 }
 
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String> {
+/// Drains a pipe on its own thread and sends what it read. A channel rather than a join handle,
+/// because the deadline has to be able to stop waiting for a reader that a descendant is keeping
+/// open, and `JoinHandle` has no timed join.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut text = String::new();
         if let Some(mut pipe) = pipe {
@@ -250,8 +325,9 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String
             let _ = pipe.read_to_end(&mut bytes);
             text = String::from_utf8_lossy(&bytes).into_owned();
         }
-        text
-    })
+        let _ = tx.send(text);
+    });
+    rx
 }
 
 fn lines(text: &str) -> Value {

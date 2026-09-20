@@ -65,8 +65,20 @@ pub(crate) fn execute(
         return Run::Done(TaskResult::failed_with("no command given"));
     }
 
+    // The reference module changes directory before it reads either guard, so a `chdir` that
+    // cannot be entered fails the task here rather than being read as a guard that found
+    // nothing under a base that cannot exist. Without this, a typo in `chdir` next to a
+    // `removes` turns a cleanup that never happened into a green skip.
+    if let Some(dir) = chdir
+        && let Err(err) = std::fs::metadata(dir)
+    {
+        return Run::Done(spawn_failure(display, chdir, &err));
+    }
     let guard_base = chdir.map(Path::new);
+    // An empty value applies no guard at all, which is what the reference's own `if creates:`
+    // does with it: a template that rendered to nothing must not decide anything.
     if let Some(path) = args.get("creates").and_then(Value::as_str)
+        && !path.is_empty()
         && glob::matches_any(guard_base, path)
     {
         return Run::Done(skipped(
@@ -76,6 +88,7 @@ pub(crate) fn execute(
         ));
     }
     if let Some(path) = args.get("removes").and_then(Value::as_str)
+        && !path.is_empty()
         && !glob::matches_any(guard_base, path)
     {
         return Run::Done(skipped(
@@ -431,8 +444,90 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Measurement (o) for the other guard: `removes` resolves under `chdir` too, so a cleanup
+    /// whose target is there runs instead of being skipped.
+    ///
+    /// What would make this red: reading `cache` from the agent's own directory, where it does
+    /// not exist, so `!matches_any` holds and the cleanup is skipped with the play still green.
+    #[test]
+    fn a_relative_removes_resolves_under_chdir() {
+        let dir = std::env::temp_dir().join(format!("volant-guard-removes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cache"), b"").unwrap();
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "echo ran",
+                "chdir": dir.to_str().unwrap(),
+                "removes": "cache",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(
+            !r.skipped(),
+            "the cleanup was skipped although 'cache' is there"
+        );
+        assert_eq!(r.0["stdout"], "ran");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A `chdir` that cannot be entered fails the task, the way the reference's own
+    /// `os.chdir` does before it ever looks at a guard.
+    ///
+    /// What would make this red: evaluating `removes` first. Nothing matches under a base that
+    /// cannot exist, so `!matches_any` holds, the task is skipped with `rc: 0` and a play that
+    /// never ran its cleanup stays green.
+    #[test]
+    fn a_missing_chdir_fails_before_the_guards() {
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "rm -rf cache",
+                "chdir": "/definitely/not/here",
+                "removes": "cache",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(!r.skipped(), "a bad chdir was read as a guard decision");
+        assert!(r.failed());
+        assert_eq!(r.0["rc"], 2);
+        assert_eq!(
+            r.0["msg"],
+            "[Errno 2] No such file or directory: b'/definitely/not/here'"
+        );
+    }
+
+    /// An empty `creates` applies no guard at all, matching the reference's own `if creates:`.
+    ///
+    /// What would make this red: an empty pattern splitting into no components and ending the
+    /// walk on the base's own existence, which is true for every `chdir` that exists — so
+    /// `creates: "{{ marker | default('') }}"` with `marker` undefined would skip the task.
+    #[test]
+    fn an_empty_creates_applies_no_guard() {
+        let dir = std::env::temp_dir().join(format!("volant-guard-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = done(execute(
+            &args(json!({
+                "_raw_params": "echo ran",
+                "chdir": dir.to_str().unwrap(),
+                "creates": "",
+            })),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(!r.skipped(), "an empty creates was read as a guard");
+        assert_eq!(r.0["stdout"], "ran");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Measurement (p): a glob in `creates` expands inside a directory component too, still
     /// resolved under `chdir`, and the message still quotes the pattern rather than the match.
+    ///
+    /// What would make this red: matching a component pattern against the whole remaining path
+    /// instead of one directory entry at a time, which never reaches `sub/marker` through `s*`.
     #[test]
     fn a_glob_creates_resolves_under_chdir() {
         let dir = std::env::temp_dir().join(format!("volant-guard-glob-{}", std::process::id()));
@@ -455,17 +550,26 @@ mod tests {
     }
 
     /// Measurement (m): an absolute glob is expanded regardless of `chdir`, and the message
-    /// quotes the absolute pattern, not the file that matched it.
+    /// quotes the absolute pattern, not the file that matched it. The `chdir` here is a real
+    /// but unrelated directory, because a `chdir` that cannot be entered fails the task before
+    /// either guard is read.
+    ///
+    /// What would make this red: joining the pattern onto `chdir` before walking it, which
+    /// sends an absolute `creates` somewhere it cannot match and runs a command that should
+    /// have been skipped.
     #[test]
     fn an_absolute_glob_creates_ignores_chdir() {
         let dir = std::env::temp_dir().join(format!("volant-guard-abs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("x-1"), b"").unwrap();
+        let elsewhere =
+            std::env::temp_dir().join(format!("volant-guard-elsewhere-{}", std::process::id()));
+        std::fs::create_dir_all(&elsewhere).unwrap();
         let pattern = format!("{}/x-*", dir.display());
         let r = done(execute(
             &args(json!({
                 "_raw_params": "echo never",
-                "chdir": "/definitely/not/here",
+                "chdir": elsewhere.to_str().unwrap(),
                 "creates": pattern,
             })),
             false,
@@ -478,6 +582,7 @@ mod tests {
         );
         assert!(!r.changed());
         std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&elsewhere).unwrap();
     }
 
     #[test]

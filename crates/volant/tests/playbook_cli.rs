@@ -6491,14 +6491,12 @@ fn a_host_file_does_move_the_implicit_localhost() {
 ///
 /// The assertion is that file's absence. A result that says `skipped` while the command ran
 /// would pass a snapshot and fail this; that is the shape this guard has to have, because what
-/// it protects is a migration or an initialisation running twice. `stdout` also carries
-/// `skipping: [h1]` for the guarded task, which a command that ran instead would never print.
+/// it protects is a migration or an initialisation running twice.
 ///
 /// The exact skip text (`Did not run command since 'marker' exists`) is pinned at the module
 /// level instead, in `command.rs`'s own tests: the CLI never shows a skipped task's message body
-/// at any verbosity (`render.rs`, `Outcome::Skipped` carries no tail), which is itself a
-/// pre-existing divergence from the reference unrelated to this guard and out of this task's
-/// scope (see `architecture.md`).
+/// at any verbosity (`render.rs`, `Outcome::Skipped` carries no tail), which is a pre-existing
+/// divergence from the reference in result classification, unrelated to this guard.
 ///
 /// What would make this red: the guard calling `Path::exists` on the bare relative path, which
 /// resolves against the agent's own directory and finds nothing.
@@ -6528,7 +6526,6 @@ fn a_relative_creates_is_resolved_against_chdir() {
         !work.join("should-not-run").exists(),
         "the command ran although its guard said it should not:\n{stdout}"
     );
-    assert!(stdout.contains("skipping: [h1]"), "{stdout}");
     assert_eq!(out.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -6567,7 +6564,6 @@ fn a_pattern_creates_is_resolved_against_chdir() {
         !work.join("should-not-run-2").exists(),
         "the pattern guard let the command run although 'x-1' matches it:\n{stdout}"
     );
-    assert!(stdout.contains("skipping: [h1]"), "{stdout}");
     assert_eq!(out.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -19,6 +19,7 @@ Everything in between runs host by host.
 It is off unless you ask for it, in `ansible.cfg`:
 
 ```ini
+# ansible-config validate rejects this section; see the note below
 [volant]
 batching = true
 ```

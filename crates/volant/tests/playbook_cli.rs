@@ -2183,7 +2183,7 @@ fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
         text.contains(
             "localhost                  : ok=1    changed=1    unreachable=1    failed=0    skipped=0    rescued=0"
         ),
-        "{text}"
+        "the step it did run is counted, and the loss is counted once: {text}"
     );
 }
 

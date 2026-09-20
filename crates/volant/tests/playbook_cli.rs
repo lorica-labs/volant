@@ -4171,13 +4171,14 @@ const RUNS_PROBES: &[RunsProbe] = &[
     ),
 ];
 
-/// Every keyword the table marks `Runs` has a proof, and every proof belongs to a row.
+/// Every keyword the table says this release answers -- `Runs` or `Partial` -- has a proof, and
+/// every proof belongs to a row.
 ///
-/// What would make this red: a row flipped to `Runs` ahead of the code that honours it, which
-/// is the way a keyword comes to be accepted, waved through and ignored; or a proof left behind
-/// for a keyword that no longer claims to run.
+/// What would make this red: a row flipped away from `Preflight` ahead of the code that answers
+/// it, which is the way a keyword comes to be accepted, waved through and ignored; or a proof
+/// left behind for a keyword that is now refused before the first connection.
 #[test]
-fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
+fn every_answered_keyword_has_a_proof_and_every_proof_has_a_row() {
     let mut declared: Vec<(&str, &str)> = [
         ("task", TASK_KEYWORDS),
         ("play", PLAY_KEYWORDS),
@@ -4189,7 +4190,7 @@ fn every_runs_keyword_has_a_proof_and_every_proof_has_a_row() {
     .flat_map(|(table, keywords)| {
         keywords
             .iter()
-            .filter(|k| k.support == Support::Runs)
+            .filter(|k| k.support != Support::Preflight)
             .map(move |k| (table, k.name))
     })
     .collect();

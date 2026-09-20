@@ -5,6 +5,7 @@ Every play, block and task keyword ansible-core 2.19 knows, and what this releas
 A playbook is loaded against the whole grammar, so it parses here as it parses there. What this release cannot execute is refused by name before the first connection, rather than accepted and then ignored. A keyword therefore carries a status per place it can be written:
 
 - `runs`: this release honours it, or refuses by name the one value it cannot do.
+- `partial`: it is accepted and answered, but not with the whole of what the reference does with it. What is missing is spelled out under the table.
 - `refused`: it loads, and the run stops before anything connects.
 - `not accepted`: it cannot be written there, and a playbook that writes it there is refused when it is read, as the reference refuses it.
 
@@ -24,7 +25,7 @@ This page is generated from the tables in the source, so it cannot drift from th
 | `become_user` | runs | runs | runs |
 | `block` | not accepted | runs | not accepted |
 | `changed_when` | not accepted | not accepted | runs |
-| `check_mode` | runs | runs | runs |
+| `check_mode` | partial | partial | partial |
 | `collections` | refused | refused | refused |
 | `connection` | refused | refused | refused |
 | `debugger` | refused | refused | refused |
@@ -36,7 +37,7 @@ This page is generated from the tables in the source, so it cannot drift from th
 | `fact_path` | refused | not accepted | not accepted |
 | `failed_when` | not accepted | not accepted | runs |
 | `force_handlers` | runs | not accepted | not accepted |
-| `gather_facts` | runs | not accepted | not accepted |
+| `gather_facts` | partial | not accepted | not accepted |
 | `gather_subset` | refused | not accepted | not accepted |
 | `gather_timeout` | refused | not accepted | not accepted |
 | `handlers` | runs | not accepted | not accepted |
@@ -98,6 +99,15 @@ This page is generated from the tables in the source, so it cannot drift from th
 | `with_url` | not accepted | not accepted | refused |
 | `with_varnames` | not accepted | not accepted | refused |
 | `with_vars` | not accepted | not accepted | refused |
+
+## What `partial` leaves out
+
+A keyword below is accepted wherever the grid says `partial`, and answered the same way in each of those places.
+
+| Keyword | What is missing |
+|---|---|
+| `check_mode` | only `false` is accepted, and it is honoured by running for real; `true` is refused by name before the first connection, because this release has no check mode |
+| `gather_facts` | accepted and warned about before the first task; no facts are gathered in this release, so `ansible_*` facts are absent whichever value is written |
 
 ## Handlers
 

@@ -11,7 +11,9 @@
 
 use std::fs;
 use std::io::{self, Write};
+
 use std::path::{Path, PathBuf};
+use volant_protocol::{FromAgent, LogLevel, ToAgent};
 
 /// Where the agent keeps payloads, and where it reads `remote_tmp` from.
 ///
@@ -105,6 +107,57 @@ pub fn holds(remote_tmp: &str, hash: &str) -> io::Result<bool> {
     let at = path(remote_tmp, hash)?;
     cache_dir(remote_tmp)?;
     matches_hash(&at, hash)
+}
+
+/// Answers a blob message, wherever in the conversation it arrives.
+///
+/// `serve` takes these between batches and `runner::is_cancelled` takes them during one, and
+/// both have to answer: a controller that sent `put_blob` waits for a `BlobState`, so one
+/// logged and dropped mid-batch left it waiting for a state that never came. `Ok(false)` says
+/// the message was not a blob message and is still the caller's to handle.
+pub fn answer<F>(remote_tmp: &str, msg: &ToAgent, send: &mut F) -> io::Result<bool>
+where
+    F: FnMut(&FromAgent) -> io::Result<()>,
+{
+    match msg {
+        ToAgent::HasBlob { hash } => {
+            let present = match holds(remote_tmp, hash) {
+                Ok(present) => present,
+                Err(err) => {
+                    send(&FromAgent::Log {
+                        level: LogLevel::Error,
+                        message: format!("looking for payload {hash}: {err}"),
+                    })?;
+                    false
+                }
+            };
+            send(&FromAgent::BlobState {
+                hash: hash.clone(),
+                present,
+            })?;
+        }
+        // A refused payload is answered, never left silent: the controller waits for this state
+        // before it sends the batch that needs the payload, and the log is the only place the
+        // reason survives.
+        ToAgent::PutBlob { hash, zip_b64 } => match store(remote_tmp, hash, zip_b64) {
+            Ok(_) => send(&FromAgent::BlobState {
+                hash: hash.clone(),
+                present: true,
+            })?,
+            Err(err) => {
+                send(&FromAgent::Log {
+                    level: LogLevel::Error,
+                    message: format!("storing payload {hash}: {err}"),
+                })?;
+                send(&FromAgent::BlobState {
+                    hash: hash.clone(),
+                    present: false,
+                })?;
+            }
+        },
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 /// Decodes, hashes, refuses a mismatch, then writes atomically under the hash.
@@ -320,7 +373,7 @@ fn free_bytes(_dir: &Path) -> io::Result<u64> {
 /// so a wrapped encoding decodes, and anything else is refused with the offset that broke it -
 /// a payload half-decoded into something that happens to hash to nothing is not a failure an
 /// operator could read.
-fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
     let mut acc: u32 = 0;
     let mut bits = 0u32;

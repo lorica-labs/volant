@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use volant_protocol::frame::{read_frame, write_frame};
-use volant_protocol::{FromAgent, LogLevel, ToAgent};
+use volant_protocol::{FromAgent, LogLevel, Task, ToAgent};
 
 /// The agent answers for a payload it does not hold, keeps one whose bytes match its name, and
 /// refuses one whose bytes do not - each with a `BlobState` the controller can wait on.
@@ -138,5 +138,81 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         child.wait().unwrap().success(),
         "the agent ends at end of stream"
     );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A `put_blob` that arrives while a batch is running is answered before the batch ends.
+///
+/// What would make this red: the message logged to the agent's stderr and discarded, which is
+/// what happened until now - a controller that sends the payload for the next play while a batch
+/// is still in flight would wait for a `BlobState` that never comes, and a wait with nothing
+/// behind it is a hang rather than a failure.
+#[test]
+fn a_put_blob_that_arrives_during_a_batch_is_answered() {
+    let dir = std::env::temp_dir().join(format!("volant-agent-batch-blob-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_volant-agent"))
+        .env("VOLANT_REMOTE_TMP", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("agent starts");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let hash = blake3::hash(b"PK\x03\x04").to_hex().to_string();
+    {
+        let mut send = |msg: &ToAgent| {
+            write_frame(&mut stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
+            stdin.flush().unwrap();
+        };
+        let mut recv = || -> FromAgent {
+            let bytes = read_frame(&mut stdout).unwrap().expect("the agent answers");
+            serde_json::from_slice(&bytes).unwrap()
+        };
+
+        // A task long enough for the next frame to arrive while it runs, and one the agent
+        // checks the control channel during.
+        send(&ToAgent::RunBatch {
+            id: 1,
+            tasks: vec![Task {
+                module: "command".into(),
+                args: serde_json::json!({"_raw_params": "sleep 1"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ignore_errors: false,
+                timeout: None,
+                environment: std::collections::BTreeMap::new(),
+                payload: None,
+            }],
+        });
+        send(&ToAgent::PutBlob {
+            hash: hash.clone(),
+            zip_b64: "UEsDBA==".into(),
+        });
+
+        let mut answered = false;
+        loop {
+            match recv() {
+                FromAgent::BlobState {
+                    hash: which,
+                    present,
+                } => {
+                    assert_eq!(which, hash);
+                    assert!(present);
+                    answered = true;
+                }
+                FromAgent::BatchDone { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(
+            answered,
+            "the batch ended without the payload ever being answered for"
+        );
+    }
+    drop(stdin);
+    let _ = child.wait();
     let _ = fs::remove_dir_all(&dir);
 }

@@ -28,7 +28,7 @@ The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them 
 
 1. Fork the repository and create a branch from `main`: `feat/…`, `fix/…`, `docs/…`, `ci/…` or `chore/…`.
 2. Keep each pull request to one logical change.
-3. Run `just check` before pushing. It covers formatting, lints and the test suite. CI reports more than that: the `ssh_*` tests, the coverage floor, a musl build, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS. Of those, `just ssh-test` and `just coverage` run here.
+3. Run `just check` before pushing. It covers formatting, lints and the test suite. CI reports more than that: the `ssh_*` tests, the coverage floor, a musl build, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS. Of those, `just ssh-test` and `just coverage` run here. `just check` is the gate to run before pushing, not the loop while iterating: `just test-one <crate> <pattern>` runs one crate's tests matching a pattern, and `just mutants [file]` runs three jobs in parallel (disk-bound on this repository's `target/`, not CPU-bound).
 4. Open a pull request against `main`. Its title must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), for example `feat(agent): collect network facts`. The title becomes the commit message when the pull request is squashed.
 5. Add a line under `Unreleased` in `CHANGELOG.md` when the change is visible to users.
 

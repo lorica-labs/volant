@@ -44,6 +44,10 @@ lint:
 test:
     cargo nextest run --workspace --no-fail-fast
 
+# One crate, one test pattern: the loop while you are iterating. `check` is the gate, not the loop.
+test-one crate pattern:
+    cargo nextest run -p {{crate}} -E 'test({{pattern}})'
+
 # Line coverage over the workspace. The ssh tests are #[ignore]d and are not in this figure.
 # llvm-cov's TOTAL row reads regions, then functions, then lines, and the first column is the one
 # a reader takes for the last. The second command names the figure the threshold is about, so
@@ -61,15 +65,26 @@ coverage:
 # mutant's scratch copy: without it, nothing inside cargo-mutants' own scratch build produces
 # that binary and every mutant's baseline fails before a single mutation runs. `--test-tool
 # nextest` matches every other recipe here and keeps tests process-isolated, which a handful of
-# this suite's tests need. `--jobs 1`, not 4: measured on the dev host, `--copy-target` copies a
-# ~2 GB target/ per parallel job, and /tmp there is a 7.6 GB tmpfs shared with everything else
-# running - both 4 and 2 parallel copies exceeded it mid-campaign ("Disk quota exceeded"); one
-# job at a time is the value that ran two full campaigns without it. Slow on purpose: one build
-# and one test run per mutant. Not in CI.
+# this suite's tests need.
+#
+# The constraint on `--jobs` is disk, not cores, and where the scratch copies land matters as
+# much as how many there are. `--copy-target` gives each parallel job its own copy of target/,
+# currently about 2.3 GB. cargo-mutants puts that scratch under TMPDIR, which defaults to /tmp;
+# on the development machine /tmp is a 7.6 GB tmpfs shared by three lanes, and copying target/
+# there overran it at both `--jobs 4` and `--jobs 2` ("Disk quota exceeded" mid-campaign,
+# errors.md) - `--jobs 1` was the only value that ever fit on it. The plan's own prescribed
+# scratch, `TMPDIR="$PWD/target/mutants-tmp"`, cannot work here either: it sits inside the tree
+# `--copy-target` copies, so the copy recurses into its own destination until "File name too
+# long" (errors.md, lane B's entry). TMPDIR below points at $HOME instead - outside the copied
+# tree and on the real disk rather than the tmpfs - where three parallel copies at ~2.3 GB each
+# is about 7 GB against the roughly 9.7 GB free there, which fits; four would not. Three lanes
+# also share this machine's eight cores, so a mutants run must not claim the whole thing either.
+# Slow on purpose: one build and one test run per mutant. Not in CI.
 # Mutation score for the given file, one build and one test run per mutant. Not in CI.
 mutants file="crates/volant/src/keywords.rs":
+    mkdir -p "$HOME/.cache/volant-mutants"
     cargo build --workspace
-    cargo mutants --file {{file}} --timeout 120 --jobs 1 --no-shuffle --test-tool nextest --copy-target true
+    TMPDIR="$HOME/.cache/volant-mutants" cargo mutants --file {{file}} --timeout 120 --jobs 3 --no-shuffle --test-tool nextest --copy-target true
 
 # Regenerate docs/src/modules.md from the module registry
 docs-modules:

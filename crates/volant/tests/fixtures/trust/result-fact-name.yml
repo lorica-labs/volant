@@ -1,0 +1,13 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Read a file whose text is a bare expression
+      command: cat {{ payload }}
+      register: r
+    - name: Carry the result through set_fact
+      set_fact:
+        which: "{{ r.stdout }}"
+    - name: Name the variable to show from the carried fact
+      debug:
+        var: "{{ which }}"
+      ignore_errors: true

@@ -140,9 +140,18 @@ pub(super) fn run_local(
                 if k == "cacheable" {
                     continue;
                 }
+                // Only the values whose own render read a managed host are data. Measured on
+                // ansible-core 2.19.12: a fact the playbook wrote can still name the variable a
+                // `debug: var:` shows, so writing every fact as data would fail a play with no
+                // host value anywhere in it.
+                let from_host = item.args_untrusted.contains(k);
                 let mut vars = store.lock().expect("vars lock");
                 for host in fact_hosts {
-                    vars.set_untrusted_fact(host, k, v.clone());
+                    if from_host {
+                        vars.set_untrusted_fact(host, k, v.clone());
+                    } else {
+                        vars.set_fact(host, k, v.clone());
+                    }
                 }
                 drop(vars);
                 facts.insert(k.clone(), v.clone());

@@ -5798,6 +5798,75 @@ fn a_variable_named_by_a_result_is_never_evaluated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The other direction of the same guard, and the one a too-wide rule breaks: a play with no
+/// managed-host value anywhere in it still prints. The fact names another variable, and the
+/// `debug: var:` that shows it compiles that name as an expression.
+///
+/// Measured on ansible-core 2.19.12: the reference prints `"greeting": "hello"` here, both from
+/// a `set_fact` and from a play-level `vars:`. A rule that called every fact data would fail
+/// this play, which is a user-visible regression and not a security property.
+///
+/// What would make this red: writing a `set_fact` value with `set_untrusted_fact` whatever its
+/// render read, which is what this release did before.
+#[test]
+fn a_fact_the_playbook_wrote_can_still_name_a_variable() {
+    let (dir, _) = trust_dir("author-fact-name", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            &fixture("trust/author-fact-name.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"greeting\": \"hello\""),
+        "a play with no host value in it should print:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// And the half the previous test could be made to pass by giving up: a fact whose value came
+/// out of a managed host still cannot name the variable a `debug: var:` compiles.
+///
+/// The set_fact reads a registered value, so its render is the one that has to carry the answer
+/// forward; the marker's absence is the assertion.
+///
+/// What would make this red: writing a `set_fact` value with `set_fact` whatever its render
+/// read, which is the lazy way to fix the test above.
+#[test]
+fn a_fact_carrying_a_result_cannot_name_a_variable() {
+    let (dir, marker) = trust_dir("result-fact-name", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("payload={}", dir.join("bare.txt").display()),
+            &fixture("trust/result-fact-name.yml"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        !marker.exists(),
+        "the expression a carried fact named ran on the controller:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Encountered untrusted template or expression"),
+        "the carried result should be refused:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The negative direction of the promotion: a map holding an author variable **and** a
 /// registered value promotes only the second. Without it nothing proves the promotion does not
 /// over-fire, because a map with no untrusted name in it cannot tell an over-wide set from a

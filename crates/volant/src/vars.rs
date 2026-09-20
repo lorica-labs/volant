@@ -32,8 +32,11 @@ impl HostVars {
     /// `insert`, for a name whose value came from a managed host: a `register`, `result`, a loop
     /// item built from one. The name is data from here on and is never rendered again.
     pub fn insert_untrusted(&mut self, key: String, value: Value) -> Option<Value> {
-        self.untrusted.insert(key.clone());
-        self.insert(key, value)
+        // After, not before, for the reason `VarStore::set_untrusted_fact` gives: `insert`
+        // clears the name.
+        let previous = self.insert(key.clone(), value);
+        self.untrusted.insert(key);
+        previous
     }
 
     /// Writes a name into the host's own map once the map is built - a loop variable, a
@@ -42,6 +45,9 @@ impl HostVars {
     /// them leaves this host's shared map, which is how the host's own value gets to answer.
     /// The map is left alone when there is no collision, so the ordinary write costs nothing.
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
+        // The name gets its trust back, the way `VarStore::set_fact` gives it back: this write
+        // is author content whatever the name held before.
+        self.untrusted.remove(&key);
         if self.shared.contains_key(&key) {
             let mut shared = Map::clone(&self.shared);
             shared.remove(&key);

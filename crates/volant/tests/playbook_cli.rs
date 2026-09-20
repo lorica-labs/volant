@@ -77,7 +77,8 @@ fn volant_within_full(
         .env_remove("COLUMNS")
         .env_remove("ANSIBLE_ROLES_PATH")
         .env_remove("ANSIBLE_RUN_TAGS")
-        .env_remove("ANSIBLE_SKIP_TAGS");
+        .env_remove("ANSIBLE_SKIP_TAGS")
+        .env_remove("VOLANT_BATCHING");
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -764,49 +765,69 @@ fn become_switches_user_and_back() {
     );
 }
 
-/// Six escalated tasks, each closing its batch with a `register`, open the escalated agent
-/// once. The link and the fork permit that bounds it stay with the driver while the next step
-/// needs nobody else, so the run pays one escalation rather than one per registered task.
+/// Six escalated tasks, each closing its batch with a `register`. With batching asked for, the
+/// escalated agent opens once: the link and the fork permit that bounds it stay with the driver
+/// while the next step needs nobody else. Strict `linear` is the other half of the same rule and
+/// the price of the default -- the permit goes back in front of every task, and the escalated
+/// link, which `forks` bounds along with it, goes back with it -- so the same play pays one
+/// escalation per task there.
+///
+/// Both counts are asserted here rather than in two tests, because they are one mechanism read
+/// at its two settings and a second copy would only restate the first.
 ///
 /// Counted through a `sudo` that records every invocation and then runs the command it was
 /// given as the invoking user: the count is what is being measured, and needing real privileges
 /// to measure it would make this a test of the machine.
 ///
-/// What would make this red: the driver handing back its escalated links after every batch,
-/// which puts six launches in the log instead of one.
+/// What would make this red: the driver handing back its escalated links after every batch with
+/// batching asked for, which puts six launches in the log instead of one; or holding them across
+/// a barrier without one, which lets an escalated connection outlive the permit that bounds it.
 #[test]
 fn escalated_links_survive_a_batch_that_a_register_closed() {
-    let dir = fake_sudo(
-        "countsudo",
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$VOLANT_SUDO_LOG\"\n\
-         while [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-    );
-    let log = dir.join("sudo.log");
-    let out = volant_within_with_path(
-        &["playbook", &fixture("become-registered.yml")],
-        DEFAULT_DEADLINE,
-        Some(&dir),
-        &[("VOLANT_SUDO_LOG", &log.display().to_string())],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
+    let escalations = |envs: &[(&str, &str)]| {
+        let dir = fake_sudo(
+            "countsudo",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$VOLANT_SUDO_LOG\"\n\
+             while [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+        );
+        let log = dir.join("sudo.log");
+        let mut all = vec![("VOLANT_SUDO_LOG", log.display().to_string())];
+        all.extend(envs.iter().map(|(k, v)| (*k, (*v).to_string())));
+        let borrowed: Vec<(&str, &str)> = all.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let out = volant_within_with_path(
+            &["playbook", &fixture("become-registered.yml")],
+            DEFAULT_DEADLINE,
+            Some(&dir),
+            &borrowed,
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{text}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let recorded = std::fs::read_to_string(&log).expect("the fake sudo wrote its log");
+        // The version probe settles which `sudo` form the link uses and is not a launch of the
+        // agent itself; everything else in the log is one.
+        let launches = recorded
+            .lines()
+            .filter(|line| !line.contains("--version"))
+            .count();
+        let _ = std::fs::remove_dir_all(&dir);
+        (launches, recorded)
+    };
+
+    let (batched, recorded) = escalations(&[("VOLANT_BATCHING", "1")]);
     assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
+        batched, 1,
+        "one escalated agent for six tasks with batching:\n{recorded}"
     );
-    let recorded = std::fs::read_to_string(&log).expect("the fake sudo wrote its log");
-    // The version probe settles which `sudo` form the link uses and is not a launch of the
-    // agent itself; everything else in the log is one.
-    let launches = recorded
-        .lines()
-        .filter(|line| !line.contains("--version"))
-        .count();
+    let (strict, recorded) = escalations(&[]);
     assert_eq!(
-        launches, 1,
-        "one escalated agent for six tasks:\n{recorded}"
+        strict, 6,
+        "one escalated agent per task under the strict default:\n{recorded}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The other half of keeping the fork permit across a batch: one fork for two hosts, and a
@@ -832,6 +853,43 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
             &fixture("hostvars-barrier.yml"),
         ],
         std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("stamped-alpha"), "beta read alpha: {text}");
+    assert_eq!(
+        text.matches("failed=0").count(),
+        2,
+        "both hosts reach the recap: {text}"
+    );
+}
+
+/// The same proof at the setting where the boundary has to be found rather than assumed. Under
+/// the strict default every step is a boundary, so the test above no longer says whether the
+/// driver hands its permit back at the boundary the textual scan raised, only that it hands it
+/// back somewhere. With batching asked for, the second task's `hostvars` is the only boundary in
+/// the play, and the permit has to go back in front of that one.
+///
+/// What would make this red: the permit kept across the boundary `reads_across_hosts` raised,
+/// which deadlocks the host holding it against a host that can never be given one.
+#[test]
+fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &fixture("vars/inventory.ini"),
+            "-f",
+            "1",
+            &fixture("hostvars-barrier.yml"),
+        ],
+        std::time::Duration::from_secs(20),
+        &[("VOLANT_BATCHING", "1")],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1132,6 +1190,131 @@ fn a_sudo_that_reads_no_password_is_never_written_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A directory of its own, an inventory of two local hosts, and the file they append to, for
+/// the two order tests below. `slug` keeps the two apart, since they share a process.
+fn two_hosts_and_a_trace(slug: &str) -> (std::path::PathBuf, String, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("volant-{slug}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a temp dir");
+    let inventory = dir.join("inv.ini");
+    std::fs::write(
+        &inventory,
+        "alpha ansible_connection=local\nbeta ansible_connection=local\n",
+    )
+    .expect("an inventory");
+    let trace = dir.join("trace");
+    (dir.clone(), inventory.display().to_string(), trace)
+}
+
+/// The trace the fixture wrote, split into the host that appended each line and the task that
+/// made it. Which of the two hosts is served first is a race -- with one fork they queue on the
+/// same permit and either may take it -- so what a test asserts is the shape of the sequence,
+/// never the names in it.
+fn trace_steps(trace: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(trace)
+        .expect("the trace")
+        .lines()
+        .map(|line| {
+            let (host, step) = line.rsplit_once('-').expect("a host-step line");
+            (host.to_string(), step.to_string())
+        })
+        .collect()
+}
+
+/// `linear` means the hosts of a batch meet in front of every task. Two hosts append a line
+/// each to one file, twice; with one fork the order is fully determined, and it says which
+/// engine ran.
+///
+/// The assertion is the file's contents, not the terminal: the coordinator reorders what it
+/// prints to keep the display in task order, so a run whose execution interleaved wrongly can
+/// still print in the right order. Only a shared effect shows the difference.
+///
+/// What would make this red: a task running ahead of another host's previous task, which is
+/// what this release did whenever no task mentioned `hostvars`.
+#[test]
+fn every_task_is_a_barrier_by_default() {
+    let (dir, inventory, trace) = two_hosts_and_a_trace("order-strict");
+
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inventory,
+            "-f",
+            "1",
+            "-e",
+            &format!("trace={}", trace.display()),
+            &fixture("order/shared-file.yml"),
+        ],
+        std::time::Duration::from_secs(60),
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let steps = trace_steps(&trace);
+    let order: Vec<&str> = steps.iter().map(|(_, step)| step.as_str()).collect();
+    assert_eq!(
+        order,
+        ["1", "1", "2", "2"],
+        "both hosts must finish task 1 before either starts task 2: {steps:?}"
+    );
+    assert_ne!(
+        steps[0].0, steps[1].0,
+        "one line per host per task: {steps:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other direction: with batching asked for, a host carries on through the tasks between
+/// two barriers, which is the whole point of the option. Same fixture, same forks, different
+/// order -- so this test is what proves the switch is wired rather than ignored.
+///
+/// What would make this red: `[volant] batching` or `VOLANT_BATCHING` read and dropped, which
+/// would leave the engine strict in both modes and the measured cost of the option unexplained.
+#[test]
+fn batching_lets_a_host_run_ahead_when_it_is_asked_for() {
+    let (dir, inventory, trace) = two_hosts_and_a_trace("order-batching");
+
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &inventory,
+            "-f",
+            "1",
+            "-e",
+            &format!("trace={}", trace.display()),
+            &fixture("order/shared-file.yml"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_BATCHING", "1")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let steps = trace_steps(&trace);
+    let order: Vec<&str> = steps.iter().map(|(_, step)| step.as_str()).collect();
+    assert_eq!(
+        order,
+        ["1", "2", "1", "2"],
+        "a host asked to batch runs both of its tasks before the next host starts: {steps:?}"
+    );
+    assert_eq!(
+        steps[0].0, steps[1].0,
+        "the same host wrote both: {steps:?}"
+    );
+    assert_ne!(steps[0].0, steps[2].0, "then the other one did: {steps:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Measured against the reference: `beta` reads the stamp `alpha` registered at the previous
 /// task, on every run, and both hosts see each other in the play's live list. Ten runs, because
 /// a barrier that does nothing passes this once by luck.
@@ -1146,6 +1329,45 @@ fn a_host_reading_hostvars_waits_for_the_others() {
                 &fixture("hostvars-barrier.yml"),
             ],
             std::time::Duration::from_secs(20),
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{text}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains(r#"ok: [beta] => {"msg": "stamped-alpha"}"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"ok: [alpha] => {"msg": "alpha,beta of alpha,beta"}"#)
+                && text.contains(r#"ok: [beta] => {"msg": "alpha,beta of alpha,beta"}"#),
+            "both hosts are still in the play: {text}"
+        );
+    }
+}
+
+/// The same play with batching asked for, which is where the textual scan is the only thing
+/// standing between `beta` and a stamp `alpha` has not written yet. Under the strict default the
+/// test above passes whatever `reads_across_hosts` answers, so this is the copy that still
+/// guards it; ten runs, for the same reason as above.
+///
+/// What would make this red: `hostvars` dropped from `CROSS_HOST_NAMES`, or the scan no longer
+/// reading the argument a `msg` was written in.
+#[test]
+fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
+    for _ in 0..10 {
+        let out = volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                &fixture("vars/inventory.ini"),
+                &fixture("hostvars-barrier.yml"),
+            ],
+            std::time::Duration::from_secs(20),
+            &[("VOLANT_BATCHING", "1")],
         );
         let text = String::from_utf8(out.stdout).unwrap();
         assert_eq!(

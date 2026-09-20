@@ -305,6 +305,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         // The play's own keyword speaks over this; measured, the flag and `[defaults]
         // force_handlers` are the same request.
         force_handlers: args.force_handlers || config.force_handlers,
+        batching: config.batching,
         stop: stop_rx.clone(),
     };
 

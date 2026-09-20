@@ -35,12 +35,18 @@ use super::{LinkKey, RunOptions};
 /// of the others, so `linear` puts a boundary in front of it.
 const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
 
-/// Whether the hosts of a play meet in front of this step: one the keyword table declares a
-/// synchronisation point, or one whose text names another host's state. The step loop asks it
-/// twice on the way through an iteration, once to give back a fork permit kept from the batch
-/// before and once to stop and wait for the other hosts. What a batch end asks instead is
-/// whether this driver carries straight on, which is a different question.
-fn is_boundary(task: &PlayTask) -> bool {
+/// Whether the hosts of a play meet in front of this step. Without `batching`, every step is
+/// such a point: that is what `linear` means, and a task's text cannot show a dependency that
+/// runs through a file, a database or a service. With `batching`, the keyword table and the
+/// textual scan decide, and a host carries on through the steps in between.
+///
+/// The step loop asks it twice on the way through an iteration, once to give back a fork permit
+/// kept from the batch before and once to stop and wait for the other hosts. What a batch end
+/// asks instead is whether this driver carries straight on, which is a different question.
+fn is_boundary(task: &PlayTask, batching: bool) -> bool {
+    if !batching {
+        return true;
+    }
     task.barrier() || reads_across_hosts(task)
 }
 
@@ -284,7 +290,7 @@ pub(super) async fn drive_host(
             // hand.
             if batch.is_empty()
                 && permit.is_some()
-                && (is_boundary(task)
+                && (is_boundary(task, options.batching)
                     || crate::compile::is_splice_point(&step.kind)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
@@ -326,7 +332,7 @@ pub(super) async fn drive_host(
             // because a host that walked into one of those without stopping here would report a
             // step the others have not reached, and every wait in this file opens on the
             // coordinator's frontier.
-            if is_boundary(task) && pos > 0 {
+            if is_boundary(task, options.batching) && pos > 0 {
                 if !batch.is_empty() {
                     break;
                 }

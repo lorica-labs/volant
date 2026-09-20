@@ -1,6 +1,6 @@
 # Fork permits span host-local batches
 
-- Status: accepted
+- Status: accepted, and conditional on an option since 2026-09-20 (see Status below)
 - Date: 2026-09-16
 
 ## Context
@@ -30,3 +30,19 @@ This decision adds no connection multiplexing. Every link remains its own `ssh` 
 - A play that never escalates is unaffected beyond holding its permit a little longer, and a play whose every task reads across hosts gives the permit back at every step, as before.
 
 Supersedes the "live agent connections per host are not bounded" consequence of ADR 0004.
+
+## Status
+
+Since 2026-09-20, a driver carries its permit past a host-local step only when the operator asks
+for it. `[volant] batching = true` in `ansible.cfg`, or `VOLANT_BATCHING=1`, turns this decision
+on; without it every step is a wait, as `linear` says it is.
+
+The reason is the fourth consequence above. Which steps count as a wait is read from the text of
+a task, and a dependency that runs through a file, a database or a service leaves no text to
+read. Ansible's `linear` promises that the hosts meet in front of every task, and a playbook
+written against that promise is allowed to rely on it. Deciding otherwise from the text alone
+was the wrong default for an engine whose first promise is that playbooks run unchanged.
+
+Everything the decision describes is kept and still runs under the option. The measured cost of
+the two settings, and what the default keeps either way, are in [Cross-host
+batching](../src/batching.md).

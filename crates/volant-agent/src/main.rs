@@ -5,6 +5,7 @@ mod blobs;
 mod clock;
 mod interpreter;
 mod modules;
+mod python;
 mod runner;
 
 use std::io::{self, BufReader, BufWriter};
@@ -86,40 +87,10 @@ fn serve() -> io::Result<()> {
             ToAgent::RunBatch { id, tasks } => runner::run_batch(id, &tasks, &rx, &mut send)?,
             ToAgent::Cancel { .. } => {}
             // Answered from the bytes, not from a file of that name: see the head of `blobs.rs`.
-            // A cache this agent cannot trust is a log and a `false`, never a silent one.
-            ToAgent::HasBlob { hash } => {
-                let present = match blobs::holds(&remote_tmp, &hash) {
-                    Ok(present) => present,
-                    Err(err) => {
-                        send(&FromAgent::Log {
-                            level: LogLevel::Error,
-                            message: format!("looking for payload {hash}: {err}"),
-                        })?;
-                        false
-                    }
-                };
-                send(&FromAgent::BlobState { hash, present })?;
-            }
-            // A refused payload is answered, never left silent: the controller waits for this
-            // state before it sends the batch that needs the payload, and the log is the only
-            // place the reason survives.
-            ToAgent::PutBlob { hash, zip_b64 } => {
-                match blobs::store(&remote_tmp, &hash, &zip_b64) {
-                    Ok(_) => send(&FromAgent::BlobState {
-                        hash,
-                        present: true,
-                    })?,
-                    Err(err) => {
-                        send(&FromAgent::Log {
-                            level: LogLevel::Error,
-                            message: format!("storing payload {hash}: {err}"),
-                        })?;
-                        send(&FromAgent::BlobState {
-                            hash,
-                            present: false,
-                        })?;
-                    }
-                }
+            // The same answer is given mid-batch by `runner::is_cancelled`, which is why it
+            // lives in `blobs` rather than here.
+            ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
+                blobs::answer(&remote_tmp, &msg, &mut send)?;
             }
         }
     }

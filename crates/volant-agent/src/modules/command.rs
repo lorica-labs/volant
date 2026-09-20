@@ -318,7 +318,7 @@ pub(crate) fn execute(
 /// How often the wait wakes up to look at the cancellation flag. The process's own end no longer
 /// costs a wait: the reaping thread signals it. Only a cancellation waits for a tick, and only
 /// while something is still running.
-const CANCEL_POLL: Duration = Duration::from_millis(50);
+pub(crate) const CANCEL_POLL: Duration = Duration::from_millis(50);
 
 /// Waits for one pipe thread under what is left of the task's deadline, waking on `CANCEL_POLL` to
 /// look at the cancellation flag -- a pipe a descendant holds open has to be abandonable both ways,
@@ -355,7 +355,7 @@ fn collect(
 }
 
 /// Kills a whole process group by its id, so pipelines and backgrounded grandchildren go too.
-fn kill_group(pgid: u32) {
+pub(crate) fn kill_group(pgid: u32) {
     #[cfg(unix)]
     {
         // Negative pid targets the group. SIGKILL: the module was already asked to stop.
@@ -426,7 +426,7 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
 /// timeout mechanism: no `cmd`, no `rc`/`stdout`/`stderr` (the reference drops those too,
 /// even when the command had already produced output), and no `timedout.frame` (an
 /// Ansible-internal traceback hint we have nothing to reproduce).
-fn timed_out(seconds: u64) -> TaskResult {
+pub(crate) fn timed_out(seconds: u64) -> TaskResult {
     let mut result = Map::new();
     result.insert("changed".into(), json!(false));
     result.insert("failed".into(), json!(true));

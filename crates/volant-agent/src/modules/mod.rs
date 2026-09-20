@@ -53,6 +53,12 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
         timeout: task.timeout.map(Duration::from_secs),
         environment: task.environment.clone(),
     };
+    // A task that carries a payload is a Python module, and the name it goes by is the
+    // reference's rather than this table's: `ping` is a module here and a payload there, so the
+    // payload decides before the name is looked up at all.
+    if let Some(payload) = &task.payload {
+        return crate::python::run(payload, &task.args, &context, cancelled);
+    }
     match MODULES.iter().find(|m| m.spec.name == name) {
         Some(module) => match unsupported_parameters(module.spec, &task.args)
             .or_else(|| refused_argument(module.spec, &task.args))

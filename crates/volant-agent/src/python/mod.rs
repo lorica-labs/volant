@@ -17,7 +17,8 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -41,6 +42,11 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 /// gone by then, so this only covers the parent reaping it and writing one frame.
 const REAP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long the agent waits for a dead server's stderr to reach its end before it reports what
+/// has arrived. Long enough for a pipe that is already closed to be drained, short enough that a
+/// grandchild holding it open costs the task nothing it can feel.
+const LAST_WORDS_WAIT: Duration = Duration::from_millis(500);
+
 /// What an operator is shown of a module's own output when it is not a result.
 const EXCERPT: usize = 2048;
 
@@ -54,8 +60,13 @@ pub struct Server {
     stdin: ChildStdin,
     /// Frames from the parent, read by a thread so a task can be cancelled while one is awaited.
     frames: Receiver<io::Result<Vec<u8>>>,
-    /// Everything the server itself wrote to stderr, available once it has ended.
-    stderr: Option<JoinHandle<String>>,
+    /// Everything the server has written to stderr so far, filled as it arrives rather than at
+    /// the end: a grandchild the server left behind holds that pipe open for as long as it
+    /// lives, and waiting for the end of it is waiting on a process this agent never started.
+    stderr: Arc<Mutex<String>>,
+    /// Sent once the server's stderr reaches its end, so the common case reads a complete
+    /// message rather than racing the reader thread for the last few bytes.
+    stderr_ended: Receiver<()>,
     interpreter: String,
 }
 
@@ -77,10 +88,22 @@ impl Server {
             .map_err(|err| io::Error::new(err.kind(), format!("starting {interpreter}: {err}")))?;
         let stdin = child.stdin.take().expect("stdin was piped");
         let mut pipe = child.stderr.take().expect("stderr was piped");
-        let stderr = thread::spawn(move || {
-            let mut text = String::new();
-            let _ = pipe.read_to_string(&mut text);
-            text
+        let stderr = Arc::new(Mutex::new(String::new()));
+        let (ended, stderr_ended) = mpsc::channel();
+        let sink = Arc::clone(&stderr);
+        thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            loop {
+                match pipe.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        if let Ok(mut text) = sink.lock() {
+                            text.push_str(&String::from_utf8_lossy(&buffer[..read]));
+                        }
+                    }
+                }
+            }
+            let _ = ended.send(());
         });
         let mut out = BufReader::new(child.stdout.take().expect("stdout was piped"));
         let (tx, frames) = mpsc::channel();
@@ -104,7 +127,8 @@ impl Server {
             child,
             stdin,
             frames,
-            stderr: Some(stderr),
+            stderr,
+            stderr_ended,
             interpreter: interpreter.to_string(),
         };
         match server.frame(Instant::now() + START_TIMEOUT) {
@@ -233,17 +257,22 @@ impl Server {
 
     /// Everything the server wrote to its own stderr, once it has ended.
     ///
-    /// The child is killed first, because the reader thread only ends when the pipe closes and
-    /// joining a live server's would wait for ever.
+    /// The child is killed first, so the pipe closes and what it wrote can be read whole.
+    ///
+    /// The wait for that end is bounded, and taking what has arrived is the answer when it
+    /// expires: anything the server started - a module's daemon, a `Popen` nobody waited on -
+    /// inherits that pipe and holds it open for as long as it lives, and a task already failing
+    /// must not also wait on a process this agent never started. Measured on a fake server whose
+    /// child outlives it by two minutes: the whole of that, before this bound existed.
     fn last_words(&mut self) -> Option<String> {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = self.stderr_ended.recv_timeout(LAST_WORDS_WAIT);
         let said = self
             .stderr
-            .take()
-            .and_then(|handle| handle.join().ok())
+            .lock()
+            .map(|text| excerpt(text.trim()))
             .unwrap_or_default();
-        let said = excerpt(said.trim());
         if said.is_empty() { None } else { Some(said) }
     }
 
@@ -1207,6 +1236,149 @@ mod tests {
         assert!(
             matches!(run, Run::Cancelled),
             "a cancel became something else"
+        );
+    }
+
+    /// An interpreter that starts, says nothing and ends is a start failure naming itself and
+    /// saying it said nothing, rather than an empty message an operator cannot act on.
+    ///
+    /// What would make this red: reading the absence of a ready frame as a server that is ready,
+    /// which sends the first task into a pipe nobody is reading.
+    #[test]
+    fn an_interpreter_that_says_nothing_at_all_says_that() {
+        let dir = tempdir();
+        let fake = program(dir.path(), "python3", "#!/bin/sh\nexit 0\n");
+        let err = Server::start(fake.to_str().unwrap(), Path::new("/nonexistent.zip")).unwrap_err();
+        assert!(err.to_string().contains(fake.to_str().unwrap()), "{err}");
+        assert!(err.to_string().contains("it said nothing"), "{err}");
+    }
+
+    /// A server that answers a request with anything but the pid of the child it forked fails the
+    /// task, and the table starts a fresh one for the next.
+    ///
+    /// What would make this red: taking whatever frame arrives as the child's pid. The agent
+    /// would then kill a process it was never told about on the next deadline - a pid it did not
+    /// choose, on a host it does not own - and read the real result as a `started` frame for the
+    /// task behind it, one task out of step for the rest of the batch.
+    #[test]
+    fn a_server_that_does_not_name_the_process_it_started_fails_the_task() {
+        let dir = tempdir();
+        let fake = program(
+            dir.path(),
+            "python3",
+            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nprintf '\\0\\0\\0\\012{\"oops\":1}'\nsleep 30\n",
+        );
+        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.failed());
+        assert!(
+            result.0["msg"]
+                .as_str()
+                .unwrap()
+                .contains("did not say which process it started"),
+            "{:?}",
+            result.0
+        );
+        assert!(!server.alive(), "a server that lost the thread is not kept");
+    }
+
+    /// A server that ends in the middle of a task fails that task and says it was the server.
+    ///
+    /// What would make this red: the read at the end of a closed pipe taken for an empty result,
+    /// which reports a module that never ran as a task that did nothing.
+    #[test]
+    fn a_server_that_ends_in_the_middle_of_a_task_fails_it() {
+        let dir = tempdir();
+        let fake = program(
+            dir.path(),
+            "python3",
+            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nexit 0\n",
+        );
+        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.failed());
+        assert!(
+            result.0["msg"].as_str().unwrap().contains("stopped"),
+            "{:?}",
+            result.0
+        );
+    }
+
+    /// A server that takes a request and never answers fails the task rather than holding the
+    /// batch behind it.
+    ///
+    /// Slow on purpose: the wait is the agent's reap allowance, and the point of the test is that
+    /// the allowance ends. What would make this red is removing the bound - the task, the batch
+    /// and the play would then wait for a frame that never comes, and only a `Cancel` would end
+    /// it.
+    #[test]
+    fn a_server_that_never_answers_fails_the_task_instead_of_waiting_for_ever() {
+        let asked = Instant::now();
+        let dir = tempdir();
+        let fake = program(
+            dir.path(),
+            "python3",
+            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nsleep 120\n",
+        );
+        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.failed());
+        assert!(
+            result.0["msg"].as_str().unwrap().contains("did not answer"),
+            "{:?}",
+            result.0
+        );
+        assert!(
+            !server.alive(),
+            "a server that stopped answering is not kept"
+        );
+        // Not a measurement of how fast anything is: the allowance is ten seconds and the fake
+        // sleeps for two minutes, so a ceiling between the two says only that the agent stopped
+        // waiting on its own terms rather than on the fake's.
+        assert!(
+            asked.elapsed() < Duration::from_secs(60),
+            "the agent waited on the server rather than on its own allowance"
+        );
+    }
+
+    /// A module cut off in the middle of its result fails the task carrying what arrived.
+    ///
+    /// What would make this red: a parser that takes the first complete value and ignores the
+    /// rest, or one that repairs what it is given. Half an object is not a result, and a module
+    /// killed by the out-of-memory killer mid-print leaves exactly this.
+    #[test]
+    fn a_module_that_writes_half_a_result_fails_the_task_carrying_it() {
+        let blob = stub_blob("\n    import sys\n    sys.stdout.write('{\"changed\": tr')\n");
+        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.failed());
+        assert!(
+            result.0["msg"]
+                .as_str()
+                .unwrap()
+                .contains("{\"changed\": tr"),
+            "{:?}",
+            result.0
         );
     }
 

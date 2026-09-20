@@ -470,6 +470,14 @@ pub fn documentation_table() -> String {
         "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
     );
     rows(LOCAL_MODULES, false, &mut out);
+    // A rule rather than a list. The names this section covers are every builtin minus the two
+    // tables above minus the ones an action plugin backs, and that last list lives in the
+    // controller crate: this crate is the one both the controller and the agent depend on, so it
+    // cannot read it. Naming seventy modules here and being wrong about twenty of them would be
+    // worse than saying what decides.
+    out.push_str(
+        "\n## On the warm Python path\n\nEverything else ansible-core ships is a Python module, and Volant runs it as one. The modules a run needs travel to the host together, once, in a single archive named by its own content. A Python server the agent keeps warm runs each of them in a fork of itself. The agent keeps the archive, so a host that already has it is sent nothing, and the interpreter comes from the list the agent reported when it started.\n\nWhich modules those are follows a rule rather than a list: every builtin in neither table above, except the ones the reference runs through an action plugin. Volant refuses those by name before the run reaches a host, because what the playbook asks for lives in the plugin and not in the module. `package` picks the host's package manager, and `template` renders the file on the controller before the task is sent. Sending the module on its own would run something else and call it a success.\n",
+    );
     out
 }
 
@@ -530,9 +538,12 @@ mod tests {
     ///
     /// `include_vars` is a controller-side module - it produces variables, and a result line with
     /// them - while `include_tasks` and `include_role` produce steps and never run as modules at
-    /// all. Told apart here because the pre-flight reads exactly this: a name in neither table is
-    /// refused as "not available in this release", which is what all three were before the
-    /// coordinator could splice.
+    /// all. Told apart here because the pre-flight reads exactly this, and what it says next
+    /// depends on which of them it is looking at: a name an action plugin backs is refused by
+    /// that name first of all, a builtin in neither table is answered with the sentence about
+    /// this release, and a name no collection has gets the reference's own words about a
+    /// misspelling. All three statements were refused outright before the coordinator could
+    /// splice, and none of them reaches any of those sentences now.
     ///
     /// What would make this red: `include_vars` left out of the controller-side table, which
     /// refuses a playbook this release now runs; or either statement added to it, which would

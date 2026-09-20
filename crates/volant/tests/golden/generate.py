@@ -83,7 +83,12 @@ def main() -> int:
         if outcome.get("skipped"):
             entry["skipped"] = True
         elif outcome.get("failed"):
-            entry["error"] = outcome.get("msg", "")
+            # The playbook is written into a fresh temporary directory, and a few of the
+            # reference's messages quote the file they came from. Left in, those lines carry a
+            # different random path on every run, so regenerating a tree that is already correct
+            # produces a diff and "regenerate and see nothing change" cannot be used as a check.
+            error = outcome.get("msg", "")
+            entry["error"] = error.replace(tmp, "<tmpdir>") if isinstance(error, str) else error
         else:
             entry["result"] = outcome.get("msg")
         results.append(entry)

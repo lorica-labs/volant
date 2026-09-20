@@ -188,40 +188,52 @@ mod tests {
     /// covers every spelling of the value it refuses, and the value that asks for what this
     /// release already does still runs.
     ///
+    /// `shell` answers for every value rather than for one, because the reference has no such
+    /// argument on `shell` at all and fails the task whatever it says.
+    ///
     /// What would make this red: nothing checking the rendered value, which prints `$HOME`,
     /// reports `changed` and exits 0 where the reference prints the home directory; or the
-    /// refusal firing on the name, which fails a task that ran identically under both engines.
+    /// refusal firing on `command`'s name, which fails a task that ran identically under both
+    /// engines.
     #[test]
     fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
         let args = |v: Value| v.as_object().unwrap().clone();
-        for spec in [&COMMAND, &SHELL] {
-            for refused in [json!(true), json!("true"), json!("YES"), json!(1)] {
-                assert_eq!(
-                    refused_argument(
-                        spec,
-                        &args(json!({"_raw_params": "/bin/echo $HOME", "expand_argument_vars": refused})),
-                    )
+        for refused in [json!(true), json!("true"), json!("YES"), json!(1)] {
+            assert_eq!(
+                refused_argument(
+                    &COMMAND,
+                    &args(
+                        json!({"_raw_params": "/bin/echo $HOME", "expand_argument_vars": refused})
+                    ),
+                )
+                .as_deref(),
+                Some(
+                    "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'. The host renders this value, so the check before the run could not read it."
+                ),
+                "{refused}"
+            );
+        }
+        for allowed in [json!(false), json!("no"), json!(0), json!("maybe")] {
+            assert_eq!(
+                refused_argument(
+                    &COMMAND,
+                    &args(json!({"expand_argument_vars": allowed.clone()})),
+                ),
+                None,
+                "{allowed}"
+            );
+        }
+        for any in [json!(true), json!(false), json!("no"), json!("maybe")] {
+            assert_eq!(
+                refused_argument(&SHELL, &args(json!({"expand_argument_vars": any.clone()})))
                     .as_deref(),
-                    Some(
-                        format!(
-                            "argument 'expand_argument_vars' is not supported yet with 'true' on '{}'. The host renders this value, so the check before the run could not read it.",
-                            spec.name
-                        )
-                        .as_str()
-                    ),
-                    "{refused}"
-                );
-            }
-            for allowed in [json!(false), json!("no"), json!(0), json!("maybe")] {
-                assert_eq!(
-                    refused_argument(
-                        spec,
-                        &args(json!({"expand_argument_vars": allowed.clone()})),
-                    ),
-                    None,
-                    "{allowed}"
-                );
-            }
+                Some(
+                    "argument 'expand_argument_vars' is not supported yet on 'shell'. The host renders this value, so the check before the run could not read it."
+                ),
+                "{any}"
+            );
+        }
+        for spec in [&COMMAND, &SHELL] {
             assert_eq!(
                 refused_argument(spec, &args(json!({"_raw_params": "x", "chdir": "/tmp"}))),
                 None,

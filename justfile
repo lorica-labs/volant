@@ -17,7 +17,11 @@ setup:
 insta-accept:
     cargo insta accept --workspace
 
-# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION)
+# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION).
+# Reproducible: running this on a correct tree leaves the three recordings byte for byte as they
+# were, so an empty diff afterwards is a check and not a coincidence. That holds because the
+# generator replaces the temporary directory it writes the play into with a fixed name; without
+# that, two of the reference's messages quote the path they came from and every run differed.
 golden:
     "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py
 

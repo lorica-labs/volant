@@ -6782,6 +6782,12 @@ fn no_log_covers_the_environment_warning() {
 /// where it is. `volant_within` stays around it as the net against a hang: without it a regression
 /// that never returns would sit until the harness's own slow-test timeout.
 ///
+/// Three seconds around a one-second deadline, not two: the rest of the budget is starting a
+/// debug-built controller, reading the inventory and spawning the local agent, and on a loaded
+/// runner that alone has no trouble taking a second. The regression this catches waits for the
+/// descendant, which holds the run for the five seconds its `sleep` asks for, so the extra
+/// second is taken out of slack rather than out of what the assertion discriminates.
+///
 /// What would make this red: waiting for the reader threads outside the deadline, which is what
 /// the wait did -- the task ended when the descendant did, and the run reported success.
 #[test]
@@ -6804,7 +6810,7 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
         "the task did not report the reference's timeout text:\n{stdout}"
     );
     assert!(
-        elapsed < std::time::Duration::from_millis(2000),
+        elapsed < std::time::Duration::from_millis(3000),
         "the run took {elapsed:?}: the deadline did not reach the readers"
     );
 }
@@ -6884,6 +6890,43 @@ fn asking_for_the_expansion_this_release_does_not_do_runs() {
     assert!(
         stdout.contains(r#""msg": "printed=$HOME""#),
         "the argument the task asked for is not what the program was given:\n{stdout}"
+    );
+}
+
+/// The default of that same argument is where the two engines part, and no playbook writes it.
+/// Ansible expands `$VAR` in a `command`'s arguments unless it is told not to; this release
+/// expands nothing, so `command: mkdir -p $HOME/releases` makes a directory called `$HOME` and
+/// reports the same success. That divergence is published in `docs/src/modules.md` rather than
+/// refused, because the pre-flight reads the text of a playbook and the text cannot say whether
+/// a `$` names something the host has set: `awk '{print $1}'` and a regular expression ending in
+/// `$` run identically under both engines, and refusing on the character would stop them before
+/// the first connection. This test is what pins the documented answer to the running one.
+///
+/// The probe variable rather than `$HOME`: it is set for this run alone, so the expanded form
+/// and the literal form are two strings this assertion can tell apart on any machine.
+///
+/// The `shell` half is the parity half, and it is here so that one test says where the boundary
+/// is. The line goes to a shell, the shell expands it, and both engines print the value.
+///
+/// What would make this red: the `command` path gaining expansion, which would make the page
+/// wrong; or the `shell` path losing it, which would diverge from the reference in the other
+/// direction and break every playbook that uses a shell variable.
+#[test]
+fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
+    let out = volant_within_env(
+        &[
+            "playbook",
+            &fixture("module-argument-expansion-default.yml"),
+        ],
+        DEFAULT_DEADLINE,
+        &[("VOLANT_EXPANSION_PROBE", "expanded")],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}{stdout}");
+    assert!(
+        stdout.contains(r#""msg": "command=$VOLANT_EXPANSION_PROBE shell=expanded""#),
+        "the default did something other than what the module page publishes:\n{stdout}"
     );
 }
 

@@ -48,6 +48,7 @@ The host needs an sshd and an account you can log into. It needs no Python and n
 
 ```sh
 printf 'web1 ansible_host=192.0.2.10 ansible_user=deploy ansible_ssh_private_key_file=/home/you/.ssh/id_ed25519\n' > inventory.ini
+printf -- '- hosts: web1\n  gather_facts: false\n  tasks:\n    - command: id -un\n' > site.yml
 ./volant playbook -i inventory.ini site.yml
 ```
 

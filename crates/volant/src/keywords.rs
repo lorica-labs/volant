@@ -195,10 +195,10 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 
 /// Play keywords, alphabetical, as `Play.fattributes` lists them.
 ///
-/// `gather_facts` is partial: a play that asks for facts is warned before its first task that
-/// none are gathered (`executor::run_play`), and a play that writes `false` is accepted in
-/// silence. None are gathered either way, so a playbook that reads an `ansible_*` fact does not
-/// get what the reference would have given it. `strategy`
+/// `gather_facts` runs: a play that asks for facts opens with the reference's own `setup`
+/// module, built on the controller and run on the host through the payload path, and what it
+/// returns lands under `ansible_facts` and flat, as the host's own words. `gather_subset` and
+/// `gather_timeout` stay refused, so the full set is what a play gets. `strategy`
 /// counts as `Runs`: `linear` is what the engine does, and any other strategy is refused by its
 /// own name.
 ///
@@ -231,12 +231,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("environment", Runs),
     kw("fact_path", Preflight),
     kw("force_handlers", Runs),
-    partial_kw(
-        "gather_facts",
-        "`true`, the default, is warned about before the first task and `false` is accepted in \
-         silence; no facts are gathered either way, so `ansible_*` facts are absent whichever \
-         value is written",
-    ),
+    kw("gather_facts", Runs),
     kw("gather_subset", Preflight),
     kw("gather_timeout", Preflight),
     kw("handlers", Runs),

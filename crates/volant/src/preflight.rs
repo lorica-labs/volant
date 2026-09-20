@@ -424,17 +424,19 @@ mod tests {
         assert!(check(&pb).is_ok(), "an implemented module passes");
     }
 
-    /// A module whose only product is facts is still refused before the first connection, and the
-    /// pre-flight reads that from `python::is_python_module` rather than deciding it again.
+    /// A module whose only product is facts reaches a host now, and the pre-flight reads that
+    /// from `python::is_python_module` rather than deciding it again.
     ///
-    /// What would make this red: the payload path admitting them. Nothing merges a result's
-    /// `ansible_facts` into the variable store, so `setup` would report `ok` on every host and
-    /// the next task reading `ansible_facts.*` would fail on an undefined variable - a run the
-    /// pre-flight accepted, broken halfway through, which is the family this pre-flight exists to
-    /// close. Red the other way if the two expressions drift: a name held back in
-    /// `is_python_module` and still admitted here fails per host for want of a payload instead.
+    /// They were held back while nothing merged a result's `ansible_facts` into the variable
+    /// store: `setup` would have reported `ok` on every host and left the next task reading
+    /// `ansible_facts.*` undefined - a run the pre-flight accepted, broken halfway through.
+    ///
+    /// What would make this red: the two expressions drifting. A name `is_python_module` holds
+    /// back and this arm still admits fails per host for want of a payload, which is a startup
+    /// refusal turned into a failure on every host; a name this arm refuses and
+    /// `is_python_module` admits is a module the run builds a payload nobody asks for.
     #[test]
-    fn a_module_that_only_gathers_facts_is_still_refused() {
+    fn a_module_that_only_gathers_facts_reaches_its_host() {
         for module in [
             "setup",
             "package_facts",
@@ -443,18 +445,15 @@ mod tests {
             "getent",
         ] {
             assert!(
-                !crate::python::is_python_module(module),
-                "{module} has no payload path while its facts are dropped"
+                crate::python::is_python_module(module),
+                "{module} runs through the payload path now that its facts are merged"
             );
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: a=b\n"
-            ));
-            assert!(
-                text.contains(&format!(
-                    "module '{module}' is not available in this release"
-                )),
-                "{text}"
-            );
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Later\n      {module}: a=b\n"),
+                "x.yml",
+            )
+            .unwrap();
+            assert!(check(&pb).is_ok(), "{module} is admitted by the pre-flight");
         }
     }
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- *(executor)* gather facts with the reference's setup module. A play that does not write `gather_facts: false` now needs ansible-core on the controller, and is refused before the first connection without it.
+
 ## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) - 2026-09-20
 
 ### Added

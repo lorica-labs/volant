@@ -1180,6 +1180,32 @@ pub(super) fn record_registered(
     }
 }
 
+/// Writes the `ansible_facts` of a batch's results for every host the batch writes for.
+///
+/// **The one place a result's facts become variables**, beside [`record_registered`] and for the
+/// same reason: a second road in is a road that writes them the trusted way. It is asked of every
+/// remote result and not of `setup` alone, because that is where the facts are - `package_facts`,
+/// `getent` and a module returning `ansible_facts` of its own all answer in the same field.
+///
+/// Not asked of a controller-side result. `set_fact` and `include_vars` write their own facts as
+/// they run, and they alone know which of them a host wrote and which the playbook did: rewriting
+/// them here would give an author's `set_fact` a managed host's trust and lose the one distinction
+/// `run_local` exists to keep.
+pub(super) fn record_facts(
+    vars: &mut VarStore,
+    targets: &[String],
+    results: &[(Option<Value>, TaskResult)],
+) {
+    for (_, result) in results {
+        let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
+            continue;
+        };
+        for target in targets {
+            vars.gather_facts(target, facts);
+        }
+    }
+}
+
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
     if task.runs_once() && !live.is_empty() {
         live.to_vec()
@@ -2194,5 +2220,96 @@ mod tests {
         );
         render(&mut store).expect("an author-side template renders");
         assert!(author.exists(), "the lookup itself does nothing here");
+    }
+
+    /// Gathered facts are untrusted, and they land under `ansible_facts` as well as flat.
+    ///
+    /// What would make this red: facts entered through `set_fact`, which trusts a managed
+    /// host's own words; or only the flat names written, which breaks
+    /// `ansible_facts['hostname']` - measurement 10 of plan 1.5, where `gather_facts: true`
+    /// followed by a `set_fact` of the same name leaves both readable: the flat name is masked
+    /// and the entry under `ansible_facts` is not.
+    #[test]
+    fn gathered_facts_are_untrusted_and_land_under_both_names() {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut store = one_host_store();
+        let render = |store: &mut VarStore, text: &str| {
+            let vars = HostVars {
+                map: store.for_host("h1", &crate::vars::Scope::default()),
+                untrusted: store.untrusted_of("h1"),
+                untrusted_hosts: store.untrusted_hosts(),
+                ..HostVars::default()
+            };
+            templar
+                .render(text, crate::template::Vars::from(&vars))
+                .expect("a gathered fact reads")
+        };
+        let result = TaskResult(vars(json!({
+            "ansible_facts": {"hostname": "probe-hostname", "distribution": "Ubuntu"},
+            "changed": false,
+        })));
+        record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+        // Read through a real render rather than off the store, because reading is what a
+        // playbook does with a fact: a name written somewhere `for_host` does not merge is a
+        // fact nothing can use.
+        assert_eq!(
+            render(&mut store, "{{ ansible_hostname }}"),
+            "probe-hostname"
+        );
+        assert_eq!(
+            render(&mut store, "{{ ansible_facts['distribution'] }}"),
+            "Ubuntu"
+        );
+        for name in ["ansible_hostname", "ansible_facts"] {
+            assert!(
+                store.untrusted_of("h1").contains(name),
+                "{name} carries a managed host's own words"
+            );
+        }
+        store.set_fact("h1", "ansible_hostname", json!("SHADOWED"));
+        assert_eq!(
+            render(
+                &mut store,
+                "{{ ansible_hostname }} / {{ ansible_facts.hostname }}"
+            ),
+            "SHADOWED / probe-hostname"
+        );
+    }
+
+    /// A template inside a gathered fact is text, the way one inside a `register` already is.
+    ///
+    /// Unix only, for the reason the test above it gives: the lookup is a `touch`.
+    ///
+    /// What would make this red: the harvest writing through `set_fact`. `untrusted_of` above
+    /// names the mechanism; this names what the mechanism is for, and there is nothing under a
+    /// missed site since the unconditional "a `set_fact` is data" rule was dropped.
+    #[cfg(unix)]
+    #[test]
+    fn a_template_in_a_gathered_fact_is_never_rendered() {
+        let dir = std::env::temp_dir().join(format!("volant-gathered-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let marker = dir.join("gathered-marker");
+        let _ = std::fs::remove_file(&marker);
+        let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
+        let mut store = one_host_store();
+        let result = TaskResult(vars(json!({ "ansible_facts": { "hostname": text } })));
+        record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+        let templar = Templar::new(PathBuf::from("."));
+        let vars = HostVars {
+            map: store.for_host("h1", &crate::vars::Scope::default()),
+            untrusted: store.untrusted_of("h1"),
+            untrusted_hosts: store.untrusted_hosts(),
+            ..HostVars::default()
+        };
+        assert_eq!(
+            templar
+                .render(
+                    "{{ ansible_facts.hostname }}",
+                    crate::template::Vars::from(&vars)
+                )
+                .expect("the value renders as the text it is"),
+            text
+        );
+        assert!(!marker.exists(), "a gathered fact was rendered");
     }
 }

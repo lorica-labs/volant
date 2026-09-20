@@ -211,9 +211,8 @@ at load time.
 
 - Collections. Roles load from the standard search paths; a collection does not.
 - Python modules: only the [native modules](modules.md) run.
-- Facts. `gather_facts` is accepted and warns; no `ansible_*` fact is ever defined, other than
-  `ansible_failed_task` and `ansible_failed_result`, which a `rescue` sets on the host that
-  failed (see [Variables](variables.md)).
+- `gather_subset` and `gather_timeout`: refused by name. A play that gathers facts gets the
+  full set (see [Variables](variables.md#facts)).
 - `local_action`: refused by name. `delegate_to: localhost` does the same job and runs.
 - `become_method` other than `sudo`; `ansible_become_flags` and `become_exe`.
 - SSH passwords (`-k`, `ansible_password`).

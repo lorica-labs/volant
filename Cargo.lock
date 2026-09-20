@@ -659,6 +659,7 @@ dependencies = [
  "anstream",
  "anstyle",
  "anyhow",
+ "blake3",
  "clap",
  "insta",
  "minijinja",

@@ -45,6 +45,12 @@ pub struct ModuleFacts {
 /// One union zip and the facts of every module merged into it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Union {
+    /// Lowercase hex blake3 of the **decoded** zip, which is what names the blob on the wire
+    /// and on the host. The agent hashes the bytes it decoded and refuses a blob whose name
+    /// they do not match, so hashing anything else here - the base64 text is the easy mistake,
+    /// being the same length of hex - leaves the two sides unable to agree on what a blob is
+    /// called, and every run re-uploads a payload the host already holds.
+    pub hash: String,
     /// The zip, base64 exactly as ansible-core produced its parts: the wrapper carries
     /// `zip_data` already encoded, so re-encoding raw bytes for the frame would decode and
     /// encode the same 631 KB for nothing.
@@ -52,6 +58,38 @@ pub struct Union {
     /// Keyed by the short module name, as `short_name` reads it, whatever spelling the playbook
     /// used: `ping` and `ansible.builtin.ping` are one entry.
     pub modules: BTreeMap<String, ModuleFacts>,
+}
+
+/// What a task needs of a payload before it knows which host it is going to.
+///
+/// A payload has two halves with two different lifetimes. This is the module's: the blob that
+/// carries it and the facts ansible-core reported building it, all of them identical on every
+/// host. The other half is the interpreter, which is the host's own and is not known until its
+/// agent has said what it has.
+///
+/// They are kept apart rather than kept together and filled in later, so that a payload with no
+/// interpreter in it cannot exist: the wire `PythonPayload` is only ever built where the chosen
+/// interpreter is in hand, and a module run under an interpreter nobody chose is the failure
+/// this whole path is built to avoid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModulePayload {
+    /// The union blob that holds this module, by its hash.
+    pub blob: String,
+    pub facts: ModuleFacts,
+}
+
+impl ModulePayload {
+    /// The payload as the agent receives it, under the interpreter chosen for its host.
+    pub fn under(&self, interpreter: &str) -> volant_protocol::PythonPayload {
+        volant_protocol::PythonPayload {
+            blob: self.blob.clone(),
+            module_fqn: self.facts.module_fqn.clone(),
+            profile: self.facts.profile.clone(),
+            rlimit_nofile: self.facts.rlimit_nofile,
+            extensions: self.facts.extensions.clone(),
+            interpreter: interpreter.to_string(),
+        }
+    }
 }
 
 /// The interpreters to try, in the order they are tried.
@@ -178,6 +216,11 @@ fn exchange<W: Write, R: Read>(mut to: W, from: R, modules: &[String]) -> anyhow
     if zip_b64.is_empty() {
         bail!("the python helper answered an empty blob; no module payload was built");
     }
+    // Hashed here rather than where it is sent, so the name and the bytes are settled in one
+    // place and by one decode.
+    let zip =
+        decode_b64(&zip_b64).map_err(|err| anyhow::anyhow!("the python helper's blob {err}"))?;
+    let hash = blake3::hash(&zip).to_hex().to_string();
     let mut facts = BTreeMap::new();
     let built = answer
         .get("modules")
@@ -198,9 +241,72 @@ fn exchange<W: Write, R: Read>(mut to: W, from: R, modules: &[String]) -> anyhow
         }
     }
     Ok(Union {
+        hash,
         zip_b64,
         modules: facts,
     })
+}
+
+/// Base64, the twenty lines of it this decode needs.
+///
+/// The controller decodes the blob exactly once, to name it. A crate for that one decode would
+/// be a dependency the whole controller carries for a single call, which is the same trade the
+/// agent made on its own side of this wire. Line breaks are skipped and a wrapped encoding
+/// decodes; anything else is refused with the offset that broke it, because a blob half-decoded
+/// into bytes that happen to hash to something is a name no operator could check.
+///
+/// **The agent holds the twin of this function**, `decode_b64` in
+/// `crates/volant-agent/src/blobs.rs`, and the two must produce the same bytes for the same
+/// text. The controller names the blob by hashing what this returns and the agent decides it
+/// holds that blob by hashing what its own returns, so a text the two read differently gives one
+/// payload two names: `has_blob` answers no for ever, every batch re-uploads the blob, and the
+/// payload is finally refused as corrupt while being perfectly valid. Neither copy is free to be
+/// tightened alone, and `SHARED_VECTOR` in the tests below is the text both sides are pinned to.
+fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    let mut padded = false;
+    for (index, &byte) in text.as_bytes().iter().enumerate() {
+        match byte {
+            b'\n' | b'\r' => continue,
+            b'=' => {
+                padded = true;
+                continue;
+            }
+            _ if padded => {
+                return Err(format!(
+                    "is not base64: a character after padding at {index}"
+                ));
+            }
+            _ => {}
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(format!("is not base64: an invalid character at {index}")),
+        };
+        acc = (acc << 6) | u32::from(value);
+        bits += 6;
+        if bits == 24 {
+            out.extend_from_slice(&[(acc >> 16) as u8, (acc >> 8) as u8, acc as u8]);
+            acc = 0;
+            bits = 0;
+        }
+    }
+    match bits {
+        0 => {}
+        12 => out.push((acc >> 4) as u8),
+        18 => {
+            out.push((acc >> 10) as u8);
+            out.push((acc >> 2) as u8);
+        }
+        _ => return Err("is not base64: it ends in the middle of a byte".to_string()),
+    }
+    Ok(out)
 }
 
 fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFacts> {
@@ -379,6 +485,74 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("empty"), "{err}");
+    }
+
+    /// The blob is named by the hash of the zip's own bytes, which is the name the agent
+    /// computes for the same blob when it decides whether it already holds it.
+    ///
+    /// What would make this red: hashing the base64 text instead of what it encodes. Both are
+    /// 64 hex characters and both look like a working cache key, and the two sides would then
+    /// never agree on what a blob is called: every run would upload a payload the agent already
+    /// has, and no `has_blob` would ever answer yes. The vector is the agent's own,
+    /// `UEsDBA==` for `PK\x03\x04`.
+    #[test]
+    fn the_blob_is_named_by_the_hash_of_the_zip_not_of_its_base64() {
+        let answer = br#"{"zip_b64": "UEsDBA==", "modules": {"ping": {"module_fqn":
+            "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
+            "extensions": {}}}}"#;
+        let union = exchange(Vec::new(), framed(answer), &["ping".to_string()]).unwrap();
+        assert_eq!(
+            union.hash,
+            blake3::hash(SHARED_VECTOR.1).to_hex().to_string()
+        );
+        assert_ne!(
+            union.hash,
+            blake3::hash(SHARED_VECTOR.0.as_bytes())
+                .to_hex()
+                .to_string()
+        );
+        // The shape the agent refuses a name by before it will look for a file under it.
+        assert_eq!(union.hash.len(), 64, "{}", union.hash);
+        assert!(
+            union
+                .hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{}",
+            union.hash
+        );
+    }
+
+    /// The text this decoder and the agent's are both pinned to, with the bytes it stands
+    /// for: the four a zip starts with. The agent's own tests hold its copy to the same
+    /// pair, so the two are tied to known bytes rather than to each other's behaviour.
+    const SHARED_VECTOR: (&str, &[u8]) = ("UEsDBA==", b"PK\x03\x04");
+
+    /// The decoder itself, over every padding the encoding has. What would make this red: a
+    /// copy of it that loses the last byte or two of a blob, which hashes to a name the agent
+    /// will refuse the payload under - after the whole 631 KB has been sent.
+    #[test]
+    fn the_decoder_reads_every_padding() {
+        assert_eq!(decode_b64(SHARED_VECTOR.0).unwrap(), SHARED_VECTOR.1);
+        assert_eq!(decode_b64("YQ==").unwrap(), b"a");
+        assert_eq!(decode_b64("YWI=").unwrap(), b"ab");
+        assert_eq!(decode_b64("YWJj").unwrap(), b"abc");
+        assert_eq!(decode_b64("YWJj\nZGVm").unwrap(), b"abcdef");
+        assert!(decode_b64("").unwrap().is_empty());
+        assert!(decode_b64("A").is_err(), "a lone character is half a byte");
+    }
+
+    /// A blob that is not base64 is refused on the controller, naming where it broke.
+    ///
+    /// What would make this red: decoding what decodes and dropping the rest, which names the
+    /// blob by the hash of bytes that are not the zip the agent will be sent.
+    #[test]
+    fn a_blob_that_is_not_base64_is_refused() {
+        let answer = br#"{"zip_b64": "UEsD!BA==", "modules": {}}"#;
+        let err = exchange(Vec::new(), framed(answer), &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("base64"), "{err}");
     }
 
     /// A truncated set of facts is an error rather than a default. What would make this red:

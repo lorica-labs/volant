@@ -26,7 +26,7 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Retry, conditional_error, fact_targets, failed_task_value, finish, notify, protocol_task,
-    registered_value, retry_plan, reuse_or_connect, run_agent_batch, run_local, until_holds,
+    record_registered, retry_plan, reuse_or_connect, run_agent_batch, run_local, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -608,13 +608,12 @@ pub(super) async fn drive_host(
                         None,
                     )
                     .await;
-                    if let Some(reg) = &task.register {
-                        let mut vars = store.lock().expect("vars lock");
-                        let value = registered_value(task, &results);
-                        for target in &register_hosts {
-                            vars.set_untrusted_fact(target, reg, value.clone());
-                        }
-                    }
+                    record_registered(
+                        &mut store.lock().expect("vars lock"),
+                        task,
+                        &register_hosts,
+                        &results,
+                    );
                     let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
@@ -715,13 +714,12 @@ pub(super) async fn drive_host(
                         labels.push(item.label.clone());
                         lefts.push(mine);
                     }
-                    if let Some(reg) = &task.register {
-                        let mut vars = store.lock().expect("vars lock");
-                        let value = registered_value(task, &results);
-                        for target in &register_hosts {
-                            vars.set_untrusted_fact(target, reg, value.clone());
-                        }
-                    }
+                    record_registered(
+                        &mut store.lock().expect("vars lock"),
+                        task,
+                        &register_hosts,
+                        &results,
+                    );
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
                     // body from `-v` on, measured: the dump is what puts the body on the line,
@@ -753,7 +751,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Remote(items, escalation, delegate)) => {
+                Ok(Prepared::Remote(items, escalation, delegate, _payload)) => {
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -981,7 +979,8 @@ pub(super) async fn drive_host(
                             link,
                             &name,
                             batch_id,
-                            vec![protocol_task(task, item)],
+                            vec![protocol_task(task, item, None)],
+                            None,
                             &mut driver.stop,
                             &mut driver.stop_broken,
                             &mut logs,
@@ -1038,7 +1037,7 @@ pub(super) async fn drive_host(
                         if item.skipped.is_some() {
                             continue;
                         }
-                        tasks.push(protocol_task(task, item));
+                        tasks.push(protocol_task(task, item, None));
                         origin.push((bi, ii));
                     }
                 }
@@ -1047,6 +1046,7 @@ pub(super) async fn drive_host(
                     &name,
                     batch_id,
                     tasks,
+                    None,
                     &mut driver.stop,
                     &mut driver.stop_broken,
                     &mut logs,
@@ -1101,14 +1101,13 @@ pub(super) async fn drive_host(
                 if !reached && results.is_empty() {
                     break;
                 }
-                if let Some(reg) = &task.register {
-                    let live = driver.progress.borrow().live_hosts.clone();
-                    let mut vars = store.lock().expect("vars lock");
-                    let value = registered_value(task, &results);
-                    for target in fact_targets(task, &name, &live) {
-                        vars.set_untrusted_fact(&target, reg, value.clone());
-                    }
-                }
+                let live = driver.progress.borrow().live_hosts.clone();
+                record_registered(
+                    &mut store.lock().expect("vars lock"),
+                    task,
+                    &fact_targets(task, &name, &live),
+                    &results,
+                );
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
                 let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
                 let retried_names: &[String] = if bi == 0 { &names } else { &[] };

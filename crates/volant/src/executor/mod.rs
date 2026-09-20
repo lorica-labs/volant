@@ -27,7 +27,7 @@ use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::stats::Stats;
 use crate::template::{Templar, Vars};
-use crate::transport::ConnectionDefaults;
+use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::{Scope, VarStore, load_vars_file};
 
 use coordinator::run_batch;
@@ -57,11 +57,15 @@ pub struct RunOptions {
 }
 
 /// Which agent a kept connection belongs to. The escalated user is part of the identity
-/// because two connections to one host under two users are two different agents.
+/// because two connections to one host under two users are two different agents, and so is the
+/// transport: connection settings are ordinary variables, so two tasks of one host can resolve
+/// different addresses, ports, users or keys, and a link reused across that difference would
+/// send a task to the wrong machine.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LinkKey {
     pub host: String,
     pub become_user: Option<String>,
+    pub transport: Transport,
 }
 
 /// What outlives a play: the templar, the variable store hosts write into, the hosts that
@@ -108,13 +112,12 @@ pub struct PlayEnd {
 /// filtered list instead merges two batches into one whenever an earlier play lost a host.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the play's whole context: nine values with no natural grouping until the controller is split"
+    reason = "the play's whole context: eight values with no natural grouping until the controller is split"
 )]
 pub async fn run_play(
     play: &Play,
     compiled: &Compiled,
     hosts: Vec<Host>,
-    inventory: Arc<HashMap<String, Host>>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -187,7 +190,6 @@ pub async fn run_play(
             &live,
             &all,
             &vars_files,
-            Arc::clone(&inventory),
             agents,
             options,
             state,

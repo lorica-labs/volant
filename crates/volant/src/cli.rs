@@ -227,15 +227,6 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .clone()
         .unwrap_or(config.become_method.clone());
     let all_hosts = inventory.resolve("all").hosts;
-    // Every host by name, for `delegate_to` to look one up in. The whole inventory and not the
-    // play's own hosts: measured on ansible-core 2.19.12, a play over h1 and h2 delegates to an
-    // h3 that is in the inventory and not in the play, and h3 stays out of the recap.
-    let inventory_hosts: Arc<HashMap<String, Host>> = Arc::new(
-        all_hosts
-            .iter()
-            .map(|h| (h.name.clone(), h.clone()))
-            .collect(),
-    );
     let escalates = args.r#become
         || config.r#become
         || playbooks
@@ -312,6 +303,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let playbook_dir = playbook::base_dir(&args.playbooks[0]);
     let cwd = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
+    // Kept for the local-agent check below, which runs before any host has an effective view
+    // and would otherwise read `ansible_connection` from the inventory alone.
+    let extra_for_check = extra.clone();
     let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
     store.set_forks(forks);
     let mut state = RunState {
@@ -325,6 +319,25 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // A controller with no local agent can still drive remote hosts, so the local agent only
     // has to be there once a play actually targets a host that runs one here. Saying so before
     // that play starts beats one `UNREACHABLE` per local host.
+    //
+    // The view this reads is the inventory's own variables under the run's extra variables, and
+    // no more: a play's `vars:`, a `group_vars` file and a `set_fact` all reach a host's
+    // connection later than this. A host those make local is checked when its link opens
+    // instead, so this is an early word rather than a guarantee.
+    let is_local = |host: &Host| {
+        let mut vars: serde_json::Map<String, serde_json::Value> = host
+            .vars
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (key, value) in &extra_for_check {
+            vars.insert(key.clone(), value.clone());
+        }
+        matches!(
+            Transport::for_vars(&host.name, &vars, &options.defaults),
+            Ok(Transport::Local)
+        )
+    };
     let mut local_agent_checked = false;
     let mut current_dir = playbook_dir;
     // Set when a batch ended the run by losing every live host it had. The recap still prints,
@@ -349,27 +362,12 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
                     current_dir.clone_from(&play.dir);
                 }
                 let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
-                if !local_agent_checked
-                    && hosts.iter().any(|h| {
-                        matches!(
-                            Transport::for_host(h, &options.defaults),
-                            Ok(Transport::Local)
-                        )
-                    })
-                {
+                if !local_agent_checked && hosts.iter().any(&is_local) {
                     agents.local()?;
                     local_agent_checked = true;
                 }
                 let end = executor::run_play(
-                    play,
-                    compiled,
-                    hosts,
-                    Arc::clone(&inventory_hosts),
-                    &agents,
-                    &options,
-                    &mut state,
-                    out,
-                    &mut stats,
+                    play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
                 // A batch that lost every live host it had ends the whole run, measured: no

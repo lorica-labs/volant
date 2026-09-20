@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: On the connection the inventory gave
+      command: /bin/true
+    - name: On the connection this task asked for
+      command: /bin/true
+      vars:
+        ansible_connection: ssh
+        ansible_host: 192.0.2.1

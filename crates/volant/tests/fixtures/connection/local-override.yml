@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: A task that only runs where the connection took it
+      command: /bin/true

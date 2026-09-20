@@ -311,7 +311,21 @@ impl VarStore {
     /// The inventory-wide magic variables are not in this map: `shared_values` builds them, and
     /// a template reads them from there first, which is the place in the order they had here.
     pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
-        let mut vars = scope.role_defaults.clone();
+        let mut vars = Map::new();
+        // A name the inventory never carried is an implicit `localhost`, which connects locally.
+        // It sits under everything else on purpose: an inventory entry of that name arrives with
+        // `host_base` just below, and an extra var or a play's `vars:` speaks over it the way it
+        // does on any other host. Measured on ansible-core 2.19.12 through `delegate_to:
+        // localhost` with no `localhost` in the inventory, which runs on the controller.
+        if !self.inventory_vars.contains_key(host)
+            && matches!(host, "localhost" | "127.0.0.1" | "::1")
+        {
+            vars.insert(
+                "ansible_connection".into(),
+                Value::String("local".to_string()),
+            );
+        }
+        extend(&mut vars, &scope.role_defaults);
         extend(&mut vars, &self.host_base(host));
         extend(&mut vars, &scope.play_vars);
         for file in &scope.vars_files {

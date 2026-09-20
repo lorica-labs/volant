@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, TaskResult};
@@ -17,7 +17,7 @@ use crate::compile::{
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::template::{Templar, TemplateError};
-use crate::transport::{ConnectError, Escalation};
+use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::VarStore;
 
 use super::coordinator::{Event, Progress, escalated_links};
@@ -263,7 +263,10 @@ pub(super) async fn drive_host(
         // keyed by. One batch is one link, so a second delegate ends the batch like a second
         // target user does.
         let mut batch_delegate: Option<String> = None;
-        let mut batch_target: Option<Host> = None;
+        // The delegate's own effective variables, which its connection is built from. The
+        // task's own host needs no equivalent: every item of the batch's first task carries its
+        // variables already.
+        let mut batch_target: Option<Map<String, Value>> = None;
         // Set when the batch's one task retries. A retried task is alone in its batch, so this
         // says how the whole batch runs: item by item, attempt by attempt, rather than in one
         // trip to the agent.
@@ -726,7 +729,7 @@ pub(super) async fn drive_host(
                     // delegate is a different host entirely, so either one ends the batch and
                     // the next one opens its own link. `pos` does not move, so this task is the
                     // first of that batch.
-                    let delegate_name = delegate.as_ref().map(|d| d.name.clone());
+                    let delegate_name = delegate.as_ref().map(|(name, _)| name.clone());
                     if !batch.is_empty()
                         && (escalation != batch_escalation || delegate_name != batch_delegate)
                     {
@@ -747,7 +750,7 @@ pub(super) async fn drive_host(
                     }
                     batch_escalation = escalation;
                     batch_delegate = delegate_name;
-                    batch_target = delegate;
+                    batch_target = delegate.map(|(_, vars)| vars);
                     batch_retry = retry;
                     // A looping task ends the batch because its items travel with
                     // `ignore_errors` set, so the agent runs all of them the way Ansible does.
@@ -800,17 +803,30 @@ pub(super) async fn drive_host(
             // The delegate's own connection, never the delegating host's. Measured on
             // ansible-core 2.19.12: a task delegated away from a host that answers nothing runs
             // perfectly well, so the delegating host's link is not opened for it at all.
-            let target = batch_target.as_ref().unwrap_or(&host);
+            let target = batch_delegate.clone().unwrap_or_else(|| name.clone());
+            // The variables the connection is built from, read again for this batch rather than
+            // taken from the inventory: a `set_fact`, an extra var, a `group_vars` file and the
+            // task's own `vars:` all decide where it goes. A batch always holds at least one
+            // task, and a task with no item at all is reported as skipped well before here, so
+            // the first item of the first task is the batch's own view of its host.
+            let target_vars = batch_target.as_ref().unwrap_or(&batch[0].1[0].vars.map);
+            let transport = match Transport::for_vars(&target, target_vars, &options.defaults) {
+                Ok(transport) => transport,
+                Err(err) => {
+                    unreachable = Some(format!("{err:#}"));
+                    break 'run;
+                }
+            };
             let key = LinkKey {
-                host: target.name.clone(),
+                host: target,
                 become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
+                transport,
             };
             let link = match reuse_or_connect(
                 &mut links,
                 &mut checked,
                 &key,
                 batch_escalation.as_ref(),
-                target,
                 &agents,
                 &options,
             )

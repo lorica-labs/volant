@@ -55,15 +55,20 @@ fn watch_head_and_branch_ref() {
     let Ok(head) = fs::read_to_string(&head_path) else {
         return;
     };
-    let Some(branch_ref) = head.trim_end().strip_prefix("ref: ") else {
+    if !head.trim_end().starts_with("ref: ") {
         return; // Detached HEAD: the commit hash is in HEAD itself, already watched above.
-    };
+    }
 
     let common_dir = resolve_common_dir(&git_dir);
 
-    // Watching the directory (not just the one ref file) also catches the ref appearing
-    // there for the first time, e.g. a fast-forward on a branch `git gc` had packed away.
-    let refs_heads = common_dir.join(Path::new(branch_ref).parent().unwrap_or(Path::new("refs")));
+    // `refs/heads` itself, never the branch's own subdirectory. Watching the directory rather
+    // than the one ref file catches the ref appearing for the first time, e.g. a fast-forward
+    // on a branch `git gc` had packed away - but `git pack-refs` deletes the loose files *and*
+    // prunes the subdirectories that held them, keeping only `refs/heads`. Watching
+    // `refs/heads/<prefix>` for a branch named `<prefix>/<name>` therefore watches a path that
+    // packing removed, and this repository's branches all carry a prefix. Cargo walks the
+    // subtree, so a nested ref still counts.
+    let refs_heads = common_dir.join("refs/heads");
     if refs_heads.is_dir() {
         println!("cargo:rerun-if-changed={}", refs_heads.display());
     }

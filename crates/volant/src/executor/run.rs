@@ -2326,6 +2326,7 @@ mod tests {
     ///
     /// What would make this red: emptying `AgentLink`'s `stop_batch` body (returning `true`
     /// without calling `cancel`), which nothing else in this suite would catch.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
         let marker = format!("40.{}", std::process::id());
@@ -2393,17 +2394,23 @@ mod tests {
 
         // The trait method the driver actually calls, not `cancel` directly.
         let confirmed = AgentChannel::stop_batch(&mut link, 77, Duration::from_secs(5)).await;
-        assert!(confirmed, "the agent must confirm the cancel");
-
+        // `kill_group` is a fire-and-forget SIGKILL with nothing waiting on the backgrounded
+        // grandchild, so a dying `sleep` can still be in /proc for one instant after the
+        // confirmation frame - the same slack `cancellation_kills_the_whole_process_group` gives
+        // it before its own `pgrep`.
+        tokio::time::sleep(Duration::from_millis(200)).await;
         let survivors = std::process::Command::new("pgrep")
             .args(["-f", &marker])
             .output()
             .expect("pgrep");
+        // Before the assertion, not after: a failure here must not also leak the agent and its
+        // 40-second sleep.
+        link.shutdown().await;
+        assert!(confirmed, "the agent must confirm the cancel");
         assert!(
             survivors.stdout.is_empty(),
             "the task kept running on a real agent after the real stop_batch forward: {}",
             String::from_utf8_lossy(&survivors.stdout)
         );
-        link.shutdown().await;
     }
 }

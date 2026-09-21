@@ -489,28 +489,70 @@ fn ssh_delegate_to_another_inventory_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The same order `crates/volant-agent/src/interpreter.rs`'s `CANDIDATES` tries on the managed
+/// host, best first - kept in sync with it by hand, since ssh_e2e.rs links against `volant`, not
+/// `volant-agent`, and the list is private there besides.
+const HOST_PYTHON_CANDIDATES: [&str; 8] = [
+    "python3.13",
+    "python3.12",
+    "python3.11",
+    "python3.10",
+    "python3.9",
+    "python3.8",
+    "/usr/bin/python3",
+    "python3",
+];
+
 /// The controller's python and the managed host's must be two distinct interpreters, or a
 /// python task passing here would prove nothing about the claim the whole milestone rests on:
 /// the module_utils travel in the blob, so the host never needs ansible-core. `just ssh-test`
 /// already refuses to run at all when `VOLANT_PYTHON` lacks ansible-core; this guards the other
-/// half, the same way the `ssh` CI job does, so the two sides cannot quietly end up the same
-/// interpreter here.
+/// half, probed the way the agent actually resolves an interpreter rather than by hoping it
+/// picks `/usr/bin/python3`: over the ssh session's own `PATH`, not the controller's, and every
+/// name the reference's fallback list tries before it, not that one path alone. The agent tries
+/// `python3.13` down to `python3.8` first and leaves the host's `site-packages` on `sys.path`
+/// behind the blob, so an ansible-core reachable under any earlier name - a venv's `bin` on the
+/// ssh session's `PATH`, the ordinary place to put `VOLANT_PYTHON` - would let a blob missing a
+/// `module_utils` entry still import it, and this guard would have missed exactly that.
 fn assert_host_and_controller_pythons_are_distinct() {
     let controller = std::env::var("VOLANT_PYTHON").expect(
         "VOLANT_PYTHON names a python with ansible-core; ssh-test checks this before any ssh_* test runs",
     );
     assert_ne!(
         controller, "/usr/bin/python3",
-        "VOLANT_PYTHON must not be the bare interpreter this test relies on being ansible-core-free"
+        "VOLANT_PYTHON must not be the bare host interpreter this test relies on being ansible-core-free"
     );
-    let bare = Command::new("/usr/bin/python3")
-        .args(["-c", "import ansible"])
-        .output()
-        .expect("running /usr/bin/python3");
-    assert!(
-        !bare.status.success(),
-        "/usr/bin/python3 has ansible-core, so this test cannot prove the module_utils came from the blob"
-    );
+    for candidate in HOST_PYTHON_CANDIDATES {
+        // Resolved and checked in one remote shell: a name absent from the ssh session's PATH
+        // exits 0 without checking anything, and a name present is asked whether it can import
+        // ansible, failure meaning "good, it cannot".
+        let probe = format!(
+            "p=$(command -v '{candidate}' 2>/dev/null) || exit 0; \"$p\" -c 'import ansible' 2>/dev/null && exit 1; exit 0"
+        );
+        let out = Command::new("ssh")
+            .args([
+                "-F",
+                "/dev/null",
+                "-i",
+                &key(),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                &format!("{}@127.0.0.1", user()),
+                &probe,
+            ])
+            .output()
+            .unwrap_or_else(|e| {
+                panic!("probing '{candidate}' over the ssh session's own PATH: {e}")
+            });
+        assert!(
+            out.status.success(),
+            "the host's '{candidate}', resolved on the ssh session's own PATH, has ansible-core; \
+             this test cannot prove the module_utils came from the blob: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// A python module runs over a real ssh and changes the disk. `ping` proves the path, `file`
@@ -596,14 +638,18 @@ fn ssh_a_python_module_s_result_is_never_evaluated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `AgentLink::stop_batch` is a one-line forward to `cancel`, and every executor test exercises
-/// the trait through a mock that never calls it: `cancel` itself is proven directly, over a real
-/// agent, in `local_transport.rs`, but nothing before this sent a real Ctrl-C through a real CLI
-/// run and checked that the forward the driver actually calls still reaches the host.
+/// Ctrl-C during a real ssh run exits 99 and leaves the host with no surviving task, which
+/// nothing else proves at the CLI level.
 ///
-/// What would make this red: emptying that forward's body, which leaves the whole suite green
-/// everywhere else while a cancelled run keeps its task running on the host it was supposed to
-/// stop.
+/// It does **not** isolate `AgentLink::stop_batch`'s own forward to `cancel`: the CLI process
+/// exiting drops the link, and `local_transport.rs::dropping_the_link_lets_the_agent_stop_its_task`
+/// proves the agent kills its process group on a dropped connection alone, so this test would
+/// still pass even if `stop_batch`'s forward did nothing at all.
+/// `executor::run::tests::a_real_link_s_stop_batch_forward_reaches_the_agent` is the one that
+/// isolates the forward, against a real agent, with the link kept open until after the check.
+///
+/// What would make this red: exit 99 not printed, or the task surviving on the host after
+/// Ctrl-C - either is a regression this test catches, whichever piece caused it.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_ctrl_c_stops_the_task_on_the_real_host() {

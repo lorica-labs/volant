@@ -1,0 +1,11 @@
+- name: A python module's own result is never rendered
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Echo untrusted data back through a python module
+      ping:
+        data: "{{ lookup('file', payload) }}"
+      register: r
+    - name: Show it by message
+      debug:
+        msg: "{{ r.ping }}"

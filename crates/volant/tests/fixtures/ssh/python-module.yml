@@ -1,0 +1,15 @@
+- name: Python modules run over a real ssh
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping proves the path
+      ping:
+      register: p
+      failed_when: p.ping != 'pong'
+    - name: Show it
+      debug:
+        msg: "{{ p.ping }}"
+    - name: File proves the effect
+      file:
+        path: "{{ target }}"
+        state: touch

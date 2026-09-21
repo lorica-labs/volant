@@ -165,10 +165,17 @@ pub(super) async fn drive_host(
     'run: loop {
         let c = plan.steps();
         let n = c.steps.len();
-        // The fork permit and the escalated links go back before either failure arm below waits
-        // at a splice point: the step loop's own release reads the success successor and never
-        // the range a host that has just failed steps over. Only on the failure paths, so a batch
-        // that ended cleanly still carries its permit into the next one.
+        // The fork permit goes back before either failure arm below waits at a splice point: the
+        // step loop's own release reads the success successor and never the range a host that
+        // has just failed steps over. Only on the failure paths, so a batch that ended cleanly
+        // still carries its permit into the next one.
+        //
+        // The escalated links go back here as well, and here alone among the releases. A host
+        // that has just failed is on its way through a rescue or an `always` and out of the
+        // play, and what it escalated to is far less likely to be what it needs next than it is
+        // on the straight path; it is also the state most likely to be left waiting a long time
+        // at a splice point. So this is where an escalated link stops being worth its process on
+        // the target.
         if failed_at.is_some() || failed_index.is_some() {
             permit = None;
             for key in escalated_links(&links) {
@@ -299,6 +306,15 @@ pub(super) async fn drive_host(
             // that same point cannot have. The batch being empty is what says this is the kept
             // permit and not the one this batch works under: no wait is reached with a batch in
             // hand.
+            //
+            // The escalated link does **not** go back with it. A permit is the run's own token
+            // and another host is waiting for it; an escalated link is a process and a
+            // connection on this host alone, which no other host is waiting for, so holding one
+            // across a barrier delays nobody. Releasing it costs an `ssh`, a `sudo` and a
+            // handshake at the next escalated task, and under the strict `linear` default every
+            // task raises a barrier. What the links are bounded by is `keep_links` at the end of
+            // the play, the failure arm at the top of this loop, and the rule below that a host
+            // holds at most one of them at a time.
             if batch.is_empty()
                 && permit.is_some()
                 && (is_boundary(task, options.batching)
@@ -306,11 +322,6 @@ pub(super) async fn drive_host(
                     || driver.steps_over_a_splice_point(&c, pos))
             {
                 permit = None;
-                for key in escalated_links(&links) {
-                    if let Some(link) = links.remove(&key) {
-                        tokio::spawn(link.shutdown());
-                    }
-                }
             }
             // A step an include spliced in for other hosts. This host reports it and shows
             // nothing, exactly as it does for a handler it never notified: the coordinator's
@@ -888,6 +899,20 @@ pub(super) async fn drive_host(
                 become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
                 transport,
             };
+            // One escalated link at a time, now that they are no longer released at every
+            // barrier: a batch escalating differently from the one in hand - another
+            // `become_user`, another transport - retires the one it is replacing rather than
+            // adding to it. So a host holds its own link plus at most one escalated link
+            // whatever the number of users the play names, which is what the run was measured
+            // for. Closed off-task: `shutdown` grants its agent two seconds and this batch has
+            // no reason to wait for a connection it has finished with.
+            if key.become_user.is_some() {
+                for stale in escalated_links(&links).into_iter().filter(|k| k != &key) {
+                    if let Some(link) = links.remove(&stale) {
+                        tokio::spawn(link.shutdown());
+                    }
+                }
+            }
             let link = match reuse_or_connect(
                 &mut links,
                 &mut checked,
@@ -1179,20 +1204,15 @@ pub(super) async fn drive_host(
                     undecided_reported = true;
                 }
             }
-            // The results are in and reported, so the next host may start. The escalated links go
-            // back with the permit, which is what makes `forks` bound the connections open as
-            // well as the hosts working; the link to the host itself stays, being the one
-            // persistence is for. Closed off-task rather than awaited: `shutdown` gives its agent
-            // two seconds, and paying that here would serialise what the permit just freed.
+            // The results are in and reported, so the next host may start. Only the permit goes
+            // back; the links stay, for the reason the release at the top of the step loop
+            // gives. The three ways out of here each close the escalated ones on their own: a
+            // failure through the arm at the top of this loop, the end of the play through
+            // `keep_links`.
             let carries_on =
                 failed_at.is_none() && deferred_error.is_none() && undecided.is_none() && pos < n;
             if !carries_on {
                 permit = None;
-                for key in escalated_links(&links) {
-                    if let Some(link) = links.remove(&key) {
-                        tokio::spawn(link.shutdown());
-                    }
-                }
             }
             match ended {
                 Err(msg) => {

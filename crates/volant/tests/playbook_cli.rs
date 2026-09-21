@@ -835,23 +835,23 @@ fn become_switches_user_and_back() {
     );
 }
 
-/// Six escalated tasks, each closing its batch with a `register`. With batching asked for, the
-/// escalated agent opens once: the link and the fork permit that bounds it stay with the driver
-/// while the next step needs nobody else. Strict `linear` is the other half of the same rule and
-/// the price of the default -- the permit goes back in front of every task, and the escalated
-/// link, which `forks` bounds along with it, goes back with it -- so the same play pays one
-/// escalation per task there.
+/// Six escalated tasks, each closing its batch with a `register`. The escalated agent opens
+/// once, at either setting: the link belongs to the host it runs on and not to the fork permit,
+/// so the permit goes back in front of every wait while the link stays with the driver.
 ///
-/// Both counts are asserted here rather than in two tests, because they are one mechanism read
-/// at its two settings and a second copy would only restate the first.
+/// Strict `linear` is what makes the second half worth asserting. It raises a boundary in front
+/// of nearly every task, so a link released with the permit was rebuilt per task -- an `ssh`, a
+/// `sudo` and a handshake each time, which is what made an escalated play slower than the
+/// reference it is meant to beat. Both settings are read here rather than in two tests, because
+/// they are one mechanism at its two settings and a second copy would only restate the first.
 ///
 /// Counted through a `sudo` that records every invocation and then runs the command it was
 /// given as the invoking user: the count is what is being measured, and needing real privileges
 /// to measure it would make this a test of the machine.
 ///
-/// What would make this red: the driver handing back its escalated links after every batch with
-/// batching asked for, which puts six launches in the log instead of one; or holding them across
-/// a barrier without one, which lets an escalated connection outlive the permit that bounds it.
+/// What would make this red: the driver releasing its escalated links with the fork permit
+/// again, which puts six launches in the log under the strict default; or handing them back
+/// after every batch whatever the setting, which puts six in both.
 #[test]
 fn escalated_links_survive_a_batch_that_a_register_closed() {
     let escalations = |envs: &[(&str, &str)]| {
@@ -895,8 +895,8 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
     );
     let (strict, recorded) = escalations(&[]);
     assert_eq!(
-        strict, 6,
-        "one escalated agent per task under the strict default:\n{recorded}"
+        strict, 1,
+        "one escalated agent for six tasks under the strict default too:\n{recorded}"
     );
 }
 

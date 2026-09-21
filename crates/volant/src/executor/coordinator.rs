@@ -841,10 +841,11 @@ impl Coordinator<'_> {
 /// because its bootstrap short-circuits on the agent already cached for that user, so it is
 /// closed here instead of idling until the recap.
 ///
-/// A driver normally releases its escalated links with its fork permit, well before it gets
-/// here; this is what closes the ones a driver still held when it left the play, and everything
-/// a failed host hands back. Between the two, no escalated link outlives the batch that needed
-/// it, and the run carries one link per host to the recap instead of one per host per user.
+/// A driver holds its escalated link for as long as the play keeps escalating the same way, so
+/// this is where most of them are closed: an escalated link lives for a play at the longest, and
+/// the run carries one link per host to the recap. The other places are the failure arm of
+/// `drive_host`, and a batch escalating differently from the one before it, which retires the
+/// link it replaces.
 async fn keep_links(
     links: &mut HashMap<LinkKey, AgentLink>,
     handed_back: Vec<(LinkKey, AgentLink)>,
@@ -861,8 +862,8 @@ async fn keep_links(
     while closing.join_next().await.is_some() {}
 }
 
-/// The keys of the connections that escalate, the ones a driver only holds while it holds a
-/// fork permit.
+/// The keys of the connections that escalate: the ones a driver retires when it fails, when it
+/// escalates differently, and when it leaves the play.
 pub(super) fn escalated_links(links: &HashMap<LinkKey, AgentLink>) -> Vec<LinkKey> {
     links
         .keys()

@@ -1,0 +1,7 @@
+# The one thing in this play that must not run on a second pass. A handler fires only when a
+# task it is notified by reported `changed`, so a run that converged never reaches it, and a
+# run that reaches it says a configuration line really did move.
+- name: Restart the scheduler
+  systemd_service:
+    name: "{{ baseline_service }}"
+    state: restarted

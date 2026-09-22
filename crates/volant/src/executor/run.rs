@@ -370,7 +370,7 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
         (Some(_), Some(_)) => {
             return TaskResult::failed_with("parameters are mutually exclusive: minutes|seconds");
         }
-        (Some(v), None) => whole(v).map(|m| (m * 60, "minutes")).ok_or(v),
+        (Some(v), None) => whole(v).map(|m| (m.saturating_mul(60), "minutes")).ok_or(v),
         (None, Some(v)) => whole(v).map(|s| (s, "seconds")).ok_or(v),
         (None, None) => Err(&Value::Null),
     };
@@ -383,6 +383,11 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
             ));
         }
     };
+    // Python's clock counts nanoseconds in a signed 64-bit integer, and the reference fails a
+    // pause it cannot hold rather than wait it out. Measured on ansible-core 2.19.12.
+    if asked.is_some_and(|(seconds, _)| seconds > i64::MAX / 1_000_000_000) {
+        return TaskResult::failed_with("Task failed: timestamp out of range for C PyTime_t");
+    }
     let prompting = asked.is_none() || item.args.contains_key("prompt");
     if prompting && interactive {
         return TaskResult::failed_with(PROMPT_REFUSED);
@@ -1843,6 +1848,30 @@ mod tests {
             Value::Object(r.0),
             json!({"changed": false, "delta": 1, "echo": true, "rc": 0, "stderr": "", "stdout": "Paused for 1.0 seconds", "user_input": ""})
         );
+    }
+
+    /// Measured on ansible-core 2.19.12: `minutes: 153722867280912931` fails at once, because
+    /// Python's clock cannot hold that many nanoseconds. The bound is that clock's, a signed
+    /// 64-bit count of nanoseconds, so `seconds` has it too.
+    ///
+    /// What would make this red: the duration multiplied without a check, which panics in a
+    /// debug build and in a release build wraps to a pause of the wrong length that reports
+    /// `ok`.
+    #[tokio::test]
+    async fn a_pause_too_long_for_the_clock_fails_at_once() {
+        for args in [
+            json!({"minutes": 153_722_867_280_912_931_i64}),
+            json!({"seconds": 9_223_372_037_i64}),
+        ] {
+            let r = tokio::time::timeout(Duration::from_secs(5), local("pause", args.clone()))
+                .await
+                .expect("the pause fails rather than waits");
+            assert_eq!(
+                Value::Object(r.0),
+                json!({"failed": true, "msg": "Task failed: timestamp out of range for C PyTime_t"}),
+                "{args}"
+            );
+        }
     }
 
     /// Measured on ansible-core 2.19.12, the two refusals of a pause.

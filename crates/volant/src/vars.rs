@@ -169,6 +169,40 @@ pub fn omit_token() -> &'static str {
     "__omit_place_holder__6d24c2dd6a8f2e0e2a6e5cce6b1f9c4a"
 }
 
+/// Reads one host variable that decides where, as whom or under what a task runs: the
+/// transport, the escalation and the interpreter choice read theirs through here and nowhere
+/// else. A managed host must never be able to set such a name for itself, so every name read
+/// here has to be one `restricted_fact` strips from gathered facts. The test
+/// `every_host_setting_is_stripped_from_gathered_facts` reads the names off the source, so a
+/// new reader is covered the day it is written.
+pub fn host_setting<'a, V: HostSettings + ?Sized>(vars: &'a V, name: &str) -> Option<&'a Value> {
+    vars.setting(name)
+}
+
+/// The three shapes a host's variables are read from: the merged map, a task's view of it, and
+/// the inventory object the pre-flight reads.
+pub trait HostSettings {
+    fn setting(&self, name: &str) -> Option<&Value>;
+}
+
+impl HostSettings for Map<String, Value> {
+    fn setting(&self, name: &str) -> Option<&Value> {
+        self.get(name)
+    }
+}
+
+impl HostSettings for BTreeMap<String, Value> {
+    fn setting(&self, name: &str) -> Option<&Value> {
+        self.get(name)
+    }
+}
+
+impl HostSettings for HostVars {
+    fn setting(&self, name: &str) -> Option<&Value> {
+        self.get(name)
+    }
+}
+
 /// The connection plugins ansible-core 2.19.12 ships, as its `connection_loader.all()` lists
 /// them on a host with no collection installed.
 const CONNECTION_PLUGINS: [&str; 6] = [
@@ -224,6 +258,14 @@ const RESTRICTED_FACTS: [&str; 39] = [
     "add_group",
 ];
 
+/// Names this engine strips although ansible-core keeps them, because it reads them where the
+/// reference does not. `ansible_remote_tmp` is where the agent is cached, and for an escalated
+/// link that is the target user's own `remote_tmp`, checked only by the version line the cached
+/// file prints: a connecting user who could name it could plant a script there that `sudo` then
+/// runs as the `become_user`. Under the reference the same name only moves the connecting user's
+/// own module files, which that user can already change.
+const ENGINE_RESTRICTED_FACTS: [&str; 1] = ["ansible_remote_tmp"];
+
 /// Whether ansible-core's `clean_facts()` removes a fact of this name before it becomes a
 /// variable: a connection or escalation setting, `ansible_<connection plugin>_*` unless it ends
 /// in `_bridge` or `_gwbridge`, any `ansible_become_*`, any `ansible_*_interpreter`, and the
@@ -244,6 +286,7 @@ fn restricted_fact(key: &str) -> bool {
         && key.starts_with("ansible_")
         && key.ends_with("_interpreter");
     RESTRICTED_FACTS.contains(&key)
+        || ENGINE_RESTRICTED_FACTS.contains(&key)
         || key.starts_with("ansible_become_")
         || plugin_setting
         || interpreter
@@ -1010,6 +1053,68 @@ mod tests {
         assert_eq!(v["t"], json!(2), "set_fact beats task vars");
         assert_eq!(v["fact"], json!("set"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Every host variable the engine reads to decide where, as whom or under what a task runs
+    /// is one a managed host cannot set through `ansible_facts`. The names are read off the
+    /// source rather than listed here: every call of `host_setting` and of the transport's two
+    /// readers built on it, in every file of the crate outside its tests. And no other code may
+    /// read an `ansible_*` variable by name, so a reader cannot sit outside the scan.
+    ///
+    /// What would make this red: a connection, escalation or interpreter setting that
+    /// `restricted_fact` keeps. It was red on `ansible_remote_tmp`, which the reference keeps
+    /// and this engine derives the escalated agent's path from; or a new reader that goes
+    /// around `host_setting`.
+    #[test]
+    fn every_host_setting_is_stripped_from_gathered_facts() {
+        let reader = regex::Regex::new(
+            r#"\b(?:host_setting|setting_text|setting_args)\((?:[^;"]*?,)?\s*"(ansible_[a-z0-9_]+)""#,
+        )
+        .unwrap();
+        // A lookup or an index, not an array literal: `vars["ansible_host"]`, never `= ["..."]`.
+        let bypass = regex::Regex::new(r#"(?:\.get\(|[\w)\]]\[)"(ansible_[a-z0-9_]+)""#).unwrap();
+        let tests = regex::Regex::new(r"#\[cfg\(test\)\]\s*mod (?:tests|testing)\b").unwrap();
+        let mut read = BTreeSet::new();
+        let mut bypasses = Vec::new();
+        let mut stack = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let code = tests.split(&source).next().unwrap_or_default();
+                for c in reader.captures_iter(code) {
+                    read.insert(c[1].to_string());
+                }
+                for c in bypass.captures_iter(code) {
+                    if &c[1] != "ansible_facts" {
+                        bypasses.push(format!("{}: {}", path.display(), &c[1]));
+                    }
+                }
+            }
+        }
+        assert!(
+            bypasses.is_empty(),
+            "read by name outside `host_setting`: {bypasses:?}"
+        );
+        for known in [
+            "ansible_host",
+            "ansible_become_password",
+            "ansible_python_interpreter",
+        ] {
+            assert!(read.contains(known), "the scan missed {known}: {read:?}");
+        }
+        let kept: Vec<_> = read.iter().filter(|n| !restricted_fact(n)).collect();
+        assert!(
+            kept.is_empty(),
+            "a managed host can set these for itself: {kept:?}"
+        );
     }
 
     /// Gathered facts rank where ansible-core 2.19.12 ranks host facts: over an inventory host

@@ -258,8 +258,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
             .flat_map(|pb| &pb.plays)
             .any(|play| play.r#become == Some(true))
         || all_hosts.iter().any(|host| {
-            host.vars
-                .get("ansible_become")
+            crate::vars::host_setting(&host.vars, "ansible_become")
                 .and_then(executor::as_bool_value)
                 == Some(true)
         });
@@ -274,9 +273,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
             ));
         }
         for host in &all_hosts {
-            if let Some(method) = host
-                .vars
-                .get("ansible_become_method")
+            if let Some(method) = crate::vars::host_setting(&host.vars, "ansible_become_method")
                 .and_then(|v| v.as_str())
                 && method != playbook::BECOME_METHOD
             {

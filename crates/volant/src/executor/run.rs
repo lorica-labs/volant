@@ -970,7 +970,7 @@ pub(super) fn running_host_vars<'a>(
 /// writing `"{{ py_override | default('') }}"` asked for nothing, and an empty path would have
 /// the host trying to start nothing and naming nothing when it failed.
 pub(super) fn requested_interpreter(vars: &Map<String, Value>) -> Option<String> {
-    vars.get("ansible_python_interpreter")
+    crate::vars::host_setting(vars, "ansible_python_interpreter")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|asked| {
@@ -3048,6 +3048,7 @@ mod tests {
                 "ansible_become_password": "x",
                 "ansible_become_anything": "x",
                 "ansible_ssh_extra_args": "-oProxyCommand=x",
+                "ansible_remote_tmp": "/home/deploy/x",
                 "ansible_ssh_host_key_rsa_public": "KEY",
                 "ansible_ssh_foo_bridge": "br",
                 "ansible_local": {"a": 1},
@@ -3085,6 +3086,8 @@ mod tests {
         assert_eq!(target.address, "192.0.2.10");
         assert_eq!(target.user, None);
         assert!(target.extra_args.is_empty(), "{:?}", target.extra_args);
+        // Where the escalated agent is looked for: a host that picks it plants its own.
+        assert_eq!(target.remote_tmp, defaults.remote_tmp);
         assert_eq!(
             requested_interpreter(&v).as_deref(),
             Some("/usr/bin/python3")
@@ -3112,6 +3115,7 @@ mod tests {
                 "ansible_playbook_python",
                 "ansible_psrp_x",
                 "ansible_python_interpreter",
+                "ansible_remote_tmp",
                 "ansible_rsync_path",
                 "ansible_ssh_extra_args",
                 "ansible_user",

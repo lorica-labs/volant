@@ -359,39 +359,72 @@ fn identity() -> Identity {
     }
 }
 
-/// A controller interpreter that can import ansible-core, or `None`.
+/// A controller interpreter importing exactly the ansible-core `want` names, or why there is none.
 ///
-/// The same order `python::resolve` uses, plus the interpreter sitting beside an
+/// Exactly, because the payload Volant sends is built from the controller's own ansible-core, so
+/// a different version sends a different module: GitHub's runner image ships one whose `stat`
+/// returns `disk_usage_bytes`, which 2.19.12's does not. Comparing across versions measures the
+/// gap between them and passes or fails for reasons that have nothing to do with Volant, which is
+/// why `generate.py` refuses to record against any other version and this refuses to compare.
+///
+/// An explicit `VOLANT_PYTHON` is the only candidate when it is set, as it is for
+/// `python::resolve`. Otherwise the same order that function uses, plus the interpreter beside an
 /// `ansible-playbook` on `PATH`, which is where a `uv tool` or `pipx` install puts one. Nothing
 /// here names a path: an account's home directory must not reach the repository, and a hard-coded
 /// candidate would be exactly that on the machine this was written against.
 #[cfg(target_os = "linux")]
-fn controller_python() -> Option<std::path::PathBuf> {
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(explicit) = std::env::var("VOLANT_PYTHON") {
-        candidates.push(explicit.into());
-    }
-    if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-        candidates.push(std::path::Path::new(&venv).join("bin/python"));
-    }
-    let probe = std::process::Command::new("sh")
-        .args(["-c", "command -v ansible-playbook"])
-        .output()
-        .expect("command -v runs");
-    let named = String::from_utf8_lossy(&probe.stdout).trim().to_string();
-    if !named.is_empty()
-        && let Ok(real) = std::fs::canonicalize(&named)
-        && let Some(bin) = real.parent()
-    {
-        candidates.push(bin.join("python3"));
-        candidates.push(bin.join("python"));
-    }
-    candidates.push("python3".into());
-    candidates.into_iter().find(|python| {
-        std::process::Command::new(python)
-            .args(["-c", "import ansible"])
+fn controller_python(want: &str) -> Result<std::path::PathBuf, String> {
+    let candidates: Vec<std::path::PathBuf> =
+        if let Some(explicit) = std::env::var_os("VOLANT_PYTHON") {
+            vec![explicit.into()]
+        } else {
+            let mut candidates = Vec::new();
+            if let Some(venv) = std::env::var_os("VIRTUAL_ENV") {
+                candidates.push(std::path::Path::new(&venv).join("bin/python"));
+            }
+            let probe = std::process::Command::new("sh")
+                .args(["-c", "command -v ansible-playbook"])
+                .output()
+                .expect("command -v runs");
+            let named = String::from_utf8_lossy(&probe.stdout).trim().to_string();
+            if !named.is_empty()
+                && let Ok(real) = std::fs::canonicalize(&named)
+                && let Some(bin) = real.parent()
+            {
+                candidates.push(bin.join("python3"));
+                candidates.push(bin.join("python"));
+            }
+            candidates.push("python3".into());
+            candidates
+        };
+    let mut seen = Vec::new();
+    for python in candidates {
+        let Ok(out) = std::process::Command::new(&python)
+            .args([
+                "-c",
+                "from ansible.release import __version__; print(__version__)",
+            ])
             .output()
-            .is_ok_and(|out| out.status.success())
+        else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if version == want {
+            return Ok(python);
+        }
+        seen.push(format!("{} has ansible-core {version}", python.display()));
+    }
+    Err(if seen.is_empty() {
+        format!("the recording is ansible-core {want} and no interpreter here can import any")
+    } else {
+        format!(
+            "the recording is ansible-core {want}, and comparing against another version would \
+             measure the version gap: {}",
+            seen.join("; ")
+        )
     })
 }
 
@@ -420,16 +453,20 @@ const IF_BOTH: &[&str] = &["_ansible_no_log"];
 /// Compared by type, never by value: these move between runs, between filesystems or between
 /// machines.
 ///
-/// The paths are qualified because the rule is not the same at every one of them. `mode` is here
-/// under `stat`, where it records the umask the generator's own shell had when it wrote the stat
-/// target, and deliberately *not* at the top level, where `file` was given an explicit `0644` -
-/// that one is the whole point of the fixture and is compared by value.
+/// Every key 2.19.12's `stat` returns was read against its source for this list, not only the
+/// ones a run happened to trip on. `atime`, `ctime`, `mtime`, `inode` and `dev` move between
+/// runs; `attr_flags`, `attributes`, `version`, `block_size`, `blocks` and `nlink` depend on the
+/// filesystem - `/tmp` on tmpfs has no `lsattr` attributes at all, on ext4 it has `e`; `mimetype`
+/// and `charset` read `unknown` without `file(1)`. `mode` and the twelve permission bits read
+/// from it are *not* here: they depend on nothing but the target's mode, which both sides now set
+/// explicitly, so they are compared by value like `file`'s own explicit `0644`. The same goes for
+/// the three `os.access` keys (read, write, execute), which follow from that mode and from the
+/// target being the running account's own file.
 ///
-/// `attr_flags`, `attributes`, `block_size`, `blocks` and `nlink` depend on the filesystem;
-/// `mimetype` and `charset` on `file(1)` being installed; `secontext` on SELinux. The apt-only
-/// movers the handoff names - `cache_update_time`, `version`, `stdout`, `stdout_lines`, `stderr`,
-/// `stderr_lines` and `diff` - are absent from this list because apt is not compared here at all
-/// (see the test's own comment); they belong here, unqualified, when it is.
+/// The paths are qualified so a rule written for `stat`'s nested map cannot loosen a top-level
+/// key of the same name. The apt-only movers the handoff names - `cache_update_time`, `version`,
+/// `stdout`, `stdout_lines`, `stderr`, `stderr_lines` and `diff` - are absent because apt is not
+/// compared here at all (see the test's own comment); they belong here, unqualified, when it is.
 #[cfg(target_os = "linux")]
 const BY_TYPE: &[&str] = &[
     "size",
@@ -444,13 +481,19 @@ const BY_TYPE: &[&str] = &[
     "stat.dev",
     "stat.inode",
     "stat.mimetype",
-    "stat.mode",
     "stat.mtime",
     "stat.nlink",
-    "stat.secontext",
     "stat.size",
     "stat.version",
 ];
+
+/// By-type keys where `null` on either side is as good as a match.
+///
+/// `version` is the inode generation number `lsattr -v` reports, `None` where the filesystem has
+/// none: the recording's `/tmp` is tmpfs and says `null`, a runner's `/tmp` on ext4 says a
+/// number. Only this key is loosened, so an `atime` that came back `null` still fails.
+#[cfg(target_os = "linux")]
+const MAY_BE_NULL: &[&str] = &["stat.version"];
 
 /// Differences this release really has, which the comparison steps over and then insists are
 /// still there.
@@ -553,7 +596,9 @@ fn compare_keys(
         }
         if BY_TYPE.contains(&path.as_str()) {
             let kind = |v: &Value| std::mem::discriminant(v);
-            if kind(reference) != kind(ours) {
+            let nullable =
+                MAY_BE_NULL.contains(&path.as_str()) && (reference.is_null() || ours.is_null());
+            if !nullable && kind(reference) != kind(ours) {
                 failures.push(format!(
                     "{module}.{path}: reference {reference} and ours {ours} are not even the same \
                      kind of value"
@@ -589,8 +634,11 @@ fn compare_keys(
 /// itself needs nothing else. `apt.json` is not read at all meanwhile, which is also why a
 /// regeneration on a non-Debian machine, where the generator deletes it, cannot break this build.
 ///
-/// The test skips, loudly, when no interpreter on this machine can import ansible-core: building
-/// a module payload is the reference's own job and there is no offline stand-in for it.
+/// Without `VOLANT_PYTHON` the test skips, loudly, when no interpreter here imports the recorded
+/// ansible-core: building a module payload is the reference's own job and there is no offline
+/// stand-in for it. With `VOLANT_PYTHON` set it never skips - a wrong version or no ansible-core
+/// at all fails instead - so a job that names its interpreter cannot go green without having
+/// compared anything. `just ssh-test` is that job.
 ///
 /// What would make this red: a module reached with no arguments, or with the wrong ones; a result
 /// whose keys are plausible and wrong; `file` applying a mode other than the one it was given;
@@ -609,19 +657,30 @@ fn a_python_module_returns_the_reference_s_own_keys() {
             include_str!("golden/python-modules/lineinfile.json"),
         ),
     ];
-    let Some(python) = controller_python() else {
-        eprintln!(
-            "skipped: no interpreter here can import ansible-core, so no module payload can be \
-             built. Set VOLANT_PYTHON to one that can."
-        );
-        return;
+    let recorded_version = include_str!("golden/ANSIBLE_VERSION").trim();
+    let python = match controller_python(recorded_version) {
+        Ok(python) => python,
+        Err(why) if std::env::var_os("VOLANT_PYTHON").is_some() => {
+            panic!("VOLANT_PYTHON cannot reproduce the recording: {why}")
+        }
+        Err(why) => {
+            eprintln!("skipped: {why}. Set VOLANT_PYTHON to an ansible-core {recorded_version}.");
+            return;
+        }
     };
 
     let dir = std::path::Path::new(PYTHON_MODULES_DIR);
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).expect("the recorded directory is writable");
-    std::fs::write(dir.join("golden-stat-target"), "golden stat fixture\n")
-        .expect("the stat target is written");
+    let target = dir.join("golden-stat-target");
+    std::fs::write(&target, "golden stat fixture\n").expect("the stat target is written");
+    // The mode `generate.py` gives its own copy: left to the umask, `stat`'s mode and the twelve
+    // permission bits read from it would name whoever ran the test.
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644))
+            .expect("the stat target's mode is set");
+    }
     let remote_tmp = dir.join("tmp");
     std::fs::create_dir_all(&remote_tmp).expect("the blob cache directory is writable");
     // The same arguments `generate.py` recorded against, on the same paths, in the same order.

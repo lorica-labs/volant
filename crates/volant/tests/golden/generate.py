@@ -113,6 +113,7 @@ def main() -> int:
 PYTHON_MODULES_TMP = "/tmp/volant15-golden"
 STAT_TARGET = os.path.join(PYTHON_MODULES_TMP, "golden-stat-target")
 STAT_TARGET_CONTENT = "golden stat fixture\n"
+STAT_TARGET_MODE = 0o644
 
 # Values that identify the machine that ran the generator rather than anything a module
 # returned. file's owner/group/uid/gid and stat's pw_name/gr_name/uid/gid all name the account
@@ -194,7 +195,11 @@ def python_modules():
     os.makedirs(PYTHON_MODULES_TMP, exist_ok=True)
     with open(STAT_TARGET, "w", encoding="utf-8") as f:
         f.write(STAT_TARGET_CONTENT)
-    playbook = os.path.join(PYTHON_MODULES_TMP, "python-modules.yml")
+    # An explicit mode for the same reason file's task carries one: stat reports the target's
+    # mode and the twelve permission bits read from it, and left to the umask those name whoever
+    # ran this script. golden.rs sets the same mode on its own copy.
+    os.chmod(STAT_TARGET, STAT_TARGET_MODE)
+    playbook =os.path.join(PYTHON_MODULES_TMP, "python-modules.yml")
     with open(playbook, "w", encoding="utf-8") as f:
         yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     run = subprocess.run(

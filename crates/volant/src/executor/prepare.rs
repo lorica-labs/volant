@@ -14,7 +14,7 @@ use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError, Vars};
 use crate::transport::{ConnectionDefaults, Escalation};
-use crate::vars::{HostVars, Scope, VarStore, omit_token};
+use crate::vars::{HostVars, Scope, VarStore, host_setting, omit_token};
 
 use super::as_bool_value;
 use super::coordinator::Progress;
@@ -89,8 +89,7 @@ fn become_for(
     defaults: &ConnectionDefaults,
     templar: &Templar,
 ) -> Result<Option<Escalation>, TemplateError> {
-    let on = vars
-        .get("ansible_become")
+    let on = host_setting(vars, "ansible_become")
         .and_then(as_bool_value)
         .or(task.r#become)
         .or(play.r#become)
@@ -103,7 +102,7 @@ fn become_for(
     // carry `ansible.cfg` and the command line: this catches the value reaching an escalating
     // task through `group_vars`, `host_vars`, `--extra-vars` or a `set_fact`, which the startup
     // pass cannot see.
-    match vars.get("ansible_become_method").and_then(Value::as_str) {
+    match host_setting(vars, "ansible_become_method").and_then(Value::as_str) {
         Some(method) if method != crate::playbook::BECOME_METHOD => {
             return Err(TemplateError(format!(
                 "ansible_become_method '{method}' is not supported yet"
@@ -117,7 +116,7 @@ fn become_for(
         }
         Some(_) | None => {}
     }
-    let user = match vars.get("ansible_become_user").and_then(Value::as_str) {
+    let user = match host_setting(vars, "ansible_become_user").and_then(Value::as_str) {
         Some(user) => user.to_string(),
         None => task
             .become_user
@@ -156,9 +155,8 @@ fn become_for(
     } else {
         user
     };
-    let password = vars
-        .get("ansible_become_password")
-        .or_else(|| vars.get("ansible_become_pass"))
+    let password = host_setting(vars, "ansible_become_password")
+        .or_else(|| host_setting(vars, "ansible_become_pass"))
         .and_then(Value::as_str)
         .map(str::to_string)
         .or_else(|| defaults.become_password.clone());
@@ -230,7 +228,7 @@ pub(super) fn host_vars(
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
         let shared = store.shared_values(&scope);
-        let mut untrusted = store.untrusted_of(host);
+        let mut untrusted = store.untrusted_of(host, &scope);
         // What an include handed down is already rendered, so its provenance cannot be read off
         // the store: it travelled with the values.
         untrusted.extend(

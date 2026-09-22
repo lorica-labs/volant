@@ -14,6 +14,7 @@ use tokio::process::Command;
 
 use crate::agent::{AgentLink, AgentSource};
 use crate::inventory::Host;
+use crate::vars::host_setting;
 
 /// Connection settings from `ansible.cfg` and the command line; host variables override them.
 #[derive(Clone, PartialEq, Eq)]
@@ -163,25 +164,32 @@ impl Transport {
         vars: &Map<String, Value>,
         defaults: &ConnectionDefaults,
     ) -> anyhow::Result<Transport> {
-        let text = |key: &str| vars.get(key).and_then(Value::as_str).map(str::to_string);
-        match text("ansible_connection").as_deref().unwrap_or("ssh") {
+        let setting_text = |key: &str| {
+            host_setting(vars, key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        match setting_text("ansible_connection")
+            .as_deref()
+            .unwrap_or("ssh")
+        {
             "local" => Ok(Transport::Local),
             "ssh" => Ok(Transport::Ssh(SshTarget {
-                address: text("ansible_host").unwrap_or_else(|| host_name.to_string()),
+                address: setting_text("ansible_host").unwrap_or_else(|| host_name.to_string()),
                 port: port_of(vars),
-                user: text("ansible_user").or_else(|| defaults.remote_user.clone()),
-                private_key: text("ansible_ssh_private_key_file")
+                user: setting_text("ansible_user").or_else(|| defaults.remote_user.clone()),
+                private_key: setting_text("ansible_ssh_private_key_file")
                     .map(PathBuf::from)
                     .or_else(|| defaults.private_key.clone()),
-                common_args: split_args(host_name, vars, "ansible_ssh_common_args")?,
-                extra_args: split_args(host_name, vars, "ansible_ssh_extra_args")?,
+                common_args: setting_args(host_name, vars, "ansible_ssh_common_args")?,
+                extra_args: setting_args(host_name, vars, "ansible_ssh_extra_args")?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
                 // Blank reads as unset, which is what the configuration arms do with the same
                 // value: an empty `remote_tmp` puts the agent cache at `/volant-agent-<version>`,
                 // the upload fails on permissions, and the host is reported unreachable over a
                 // directory nobody wrote. Trimmed for the same reason they trim.
-                remote_tmp: match text("ansible_remote_tmp")
+                remote_tmp: match setting_text("ansible_remote_tmp")
                     .map(|tmp| tmp.trim().to_string())
                     .filter(|tmp| !tmp.is_empty())
                 {
@@ -521,12 +529,12 @@ fn unreachable_message(stderr: &str, offered: Option<&str>) -> String {
 /// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
 /// rather than dropped: silently connecting without a `ProxyJump` or `ProxyCommand` the
 /// inventory asked for can reach a different machine than the operator meant.
-fn split_args(
+fn setting_args(
     host_name: &str,
     vars: &Map<String, Value>,
     key: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let Some(text) = vars.get(key).and_then(Value::as_str) else {
+    let Some(text) = host_setting(vars, key).and_then(Value::as_str) else {
         return Ok(Vec::new());
     };
     shlex::split(text).ok_or_else(|| {
@@ -597,7 +605,7 @@ fn single_quoted(text: &str) -> String {
 
 /// `ansible_port`, whether the inventory typed it as a number or quoted it as a string.
 fn port_of(vars: &Map<String, Value>) -> Option<u16> {
-    let value = vars.get("ansible_port")?;
+    let value = host_setting(vars, "ansible_port")?;
     match value {
         Value::Number(_) => value.as_u64().and_then(|p| u16::try_from(p).ok()),
         Value::String(s) => s.trim().parse().ok(),

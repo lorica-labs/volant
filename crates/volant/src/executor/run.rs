@@ -643,12 +643,19 @@ pub(super) fn finish(
 }
 
 /// Applies `changed_when` and `failed_when` to one result, with `result` bound to it.
+///
+/// First, `failed` is settled: filled in when the result does not carry it, with the value
+/// [`TaskResult::failed`] reads off `rc`, and made `true` on a result that fails by a truthy
+/// non-boolean. ansible-core's `TaskExecutor._execute` fills it in on every result that ran,
+/// before the conditions and before `register`, and registers `True` for a failure. A skipped
+/// item never comes here, and the reference leaves `failed` off it too.
 fn apply_conditions(
     task: &PlayTask,
     item: &Item,
     mut result: TaskResult,
     templar: &Templar,
 ) -> Result<TaskResult, TemplateError> {
+    result.settle_failed();
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return Ok(result);
     }
@@ -664,15 +671,8 @@ fn apply_conditions(
     if !task.failed_when.is_empty() {
         let failed = all_hold(&task.failed_when, &vars, templar)?;
         result.0.insert("failed_when_result".into(), json!(failed));
-        if failed {
-            result.0.insert("failed".into(), json!(true));
-        } else {
-            result.0.remove("failed");
-            // A non-zero rc would still count as failed: the condition has spoken.
-            if result.failed() {
-                result.0.insert("failed".into(), json!(false));
-            }
-        }
+        // Over a non-zero rc too: the condition has spoken.
+        result.0.insert("failed".into(), json!(failed));
     }
     Ok(result)
 }
@@ -968,7 +968,7 @@ pub(super) fn running_host_vars<'a>(
 /// writing `"{{ py_override | default('') }}"` asked for nothing, and an empty path would have
 /// the host trying to start nothing and naming nothing when it failed.
 pub(super) fn requested_interpreter(vars: &Map<String, Value>) -> Option<String> {
-    vars.get("ansible_python_interpreter")
+    crate::vars::host_setting(vars, "ansible_python_interpreter")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|asked| {
@@ -1450,19 +1450,24 @@ pub(super) fn record_registered(
 /// they run, and they alone know which of them a host wrote and which the playbook did: rewriting
 /// them here would give an author's `set_fact` a managed host's trust and lose the one distinction
 /// `run_local` exists to keep.
+///
+/// Returns the restricted names [`VarStore::gather_facts`] took out and has not warned about
+/// yet in this run, for the caller to warn about.
 pub(super) fn record_facts(
     vars: &mut VarStore,
     targets: &[String],
     results: &[(Option<Value>, TaskResult)],
-) {
+) -> Vec<String> {
+    let mut removed = Vec::new();
     for (_, result) in results {
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
         };
         for target in targets {
-            vars.gather_facts(target, facts);
+            removed.extend(vars.gather_facts(target, facts));
         }
     }
+    removed
 }
 
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
@@ -2135,6 +2140,115 @@ mod tests {
         assert_eq!(agg["msg"], json!("All items completed"));
         assert_eq!(agg["results"][1]["item"], json!(2));
         assert_eq!(agg["results"][1]["ansible_loop_var"], json!("item"));
+    }
+
+    /// Every result that ran, module or controller, comes out with `failed` set, the way
+    /// ansible-core's `TaskExecutor._execute` sets it before `register`: kept when the result
+    /// says it, otherwise `true` for a non-zero `rc` and `false` for anything else. Measured on
+    /// 2.19.12, registered values read `failed=False` for `ping`, `command: "true"` and `stat`,
+    /// `failed=True` for a `command: "false"` and a `file` that failed, and `ABSENT` for a task
+    /// `when` skipped, which never gets here.
+    ///
+    /// What would make this red: `failed` left absent, so `r.failed` is undefined on a
+    /// registered `ping`; or written `false` over a failure, which would be far worse - a task
+    /// that failed and reads as a success.
+    #[test]
+    fn a_result_that_ran_says_whether_it_failed() {
+        let templar = Templar::new(std::env::temp_dir());
+        let t = task("command");
+        let item = Item {
+            element: None,
+            label: None,
+            args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        };
+        let failed = |r: Value| {
+            let r = apply_conditions(&t, &item, result(r), &templar).unwrap();
+            r.0.get("failed").cloned()
+        };
+        assert_eq!(failed(json!({"ping": "pong"})), Some(json!(false)));
+        assert_eq!(failed(json!({"rc": 0})), Some(json!(false)));
+        assert_eq!(failed(json!({"rc": 1})), Some(json!(true)));
+        assert_eq!(
+            failed(json!({"failed": true, "msg": "missing"})),
+            Some(json!(true))
+        );
+        assert_eq!(
+            failed(json!({"rc": 1, "failed": false})),
+            Some(json!(false))
+        );
+        // Measured on 2.19.12 through a module printing each shape: a failure registers `True`
+        // whatever made it one, and a falsy `failed` is kept as written.
+        assert_eq!(failed(json!({"rc": "2"})), Some(json!(true)));
+        assert_eq!(failed(json!({"rc": null})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": "yes"})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": 1})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": 0})), Some(json!(0)));
+        assert_eq!(failed(json!({"failed": null})), Some(json!(null)));
+        let mut t = task("command");
+        t.failed_when = vec!["false".into()];
+        let r = apply_conditions(&t, &item, result(json!({"rc": 0})), &templar).unwrap();
+        assert_eq!(r.0.get("failed"), Some(&json!(false)), "{:?}", r.0);
+    }
+
+    /// The recap the reference printed for these five tasks on 2.19.12, measured with a module
+    /// printing each result: two ignored failures reporting `changed: true` and `changed: "yes"`,
+    /// a `changed: "yes"` under `changed_when: false`, a rescued failure reporting
+    /// `changed: true`, and the rescue's own `debug` - `ok=4 changed=2 rescued=1 ignored=2`
+    /// (the play's last `debug` made the reference's `ok=5`).
+    ///
+    /// What would make this red: `changed: "yes"` read as unchanged; `changed_when: false` losing
+    /// to it; or a failure that stopped the host counted as a change.
+    #[test]
+    fn the_recap_counts_changed_the_way_the_reference_does() {
+        let templar = Templar::new(std::env::temp_dir());
+        let item = Item {
+            element: None,
+            label: None,
+            args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        };
+        let plain = task("command");
+        let mut quiet = task("command");
+        quiet.changed_when = vec!["false".into()];
+        let tasks = [
+            (
+                &plain,
+                json!({"changed": true, "failed": true}),
+                true,
+                false,
+            ),
+            (
+                &plain,
+                json!({"changed": "yes", "failed": true}),
+                true,
+                false,
+            ),
+            (&quiet, json!({"changed": "yes"}), false, false),
+            (
+                &plain,
+                json!({"changed": true, "failed": true}),
+                false,
+                true,
+            ),
+            (&plain, json!({"changed": false}), false, false),
+        ];
+        let mut stats = crate::stats::Stats::default();
+        for (t, shape, ignore_errors, rescuable) in tasks {
+            let r = apply_conditions(t, &item, result(shape), &templar).unwrap();
+            stats.record("h", classify(&r, ignore_errors, rescuable), r.changed());
+        }
+        let h = stats.host("h");
+        assert_eq!(
+            (h.ok, h.changed, h.rescued, h.ignored, h.failed),
+            (4, 2, 1, 2, 0)
+        );
     }
 
     #[test]
@@ -2821,7 +2935,11 @@ mod tests {
     fn a_python_module_result_enters_untrusted() {
         let mut store = one_host_store();
         registered(&mut store, json!({"changed": false}));
-        assert!(store.untrusted_of("h1").contains("probe"));
+        assert!(
+            store
+                .untrusted_of("h1", &crate::vars::Scope::default())
+                .contains("probe")
+        );
     }
 
     /// A module that returns a template does not get it rendered. The marker file is the proof.
@@ -2845,7 +2963,7 @@ mod tests {
         let render = |store: &mut VarStore| {
             let vars = HostVars {
                 map: store.for_host("h1", &crate::vars::Scope::default()),
-                untrusted: store.untrusted_of("h1"),
+                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
                 untrusted_hosts: store.untrusted_hosts(),
                 ..HostVars::default()
             };
@@ -2885,7 +3003,8 @@ mod tests {
     /// host's own words; or only the flat names written, which breaks
     /// `ansible_facts['hostname']` - measurement 10 of plan 1.5, where `gather_facts: true`
     /// followed by a `set_fact` of the same name leaves both readable: the flat name is masked
-    /// and the entry under `ansible_facts` is not.
+    /// and the entry under `ansible_facts` is not. Or the namespace keyed by the name `setup`
+    /// returned, which keeps its `ansible_` prefix where ansible-core strips it.
     #[test]
     fn gathered_facts_are_untrusted_and_land_under_both_names() {
         let templar = Templar::new(PathBuf::from("."));
@@ -2893,7 +3012,7 @@ mod tests {
         let render = |store: &mut VarStore, text: &str| {
             let vars = HostVars {
                 map: store.for_host("h1", &crate::vars::Scope::default()),
-                untrusted: store.untrusted_of("h1"),
+                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
                 untrusted_hosts: store.untrusted_hosts(),
                 ..HostVars::default()
             };
@@ -2901,8 +3020,17 @@ mod tests {
                 .render(text, crate::template::Vars::from(&vars))
                 .expect("a gathered fact reads")
         };
+        // The shape ansible-core 2.19.12's `setup` returns, measured with `gather_subset: [min]`:
+        // every fact already carries the `ansible_` prefix except `gather_subset` and
+        // `module_setup`, and `ansible_local` is always there.
         let result = TaskResult(vars(json!({
-            "ansible_facts": {"hostname": "probe-hostname", "distribution": "Ubuntu"},
+            "ansible_facts": {
+                "ansible_hostname": "probe-hostname",
+                "ansible_distribution": "Ubuntu",
+                "ansible_local": {},
+                "gather_subset": ["min"],
+                "module_setup": true,
+            },
             "changed": false,
         })));
         record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
@@ -2917,9 +3045,31 @@ mod tests {
             render(&mut store, "{{ ansible_facts['distribution'] }}"),
             "Ubuntu"
         );
+        // The reference, same play: `ansible_facts['ansible_distribution']` is undefined, and
+        // `ansible_local` is the one prefix `namespace_facts()` keeps.
+        assert_eq!(
+            render(
+                &mut store,
+                "{{ ansible_facts['ansible_distribution'] is defined }} \
+                 {{ ansible_facts.ansible_local is defined }} {{ ansible_facts.local is defined }} \
+                 {{ ansible_facts.module_setup }} {{ ansible_ansible_hostname is defined }}"
+            ),
+            "False True False True False"
+        );
+        // Flat, a key lands as the module spelled it: the reference's `clean_facts()` adds no
+        // prefix, so `module_setup` is there and `ansible_module_setup` is undefined.
+        assert_eq!(
+            render(
+                &mut store,
+                "{{ module_setup }} {{ gather_subset | first }} {{ ansible_module_setup is defined }}"
+            ),
+            "True min False"
+        );
         for name in ["ansible_hostname", "ansible_facts"] {
             assert!(
-                store.untrusted_of("h1").contains(name),
+                store
+                    .untrusted_of("h1", &crate::vars::Scope::default())
+                    .contains(name),
                 "{name} carries a managed host's own words"
             );
         }
@@ -2931,6 +3081,112 @@ mod tests {
             ),
             "SHADOWED / probe-hostname"
         );
+    }
+
+    /// A managed host cannot choose where its own next task connects, as whom, or under which
+    /// interpreter. Gathered facts rank over the inventory, where `ansible_host` lives, so a
+    /// module answering `ansible_facts: {ansible_host: <elsewhere>}` would otherwise move the
+    /// connection. ansible-core 2.19.12's `clean_facts()` strips those names from the flat
+    /// variables with `[WARNING]: Removed restricted key from module data: <name>`; measured with
+    /// a module returning this set, the reference kept `ansible_ssh_host_key_rsa_public`,
+    /// `ansible_ssh_foo_bridge`, `ansible_local` and `plain`, dropped `_ansible_hidden` and the
+    /// nested `_ansible_inner` without a word, and warned once for each of the others.
+    ///
+    /// What would make this red: facts merged without the restricted names taken out, so the
+    /// transport built for the host's next task reads the host's own answer.
+    #[test]
+    fn a_fact_cannot_move_the_hosts_next_connection() {
+        let inventory = crate::inventory::Inventory::parse_ini(
+            "h1 ansible_host=192.0.2.10 ansible_python_interpreter=/usr/bin/python3\n",
+        )
+        .expect("an inventory");
+        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let result = TaskResult(vars(json!({
+            "ansible_facts": {
+                "ansible_host": "203.0.113.9",
+                "ansible_connection": "local",
+                "ansible_user": "intruder",
+                "ansible_python_interpreter": "/tmp/evil/python",
+                "ansible_foo_interpreter": "x",
+                "ansible_become_password": "x",
+                "ansible_become_anything": "x",
+                "ansible_ssh_extra_args": "-oProxyCommand=x",
+                "ansible_remote_tmp": "/home/deploy/x",
+                "ansible_ssh_host_key_rsa_public": "KEY",
+                "ansible_ssh_foo_bridge": "br",
+                "ansible_local": {"a": 1},
+                "ansible_local_thing": "x",
+                "ansible_winrm_x": "x",
+                "ansible_paramiko_ssh_x": "x",
+                "ansible_psrp_x": "x",
+                "ansible_network_os": "x",
+                "ansible_rsync_path": "x",
+                "ansible_playbook_python": "x",
+                "add_host": "x",
+                "add_group": "x",
+                "_ansible_hidden": "x",
+                "nested": {"_ansible_inner": 1, "kept": 2},
+                "plain": 1,
+            },
+            "changed": false,
+        })));
+        let warned = record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+        let v = store.for_host("h1", &crate::vars::Scope::default());
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
+            panic!("a fact turned the host's connection local");
+        };
+        assert_eq!(target.address, "192.0.2.10");
+        assert_eq!(target.user, None);
+        assert!(target.extra_args.is_empty(), "{:?}", target.extra_args);
+        // Where the escalated agent is looked for: a host that picks it plants its own.
+        assert_eq!(target.remote_tmp, defaults.remote_tmp);
+        assert_eq!(
+            requested_interpreter(&v).as_deref(),
+            Some("/usr/bin/python3")
+        );
+        assert!(!v.contains_key("ansible_become_password"));
+        assert_eq!(v["ansible_ssh_host_key_rsa_public"], json!("KEY"));
+        assert_eq!(v["ansible_ssh_foo_bridge"], json!("br"));
+        assert_eq!(v["ansible_local"], json!({"a": 1}));
+        assert_eq!(v["plain"], json!(1));
+        assert!(!v.contains_key("_ansible_hidden"));
+        assert_eq!(v["nested"], json!({"kept": 2}));
+        assert_eq!(
+            warned,
+            [
+                "add_group",
+                "add_host",
+                "ansible_become_anything",
+                "ansible_become_password",
+                "ansible_connection",
+                "ansible_foo_interpreter",
+                "ansible_host",
+                "ansible_local_thing",
+                "ansible_network_os",
+                "ansible_paramiko_ssh_x",
+                "ansible_playbook_python",
+                "ansible_psrp_x",
+                "ansible_python_interpreter",
+                "ansible_remote_tmp",
+                "ansible_rsync_path",
+                "ansible_ssh_extra_args",
+                "ansible_user",
+                "ansible_winrm_x",
+            ]
+        );
+        // The reference leaves the namespace alone, and nothing reads a connection from it.
+        assert_eq!(v["ansible_facts"]["host"], json!("203.0.113.9"));
     }
 
     /// A template inside a gathered fact is text, the way one inside a `register` already is.
@@ -2954,7 +3210,7 @@ mod tests {
         let templar = Templar::new(PathBuf::from("."));
         let vars = HostVars {
             map: store.for_host("h1", &crate::vars::Scope::default()),
-            untrusted: store.untrusted_of("h1"),
+            untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
             untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
         };

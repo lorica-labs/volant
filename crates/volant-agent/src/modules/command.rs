@@ -122,7 +122,7 @@ pub(crate) fn execute(
         && !path.is_empty()
         && glob::matches_any(guard_base, path)
     {
-        return Run::Done(skipped(
+        return Run::Done(not_run(
             display,
             format!("Did not run command since '{path}' exists"),
             format!("skipped, since {path} exists"),
@@ -132,7 +132,7 @@ pub(crate) fn execute(
         && !path.is_empty()
         && !glob::matches_any(guard_base, path)
     {
-        return Run::Done(skipped(
+        return Run::Done(not_run(
             display,
             format!("Did not run command since '{path}' does not exist"),
             format!("skipped, since {path} does not exist"),
@@ -408,16 +408,20 @@ fn lines(text: &str) -> Value {
     json!(text.lines().collect::<Vec<_>>())
 }
 
-fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
+/// A guard that stopped the command. The reference leaves the task `ok`, never `skipped`, and
+/// `start`, `end` and `delta` null because nothing ran.
+fn not_run(cmd: Value, msg: String, stdout: String) -> TaskResult {
     let mut result = Map::new();
     result.insert("cmd".into(), cmd);
+    for key in ["start", "end", "delta"] {
+        result.insert(key.into(), Value::Null);
+    }
     result.insert("rc".into(), json!(0));
     result.insert("stdout".into(), json!(stdout));
     result.insert("stderr".into(), json!(""));
     result.insert("stdout_lines".into(), lines(&stdout));
     result.insert("stderr_lines".into(), json!([]));
     result.insert("changed".into(), json!(false));
-    result.insert("skipped".into(), json!(true));
     result.insert("msg".into(), json!(msg));
     TaskResult(result)
 }
@@ -596,35 +600,52 @@ mod tests {
         assert_eq!(r.0["stdout"], "cmd-form");
     }
 
+    /// The whole result, key for key, against what ansible-core 2.19.12's `command` returned for
+    /// `{cmd: "true", creates: /etc/hostname}` on a host where the file exists, `invocation`
+    /// and the interpreter-discovery `ansible_facts` and `warnings` left out. The task is `ok`,
+    /// not `skipped`: the module never sets `skipped` for a guard, and `start`, `end` and
+    /// `delta` stay null because nothing ran.
+    ///
+    /// What would make this red: any key added or missing, `skipped: true` first among them,
+    /// which turns `when: r is skipped` the other way.
     #[test]
-    fn creates_skips_when_the_path_exists() {
+    fn creates_does_not_run_and_reports_ok_when_the_path_exists() {
         let r = done(execute(
-            &args(json!({"_raw_params": "echo never", "creates": "/"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], 0);
-        assert_eq!(r.0["msg"], "Did not run command since '/' exists");
-        assert_eq!(r.0["stdout"], "skipped, since / exists");
-        assert!(!r.changed() && !r.failed());
-        assert!(r.skipped());
-    }
-
-    #[test]
-    fn removes_skips_when_the_path_is_absent() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "echo never", "removes": "/definitely/not/here"})),
+            &args(json!({"_raw_params": "true", "creates": "/"})),
             false,
             &Context::default(),
             &|| false,
         ));
         assert_eq!(
-            r.0["msg"],
-            "Did not run command since '/definitely/not/here' does not exist"
+            Value::Object(r.0),
+            json!({
+                "changed": false, "cmd": ["true"], "delta": null, "end": null,
+                "msg": "Did not run command since '/' exists", "rc": 0, "start": null,
+                "stderr": "", "stderr_lines": [], "stdout": "skipped, since / exists",
+                "stdout_lines": ["skipped, since / exists"],
+            })
         );
-        assert!(!r.changed());
-        assert!(r.skipped());
+    }
+
+    /// The same measurement, for `removes: /nonexistent-vc`: the same shape and no `skipped`.
+    #[test]
+    fn removes_does_not_run_and_reports_ok_when_the_path_is_absent() {
+        let r = done(execute(
+            &args(json!({"_raw_params": "true", "removes": "/definitely/not/here"})),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(
+            Value::Object(r.0),
+            json!({
+                "changed": false, "cmd": ["true"], "delta": null, "end": null,
+                "msg": "Did not run command since '/definitely/not/here' does not exist",
+                "rc": 0, "start": null, "stderr": "", "stderr_lines": [],
+                "stdout": "skipped, since /definitely/not/here does not exist",
+                "stdout_lines": ["skipped, since /definitely/not/here does not exist"],
+            })
+        );
     }
 
     /// Measurement (o): a relative `creates` resolves under `chdir`, and the message keeps the
@@ -674,8 +695,8 @@ mod tests {
             &|| false,
         ));
         assert!(
-            !r.skipped(),
-            "the cleanup was skipped although 'cache' is there"
+            r.changed(),
+            "the cleanup did not run although 'cache' is there"
         );
         assert_eq!(r.0["stdout"], "ran");
         std::fs::remove_dir_all(&dir).unwrap();
@@ -699,8 +720,7 @@ mod tests {
             &Context::default(),
             &|| false,
         ));
-        assert!(!r.skipped(), "a bad chdir was read as a guard decision");
-        assert!(r.failed());
+        assert!(r.failed(), "a bad chdir was read as a guard decision");
         assert_eq!(r.0["rc"], 2);
         assert_eq!(
             r.0["msg"],
@@ -732,8 +752,7 @@ mod tests {
             &|| false,
         ));
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(!r.skipped(), "a file as chdir was read as a guard decision");
-        assert!(r.failed());
+        assert!(r.failed(), "a file as chdir was read as a guard decision");
         // The `rc` and `msg` a bad `chdir` reports are a separate, measured divergence from the
         // reference, which answers `rc: null` and `Unable to change directory before execution.`
         // for both a missing directory and a file. This test is about which branch runs, not
@@ -759,7 +778,7 @@ mod tests {
             &Context::default(),
             &|| false,
         ));
-        assert!(!r.skipped(), "an empty creates was read as a guard");
+        assert!(r.changed(), "an empty creates was read as a guard");
         assert_eq!(r.0["stdout"], "ran");
         std::fs::remove_dir_all(&dir).unwrap();
     }

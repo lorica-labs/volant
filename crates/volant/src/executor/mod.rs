@@ -267,7 +267,7 @@ fn load_play_vars_files(
         let (raw, shared, untrusted, untrusted_hosts) = {
             let mut store = state.vars.lock().expect("vars lock");
             let shared = store.shared_values(&scope);
-            let untrusted = store.untrusted_of(&host.name);
+            let untrusted = store.untrusted_of(&host.name, &scope);
             let untrusted_hosts = store.untrusted_hosts();
             (
                 store.for_host(&host.name, &scope),

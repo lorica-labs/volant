@@ -498,17 +498,12 @@ const MAY_BE_NULL: &[&str] = &["stat.version"];
 /// Differences this release really has, which the comparison steps over and then insists are
 /// still there.
 ///
-/// One entry: ansible-core normalises `changed` onto every result, so the reference records
-/// `"changed": false` for `ping`, which returns only `{"ping": "pong"}` of its own. Volant hands
-/// back what the module printed, so a registered `ping` has no `changed` at all and
-/// `when: r.changed` reads differently here than under the reference. The fix belongs in the
-/// executor, not in this file.
-///
-/// The entry is not a way to look away from it. `a_python_module_returns_the_reference_s_own_keys`
-/// fails if a listed difference has stopped differing, so whoever fixes the executor is sent
-/// straight here to delete the line, and the exemption cannot outlive the defect.
+/// None at the moment. An entry is not a way to look away from a difference:
+/// `a_python_module_returns_the_reference_s_own_keys` fails if a listed difference has stopped
+/// differing, so whoever fixes the executor is sent straight here to delete the line, and the
+/// exemption cannot outlive the defect.
 #[cfg(target_os = "linux")]
-const KNOWN_DIFFERENCES: &[(&str, &str)] = &[("ping", "changed")];
+const KNOWN_DIFFERENCES: &[(&str, &str)] = &[];
 
 /// The eight ownership keys, and which part of the running account each one must equal.
 #[cfg(target_os = "linux")]

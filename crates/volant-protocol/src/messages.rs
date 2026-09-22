@@ -159,20 +159,43 @@ impl TaskResult {
         matches!(self.0.get(key), Some(Value::Bool(true)))
     }
 
+    /// ansible-core 2.19.12's rule, measured: `changed` decides by Python truthiness, so
+    /// `"yes"`, `"false"` and `1` report `changed:` and `0`, `null`, `""` and `[]` do not. The
+    /// value is registered as the module wrote it (`r.changed` reads `yes`), so nothing here
+    /// rewrites it; `changed_when` does, with a boolean.
     pub fn changed(&self) -> bool {
-        self.flag("changed")
+        self.0.get("changed").is_some_and(truthy)
     }
 
     pub fn skipped(&self) -> bool {
         self.flag("skipped")
     }
 
-    /// Ansible's rule: a present `failed` (true or false) is the truth; `rc` only decides when
-    /// `failed` is absent. `failed_when: false` can rescue a non-zero `rc`.
+    /// ansible-core 2.19.12's rule, measured: a present `failed` decides by Python truthiness
+    /// (`"yes"` and `"false"` fail, `0`, `null`, `""` and `[]` do not), and only when it is
+    /// absent does `rc` decide, failing on anything present but `0` or `"0"` - `null`, `"2"`,
+    /// `""` and `true` fail, `0.0` and `false` (both equal to `0` in Python) do not.
+    /// `failed_when: false` can rescue a non-zero `rc`.
     pub fn failed(&self) -> bool {
         match self.0.get("failed") {
-            Some(Value::Bool(b)) => *b,
-            _ => matches!(self.0.get("rc"), Some(Value::Number(n)) if n.as_i64() != Some(0)),
+            Some(value) => truthy(value),
+            None => match self.0.get("rc") {
+                None => false,
+                Some(Value::Number(n)) => n.as_f64() != Some(0.0),
+                Some(Value::Bool(b)) => *b,
+                Some(Value::String(s)) => s != "0",
+                Some(_) => true,
+            },
+        }
+    }
+
+    /// Makes a result that counts as failed say `failed: true`, which is what the reference
+    /// registers for one: measured, `failed: "yes"` and `failed: 1` both register `True`, while a
+    /// falsy `failed` (`0`, `null`) is kept as the module wrote it.
+    pub fn settle_failed(&mut self) {
+        let failed = self.failed();
+        if failed || !self.0.contains_key("failed") {
+            self.0.insert("failed".into(), Value::Bool(failed));
         }
     }
 
@@ -203,10 +226,97 @@ impl TaskResult {
     }
 }
 
+/// Python's truthiness of a JSON value, which is how the reference reads a result's `failed`.
+fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Which results changed, against ansible-core 2.19.12 on the development machine: a module
+    /// printing each of these shapes, and the task's own line read - `changed:` for every
+    /// `true` here, `ok:` for every `false`, and a recap of `changed=3`.
+    ///
+    /// What would make this red: `changed: "yes"` or `changed: 1` reported as `ok`, which the
+    /// recap and every `notify` then miss.
+    #[test]
+    fn a_result_changed_by_the_reference_s_own_rule() {
+        let cases = [
+            (json!({"changed": "yes"}), true),
+            (json!({"changed": "false"}), true),
+            (json!({"changed": 1}), true),
+            (json!({"changed": 0}), false),
+            (json!({"changed": null}), false),
+            (json!({"changed": ""}), false),
+            (json!({"changed": []}), false),
+            (json!({}), false),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(shape, changed)| {
+                let Value::Object(map) = shape.clone() else {
+                    unreachable!()
+                };
+                (TaskResult(map).changed() != changed).then(|| format!("{shape} changed={changed}"))
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "read otherwise than the reference: {wrong:?}"
+        );
+    }
+
+    /// Which results fail, against ansible-core 2.19.12 on the development machine: a module
+    /// printing each of these shapes (with `changed: false`) under `ignore_errors`, and the
+    /// task's own line read. `fatal` for every `true` here, `ok` for every `false`.
+    ///
+    /// What would make this red: a string `rc` of `"2"`, a `null` rc or a `failed: "yes"` read
+    /// as success - a failure reported as `ok`.
+    #[test]
+    fn a_result_fails_by_the_reference_s_own_rule() {
+        let cases = [
+            (json!({"failed": "yes"}), true),
+            (json!({"failed": "false"}), true),
+            (json!({"failed": 0}), false),
+            (json!({"failed": 1}), true),
+            (json!({"failed": null}), false),
+            (json!({"failed": ""}), false),
+            (json!({"failed": []}), false),
+            (json!({"rc": "2"}), true),
+            (json!({"rc": "0"}), false),
+            (json!({"rc": null}), true),
+            (json!({"rc": 0.0}), false),
+            (json!({"rc": false}), false),
+            (json!({"rc": true}), true),
+            (json!({"rc": ""}), true),
+            (json!({"rc": 1}), true),
+            (json!({}), false),
+            (json!({"failed": false, "rc": 1}), false),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(shape, fails)| {
+                let Value::Object(map) = shape.clone() else {
+                    unreachable!()
+                };
+                (TaskResult(map).failed() != fails).then(|| format!("{shape} fails={fails}"))
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "read otherwise than the reference: {wrong:?}"
+        );
+    }
 
     #[test]
     fn hello_has_a_snake_case_type_tag() {

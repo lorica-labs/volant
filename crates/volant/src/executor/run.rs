@@ -1452,19 +1452,24 @@ pub(super) fn record_registered(
 /// they run, and they alone know which of them a host wrote and which the playbook did: rewriting
 /// them here would give an author's `set_fact` a managed host's trust and lose the one distinction
 /// `run_local` exists to keep.
+///
+/// Returns the restricted names [`VarStore::gather_facts`] took out and has not warned about
+/// yet in this run, for the caller to warn about.
 pub(super) fn record_facts(
     vars: &mut VarStore,
     targets: &[String],
     results: &[(Option<Value>, TaskResult)],
-) {
+) -> Vec<String> {
+    let mut removed = Vec::new();
     for (_, result) in results {
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
         };
         for target in targets {
-            vars.gather_facts(target, facts);
+            removed.extend(vars.gather_facts(target, facts));
         }
     }
+    removed
 }
 
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
@@ -3013,6 +3018,108 @@ mod tests {
             ),
             "SHADOWED / probe-hostname"
         );
+    }
+
+    /// A managed host cannot choose where its own next task connects, as whom, or under which
+    /// interpreter. Gathered facts rank over the inventory, where `ansible_host` lives, so a
+    /// module answering `ansible_facts: {ansible_host: <elsewhere>}` would otherwise move the
+    /// connection. ansible-core 2.19.12's `clean_facts()` strips those names from the flat
+    /// variables with `[WARNING]: Removed restricted key from module data: <name>`; measured with
+    /// a module returning this set, the reference kept `ansible_ssh_host_key_rsa_public`,
+    /// `ansible_ssh_foo_bridge`, `ansible_local` and `plain`, dropped `_ansible_hidden` and the
+    /// nested `_ansible_inner` without a word, and warned once for each of the others.
+    ///
+    /// What would make this red: facts merged without the restricted names taken out, so the
+    /// transport built for the host's next task reads the host's own answer.
+    #[test]
+    fn a_fact_cannot_move_the_hosts_next_connection() {
+        let inventory = crate::inventory::Inventory::parse_ini(
+            "h1 ansible_host=192.0.2.10 ansible_python_interpreter=/usr/bin/python3\n",
+        )
+        .expect("an inventory");
+        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let result = TaskResult(vars(json!({
+            "ansible_facts": {
+                "ansible_host": "203.0.113.9",
+                "ansible_connection": "local",
+                "ansible_user": "intruder",
+                "ansible_python_interpreter": "/tmp/evil/python",
+                "ansible_foo_interpreter": "x",
+                "ansible_become_password": "x",
+                "ansible_become_anything": "x",
+                "ansible_ssh_extra_args": "-oProxyCommand=x",
+                "ansible_ssh_host_key_rsa_public": "KEY",
+                "ansible_ssh_foo_bridge": "br",
+                "ansible_local": {"a": 1},
+                "ansible_local_thing": "x",
+                "ansible_winrm_x": "x",
+                "ansible_paramiko_ssh_x": "x",
+                "ansible_psrp_x": "x",
+                "ansible_network_os": "x",
+                "ansible_rsync_path": "x",
+                "ansible_playbook_python": "x",
+                "add_host": "x",
+                "add_group": "x",
+                "_ansible_hidden": "x",
+                "nested": {"_ansible_inner": 1, "kept": 2},
+                "plain": 1,
+            },
+            "changed": false,
+        })));
+        let warned = record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+        let v = store.for_host("h1", &crate::vars::Scope::default());
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
+            panic!("a fact turned the host's connection local");
+        };
+        assert_eq!(target.address, "192.0.2.10");
+        assert_eq!(target.user, None);
+        assert!(target.extra_args.is_empty(), "{:?}", target.extra_args);
+        assert_eq!(
+            requested_interpreter(&v).as_deref(),
+            Some("/usr/bin/python3")
+        );
+        assert!(!v.contains_key("ansible_become_password"));
+        assert_eq!(v["ansible_ssh_host_key_rsa_public"], json!("KEY"));
+        assert_eq!(v["ansible_ssh_foo_bridge"], json!("br"));
+        assert_eq!(v["ansible_local"], json!({"a": 1}));
+        assert_eq!(v["plain"], json!(1));
+        assert!(!v.contains_key("_ansible_hidden"));
+        assert_eq!(v["nested"], json!({"kept": 2}));
+        assert_eq!(
+            warned,
+            [
+                "add_group",
+                "add_host",
+                "ansible_become_anything",
+                "ansible_become_password",
+                "ansible_connection",
+                "ansible_foo_interpreter",
+                "ansible_host",
+                "ansible_local_thing",
+                "ansible_network_os",
+                "ansible_paramiko_ssh_x",
+                "ansible_playbook_python",
+                "ansible_psrp_x",
+                "ansible_python_interpreter",
+                "ansible_rsync_path",
+                "ansible_ssh_extra_args",
+                "ansible_user",
+                "ansible_winrm_x",
+            ]
+        );
+        // The reference leaves the namespace alone, and nothing reads a connection from it.
+        assert_eq!(v["ansible_facts"]["host"], json!("203.0.113.9"));
     }
 
     /// A template inside a gathered fact is text, the way one inside a `register` already is.

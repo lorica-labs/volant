@@ -136,6 +136,8 @@ pub struct VarStore {
     /// facts, a layer of their own that ranks over the inventory and under the play. Every name
     /// in it is untrusted.
     gathered: BTreeMap<String, Map<String, Value>>,
+    /// Restricted fact names already warned about: the reference says each once per run.
+    warned_restricted: BTreeSet<String>,
     /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
     /// from the playbook.
     untrusted: BTreeMap<String, BTreeSet<String>>,
@@ -165,6 +167,99 @@ type SharedKey = (Vec<String>, Vec<String>, Vec<String>);
 /// and keeps output reproducible.
 pub fn omit_token() -> &'static str {
     "__omit_place_holder__6d24c2dd6a8f2e0e2a6e5cce6b1f9c4a"
+}
+
+/// The connection plugins ansible-core 2.19.12 ships, as its `connection_loader.all()` lists
+/// them on a host with no collection installed.
+const CONNECTION_PLUGINS: [&str; 6] = [
+    "_paramiko_ssh",
+    "local",
+    "paramiko_ssh",
+    "psrp",
+    "ssh",
+    "winrm",
+];
+
+/// ansible-core 2.19.12's `MAGIC_VARIABLE_MAPPING` values, which include every
+/// `COMMON_CONNECTION_VARS` name, then `RESTRICTED_RESULT_KEYS` and `INTERNAL_RESULT_KEYS`.
+const RESTRICTED_FACTS: [&str; 39] = [
+    "ansible_become",
+    "ansible_become_exe",
+    "ansible_become_flags",
+    "ansible_become_method",
+    "ansible_become_pass",
+    "ansible_become_password",
+    "ansible_become_user",
+    "ansible_connection",
+    "ansible_connection_user",
+    "ansible_docker_extra_args",
+    "ansible_host",
+    "ansible_module_compression",
+    "ansible_network_os",
+    "ansible_password",
+    "ansible_pipelining",
+    "ansible_port",
+    "ansible_private_key_file",
+    "ansible_scp_extra_args",
+    "ansible_sftp_extra_args",
+    "ansible_shell_executable",
+    "ansible_shell_type",
+    "ansible_ssh_common_args",
+    "ansible_ssh_executable",
+    "ansible_ssh_extra_args",
+    "ansible_ssh_host",
+    "ansible_ssh_pass",
+    "ansible_ssh_pipelining",
+    "ansible_ssh_port",
+    "ansible_ssh_private_key_file",
+    "ansible_ssh_timeout",
+    "ansible_ssh_transfer_method",
+    "ansible_ssh_user",
+    "ansible_timeout",
+    "ansible_user",
+    "ansible_rsync_path",
+    "ansible_playbook_python",
+    "ansible_facts",
+    "add_host",
+    "add_group",
+];
+
+/// Whether ansible-core's `clean_facts()` removes a fact of this name before it becomes a
+/// variable: a connection or escalation setting, `ansible_<connection plugin>_*` unless it ends
+/// in `_bridge` or `_gwbridge`, any `ansible_become_*`, any `ansible_*_interpreter`, and the
+/// engine's own result keys - except `ansible_ssh_host_key_*`, which `setup` reports and which
+/// it always keeps.
+fn restricted_fact(key: &str) -> bool {
+    if key.starts_with("ansible_ssh_host_key_") {
+        return false;
+    }
+    let plugin_setting = CONNECTION_PLUGINS.iter().any(|plugin| {
+        key.strip_prefix("ansible_")
+            .and_then(|rest| rest.strip_prefix(plugin))
+            .is_some_and(|rest| rest.starts_with('_'))
+    }) && !key.ends_with("_bridge")
+        && !key.ends_with("_gwbridge");
+    // `^ansible_.*_interpreter$`: both underscores are its own, so `ansible_interpreter` is not.
+    let interpreter = key.len() >= "ansible__interpreter".len()
+        && key.starts_with("ansible_")
+        && key.ends_with("_interpreter");
+    RESTRICTED_FACTS.contains(&key)
+        || key.starts_with("ansible_become_")
+        || plugin_setting
+        || interpreter
+}
+
+/// ansible-core's `strip_internal_keys()`: every `_ansible_*` key, at any depth, goes without a
+/// word.
+fn strip_internal_keys(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|key, _| !key.starts_with("_ansible_"));
+            map.values_mut().for_each(strip_internal_keys);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_internal_keys),
+        _ => {}
+    }
 }
 
 /// An inventory name without its domain, which is what `inventory_hostname_short` reports.
@@ -223,6 +318,7 @@ impl VarStore {
             groups,
             facts: BTreeMap::new(),
             gathered: BTreeMap::new(),
+            warned_restricted: BTreeSet::new(),
             untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
@@ -300,15 +396,31 @@ impl VarStore {
     /// Untrusted, every one of them, and this is the entry point that makes that true for a whole
     /// module result at once. They are a managed host's own words - a hostname the host chose, a
     /// package name it printed - so a template in a value is text from here on.
-    pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) {
+    ///
+    /// Never flat under a restricted name: a managed host must not choose the address, user,
+    /// `ssh` arguments or interpreter of its own next task, and gathered facts rank over the
+    /// inventory that normally sets them. `restricted_fact` is ansible-core's `clean_facts()`;
+    /// what it takes out is returned, the names not yet warned about in this run, for the
+    /// caller's `Removed restricted key from module data` warning. The namespaced copy keeps
+    /// them, as the reference's does: nothing reads a connection setting from there.
+    pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) -> Vec<String> {
         let gathered = self.gathered.entry(host.to_string()).or_default();
         let mut namespace = gathered
             .get("ansible_facts")
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        let mut removed = Vec::new();
         for (key, value) in facts {
-            gathered.insert(key.clone(), value.clone());
+            if restricted_fact(key) {
+                if self.warned_restricted.insert(key.clone()) {
+                    removed.push(key.clone());
+                }
+            } else if !key.starts_with("_ansible_") {
+                let mut flat = value.clone();
+                strip_internal_keys(&mut flat);
+                gathered.insert(key.clone(), flat);
+            }
             // ansible-core's `namespace_facts()`: the prefix `setup` returned comes off, except
             // on `ansible_local`.
             let bare = match key.strip_prefix("ansible_") {
@@ -319,6 +431,9 @@ impl VarStore {
         }
         gathered.insert("ansible_facts".into(), Value::Object(namespace));
         self.forget_hostvars();
+        // The reference's order is a Python set's; name order at least reads the same each run.
+        removed.sort();
+        removed
     }
 
     /// The names of `host`'s merged view that came from a managed host: the `set_fact` layer's

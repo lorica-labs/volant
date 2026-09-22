@@ -1187,7 +1187,7 @@ pub(super) async fn drive_host(
                 }
                 let live = driver.progress.borrow().live_hosts.clone();
                 let targets = fact_targets(task, &name, &live);
-                {
+                let removed = {
                     // One lock for both: a reader between them would see a host that had
                     // registered a result without holding the facts that came in it.
                     let mut vars = store.lock().expect("vars lock");
@@ -1195,7 +1195,18 @@ pub(super) async fn drive_host(
                     // Only here, and never on the `run_local` path above: this is where a
                     // managed host's own words arrive, and `set_fact` writes its own facts with
                     // the trust each of them earned.
-                    record_facts(&mut vars, &targets, &results);
+                    record_facts(&mut vars, &targets, &results)
+                };
+                // A name, never a value, so there is nothing in it for `no_log` to hide.
+                for key in removed {
+                    let _ = tx
+                        .send(Event::Warning {
+                            host: name.clone(),
+                            index: *index,
+                            message: format!("Removed restricted key from module data: {key}"),
+                            censored: false,
+                        })
+                        .await;
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
                 let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };

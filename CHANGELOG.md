@@ -6,9 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) - 2026-09-22
+
+### Security
+
+- A managed host can no longer set its own connection settings through the facts a module returns. Until this release, a fact module's `ansible_facts` reached the host's variables unfiltered, so a host could change the address, user and ssh arguments of its own next task, including `-oProxyCommand`, which runs a command on the controller. It could also pick the Python interpreter its next module ran under, switch the connection to `local` to move its next task onto the controller, and move `ansible_remote_tmp` so that a planted agent ran as root on the next `become` task. Volant now strips the names ansible-core's `clean_facts()` strips, plus `ansible_remote_tmp`, which ansible-core does not use this way, and prints the same warning. ([#181](https://github.com/lorica-labs/volant/pull/181))
+
+### Added
+
+- Run ansible-core's Python modules on managed hosts. The controller builds one content-addressed zip of the modules a run needs and their `module_utils`, and sends it to each host once. A Python server in the agent loads it once and forks a child per task, so running a module costs tens of milliseconds rather than starting a new interpreter for each one. The host needs a Python interpreter but not ansible-core; the controller needs ansible-core. Modules the reference runs through an action plugin, such as `copy`, `template`, `service` and `package`, are still refused before the first connection. ([#158](https://github.com/lorica-labs/volant/pull/158), [#159](https://github.com/lorica-labs/volant/pull/159), [#163](https://github.com/lorica-labs/volant/pull/163), [#166](https://github.com/lorica-labs/volant/pull/166), [#171](https://github.com/lorica-labs/volant/pull/171))
+- Gather facts with ansible-core's own `setup` module when a play asks for them. Gathered facts are data from the host and are never rendered as templates. ([#173](https://github.com/lorica-labs/volant/pull/173))
+- Run `assert`, `fail` and `pause` on the controller. ([#179](https://github.com/lorica-labs/volant/pull/179))
+
 ### Changed
 
-- *(executor)* gather facts with the reference's setup module. A play that does not write `gather_facts: false` now needs ansible-core on the controller, and is refused before the first connection without it.
+- A play that does not write `gather_facts: false` now gathers facts, so it needs ansible-core on the controller and is refused before the first connection without it. ([#173](https://github.com/lorica-labs/volant/pull/173))
+- Gathered facts now rank above the inventory and below the play's, role's and task's own variables, as in ansible-core. A playbook that sets a variable with the same name as a gathered fact now reads its own value. ([#181](https://github.com/lorica-labs/volant/pull/181))
+- An escalated connection is kept for the whole play instead of being rebuilt at every task. On a thirty-five task playbook against one host this took the run from 872 ms to 226 ms per task. A run can now hold two connections per host, so a controller limited to 1024 open files reaches that limit at about 169 escalating hosts. ([#178](https://github.com/lorica-labs/volant/pull/178))
+
+### Fixed
+
+- `ansible_facts[...]` uses the same keys as ansible-core, without an `ansible_` prefix, and a fact a module returns without the prefix keeps its name. ([#181](https://github.com/lorica-labs/volant/pull/181))
+- A command skipped because of `creates:` or `removes:` is reported as `ok`, as in ansible-core, rather than as skipped. ([#181](https://github.com/lorica-labs/volant/pull/181))
+- A registered result carries `changed` and `failed` the way ansible-core's does, and a result such as `rc: "2"` counts as a failure as it does there. ([#181](https://github.com/lorica-labs/volant/pull/181))
+- The `timeout:` keyword applies to tasks that run on the controller. ([#179](https://github.com/lorica-labs/volant/pull/179))
 
 ## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) - 2026-09-20
 

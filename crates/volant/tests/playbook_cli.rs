@@ -200,6 +200,61 @@ fn an_assert_shows_its_result_unless_quiet() {
     );
 }
 
+/// Measured on ansible-core 2.19.12 with two hosts and standard input not a terminal: a `pause`
+/// runs for the first host alone. One `ok: [h1]`, one warning, `q` registered on h1 only, and a
+/// `when` that leaves h1 out skips the pause for both. A pause that fails takes the other hosts
+/// out of the play with no line and no recap entry, and the run exits 2.
+///
+/// What would make this red: a pause run per host, which prints `ok: [h2]`, registers `q` on h2 and pauses h2 under its `when`; or a failed pause that leaves h2 running
+/// the next task.
+#[test]
+fn a_pause_runs_once_for_the_first_host() {
+    let inventory = fixture("controller/two-hosts.ini");
+    let run = |playbook: &str| {
+        volant_within_full(
+            &["playbook", "-i", &inventory, &fixture(playbook)],
+            DEFAULT_DEADLINE,
+            None,
+            None,
+            None,
+            Some(""),
+            &[],
+        )
+    };
+    let out = run("controller/pause-once.yml");
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    let task = |name: &str| {
+        text.split(&format!("TASK [{name}] "))
+            .nth(1)
+            .and_then(|rest| rest.split("\n\n").next())
+            .map(|block| block.lines().skip(1).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    assert_eq!(task("prompt"), ["ok: [h1]"], "{text}");
+    assert_eq!(
+        task("seen"),
+        [
+            r#"ok: [h1] => {"msg": true}"#,
+            r#"ok: [h2] => {"msg": false}"#
+        ],
+        "{text}"
+    );
+    assert_eq!(task("only h2"), ["skipping: [h1]"], "{text}");
+    assert!(
+        text.contains("h1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=1")
+            && text.contains("h2                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0"),
+        "{text}"
+    );
+
+    let out = run("controller/pause-fails.yml");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(!text.contains("after") && !text.contains("[h2]"), "{text}");
+    assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
+}
+
 #[test]
 fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
     let out = volant(&["playbook", &fixture("local-conditions.yml")]);

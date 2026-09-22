@@ -373,8 +373,9 @@ pub(super) async fn drive_host(
             // for it. Measured again with an include a `when` kept one of three hosts out of:
             // the two the mask holds both read the registered value back, and the third runs
             // only what follows.
-            let follower =
-                task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
+            let follower = task.bypasses_host_loop()
+                && !handlers_only
+                && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind: every index the flush was asked for goes,
             // reached or not, so a handler runs once per notification. Measured on ansible-core
             // 2.19.12, both halves - `first handler` notified twice runs once and does **not**

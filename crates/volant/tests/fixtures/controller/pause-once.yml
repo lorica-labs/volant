@@ -1,0 +1,11 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: prompt
+      pause: {prompt: "Go?"}
+      register: q
+    - name: seen
+      debug: {msg: "{{ q is defined }}"}
+    - name: only h2
+      pause: {prompt: "Go?"}
+      when: inventory_hostname == "h2"

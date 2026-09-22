@@ -2885,7 +2885,8 @@ mod tests {
     /// host's own words; or only the flat names written, which breaks
     /// `ansible_facts['hostname']` - measurement 10 of plan 1.5, where `gather_facts: true`
     /// followed by a `set_fact` of the same name leaves both readable: the flat name is masked
-    /// and the entry under `ansible_facts` is not.
+    /// and the entry under `ansible_facts` is not. Or the namespace keyed by the name `setup`
+    /// returned, which keeps its `ansible_` prefix where ansible-core strips it.
     #[test]
     fn gathered_facts_are_untrusted_and_land_under_both_names() {
         let templar = Templar::new(PathBuf::from("."));
@@ -2901,8 +2902,17 @@ mod tests {
                 .render(text, crate::template::Vars::from(&vars))
                 .expect("a gathered fact reads")
         };
+        // The shape ansible-core 2.19.12's `setup` returns, measured with `gather_subset: [min]`:
+        // every fact already carries the `ansible_` prefix except `gather_subset` and
+        // `module_setup`, and `ansible_local` is always there.
         let result = TaskResult(vars(json!({
-            "ansible_facts": {"hostname": "probe-hostname", "distribution": "Ubuntu"},
+            "ansible_facts": {
+                "ansible_hostname": "probe-hostname",
+                "ansible_distribution": "Ubuntu",
+                "ansible_local": {},
+                "gather_subset": ["min"],
+                "module_setup": true,
+            },
             "changed": false,
         })));
         record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
@@ -2916,6 +2926,17 @@ mod tests {
         assert_eq!(
             render(&mut store, "{{ ansible_facts['distribution'] }}"),
             "Ubuntu"
+        );
+        // The reference, same play: `ansible_facts['ansible_distribution']` is undefined, and
+        // `ansible_local` is the one prefix `namespace_facts()` keeps.
+        assert_eq!(
+            render(
+                &mut store,
+                "{{ ansible_facts['ansible_distribution'] is defined }} \
+                 {{ ansible_facts.ansible_local is defined }} {{ ansible_facts.local is defined }} \
+                 {{ ansible_facts.module_setup }} {{ ansible_ansible_hostname is defined }}"
+            ),
+            "False True False True False"
         );
         for name in ["ansible_hostname", "ansible_facts"] {
             assert!(

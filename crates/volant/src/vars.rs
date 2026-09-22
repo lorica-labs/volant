@@ -277,8 +277,8 @@ impl VarStore {
     /// Merges the `ansible_facts` a module returned into one host's facts, under both the names
     /// the reference gives them.
     ///
-    /// Each key lands flat, prefixed with `ansible_`, **and** under `ansible_facts` as the module
-    /// spelled it. Measurement 10 of plan 1.5 is what settles the pair: `gather_facts: true`
+    /// Each key lands flat, prefixed with `ansible_`, **and** under `ansible_facts` without that
+    /// prefix, which `setup` puts on every name it returns. Measurement 10 of plan 1.5 is what settles the pair: `gather_facts: true`
     /// followed by a `set_fact: ansible_hostname: SHADOWED` leaves both readable, the flat name
     /// masked and `ansible_facts.hostname` still holding what the host reported. So the two are
     /// separate names and a later write to one leaves the other alone. Writing only the flat half
@@ -307,7 +307,13 @@ impl VarStore {
                 format!("ansible_{key}")
             };
             self.set_untrusted_fact(host, &flat, value.clone());
-            namespace.insert(key.clone(), value.clone());
+            // ansible-core's `namespace_facts()`: the prefix `setup` returned comes off, except
+            // on `ansible_local`.
+            let bare = match key.strip_prefix("ansible_") {
+                Some(bare) if key != "ansible_local" => bare,
+                _ => key,
+            };
+            namespace.insert(bare.to_string(), value.clone());
         }
         self.set_untrusted_fact(host, "ansible_facts", Value::Object(namespace));
     }

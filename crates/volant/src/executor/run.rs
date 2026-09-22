@@ -140,7 +140,7 @@ pub(super) async fn run_local(
 ) -> TaskResult {
     let mut r = Map::new();
     match short_name(&task.module) {
-        "assert" => return assert_module(item, templar),
+        "assert" => return assert_module(task, item, templar),
         "fail" => {
             let unknown = unknown_args(&FAIL, &item.args);
             if !unknown.is_empty() {
@@ -282,33 +282,45 @@ fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -
 /// false one is reported as the playbook wrote it, a string or a boolean, and an undefined name
 /// fails the task the way any other conditional does.
 ///
-/// A `that` a managed host wrote is refused rather than evaluated, for the reason `debug: var:`
-/// is: evaluating it would compile a remote string on the controller.
-fn assert_module(item: &Item, templar: &Templar) -> TaskResult {
+/// `that` is read from the task as the playbook wrote it, never as `prepare` rendered it, and
+/// each element goes through `Templar::condition`, the code `when` goes through: rendering it
+/// first and evaluating the result would evaluate a value rather than the author's expression.
+/// The one render is the reference's own: a `that` that is one template naming a list is that
+/// list. A list a managed host wrote is data, so its strings are refused rather than compiled.
+fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult {
     if let Some(refusal) = unsupported(&ASSERT, &["msg"], &item.args) {
         return TaskResult::failed_with(refusal);
     }
-    let Some(that) = item.args.get("that").filter(|v| !v.is_null()) else {
+    let Some(that) = task.args.get("that").filter(|v| !v.is_null()) else {
         return TaskResult::failed_with("missing required arguments: that");
     };
-    if item.args_untrusted.contains("that") {
-        return TaskResult::failed_with(conditional_error(&TemplateError(
-            "Encountered untrusted template or expression.".into(),
-        )));
-    }
     let conditions = match that {
-        Value::Array(list) => list.as_slice(),
-        one => std::slice::from_ref(one),
+        Value::Array(list) => list.clone(),
+        Value::String(s) if Templar::is_template(s) => {
+            match templar.render_value_tainted(that, &item.vars) {
+                Ok((Value::Array(list), from_host)) => {
+                    if from_host && list.iter().any(Value::is_string) {
+                        return TaskResult::failed_with(conditional_error(&TemplateError(
+                            "Encountered untrusted template or expression.".into(),
+                        )));
+                    }
+                    list
+                }
+                _ => vec![that.clone()],
+            }
+        }
+        one => vec![one.clone()],
     };
     let mut r = Map::new();
     r.insert("changed".into(), json!(false));
-    for condition in conditions {
-        let held = match condition {
-            Value::Bool(b) => Ok(*b),
-            Value::String(s) => templar.condition(s, &item.vars),
-            other => templar.condition(&other.to_string(), &item.vars),
+    for condition in &conditions {
+        // A YAML boolean reaches `condition` spelled the way `when` spells one.
+        let text = match condition {
+            Value::String(s) => s.clone(),
+            Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+            other => other.to_string(),
         };
-        match held {
+        match templar.condition(&text, &item.vars) {
             Err(e) => return TaskResult::failed_with(conditional_error(&e)),
             Ok(true) => {}
             Ok(false) => {
@@ -1565,6 +1577,25 @@ mod tests {
 
     /// One controller-side module run the way the driver runs it, with nothing interrupting.
     async fn local(module: &str, args: Value) -> TaskResult {
+        local_with(module, args, HostVars::default()).await
+    }
+
+    /// `local` against the host variables given, the task carrying the arguments as written and
+    /// the item carrying them as `prepare` renders them: per argument, with the names whose
+    /// render read a managed host set apart.
+    async fn local_with(module: &str, args: Value, host_vars: HostVars) -> TaskResult {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut written = task(module);
+        written.args = vars(args);
+        let (rendered, untrusted) = templar
+            .render_map_tainted(&written.args, &host_vars)
+            .expect("the arguments render");
+        let item = Item {
+            args: rendered,
+            args_untrusted: untrusted,
+            vars: host_vars,
+            ..local_item(json!({}))
+        };
         let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
         let store = Mutex::new(
             VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
@@ -1580,11 +1611,11 @@ mod tests {
             hosts: None,
         };
         run_local(
-            &task(module),
-            &local_item(args),
+            &written,
+            &item,
             &step,
             std::slice::from_ref(&"h1".to_string()),
-            &Templar::new(PathBuf::from(".")),
+            &templar,
             &store,
             0,
             &mut watch::channel(false).1,
@@ -1677,21 +1708,92 @@ mod tests {
         );
     }
 
-    /// A `that` a managed host wrote is data. Evaluating it would compile a remote string on the
-    /// controller, which is the hole `debug: var:` refuses for the same reason.
+    /// A host's variables where `r` is a registered result, as `record_registered` leaves it.
+    fn with_registered(extra: Value) -> HostVars {
+        let mut v = hvars(extra);
+        v.insert_untrusted("r".into(), json!({"rc": 0, "stdout": "1 == 2"}));
+        v
+    }
+
+    /// Measured on ansible-core 2.19.12, after `register: r` on `command: echo "1 == 2"`: the
+    /// three forms below pass, the first two with the deprecation warning for the braces.
     ///
-    /// What would make this red: an untrusted `that` evaluated.
+    /// What would make this red: `that` rendered along with the other arguments and refused
+    /// because that render read a registered value, although the render left no text to compile.
     #[tokio::test]
-    async fn an_assert_whose_condition_came_from_a_host_is_refused() {
-        let mut item = local_item(json!({"that": "1 == 1"}));
-        item.args_untrusted.insert("that".into());
-        let r = assert_module(&item, &Templar::new(PathBuf::from(".")));
-        assert!(r.failed());
+    async fn a_that_reading_a_registered_value_reads_it_as_data() {
+        for that in [
+            json!("{{ r.rc == 0 }}"),
+            json!(["1 == 1", "{{ r.rc == 0 }}"]),
+            json!("r.stdout == '1 == 2'"),
+        ] {
+            let r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
+            assert_eq!(
+                Value::Object(r.0),
+                json!({"changed": false, "msg": "All assertions passed"}),
+                "{that}"
+            );
+        }
+    }
+
+    /// `that` is evaluated by the code that evaluates `when`, element by element, from the text
+    /// the playbook wrote. Asserted against `when` rather than against the reference because
+    /// the two agree in the reference as well: measured on ansible-core 2.19.12, every case
+    /// here gives an assert and a `when` the same outcome. Where this engine's `when` departs
+    /// from the reference, which evaluates again the string a `{{ }}` conditional renders to,
+    /// `that` departs with it, and that is the point of sharing the code.
+    ///
+    /// What would make this red: a rendered value evaluated a second time, which passes
+    /// `that: "{{ healthy }}"` for the string `"true"` where `when` refuses it; or a `that`
+    /// whose render read a host value refused in words of its own rather than `when`'s.
+    #[tokio::test]
+    async fn a_that_is_evaluated_the_way_when_is() {
+        let host_vars = with_registered(json!({"healthy": "true"}));
+        let templar = Templar::new(PathBuf::from("."));
+        for that in [
+            "{{ healthy }}",
+            "healthy",
+            "{{ r.stdout }}",
+            "r.stdout",
+            "{{ 1 == 2 }}",
+            "{{ r.rc == 0 }}",
+        ] {
+            let asserted = local_with("assert", json!({"that": that}), host_vars.clone()).await;
+            match templar.condition(that, &host_vars) {
+                Ok(held) => assert_eq!(asserted.failed(), !held, "{that}: {:?}", asserted.0),
+                Err(e) => assert_eq!(
+                    asserted.0["msg"],
+                    json!(conditional_error(&e)),
+                    "{that}: {:?}",
+                    asserted.0
+                ),
+            }
+        }
+    }
+
+    /// Measured on ansible-core 2.19.12: a `that` that is one template naming a list is that
+    /// list, each element a condition, and the one that fails is reported as the list held it.
+    /// A list a managed host wrote is data, and its strings are not compiled.
+    ///
+    /// What would make this red: the list itself taken as the condition, or a host's strings
+    /// evaluated on the controller.
+    #[tokio::test]
+    async fn a_that_naming_a_list_is_that_list() {
+        let host_vars = hvars(json!({"good": ["1 == 1", "2 == 2"], "bad": ["1 == 1", "1 == 2"]}));
+        let r = local_with("assert", json!({"that": "{{ good }}"}), host_vars.clone()).await;
+        assert!(!r.failed(), "{:?}", r.0);
+        let r = local_with("assert", json!({"that": "{{ bad }}"}), host_vars).await;
+        assert_eq!(r.0["assertion"], json!("1 == 2"), "{:?}", r.0);
+        let mut host_vars = HostVars::default();
+        host_vars.insert_untrusted("remote".into(), json!(["1 == 1"]));
+        let r = local_with("assert", json!({"that": "{{ remote }}"}), host_vars).await;
         assert_eq!(
             r.0["msg"],
             json!(
                 "Task failed: Error while evaluating conditional: Encountered untrusted template or expression."
-            )
+            ),
+            "{:?}",
+            r.0
         );
     }
 

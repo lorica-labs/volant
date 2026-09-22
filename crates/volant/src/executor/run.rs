@@ -1658,11 +1658,12 @@ mod tests {
     }
 
     /// Measured on ansible-core 2.19.12: `fail_msg`, or its alias `msg`, replaces `msg` and leaves
-    /// `assertion` and `evaluated_to` in place. `quiet` changes the display only.
+    /// `assertion` and `evaluated_to` in place. `quiet` changes the display only, which
+    /// `an_assert_shows_its_result_unless_quiet` pins.
     ///
     /// What would make this red: the alias refused or ignored, or `quiet` changing the result.
     #[tokio::test]
-    async fn fail_msg_and_its_alias_replace_the_message_and_quiet_changes_nothing() {
+    async fn fail_msg_and_its_alias_replace_the_message_and_quiet_leaves_the_result_alone() {
         for key in ["fail_msg", "msg"] {
             let r = local("assert", json!({"that": "1 == 2", key: "custom"})).await;
             assert_eq!(

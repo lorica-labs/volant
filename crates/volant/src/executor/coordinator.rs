@@ -14,7 +14,7 @@ use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{Compiled, Step, StepKind};
 use crate::inventory::Host;
 use crate::playbook::Play;
-use crate::render::Renderer;
+use crate::render::{Dump, Renderer};
 use crate::stats::{Outcome, Stats};
 use crate::template::Templar;
 
@@ -81,7 +81,7 @@ pub(super) enum Event {
         label: Option<String>,
         outcome: Outcome,
         result: TaskResult,
-        dump: bool,
+        dump: Dump,
         show: bool,
         counts: bool,
         /// The task's `no_log`. Carried on the event rather than applied to `result`, because

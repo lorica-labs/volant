@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
-use volant_protocol::modules::short_name;
+use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
 use crate::agent::{AgentLink, AgentSource};
@@ -17,6 +17,7 @@ use crate::compile::{
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::python::ModulePayload;
+use crate::render::Dump;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::VarStore;
@@ -621,7 +622,7 @@ pub(super) async fn drive_host(
                         &labels,
                         &[],
                         &[],
-                        false,
+                        Dump::No,
                         false,
                         None,
                     )
@@ -743,9 +744,20 @@ pub(super) async fn drive_host(
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
                     // body from `-v` on, measured: the dump is what puts the body on the line,
-                    // so it is the dump that goes.
-                    let dump =
-                        short_name(&task.module) == "debug" && !(task.censors() && verbosity == 0);
+                    // so it is the dump that goes. An `assert` dumps its whole result unless it
+                    // is `quiet`, measured on ansible-core 2.19.12, and `quiet` is the one
+                    // thing that argument does.
+                    let dump = match short_name(&task.module) {
+                        "debug" if !(task.censors() && verbosity == 0) => Dump::Debug,
+                        "assert"
+                            if !items.first().is_some_and(|i| {
+                                i.args.get("quiet").and_then(arg_bool) == Some(true)
+                            }) =>
+                        {
+                            Dump::Whole
+                        }
+                        _ => Dump::No,
+                    };
                     if let Some(result) = report_task(
                         &tx,
                         &name,
@@ -947,7 +959,7 @@ pub(super) async fn drive_host(
                         &[None],
                         &[],
                         &[],
-                        false,
+                        Dump::No,
                         rescuable,
                         batch_delegate.as_deref(),
                     )
@@ -1191,7 +1203,7 @@ pub(super) async fn drive_host(
                     &labels,
                     retried,
                     retried_names,
-                    false,
+                    Dump::No,
                     rescuable,
                     batch_delegate.as_deref(),
                 )
@@ -1265,7 +1277,7 @@ pub(super) async fn drive_host(
                 &[None],
                 &[],
                 &[],
-                false,
+                Dump::No,
                 rescuable,
                 None,
             )

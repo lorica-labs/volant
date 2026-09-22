@@ -177,6 +177,29 @@ fn a_failing_task_stops_the_host_and_exits_2() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
+/// Measured on ansible-core 2.19.12 at verbosity 0: an assert that is not `quiet` shows its
+/// result, `changed` included, and a `quiet` one or a `no_log` one shows `ok:` alone. The
+/// reference spreads the body over several lines; this engine prints every body on one.
+///
+/// What would make this red: `success_msg` never shown, `quiet` changing nothing, the body
+/// cleaned the way a `debug` result is, or a `no_log` message printed.
+#[test]
+fn an_assert_shows_its_result_unless_quiet() {
+    let out = volant(&["playbook", &fixture("controller/assert-display.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("ok:")).collect();
+    assert_eq!(
+        lines,
+        [
+            r#"ok: [localhost] => {"changed": false, "msg": "looks good"}"#,
+            "ok: [localhost]",
+            "ok: [localhost]",
+        ],
+        "{text}"
+    );
+}
+
 #[test]
 fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
     let out = volant(&["playbook", &fixture("local-conditions.yml")]);

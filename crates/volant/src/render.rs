@@ -9,6 +9,19 @@ use volant_protocol::TaskResult;
 
 use crate::stats::{Outcome, Stats};
 
+/// Whether a result's body goes on its line at verbosity 0, the reference's
+/// `_ansible_verbose_always`, and how it is cleaned first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dump {
+    /// Shown from `-v` on, like any task's.
+    No,
+    /// A `debug`: always shown, stripped to the message the way the reference's callback
+    /// strips a `debug` result.
+    Debug,
+    /// Always shown as it is: an `assert` that is not `quiet`.
+    Whole,
+}
+
 pub struct Renderer {
     out: Box<dyn Write>,
     color: bool,
@@ -144,7 +157,7 @@ impl Renderer {
     }
 
     /// `label` is the loop item's display text, present only for a loop item result. `dump`
-    /// forces the JSON tail (used for `debug`) even for an `ok` result at verbosity 0.
+    /// forces the JSON tail even for an `ok` result at verbosity 0; see [`Dump`].
     ///
     /// `censored` is the task's `no_log`: the body becomes `{"censored": CENSORED, "changed":
     /// ...}` and the item label becomes [`CENSORED_ITEM`], which is what keeps a secret out of
@@ -161,7 +174,7 @@ impl Renderer {
         outcome: Outcome,
         result: &TaskResult,
         label: Option<&str>,
-        dump: bool,
+        dump: Dump,
         censored: bool,
         delegate: Option<&str>,
     ) {
@@ -181,7 +194,7 @@ impl Renderer {
         } else {
             result.0.clone()
         };
-        if dump {
+        if dump == Dump::Debug {
             // Ansible cleans a `debug` result before showing it, so the message stands alone:
             // whatever `changed_when` and `failed_when` decided is counted, never printed, and
             // neither is the attempt count - measured on ansible-core 2.19.12, a `debug` retried
@@ -204,7 +217,7 @@ impl Renderer {
         // A censored `debug` still goes through the cleanup above - which is what leaves its
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
         // measured, `ok: [h1]` alone there and the censored body from `-v` on.
-        let show = (dump && !censored) || self.verbosity > 0;
+        let show = (dump != Dump::No && !censored) || self.verbosity > 0;
         let tail = if show {
             format!(" => {json}")
         } else {
@@ -421,7 +434,7 @@ mod tests {
                 Outcome::Changed,
                 &result(json!({"changed": true, "stdout": "hi"})),
                 None,
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -430,7 +443,7 @@ mod tests {
                 Outcome::Ok,
                 &result(json!({"changed": false})),
                 None,
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -439,7 +452,7 @@ mod tests {
                 Outcome::Skipped,
                 &result(json!({"skipped": true})),
                 None,
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -448,7 +461,7 @@ mod tests {
                 Outcome::Failed,
                 &result(json!({"failed": true, "rc": 1, "msg": "non-zero return code"})),
                 None,
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -457,7 +470,7 @@ mod tests {
                 Outcome::Ignored,
                 &result(json!({"failed": true, "rc": 1})),
                 None,
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -515,7 +528,7 @@ mod tests {
             Outcome::Ok,
             &result(json!({"changed": false, "stdout": "x"})),
             None,
-            false,
+            Dump::No,
             false,
             None,
         );
@@ -552,9 +565,10 @@ mod tests {
             (Outcome::Ignored, result(json!({"failed": true, "rc": 1}))),
         ];
         for (outcome, task_result) in cases {
-            let plain = capture(|r| r.result("h", outcome, &task_result, None, false, false, None));
+            let plain =
+                capture(|r| r.result("h", outcome, &task_result, None, Dump::No, false, None));
             let coloured = capture_with_color(true, |r| {
-                r.result("h", outcome, &task_result, None, false, false, None);
+                r.result("h", outcome, &task_result, None, Dump::No, false, None);
             });
             assert_ne!(
                 coloured, plain,
@@ -585,14 +599,14 @@ mod tests {
         let secret = result(json!({"changed": true, "stdout": "secret"}));
         let failed = result(json!({"changed": true, "failed": true, "stdout": "secret"}));
         let out = capture(|r| {
-            r.result("h1", Outcome::Changed, &secret, None, false, true, None);
-            r.result("h1", Outcome::Ignored, &failed, None, false, true, None);
+            r.result("h1", Outcome::Changed, &secret, None, Dump::No, true, None);
+            r.result("h1", Outcome::Ignored, &failed, None, Dump::No, true, None);
             r.result(
                 "h1",
                 Outcome::Changed,
                 &secret,
                 Some("a"),
-                false,
+                Dump::No,
                 true,
                 None,
             );
@@ -601,7 +615,7 @@ mod tests {
                 Outcome::Ok,
                 &result(json!({"changed": false, "msg": "hush"})),
                 None,
-                true,
+                Dump::Debug,
                 true,
                 None,
             );
@@ -619,13 +633,13 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::new()));
         let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
-        r.result("h1", Outcome::Changed, &secret, None, false, true, None);
+        r.result("h1", Outcome::Changed, &secret, None, Dump::No, true, None);
         r.result(
             "h1",
             Outcome::Ok,
             &result(json!({"changed": false, "msg": "hush"})),
             None,
-            true,
+            Dump::Debug,
             true,
             None,
         );
@@ -675,7 +689,7 @@ mod tests {
                 Outcome::Changed,
                 &result(json!({"changed": true})),
                 Some("one"),
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -684,7 +698,7 @@ mod tests {
                 Outcome::Skipped,
                 &result(json!({"skipped": true})),
                 Some("two"),
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -693,7 +707,7 @@ mod tests {
                 Outcome::Failed,
                 &result(json!({"failed": true, "rc": 1})),
                 Some("three"),
-                false,
+                Dump::No,
                 false,
                 None,
             );
@@ -702,7 +716,7 @@ mod tests {
                 Outcome::Ok,
                 &result(json!({"msg": "shown"})),
                 None,
-                true,
+                Dump::Debug,
                 false,
                 None,
             );

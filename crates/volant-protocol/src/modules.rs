@@ -223,7 +223,7 @@ const fn honoured(name: &'static str) -> ModuleArg {
 
 /// Measured on ansible-core 2.19.12. `msg` is the alias the reference gives `fail_msg`, listed
 /// here as a name of its own so that a task writing it is not refused. `quiet` changes only how
-/// the reference prints the result, never the result itself.
+/// the reference prints the result, never the result itself, and the driver prints it that way.
 pub const ASSERT: ModuleSpec = ModuleSpec {
     name: "assert",
     free_form: false,

@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - pause: {seconds: 5}
+      timeout: 1

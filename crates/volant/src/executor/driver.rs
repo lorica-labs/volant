@@ -686,22 +686,27 @@ pub(super) async fn drive_host(
                             let mut attempt = 0;
                             loop {
                                 attempt += 1;
-                                let mut r = finish(
+                                // The `timeout` keyword holds on the controller as it does
+                                // on the agent, per attempt, and zero is no timeout: measured
+                                // on ansible-core 2.19.12. A `pause` is the one local module
+                                // that can run into it.
+                                let ran = run_local(
                                     task,
                                     item,
-                                    run_local(
-                                        task,
-                                        item,
-                                        step,
-                                        &fact_hosts,
-                                        &templar,
-                                        &store,
-                                        verbosity,
-                                        &mut driver.stop,
-                                    )
-                                    .await,
+                                    step,
+                                    &fact_hosts,
                                     &templar,
+                                    &store,
+                                    verbosity,
+                                    &mut driver.stop,
                                 );
+                                let ran = match task.timeout.filter(|t| *t > 0) {
+                                    Some(t) => tokio::time::timeout(Duration::from_secs(t), ran)
+                                        .await
+                                        .unwrap_or_else(|_| TaskResult::timed_out(t)),
+                                    None => ran.await,
+                                };
+                                let mut r = finish(task, item, ran, &templar);
                                 let Some(retry) = &retry else { break r };
                                 r.0.insert("attempts".into(), json!(attempt));
                                 match until_holds(task, item, &r, retry, &templar) {

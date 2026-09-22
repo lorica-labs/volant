@@ -182,6 +182,25 @@ impl TaskResult {
         map.insert("msg".into(), Value::String(msg.into()));
         Self(map)
     }
+
+    /// A task that ran out of its `timeout:` keyword, on the agent or on the controller.
+    /// Measured on ansible-core 2.19.12, for `command` and for `pause` alike: no `cmd`, no
+    /// `rc`/`stdout`/`stderr` (the reference drops those too, even when the command had already
+    /// produced output), and no `timedout.frame` (an Ansible-internal traceback hint there is
+    /// nothing here to reproduce).
+    pub fn timed_out(seconds: u64) -> Self {
+        let mut map = Map::new();
+        map.insert("changed".into(), Value::Bool(false));
+        map.insert("failed".into(), Value::Bool(true));
+        map.insert(
+            "msg".into(),
+            Value::String(format!("Task failed: Timed out after {seconds} second(s).")),
+        );
+        let mut timedout = Map::new();
+        timedout.insert("period".into(), Value::from(seconds));
+        map.insert("timedout".into(), Value::Object(timedout));
+        Self(map)
+    }
 }
 
 #[cfg(test)]

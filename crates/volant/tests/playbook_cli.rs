@@ -255,6 +255,29 @@ fn a_pause_runs_once_for_the_first_host() {
     assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
 }
 
+/// Measured on ansible-core 2.19.12: `timeout` applies to a controller-side action as it does
+/// to a module, and a `pause: {seconds: 5}` under `timeout: 1` fails after one second with the
+/// message `command` gives. `frame` is left out, as the agent leaves it out.
+///
+/// What would make this red: the keyword ignored on the controller, which waits the five
+/// seconds and reports `ok`.
+#[test]
+fn a_task_timeout_ends_a_controller_side_action() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/pause-timeout.yml")],
+        std::time::Duration::from_secs(30),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("fatal: [localhost]: FAILED! => ")
+            && text.contains(
+                r#""msg": "Task failed: Timed out after 1 second(s).", "timedout": {"period": 1}}"#
+            ),
+        "{text}"
+    );
+}
+
 #[test]
 fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
     let out = volant(&["playbook", &fixture("local-conditions.yml")]);

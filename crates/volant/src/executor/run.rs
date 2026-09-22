@@ -644,20 +644,18 @@ pub(super) fn finish(
 
 /// Applies `changed_when` and `failed_when` to one result, with `result` bound to it.
 ///
-/// First, `failed` is filled in when the result does not carry it, with the value
-/// [`TaskResult::failed`] already reads off `rc`: ansible-core's `TaskExecutor._execute` does the
-/// same to every result that ran, before the conditions and before `register`. A skipped item
-/// never comes here, and the reference leaves `failed` off it too.
+/// First, `failed` is settled: filled in when the result does not carry it, with the value
+/// [`TaskResult::failed`] reads off `rc`, and made `true` on a result that fails by a truthy
+/// non-boolean. ansible-core's `TaskExecutor._execute` fills it in on every result that ran,
+/// before the conditions and before `register`, and registers `True` for a failure. A skipped
+/// item never comes here, and the reference leaves `failed` off it too.
 fn apply_conditions(
     task: &PlayTask,
     item: &Item,
     mut result: TaskResult,
     templar: &Templar,
 ) -> Result<TaskResult, TemplateError> {
-    if !result.0.contains_key("failed") {
-        let failed = result.failed();
-        result.0.insert("failed".into(), json!(failed));
-    }
+    result.settle_failed();
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return Ok(result);
     }
@@ -2182,6 +2180,14 @@ mod tests {
             failed(json!({"rc": 1, "failed": false})),
             Some(json!(false))
         );
+        // Measured on 2.19.12 through a module printing each shape: a failure registers `True`
+        // whatever made it one, and a falsy `failed` is kept as written.
+        assert_eq!(failed(json!({"rc": "2"})), Some(json!(true)));
+        assert_eq!(failed(json!({"rc": null})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": "yes"})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": 1})), Some(json!(true)));
+        assert_eq!(failed(json!({"failed": 0})), Some(json!(0)));
+        assert_eq!(failed(json!({"failed": null})), Some(json!(null)));
         let mut t = task("command");
         t.failed_when = vec!["false".into()];
         let r = apply_conditions(&t, &item, result(json!({"rc": 0})), &templar).unwrap();

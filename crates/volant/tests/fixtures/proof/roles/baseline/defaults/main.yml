@@ -1,0 +1,19 @@
+# Everything the role writes lives under one root, so a run can be undone by removing it.
+baseline_root: /opt/volant-proof
+baseline_conf: "{{ baseline_root }}/conf/baseline.conf"
+baseline_state: "{{ baseline_root }}/state"
+baseline_report: "{{ baseline_root }}/state/inventory.txt"
+baseline_checks: "{{ baseline_root }}/state/checks.txt"
+baseline_dir_mode: "0755"
+baseline_conf_mode: "0640"
+baseline_file_mode: "0644"
+# Two of these are on a stock Ubuntu image and two are not, so a first run reports both
+# answers `apt` can give and a second run reports only one.
+baseline_packages:
+  - jq
+  - rsync
+  - tree
+  - ncdu
+# Started and enabled on any systemd host, so holding it there asks for no change once it is.
+baseline_service: cron
+baseline_retention_days: 14

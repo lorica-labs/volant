@@ -189,3 +189,45 @@ e2e-target: agent-musl
     cargo build -p volant
     printf '[targets]\n%s ansible_host=%s\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST" > target/e2e-inventory.ini
     VOLANT_AGENT_DIR="$PWD/target/agents" ./target/debug/volant playbook -i target/e2e-inventory.ini crates/volant/tests/fixtures/ssh/e2e.yml
+
+# Run the proof playbook against the machine named by VOLANT_TARGET_HOST (never in CI), under
+# either engine, and print the wall clock of the run itself without the build in front of it.
+#
+# `ANSIBLE_PIPELINING` is ansible-core's own variable and is read only by the reference: volant
+# keeps one agent alive per host for the whole run, so it has nothing to pipeline and no setting
+# for it. The label the timing prints carries whatever the reference was given, so a number can
+# never be recorded against the wrong configuration.
+proof engine="volant": agent-musl
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    printf '[targets]\n%s ansible_host=%s\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST" > target/proof-inventory.ini
+    play=crates/volant/tests/fixtures/proof/site.yml
+    case "{{engine}}" in
+      volant)
+        # Release, not debug: the number this prints is compared against a released ansible-core,
+        # and timing an unoptimised build against it would not be a comparison. Measured on
+        # 2026-09-21, the two builds run this play within half a second of each other - the run is
+        # not controller-bound - so this is fairness rather than a speed-up.
+        cargo build --release -p volant
+        VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+        VOLANT_AGENT_DIR="$PWD/target/agents" \
+          /usr/bin/time -f 'proof volant %e s' \
+          ./target/release/volant playbook -i target/proof-inventory.ini "$play"
+        ;;
+      reference)
+        command -v ansible-playbook > /dev/null || { echo "ansible-playbook is not on PATH"; exit 1; }
+        /usr/bin/time -f "proof reference (pipelining ${ANSIBLE_PIPELINING:-False}) %e s" \
+          ansible-playbook -i target/proof-inventory.ini "$play"
+        ;;
+      *)
+        echo "engine must be 'volant' or 'reference'"; exit 1
+        ;;
+    esac
+
+# Undo everything `proof` writes, so the first run of a pair meets a host that was never
+# baselined. The paths and the packages are the ones in the role's `defaults/main.yml`. Only ever
+# pointed at a disposable test target.
+proof-reset:
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    ssh "$VOLANT_TARGET_HOST" 'sudo rm -rf /opt/volant-proof && sudo apt-get -qq -y purge tree ncdu > /dev/null && sudo apt-get -qq -y autoremove > /dev/null && echo reset'

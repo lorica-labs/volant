@@ -1,0 +1,155 @@
+- name: Announce the baseline
+  debug:
+    msg: "baseline {{ baseline_packages | length }} packages, root {{ baseline_root }}"
+
+# Four separate tasks rather than one loop: the recap counts a looped task once, and what is
+# being shown here is a play of about thirty tasks. Two of the four are already installed on
+# a stock image, so a first run reports two `changed` and two `ok` from the same module.
+- name: Hold jq present
+  apt:
+    name: jq
+    state: present
+- name: Hold rsync present
+  apt:
+    name: rsync
+    state: present
+- name: Hold tree present
+  apt:
+    name: tree
+    state: present
+- name: Hold ncdu present
+  apt:
+    name: ncdu
+    state: present
+
+- name: Create the root directory
+  file:
+    path: "{{ baseline_root }}"
+    state: directory
+    mode: "{{ baseline_dir_mode }}"
+- name: Create the configuration directory
+  file:
+    path: "{{ baseline_root }}/conf"
+    state: directory
+    mode: "{{ baseline_dir_mode }}"
+- name: Create the state directory
+  file:
+    path: "{{ baseline_state }}"
+    state: directory
+    mode: "{{ baseline_dir_mode }}"
+- name: Create the log directory
+  file:
+    path: "{{ baseline_root }}/log"
+    state: directory
+    mode: "{{ baseline_dir_mode }}"
+
+# `create: true` on the first of these writes the file; the four that follow find it. Each
+# carries a `regexp` anchored on its own key, so a second run rewrites nothing and a changed
+# value is corrected in place rather than appended a second time.
+- name: Open the configuration with a header
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    create: true
+    mode: "{{ baseline_conf_mode }}"
+    regexp: "^# managed by "
+    line: "# managed by the baseline role"
+    insertbefore: BOF
+  notify: Restart the scheduler
+- name: Record the distribution
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    regexp: "^distribution="
+    line: "distribution={{ ansible_distribution }}"
+  notify: Restart the scheduler
+- name: Record the release
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    regexp: "^release="
+    line: "release={{ ansible_distribution_version }}"
+  notify: Restart the scheduler
+- name: Record the interpreter the facts came from
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    regexp: "^python="
+    line: "python={{ ansible_python_version }}"
+  notify: Restart the scheduler
+- name: Record the retention window
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    regexp: "^retention_days="
+    line: "retention_days={{ baseline_retention_days }}"
+  notify: Restart the scheduler
+- name: Record the platform the play named
+  lineinfile:
+    path: "{{ baseline_conf }}"
+    regexp: "^platform="
+    line: "platform={{ baseline_platform | trim }}"
+  notify: Restart the scheduler
+
+# `state: file` asserts the path is a regular file and fixes its mode. It creates nothing, so
+# it belongs after the task that wrote the file and not before it.
+- name: Hold the configuration's mode
+  file:
+    path: "{{ baseline_conf }}"
+    state: file
+    mode: "{{ baseline_conf_mode }}"
+
+# `creates:` is what makes a `command` idempotent. Without it this task alone would report
+# `changed` on every run and the second recap could never reach zero.
+- name: Keep a copy of what the host reports about itself
+  command: "cp /etc/os-release {{ baseline_report }}"
+  args:
+    creates: "{{ baseline_report }}"
+- name: Hold the report's mode
+  file:
+    path: "{{ baseline_report }}"
+    state: file
+    mode: "{{ baseline_file_mode }}"
+
+- name: Read the configuration back
+  stat:
+    path: "{{ baseline_conf }}"
+  register: conf_stat
+- name: Report what the configuration became
+  debug:
+    msg: "conf {{ conf_stat.stat.size }} bytes, mode {{ conf_stat.stat.mode }}"
+- name: The configuration is a regular file the right size
+  set_fact:
+    baseline_conf_ok: "{{ conf_stat.stat.exists and conf_stat.stat.isreg and conf_stat.stat.size > 0 }}"
+
+- name: Hold the scheduler started and enabled
+  systemd_service:
+    name: "{{ baseline_service }}"
+    state: started
+    enabled: true
+- name: The scheduler answers that it is running
+  command: "systemctl is-active {{ baseline_service }}"
+  changed_when: false
+  register: service_state
+  failed_when: service_state.stdout | trim != 'active'
+
+- name: Record the check that just passed
+  lineinfile:
+    path: "{{ baseline_checks }}"
+    create: true
+    mode: "{{ baseline_file_mode }}"
+    regexp: "^{{ baseline_service }}="
+    line: "{{ baseline_service }}=active"
+- name: Record that the configuration checked out
+  lineinfile:
+    path: "{{ baseline_checks }}"
+    regexp: "^conf="
+    line: "conf={{ baseline_conf_ok }}"
+- name: Read the checks back
+  stat:
+    path: "{{ baseline_checks }}"
+  register: checks_stat
+  failed_when: not checks_stat.stat.exists
+
+- name: List what the role laid down
+  command: "find {{ baseline_root }} -mindepth 1 -printf '%y %m %p\\n'"
+  changed_when: false
+  register: laid_down
+- name: Report the count
+  debug:
+    msg: "{{ laid_down.stdout_lines | length }} paths under {{ baseline_root }}"

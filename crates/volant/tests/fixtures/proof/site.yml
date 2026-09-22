@@ -1,0 +1,68 @@
+# A realistic baseline play, run against a real managed host under both engines.
+#
+# Every module it names is one this release runs: `apt`, `file`, `lineinfile`, `stat` and
+# `systemd_service` through the warm Python path, and `command`, `debug`, `set_fact`
+# natively. Nothing here is backed by an action plugin, so nothing is refused before the
+# first connection.
+#
+# It gathers facts. That is a choice, not a default: gathering is what a real playbook does,
+# it puts the reference's own `setup` module through the warm path, and the values it reads
+# back decide what several later tasks write. It also means the controller needs ansible-core
+# even for the native tasks, and it is part of what the timings measure.
+#
+# The play is written to converge, so that every run after the first reports no change.
+# `file` with `state: touch` is deliberately absent: it reports `changed` on every run and
+# could never carry that claim. Nothing here records a timestamp either, for the same reason.
+# Every task either converges (`state: present`, `state: directory`, `state: file`,
+# `lineinfile`), reports without acting (`stat`, `debug`, `set_fact`), or is guarded by
+# `creates:` or `changed_when: false`.
+- name: Baseline a managed host
+  hosts: all
+  gather_facts: true
+  become: true
+  pre_tasks:
+    # The host's own words, read back through a real render. Its name is deliberately not
+    # printed: this output is pasted into evidence, and the target's identity does not belong
+    # in it.
+    #
+    # The flat `ansible_<name>` spelling throughout, which is the one both engines resolve to
+    # the same value today. The namespaced `ansible_facts['<name>']` form is what a play
+    # written now would more often use, and this release does not yet answer it; reading it
+    # here would fail the play for a reason that has nothing to do with what it measures.
+    - name: Say what was gathered
+      debug:
+        msg: >-
+          {{ ansible_distribution }}
+          {{ ansible_distribution_version }}
+          on {{ ansible_architecture }},
+          python {{ ansible_python_version }}
+    # Derived from gathered facts and from nothing that moves, so the line the role writes
+    # from it is the same line on every run.
+    - name: Name the platform this host is being baselined as
+      set_fact:
+        baseline_platform: >-
+          {{ ansible_distribution | lower }}-{{ ansible_distribution_version }}-{{ ansible_architecture }}
+  roles:
+    - baseline
+  post_tasks:
+    - name: The root directory is there and is a directory
+      stat:
+        path: "{{ baseline_root }}"
+      register: root_stat
+      failed_when: not root_stat.stat.exists or not root_stat.stat.isdir
+    - name: The release the configuration records is the one running
+      command: "grep -c '^release={{ ansible_distribution_version }}$' {{ baseline_conf }}"
+      register: release_line
+      changed_when: false
+      failed_when: release_line.stdout | trim != '1'
+    - name: The report the command wrote is not empty
+      stat:
+        path: "{{ baseline_report }}"
+      register: report_stat
+      failed_when: not report_stat.stat.exists or report_stat.stat.size == 0
+    - name: Verdict
+      debug:
+        msg: >-
+          baseline converged: conf {{ conf_stat.stat.size }} bytes,
+          report {{ report_stat.stat.size }} bytes,
+          {{ baseline_packages | length }} packages held present

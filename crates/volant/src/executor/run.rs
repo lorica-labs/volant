@@ -643,12 +643,21 @@ pub(super) fn finish(
 }
 
 /// Applies `changed_when` and `failed_when` to one result, with `result` bound to it.
+///
+/// First, `failed` is filled in when the result does not carry it, with the value
+/// [`TaskResult::failed`] already reads off `rc`: ansible-core's `TaskExecutor._execute` does the
+/// same to every result that ran, before the conditions and before `register`. A skipped item
+/// never comes here, and the reference leaves `failed` off it too.
 fn apply_conditions(
     task: &PlayTask,
     item: &Item,
     mut result: TaskResult,
     templar: &Templar,
 ) -> Result<TaskResult, TemplateError> {
+    if !result.0.contains_key("failed") {
+        let failed = result.failed();
+        result.0.insert("failed".into(), json!(failed));
+    }
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return Ok(result);
     }
@@ -664,15 +673,8 @@ fn apply_conditions(
     if !task.failed_when.is_empty() {
         let failed = all_hold(&task.failed_when, &vars, templar)?;
         result.0.insert("failed_when_result".into(), json!(failed));
-        if failed {
-            result.0.insert("failed".into(), json!(true));
-        } else {
-            result.0.remove("failed");
-            // A non-zero rc would still count as failed: the condition has spoken.
-            if result.failed() {
-                result.0.insert("failed".into(), json!(false));
-            }
-        }
+        // Over a non-zero rc too: the condition has spoken.
+        result.0.insert("failed".into(), json!(failed));
     }
     Ok(result)
 }
@@ -2135,6 +2137,50 @@ mod tests {
         assert_eq!(agg["msg"], json!("All items completed"));
         assert_eq!(agg["results"][1]["item"], json!(2));
         assert_eq!(agg["results"][1]["ansible_loop_var"], json!("item"));
+    }
+
+    /// Every result that ran, module or controller, comes out with `failed` set, the way
+    /// ansible-core's `TaskExecutor._execute` sets it before `register`: kept when the result
+    /// says it, otherwise `true` for a non-zero `rc` and `false` for anything else. Measured on
+    /// 2.19.12, registered values read `failed=False` for `ping`, `command: "true"` and `stat`,
+    /// `failed=True` for a `command: "false"` and a `file` that failed, and `ABSENT` for a task
+    /// `when` skipped, which never gets here.
+    ///
+    /// What would make this red: `failed` left absent, so `r.failed` is undefined on a
+    /// registered `ping`; or written `false` over a failure, which would be far worse - a task
+    /// that failed and reads as a success.
+    #[test]
+    fn a_result_that_ran_says_whether_it_failed() {
+        let templar = Templar::new(std::env::temp_dir());
+        let t = task("command");
+        let item = Item {
+            element: None,
+            label: None,
+            args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        };
+        let failed = |r: Value| {
+            let r = apply_conditions(&t, &item, result(r), &templar).unwrap();
+            r.0.get("failed").cloned()
+        };
+        assert_eq!(failed(json!({"ping": "pong"})), Some(json!(false)));
+        assert_eq!(failed(json!({"rc": 0})), Some(json!(false)));
+        assert_eq!(failed(json!({"rc": 1})), Some(json!(true)));
+        assert_eq!(
+            failed(json!({"failed": true, "msg": "missing"})),
+            Some(json!(true))
+        );
+        assert_eq!(
+            failed(json!({"rc": 1, "failed": false})),
+            Some(json!(false))
+        );
+        let mut t = task("command");
+        t.failed_when = vec!["false".into()];
+        let r = apply_conditions(&t, &item, result(json!({"rc": 0})), &templar).unwrap();
+        assert_eq!(r.0.get("failed"), Some(&json!(false)), "{:?}", r.0);
     }
 
     #[test]

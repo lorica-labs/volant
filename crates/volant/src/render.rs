@@ -194,6 +194,10 @@ impl Renderer {
         } else {
             result.0.clone()
         };
+        // The reference shows no `failed` at all; a `true` stays until that is matched.
+        if body.get("failed") == Some(&serde_json::Value::Bool(false)) {
+            body.remove("failed");
+        }
         if dump == Dump::Debug {
             // Ansible cleans a `debug` result before showing it, so the message stands alone:
             // whatever `changed_when` and `failed_when` decided is counted, never printed, and
@@ -536,6 +540,31 @@ mod tests {
         assert_eq!(
             out.trim_end(),
             r#"ok: [h] => {"changed": false, "stdout": "x"}"#
+        );
+    }
+
+    /// The `failed: false` every result that ran now carries is for `register`, not for the
+    /// screen: measured on ansible-core 2.19.12, `-v` shows `ok: [localhost] => {"changed":
+    /// false, "ping": "pong"}` for a registered value that reads `failed=False`.
+    ///
+    /// What would make this red: the filled-in key printed, a line the reference never shows.
+    #[test]
+    fn a_result_that_did_not_fail_does_not_say_so() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
+        r.result(
+            "h",
+            Outcome::Ok,
+            &result(json!({"changed": false, "failed": false, "ping": "pong"})),
+            None,
+            Dump::No,
+            false,
+            None,
+        );
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            out.trim_end(),
+            r#"ok: [h] => {"changed": false, "ping": "pong"}"#
         );
     }
 

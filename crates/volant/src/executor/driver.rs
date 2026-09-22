@@ -1782,4 +1782,19 @@ mod tests {
         );
         assert!(!t.barrier(), "and it needs no keyword to do it");
     }
+
+    /// Under `batching`, a host with a fork permit kept from the batch before gives it back
+    /// only in front of a boundary. A `pause` that is not one is waited out with the permit in
+    /// hand, so with `forks = 2` two hosts pause while the others cannot even start the task
+    /// before it, and the play takes several pause lengths where the reference takes one.
+    ///
+    /// What would make this red: a `pause` the batching driver walks into without meeting the
+    /// other hosts, permit and all.
+    #[test]
+    fn a_pause_is_a_boundary_under_batching() {
+        for module in ["pause", "ansible.builtin.pause"] {
+            assert!(is_boundary(&task(module), true), "{module}");
+        }
+        assert!(!is_boundary(&task("debug"), true));
+    }
 }

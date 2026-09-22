@@ -6871,10 +6871,9 @@ fn a_host_file_does_move_the_implicit_localhost() {
 /// would pass a snapshot and fail this; that is the shape this guard has to have, because what
 /// it protects is a migration or an initialisation running twice.
 ///
-/// The exact skip text (`Did not run command since 'marker' exists`) is pinned at the module
-/// level instead, in `command.rs`'s own tests: the CLI never shows a skipped task's message body
-/// at any verbosity (`render.rs`, `Outcome::Skipped` carries no tail), which is a pre-existing
-/// divergence from the reference in result classification, unrelated to this guard.
+/// The exact result (`Did not run command since 'marker' exists`) is pinned at the module level
+/// instead, in `command.rs`'s own tests: the task reports `ok` with no body at this verbosity,
+/// as the reference does.
 ///
 /// What would make this red: the guard calling `Path::exists` on the bare relative path, which
 /// resolves against the agent's own directory and finds nothing.

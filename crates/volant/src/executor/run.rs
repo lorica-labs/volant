@@ -1933,11 +1933,10 @@ mod tests {
                 &mut watch::channel(false).1,
             )
             .await;
-            assert!(r.failed(), "{args}: {:?}", r.0);
-            assert!(
-                r.0["msg"].as_str().is_some_and(|m| m.contains("prompt")),
-                "{args}: {:?}",
-                r.0
+            assert_eq!(
+                Value::Object(r.0),
+                json!({"failed": true, "msg": PROMPT_REFUSED}),
+                "{args}"
             );
         }
     }
@@ -1945,21 +1944,23 @@ mod tests {
     /// An interrupted run does not sit out the rest of a pause.
     ///
     /// What would make this red: a pause that waits on its timer alone, which holds a cancelled
-    /// run for as long as the playbook asked to wait.
+    /// run for as long as the playbook asked to wait. The five-second bound is what makes it
+    /// red in five seconds rather than in the ten minutes the pause asks for.
     #[tokio::test]
     async fn an_interrupted_pause_ends_at_once() {
         let (stop_tx, mut stop) = watch::channel(false);
         let item = local_item(json!({"minutes": 10}));
-        let began = std::time::Instant::now();
-        let (r, ()) = tokio::join!(pause(&item, false, &mut stop), async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            stop_tx.send(true).expect("the receiver is alive");
-        });
-        assert!(r.failed(), "{:?}", r.0);
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            began.elapsed()
+        let (r, ()) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(5), pause(&item, false, &mut stop)),
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                stop_tx.send(true).expect("the receiver is alive");
+            }
+        );
+        let r = r.expect("the interruption ends the pause");
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"failed": true, "msg": "user requested abort!"})
         );
     }
 

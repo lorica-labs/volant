@@ -473,7 +473,11 @@ fn result(frame: &Value) -> TaskResult {
         );
     }
     match serde_json::from_str::<Value>(stdout) {
-        Ok(Value::Object(result)) => TaskResult(result),
+        // ansible-core's `TaskExecutor._execute` fills in a missing `changed` and nothing more.
+        Ok(Value::Object(mut result)) => {
+            result.entry("changed").or_insert(Value::Bool(false));
+            TaskResult(result)
+        }
         _ => fail(
             format!(
                 "the module wrote something that is not a result (exit status {code}): {}",
@@ -765,6 +769,45 @@ mod tests {
         ));
         assert!(result.failed());
         assert_eq!(result.0["msg"], "nothing to do here");
+    }
+
+    /// A module that says nothing about `changed` reports `changed: false`, the way
+    /// ansible-core's `TaskExecutor._execute` fills it in: `ping` prints `{"ping": "pong"}` and
+    /// the reference registers `{"changed": false, "failed": false, "ping": "pong"}` (measured on
+    /// 2.19.12; `failed` is a separate normalisation).
+    ///
+    /// What would make this red: the module's JSON handed back as printed, so `when: r.changed`
+    /// on a registered `ping` is undefined here and false under the reference.
+    #[test]
+    fn a_module_silent_about_changed_reports_it_false() {
+        let blob = stub_blob("\n    print(json.dumps({\"ping\": \"pong\"}))\n");
+        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert_eq!(
+            Value::Object(result.0),
+            json!({"changed": false, "ping": "pong"})
+        );
+    }
+
+    /// The fill-in is only for an absent `changed`: a module that changed something says so.
+    ///
+    /// What would make this red: `changed: false` written over what the module printed.
+    #[test]
+    fn a_module_that_reports_a_change_keeps_it() {
+        let blob = stub_blob("\n    print(json.dumps({\"changed\": True}))\n");
+        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.changed());
     }
 
     /// A cancelled task kills the module's process group and answers `Cancelled`, and the server

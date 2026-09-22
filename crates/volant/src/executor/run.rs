@@ -2194,6 +2194,63 @@ mod tests {
         assert_eq!(r.0.get("failed"), Some(&json!(false)), "{:?}", r.0);
     }
 
+    /// The recap the reference printed for these five tasks on 2.19.12, measured with a module
+    /// printing each result: two ignored failures reporting `changed: true` and `changed: "yes"`,
+    /// a `changed: "yes"` under `changed_when: false`, a rescued failure reporting
+    /// `changed: true`, and the rescue's own `debug` - `ok=4 changed=2 rescued=1 ignored=2`
+    /// (the play's last `debug` made the reference's `ok=5`).
+    ///
+    /// What would make this red: `changed: "yes"` read as unchanged; `changed_when: false` losing
+    /// to it; or a failure that stopped the host counted as a change.
+    #[test]
+    fn the_recap_counts_changed_the_way_the_reference_does() {
+        let templar = Templar::new(std::env::temp_dir());
+        let item = Item {
+            element: None,
+            label: None,
+            args: Map::new(),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        };
+        let plain = task("command");
+        let mut quiet = task("command");
+        quiet.changed_when = vec!["false".into()];
+        let tasks = [
+            (
+                &plain,
+                json!({"changed": true, "failed": true}),
+                true,
+                false,
+            ),
+            (
+                &plain,
+                json!({"changed": "yes", "failed": true}),
+                true,
+                false,
+            ),
+            (&quiet, json!({"changed": "yes"}), false, false),
+            (
+                &plain,
+                json!({"changed": true, "failed": true}),
+                false,
+                true,
+            ),
+            (&plain, json!({"changed": false}), false, false),
+        ];
+        let mut stats = crate::stats::Stats::default();
+        for (t, shape, ignore_errors, rescuable) in tasks {
+            let r = apply_conditions(t, &item, result(shape), &templar).unwrap();
+            stats.record("h", classify(&r, ignore_errors, rescuable), r.changed());
+        }
+        let h = stats.host("h");
+        assert_eq!(
+            (h.ok, h.changed, h.rescued, h.ignored, h.failed),
+            (4, 2, 1, 2, 0)
+        );
+    }
+
     #[test]
     fn failed_when_false_rescues_a_non_zero_rc() {
         let templar = Templar::new(std::env::temp_dir());

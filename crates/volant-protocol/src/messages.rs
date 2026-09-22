@@ -159,8 +159,12 @@ impl TaskResult {
         matches!(self.0.get(key), Some(Value::Bool(true)))
     }
 
+    /// ansible-core 2.19.12's rule, measured: `changed` decides by Python truthiness, so
+    /// `"yes"`, `"false"` and `1` report `changed:` and `0`, `null`, `""` and `[]` do not. The
+    /// value is registered as the module wrote it (`r.changed` reads `yes`), so nothing here
+    /// rewrites it; `changed_when` does, with a boolean.
     pub fn changed(&self) -> bool {
-        self.flag("changed")
+        self.0.get("changed").is_some_and(truthy)
     }
 
     pub fn skipped(&self) -> bool {
@@ -238,6 +242,39 @@ fn truthy(value: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Which results changed, against ansible-core 2.19.12 on the development machine: a module
+    /// printing each of these shapes, and the task's own line read - `changed:` for every
+    /// `true` here, `ok:` for every `false`, and a recap of `changed=3`.
+    ///
+    /// What would make this red: `changed: "yes"` or `changed: 1` reported as `ok`, which the
+    /// recap and every `notify` then miss.
+    #[test]
+    fn a_result_changed_by_the_reference_s_own_rule() {
+        let cases = [
+            (json!({"changed": "yes"}), true),
+            (json!({"changed": "false"}), true),
+            (json!({"changed": 1}), true),
+            (json!({"changed": 0}), false),
+            (json!({"changed": null}), false),
+            (json!({"changed": ""}), false),
+            (json!({"changed": []}), false),
+            (json!({}), false),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(shape, changed)| {
+                let Value::Object(map) = shape.clone() else {
+                    unreachable!()
+                };
+                (TaskResult(map).changed() != changed).then(|| format!("{shape} changed={changed}"))
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "read otherwise than the reference: {wrong:?}"
+        );
+    }
 
     /// Which results fail, against ansible-core 2.19.12 on the development machine: a module
     /// printing each of these shapes (with `changed: false`) under `ignore_errors`, and the

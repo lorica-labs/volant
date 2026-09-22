@@ -132,7 +132,12 @@ pub struct VarStore {
     group_names: BTreeMap<String, Vec<String>>,
     groups: BTreeMap<String, Vec<String>>,
     facts: BTreeMap<String, Map<String, Value>>,
-    /// Of those facts, the names that came from a managed host rather than from the playbook.
+    /// What modules returned under `ansible_facts`, flat and namespaced: the reference's host
+    /// facts, a layer of their own that ranks over the inventory and under the play. Every name
+    /// in it is untrusted.
+    gathered: BTreeMap<String, Map<String, Value>>,
+    /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
+    /// from the playbook.
     untrusted: BTreeMap<String, BTreeSet<String>>,
     extra: Map<String, Value>,
     /// What `ansible_forks` reports, which the reference sets from the run's own `forks`.
@@ -217,6 +222,7 @@ impl VarStore {
             group_names,
             groups,
             facts: BTreeMap::new(),
+            gathered: BTreeMap::new(),
             untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
@@ -293,10 +299,9 @@ impl VarStore {
     /// module result at once. They are a managed host's own words - a hostname the host chose, a
     /// package name it printed - so a template in a value is text from here on.
     pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) {
-        let mut namespace = self
-            .facts
-            .get(host)
-            .and_then(|f| f.get("ansible_facts"))
+        let gathered = self.gathered.entry(host.to_string()).or_default();
+        let mut namespace = gathered
+            .get("ansible_facts")
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
@@ -306,7 +311,7 @@ impl VarStore {
             } else {
                 format!("ansible_{key}")
             };
-            self.set_untrusted_fact(host, &flat, value.clone());
+            gathered.insert(flat, value.clone());
             // ansible-core's `namespace_facts()`: the prefix `setup` returned comes off, except
             // on `ansible_local`.
             let bare = match key.strip_prefix("ansible_") {
@@ -315,11 +320,35 @@ impl VarStore {
             };
             namespace.insert(bare.to_string(), value.clone());
         }
-        self.set_untrusted_fact(host, "ansible_facts", Value::Object(namespace));
+        gathered.insert("ansible_facts".into(), Value::Object(namespace));
+        self.forget_hostvars();
     }
 
-    pub fn untrusted_of(&self, host: &str) -> BTreeSet<String> {
-        self.untrusted.get(host).cloned().unwrap_or_default()
+    /// The names of `host`'s merged view that came from a managed host: the `set_fact` layer's
+    /// untrusted names, and every gathered one that no layer above it overrides. A play variable
+    /// that shadows a gathered name answers with the author's value, and a template in it renders.
+    pub fn untrusted_of(&self, host: &str, scope: &Scope) -> BTreeSet<String> {
+        let mut names = self.untrusted.get(host).cloned().unwrap_or_default();
+        let Some(gathered) = self.gathered.get(host) else {
+            return names;
+        };
+        let facts = self.facts.get(host);
+        let above = [
+            Some(&scope.play_vars),
+            Some(&scope.role_vars),
+            Some(&scope.task_vars),
+            facts,
+            Some(&scope.role_params),
+            Some(&self.extra),
+        ];
+        for name in gathered.keys() {
+            let shadowed = above.iter().flatten().any(|m| m.contains_key(name))
+                || scope.vars_files.iter().any(|m| m.contains_key(name));
+            if !shadowed {
+                names.insert(name.clone());
+            }
+        }
+        names
     }
 
     /// Hosts holding at least one untrusted name, for the `hostvars[other]` path. Read once per
@@ -334,7 +363,9 @@ impl VarStore {
             self.untrusted
                 .iter()
                 .filter(|(_, names)| !names.is_empty())
-                .map(|(host, _)| host.clone())
+                .map(|(host, _)| host)
+                .chain(self.gathered.keys())
+                .cloned()
                 .collect(),
         );
         self.untrusted_hosts = Some(Arc::clone(&hosts));
@@ -345,8 +376,9 @@ impl VarStore {
     /// `all`, `group_vars/all` (inventory then playbook), inventory groups by depth and name,
     /// `group_vars/<group>` (inventory then playbook), inventory host vars - an implicit
     /// `localhost`'s `local` connection among them - `host_vars/<host>`
-    /// (inventory then playbook), play vars, vars_files, a role's `vars`, task vars, facts, a
-    /// role's parameters, extra vars, then the magic variables.
+    /// (inventory then playbook), gathered facts, play vars, vars_files, a role's `vars`, task
+    /// vars, `set_fact` and registered values, a role's parameters, extra vars, then the magic
+    /// variables.
     ///
     /// The three role layers sit where ansible-core 2.19.12 puts them, each measured against the
     /// layer on either side of it rather than derived from the documented numbering: `defaults`
@@ -359,6 +391,9 @@ impl VarStore {
         let mut vars = Map::new();
         extend(&mut vars, &scope.role_defaults);
         extend(&mut vars, &self.host_base(host));
+        if let Some(gathered) = self.gathered.get(host) {
+            extend(&mut vars, gathered);
+        }
         extend(&mut vars, &scope.play_vars);
         for file in &scope.vars_files {
             extend(&mut vars, file);
@@ -440,6 +475,9 @@ impl VarStore {
     /// naming another host can ask who that host is.
     fn host_view(&self, host: &str) -> Map<String, Value> {
         let mut base = self.host_base(host);
+        if let Some(gathered) = self.gathered.get(host) {
+            extend(&mut base, gathered);
+        }
         if let Some(facts) = self.facts.get(host) {
             extend(&mut base, facts);
         }
@@ -860,6 +898,72 @@ mod tests {
         assert_eq!(v["t"], json!(2), "set_fact beats task vars");
         assert_eq!(v["fact"], json!("set"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Gathered facts rank where ansible-core 2.19.12 ranks host facts: over an inventory host
+    /// variable, under the play's `vars:`, a task's `vars:` and a `set_fact`, whichever came
+    /// first. Measured on the development machine: an inventory `ansible_distribution=from-inventory`
+    /// reads `Ubuntu` after `setup`, a play `vars: {ansible_distribution: from-play}` still reads
+    /// `from-play`, a `set_fact` made before a second `setup` survives it, and a task's `vars:`
+    /// wins over the fact.
+    ///
+    /// What would make this red: gathered facts written into the `set_fact` layer, which puts a
+    /// managed host's answer over the author's own variables and lets a later `setup` erase a
+    /// `set_fact`. And a play variable that shadows a gathered name still counted as untrusted,
+    /// which would leave a template in it unrendered.
+    #[test]
+    fn gathered_facts_rank_under_the_play_and_over_the_inventory() {
+        let inv = Inventory::parse_ini("h1 ansible_inv=from-inventory\n").unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+        store.set_fact("h1", "ansible_kept", json!("from-set-fact"));
+        let facts = json!({"ansible_inv": "Ubuntu", "ansible_play": "Ubuntu", "ansible_task": "Ubuntu", "ansible_kept": "Ubuntu"});
+        store.gather_facts("h1", facts.as_object().unwrap());
+        let mut sc = scope(&["h1"]);
+        sc.play_vars = json!({"ansible_play": "from-play"})
+            .as_object()
+            .unwrap()
+            .clone();
+        sc.task_vars = json!({"ansible_task": "from-task"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let v = store.for_host("h1", &sc);
+        assert_eq!(
+            v["ansible_inv"],
+            json!("Ubuntu"),
+            "a fact beats an inventory variable"
+        );
+        assert_eq!(
+            v["ansible_play"],
+            json!("from-play"),
+            "a play variable beats a fact"
+        );
+        assert_eq!(
+            v["ansible_task"],
+            json!("from-task"),
+            "a task variable beats a fact"
+        );
+        assert_eq!(
+            v["ansible_kept"],
+            json!("from-set-fact"),
+            "a later setup keeps a set_fact"
+        );
+        let untrusted = store.untrusted_of("h1", &sc);
+        assert!(
+            untrusted.contains("ansible_inv"),
+            "the fact that answers is untrusted"
+        );
+        for name in ["ansible_play", "ansible_task", "ansible_kept"] {
+            assert!(
+                !untrusted.contains(name),
+                "{name} answers with the author's value"
+            );
+        }
+        assert_eq!(
+            store.hostvars_shared("h1")["h1"]["ansible_kept"],
+            json!("from-set-fact"),
+            "hostvars ranks them the same way"
+        );
     }
 
     /// Where a role's three layers sit, one assertion per measured relation.

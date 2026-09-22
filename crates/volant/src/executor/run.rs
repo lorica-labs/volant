@@ -2821,7 +2821,11 @@ mod tests {
     fn a_python_module_result_enters_untrusted() {
         let mut store = one_host_store();
         registered(&mut store, json!({"changed": false}));
-        assert!(store.untrusted_of("h1").contains("probe"));
+        assert!(
+            store
+                .untrusted_of("h1", &crate::vars::Scope::default())
+                .contains("probe")
+        );
     }
 
     /// A module that returns a template does not get it rendered. The marker file is the proof.
@@ -2845,7 +2849,7 @@ mod tests {
         let render = |store: &mut VarStore| {
             let vars = HostVars {
                 map: store.for_host("h1", &crate::vars::Scope::default()),
-                untrusted: store.untrusted_of("h1"),
+                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
                 untrusted_hosts: store.untrusted_hosts(),
                 ..HostVars::default()
             };
@@ -2894,7 +2898,7 @@ mod tests {
         let render = |store: &mut VarStore, text: &str| {
             let vars = HostVars {
                 map: store.for_host("h1", &crate::vars::Scope::default()),
-                untrusted: store.untrusted_of("h1"),
+                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
                 untrusted_hosts: store.untrusted_hosts(),
                 ..HostVars::default()
             };
@@ -2940,7 +2944,9 @@ mod tests {
         );
         for name in ["ansible_hostname", "ansible_facts"] {
             assert!(
-                store.untrusted_of("h1").contains(name),
+                store
+                    .untrusted_of("h1", &crate::vars::Scope::default())
+                    .contains(name),
                 "{name} carries a managed host's own words"
             );
         }
@@ -2975,7 +2981,7 @@ mod tests {
         let templar = Templar::new(PathBuf::from("."));
         let vars = HostVars {
             map: store.for_host("h1", &crate::vars::Scope::default()),
-            untrusted: store.untrusted_of("h1"),
+            untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
             untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
         };

@@ -230,7 +230,7 @@ pub(super) fn host_vars(
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
         let shared = store.shared_values(&scope);
-        let mut untrusted = store.untrusted_of(host);
+        let mut untrusted = store.untrusted_of(host, &scope);
         // What an include handed down is already rendered, so its provenance cannot be read off
         // the store: it travelled with the values.
         untrusted.extend(

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.6...volant-agent-v0.1.0-alpha.7) - 2026-09-22
+
+### Added
+
+- *(modules)* run assert, fail and pause on the controller ([#179](https://github.com/lorica-labs/volant/pull/179))
+- *(agent)* run python modules in a warm forking server ([#168](https://github.com/lorica-labs/volant/pull/168))
+- *(agent)* report the host's python interpreters at handshake ([#161](https://github.com/lorica-labs/volant/pull/161))
+- *(protocol)* address module payloads by content hash ([#159](https://github.com/lorica-labs/volant/pull/159))
+
+### Fixed
+
+- match the reference on facts, guarded commands and registered results ([#181](https://github.com/lorica-labs/volant/pull/181))
+- *(agent)* fail a python task that returns no result ([#172](https://github.com/lorica-labs/volant/pull/172))
+
+### Other
+
+- describe the warm python path and record the decision ([#169](https://github.com/lorica-labs/volant/pull/169))
+
 ## [0.1.0-alpha.6](https://github.com/lorica-labs/volant/compare/volant-agent-v0.1.0-alpha.5...volant-agent-v0.1.0-alpha.6) - 2026-09-20
 
 ### Added

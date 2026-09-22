@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) - 2026-09-22
+
+### Added
+
+- *(modules)* run assert, fail and pause on the controller ([#179](https://github.com/lorica-labs/volant/pull/179))
+- *(executor)* gather facts with the reference's setup module ([#173](https://github.com/lorica-labs/volant/pull/173))
+- *(executor)* run the python modules a playbook names ([#171](https://github.com/lorica-labs/volant/pull/171))
+- *(executor)* run a python task through the agent ([#166](https://github.com/lorica-labs/volant/pull/166))
+- *(executor)* send a python module payload with its task ([#163](https://github.com/lorica-labs/volant/pull/163))
+- *(controller)* build python module payloads through a helper ([#158](https://github.com/lorica-labs/volant/pull/158))
+- *(protocol)* address module payloads by content hash ([#159](https://github.com/lorica-labs/volant/pull/159))
+
+### Fixed
+
+- match the reference on facts, guarded commands and registered results ([#181](https://github.com/lorica-labs/volant/pull/181))
+- *(executor)* keep the escalated link across a barrier ([#178](https://github.com/lorica-labs/volant/pull/178))
+
+### Other
+
+- compare python module results against the reference ([#176](https://github.com/lorica-labs/volant/pull/176))
+- prove the python path against a real host ([#177](https://github.com/lorica-labs/volant/pull/177))
+- run a python module over ssh end to end ([#175](https://github.com/lorica-labs/volant/pull/175))
+- describe the warm python path and record the decision ([#169](https://github.com/lorica-labs/volant/pull/169))
+- *(golden)* record what ansible-core returns for five python modules ([#162](https://github.com/lorica-labs/volant/pull/162))
+
 ### Changed
 
 - *(executor)* gather facts with the reference's setup module. A play that does not write `gather_facts: false` now needs ansible-core on the controller, and is refused before the first connection without it.

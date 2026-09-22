@@ -2942,6 +2942,15 @@ mod tests {
             ),
             "False True False True False"
         );
+        // Flat, a key lands as the module spelled it: the reference's `clean_facts()` adds no
+        // prefix, so `module_setup` is there and `ansible_module_setup` is undefined.
+        assert_eq!(
+            render(
+                &mut store,
+                "{{ module_setup }} {{ gather_subset | first }} {{ ansible_module_setup is defined }}"
+            ),
+            "True min False"
+        );
         for name in ["ansible_hostname", "ansible_facts"] {
             assert!(
                 store

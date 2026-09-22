@@ -283,12 +283,14 @@ impl VarStore {
     /// Merges the `ansible_facts` a module returned into one host's facts, under both the names
     /// the reference gives them.
     ///
-    /// Each key lands flat, prefixed with `ansible_`, **and** under `ansible_facts` without that
-    /// prefix, which `setup` puts on every name it returns. Measurement 10 of plan 1.5 is what settles the pair: `gather_facts: true`
-    /// followed by a `set_fact: ansible_hostname: SHADOWED` leaves both readable, the flat name
-    /// masked and `ansible_facts.hostname` still holding what the host reported. So the two are
-    /// separate names and a later write to one leaves the other alone. Writing only the flat half
-    /// breaks
+    /// Each key lands flat as the module spelled it, **and** under `ansible_facts` without the
+    /// `ansible_` prefix `setup` puts on every name it returns: ansible-core's `clean_facts()`
+    /// adds no prefix and `namespace_facts()` takes it off. So `ansible_distribution` is flat and
+    /// `distribution` namespaced, and a bare `module_setup` or `packages` is bare in both.
+    /// Measurement 10 of plan 1.5 is what settles the pair: `gather_facts: true` followed by a
+    /// `set_fact: ansible_hostname: SHADOWED` leaves both readable, the flat name masked and
+    /// `ansible_facts.hostname` still holding what the host reported. So the two are separate
+    /// names and a later write to one leaves the other alone. Writing only the flat half breaks
     /// `ansible_facts['hostname']`, which is how playbooks that survived the injection being
     /// turned off read a fact.
     ///
@@ -306,12 +308,7 @@ impl VarStore {
             .cloned()
             .unwrap_or_default();
         for (key, value) in facts {
-            let flat = if key.starts_with("ansible_") {
-                key.clone()
-            } else {
-                format!("ansible_{key}")
-            };
-            gathered.insert(flat, value.clone());
+            gathered.insert(key.clone(), value.clone());
             // ansible-core's `namespace_facts()`: the prefix `setup` returned comes off, except
             // on `ansible_local`.
             let bare = match key.strip_prefix("ansible_") {

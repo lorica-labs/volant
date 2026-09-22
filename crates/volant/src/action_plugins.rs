@@ -9,22 +9,19 @@
 //! something that is not what the playbook asked for.
 //!
 //! The names this release already implements are **not** here, whether natively (`command`,
-//! `shell`, `raw`) or on the controller (`debug`, `set_fact`, `include_vars`,
-//! `validate_argument_spec`). `normal` is not here either: it is the only action plugin with no
-//! module of the same name, so no playbook can name it.
+//! `shell`, `raw`) or on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
+//! `set_fact`, `validate_argument_spec`). `normal` is not here either: it is the only action
+//! plugin with no module of the same name, so no playbook can name it.
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
-    "assert",
     "async_status",
     "copy",
     "dnf",
-    "fail",
     "fetch",
     "gather_facts",
     "group_by",
     "package",
-    "pause",
     "reboot",
     "script",
     "service",
@@ -61,7 +58,7 @@ mod tests {
         let mut sorted = BUILTIN_ACTION_PLUGINS.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, BUILTIN_ACTION_PLUGINS, "the list is kept sorted");
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 20);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 17);
         for absent in [
             "setup",
             "command",
@@ -70,6 +67,9 @@ mod tests {
             "debug",
             "set_fact",
             "include_vars",
+            "assert",
+            "fail",
+            "pause",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }

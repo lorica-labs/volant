@@ -214,11 +214,55 @@ pub const SHELL: ModuleSpec = ModuleSpec {
 /// Every module the agent implements natively, sorted by name.
 pub const NATIVE_MODULES: &[ModuleSpec] = &[COMMAND, RAW, SHELL];
 
+const fn honoured(name: &'static str) -> ModuleArg {
+    ModuleArg {
+        name,
+        status: ArgStatus::Honoured,
+    }
+}
+
+/// Measured on ansible-core 2.19.12. `msg` is the alias the reference gives `fail_msg`, listed
+/// here as a name of its own so that a task writing it is not refused. `quiet` changes only how
+/// the reference prints the result, never the result itself.
+pub const ASSERT: ModuleSpec = ModuleSpec {
+    name: "assert",
+    free_form: false,
+    summary: "Fail the task unless every condition in `that` holds.",
+    args: &[
+        honoured("fail_msg"),
+        honoured("msg"),
+        honoured("quiet"),
+        honoured("success_msg"),
+        honoured("that"),
+    ],
+    validated_as: None,
+};
 pub const DEBUG: ModuleSpec = ModuleSpec {
     name: "debug",
     free_form: false,
     summary: "Print a message or the value of a variable.",
     args: &[],
+    validated_as: None,
+};
+pub const FAIL: ModuleSpec = ModuleSpec {
+    name: "fail",
+    free_form: false,
+    summary: "Fail the task with a message.",
+    args: &[honoured("msg")],
+    validated_as: None,
+};
+/// `prompt` is read, but nothing here reads an answer to it, so a prompt shown on a terminal is
+/// refused when the task runs rather than shown and never waited for.
+pub const PAUSE: ModuleSpec = ModuleSpec {
+    name: "pause",
+    free_form: false,
+    summary: "Wait for `seconds` or `minutes`. Volant cannot read an answer from the keyboard, so when standard input is a terminal it refuses a `prompt`, and a pause with no duration, where Ansible would wait for one. Without a terminal, a pause that asks for an answer prints a warning and goes on at once, as Ansible does.",
+    args: &[
+        honoured("echo"),
+        honoured("minutes"),
+        honoured("prompt"),
+        honoured("seconds"),
+    ],
     validated_as: None,
 };
 pub const SET_FACT: ModuleSpec = ModuleSpec {
@@ -246,7 +290,15 @@ pub const VALIDATE_ARGUMENT_SPEC: ModuleSpec = ModuleSpec {
 };
 
 /// Modules the controller runs itself and never sends to a host, sorted by name.
-pub const LOCAL_MODULES: &[ModuleSpec] = &[DEBUG, INCLUDE_VARS, SET_FACT, VALIDATE_ARGUMENT_SPEC];
+pub const LOCAL_MODULES: &[ModuleSpec] = &[
+    ASSERT,
+    DEBUG,
+    FAIL,
+    INCLUDE_VARS,
+    PAUSE,
+    SET_FACT,
+    VALIDATE_ARGUMENT_SPEC,
+];
 
 /// The three statements that read a file while the play is being compiled instead of naming
 /// work for a host, with whether their string form is one raw argument.

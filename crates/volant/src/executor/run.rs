@@ -2,12 +2,13 @@
 //! Running one task and judging its result, on the controller as well as on the agent.
 
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal as _;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
-use volant_protocol::modules::short_name;
+use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource, BlobMemory};
@@ -121,8 +122,13 @@ fn run_include_vars(
     TaskResult(r)
 }
 
-/// `set_fact`, `debug` and `include_vars` never leave the controller.
-pub(super) fn run_local(
+/// The modules in `LOCAL_MODULES` never leave the controller. `stop` is the run's interruption,
+/// which a `pause` waits on beside its timer.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the task, the host's view of it, and the run's interruption for a pause"
+)]
+pub(super) async fn run_local(
     task: &PlayTask,
     item: &Item,
     step: &Step,
@@ -130,10 +136,31 @@ pub(super) fn run_local(
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
+    stop: &mut watch::Receiver<bool>,
 ) -> TaskResult {
     let mut r = Map::new();
     match short_name(&task.module) {
+        "assert" => return assert_module(item, templar),
+        "fail" => {
+            let unknown = unknown_args(&FAIL, &item.args);
+            if !unknown.is_empty() {
+                return TaskResult::failed_with(format!(
+                    "Invalid options for ansible.builtin.fail: {}",
+                    unknown.join(", ")
+                ));
+            }
+            r.insert("changed".into(), json!(false));
+            r.insert("failed".into(), json!(true));
+            r.insert(
+                "msg".into(),
+                item.args
+                    .get("msg")
+                    .cloned()
+                    .unwrap_or_else(|| json!("Failed as requested from task")),
+            );
+        }
         "include_vars" => return run_include_vars(item, step, fact_hosts, store),
+        "pause" => return pause(item, std::io::stdin().is_terminal(), stop).await,
         "set_fact" => {
             let mut facts = Map::new();
             for (k, v) in &item.args {
@@ -212,6 +239,221 @@ pub(super) fn run_local(
         }
     }
     TaskResult(r)
+}
+
+/// The names a task wrote that the module does not have, sorted.
+fn unknown_args<'a>(spec: &ModuleSpec, args: &'a Map<String, Value>) -> Vec<&'a str> {
+    let mut unknown: Vec<&str> = args
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !spec.args.iter().any(|a| a.name == *key))
+        .collect();
+    unknown.sort_unstable();
+    unknown
+}
+
+/// The reference's refusal of an argument its `assert` or `pause` action plugin does not have,
+/// measured on ansible-core 2.19.12. It lists aliases apart, in brackets after the names.
+fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -> Option<String> {
+    let unknown = unknown_args(spec, args);
+    if unknown.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = spec
+        .args
+        .iter()
+        .map(|a| a.name)
+        .filter(|name| !aliases.contains(name))
+        .collect();
+    let aliases = if aliases.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", aliases.join(", "))
+    };
+    Some(format!(
+        "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.{}) module: {}. Supported parameters include: {}{aliases}.",
+        spec.name,
+        unknown.join(", "),
+        names.join(", ")
+    ))
+}
+
+/// `assert`, measured on ansible-core 2.19.12: the conditions are evaluated in order, the first
+/// false one is reported as the playbook wrote it, a string or a boolean, and an undefined name
+/// fails the task the way any other conditional does.
+///
+/// A `that` a managed host wrote is refused rather than evaluated, for the reason `debug: var:`
+/// is: evaluating it would compile a remote string on the controller.
+fn assert_module(item: &Item, templar: &Templar) -> TaskResult {
+    if let Some(refusal) = unsupported(&ASSERT, &["msg"], &item.args) {
+        return TaskResult::failed_with(refusal);
+    }
+    let Some(that) = item.args.get("that").filter(|v| !v.is_null()) else {
+        return TaskResult::failed_with("missing required arguments: that");
+    };
+    if item.args_untrusted.contains("that") {
+        return TaskResult::failed_with(conditional_error(&TemplateError(
+            "Encountered untrusted template or expression.".into(),
+        )));
+    }
+    let conditions = match that {
+        Value::Array(list) => list.as_slice(),
+        one => std::slice::from_ref(one),
+    };
+    let mut r = Map::new();
+    r.insert("changed".into(), json!(false));
+    for condition in conditions {
+        let held = match condition {
+            Value::Bool(b) => Ok(*b),
+            Value::String(s) => templar.condition(s, &item.vars),
+            other => templar.condition(&other.to_string(), &item.vars),
+        };
+        match held {
+            Err(e) => return TaskResult::failed_with(conditional_error(&e)),
+            Ok(true) => {}
+            Ok(false) => {
+                let msg = item.args.get("fail_msg").or_else(|| item.args.get("msg"));
+                r.insert("assertion".into(), condition.clone());
+                r.insert("evaluated_to".into(), json!(false));
+                r.insert("failed".into(), json!(true));
+                r.insert(
+                    "msg".into(),
+                    msg.cloned().unwrap_or_else(|| json!("Assertion failed")),
+                );
+                return TaskResult(r);
+            }
+        }
+    }
+    r.insert(
+        "msg".into(),
+        item.args
+            .get("success_msg")
+            .cloned()
+            .unwrap_or_else(|| json!("All assertions passed")),
+    );
+    TaskResult(r)
+}
+
+/// Why a `pause` that would wait for an answer is refused on a terminal.
+const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant does not read the answer and would carry on without waiting for one. Give the pause seconds or minutes and no prompt, or redirect standard input.";
+
+/// `pause`, measured on ansible-core 2.19.12: a duration under one second waits one, `delta` is
+/// the whole seconds waited, and `stdout` gives the time waited to two decimals, in minutes
+/// unless `seconds` was the argument. A pause that asks for an answer, through `prompt` or by
+/// having no duration at all, warns and goes on at once when standard input is not a terminal.
+///
+/// On a terminal it is refused: nothing here reads the answer, and showing the prompt and going
+/// on would accept the task and not do it. `interactive` is passed in so that both sides of that
+/// can be tested. The run's interruption ends the wait early and fails the task.
+async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>) -> TaskResult {
+    if let Some(refusal) = unsupported(&PAUSE, &[], &item.args) {
+        return TaskResult::failed_with(refusal);
+    }
+    let whole = |v: &Value| match v {
+        Value::Number(n) => n.as_f64().map(|f| f.trunc() as i64),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    };
+    let asked = match (item.args.get("minutes"), item.args.get("seconds")) {
+        (Some(_), Some(_)) => {
+            return TaskResult::failed_with("parameters are mutually exclusive: minutes|seconds");
+        }
+        (Some(v), None) => whole(v).map(|m| (m * 60, "minutes")).ok_or(v),
+        (None, Some(v)) => whole(v).map(|s| (s, "seconds")).ok_or(v),
+        (None, None) => Err(&Value::Null),
+    };
+    let asked = match asked {
+        Ok(asked) => Some(asked),
+        Err(Value::Null) => None,
+        Err(v) => {
+            return TaskResult::failed_with(format!(
+                "non-integer value given for prompt duration: {v}"
+            ));
+        }
+    };
+    let prompting = asked.is_none() || item.args.contains_key("prompt");
+    if prompting && interactive {
+        return TaskResult::failed_with(PROMPT_REFUSED);
+    }
+    let mut r = Map::new();
+    r.insert("start".into(), json!(timestamp()));
+    let began = std::time::Instant::now();
+    match asked {
+        Some((seconds, _)) => {
+            let wait = Duration::from_secs(seconds.max(1).unsigned_abs());
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                () = interrupted(stop) => return TaskResult::failed_with("user requested abort!"),
+            }
+        }
+        None => {
+            r.insert(
+                "warnings".into(),
+                json!(["Not waiting for response to prompt as stdin is not interactive"]),
+            );
+        }
+    }
+    let waited = began.elapsed();
+    let unit = asked.map_or("minutes", |(_, unit)| unit);
+    let shown = waited.as_secs_f64() / if unit == "minutes" { 60.0 } else { 1.0 };
+    let shown = (shown * 100.0).round() / 100.0;
+    // Python prints a whole float with one decimal, `1.0`, and any other the shortest way.
+    let shown = if shown.fract() == 0.0 {
+        format!("{shown:.1}")
+    } else {
+        shown.to_string()
+    };
+    r.insert("changed".into(), json!(false));
+    r.insert("delta".into(), json!(waited.as_secs()));
+    r.insert(
+        "echo".into(),
+        json!(
+            item.args
+                .get("echo")
+                .and_then(volant_protocol::modules::arg_bool)
+                .unwrap_or(true)
+        ),
+    );
+    r.insert("rc".into(), json!(0));
+    r.insert("stderr".into(), json!(""));
+    r.insert("stdout".into(), json!(format!("Paused for {shown} {unit}")));
+    r.insert("stop".into(), json!(timestamp()));
+    r.insert("user_input".into(), json!(""));
+    TaskResult(r)
+}
+
+/// Resolves when the run is interrupted, and never once nothing is left that could interrupt it.
+async fn interrupted(stop: &mut watch::Receiver<bool>) {
+    let gone = stop.wait_for(|stopped| *stopped).await.is_err();
+    if gone {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Now, in the shape the reference's `pause` gives `start` and `stop`. UTC where the reference
+/// uses local time, as the agent's own timestamps are.
+fn timestamp() -> String {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = since.as_secs() as i64;
+    // Days since 1970-01-01 to a Gregorian date, Howard Hinnant's algorithm.
+    let z = secs.div_euclid(86_400) + 719_468;
+    let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let day = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.{:06}",
+        day / 3600,
+        (day % 3600) / 60,
+        day % 60,
+        since.subsec_micros()
+    )
 }
 
 /// The argument check a role with a `meta/argument_specs.yml` gets in front of it.
@@ -1259,8 +1501,8 @@ mod tests {
     ///
     /// What would make this red: a name in `LOCAL_MODULES` that falls through to the catch-all
     /// arm.
-    #[test]
-    fn every_local_module_has_an_arm_in_run_local() {
+    #[tokio::test]
+    async fn every_local_module_has_an_arm_in_run_local() {
         let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
         let store = Mutex::new(
             VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
@@ -1297,7 +1539,9 @@ mod tests {
                 &templar,
                 &store,
                 0,
-            );
+                &mut watch::channel(false).1,
+            )
+            .await;
             assert_ne!(
                 result.0.get("msg").and_then(Value::as_str),
                 Some(format!("{} is not a controller-side module", spec.name).as_str()),
@@ -1305,6 +1549,286 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    fn local_item(args: Value) -> Item {
+        Item {
+            element: None,
+            label: None,
+            args: vars(args),
+            args_untrusted: std::collections::BTreeSet::new(),
+            vars: HostVars::default(),
+            environment: BTreeMap::new(),
+            skipped: None,
+        }
+    }
+
+    /// One controller-side module run the way the driver runs it, with nothing interrupting.
+    async fn local(module: &str, args: Value) -> TaskResult {
+        let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
+        let store = Mutex::new(
+            VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+        );
+        let step = Step {
+            kind: StepKind::Task,
+            task: PlayTask::empty(),
+            block: None,
+            section: crate::compile::Section::Body,
+            role: None,
+            origin: Arc::new(crate::compile::Origin::default()),
+            include_params: None,
+            hosts: None,
+        };
+        run_local(
+            &task(module),
+            &local_item(args),
+            &step,
+            std::slice::from_ref(&"h1".to_string()),
+            &Templar::new(PathBuf::from(".")),
+            &store,
+            0,
+            &mut watch::channel(false).1,
+        )
+        .await
+    }
+
+    /// Measured on ansible-core 2.19.12: every condition true gives `All assertions passed`, and a
+    /// `success_msg` takes its place.
+    ///
+    /// What would make this red: a passing assert reported failed, or `success_msg` dropped.
+    #[tokio::test]
+    async fn an_assert_that_holds_passes() {
+        let r = local("assert", json!({"that": ["1 == 1", "2 > 1"]})).await;
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"changed": false, "msg": "All assertions passed"})
+        );
+        let r = local("assert", json!({"that": "1 == 1", "success_msg": "fine"})).await;
+        assert_eq!(Value::Object(r.0), json!({"changed": false, "msg": "fine"}));
+    }
+
+    /// Measured on ansible-core 2.19.12: the failing element comes back as written, a string for
+    /// `that: 1 == 2` and a boolean for `that: false`, and in a list it is the first false one.
+    ///
+    /// What would make this red: the rendered value or the last false element reported instead
+    /// of the first one as written, or `evaluated_to` missing.
+    #[tokio::test]
+    async fn a_failed_assert_names_the_first_false_element_as_written() {
+        let r = local("assert", json!({"that": "1 == 2"})).await;
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "failed": true, "msg": "Assertion failed"})
+        );
+        let r = local("assert", json!({"that": false})).await;
+        assert_eq!(r.0["assertion"], json!(false));
+        let r = local("assert", json!({"that": ["1 == 1", "2 == 3", "4 == 5"]})).await;
+        assert_eq!(r.0["assertion"], json!("2 == 3"));
+        assert!(r.failed());
+    }
+
+    /// Measured on ansible-core 2.19.12: `fail_msg`, or its alias `msg`, replaces `msg` and leaves
+    /// `assertion` and `evaluated_to` in place. `quiet` changes the display only.
+    ///
+    /// What would make this red: the alias refused or ignored, or `quiet` changing the result.
+    #[tokio::test]
+    async fn fail_msg_and_its_alias_replace_the_message_and_quiet_changes_nothing() {
+        for key in ["fail_msg", "msg"] {
+            let r = local("assert", json!({"that": "1 == 2", key: "custom"})).await;
+            assert_eq!(
+                Value::Object(r.0),
+                json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "failed": true, "msg": "custom"}),
+                "{key}"
+            );
+        }
+        let loud = local("assert", json!({"that": "1 == 2"})).await;
+        let quiet = local("assert", json!({"that": "1 == 2", "quiet": true})).await;
+        assert_eq!(loud.0, quiet.0);
+    }
+
+    /// The three refusals measured on ansible-core 2.19.12, the first two in its own words. The
+    /// third fails the way every other conditional in this engine fails.
+    ///
+    /// What would make this red: an assert with no `that` passing, an unknown argument accepted,
+    /// the supported list or its alias spelled differently, or an undefined name panicking or
+    /// reading as false.
+    #[tokio::test]
+    async fn assert_refuses_what_the_reference_refuses() {
+        let r = local("assert", json!({})).await;
+        assert!(r.failed());
+        assert_eq!(r.0["msg"], json!("missing required arguments: that"));
+        let r = local("assert", json!({"that": "1 == 1", "nosucharg": 1})).await;
+        assert!(r.failed());
+        assert_eq!(
+            r.0["msg"],
+            json!(
+                "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: nosucharg. Supported parameters include: fail_msg, quiet, success_msg, that (msg)."
+            )
+        );
+        // The reference ends this one with `'some_undefined_thing' is undefined`. The prefix is
+        // the one every conditional here shares; the sentence behind it is the templar's.
+        let r = local("assert", json!({"that": "some_undefined_thing"})).await;
+        assert!(r.failed());
+        assert!(
+            r.0["msg"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("Task failed: Error while evaluating conditional: ")),
+            "{:?}",
+            r.0
+        );
+    }
+
+    /// A `that` a managed host wrote is data. Evaluating it would compile a remote string on the
+    /// controller, which is the hole `debug: var:` refuses for the same reason.
+    ///
+    /// What would make this red: an untrusted `that` evaluated.
+    #[tokio::test]
+    async fn an_assert_whose_condition_came_from_a_host_is_refused() {
+        let mut item = local_item(json!({"that": "1 == 1"}));
+        item.args_untrusted.insert("that".into());
+        let r = assert_module(&item, &Templar::new(PathBuf::from(".")));
+        assert!(r.failed());
+        assert_eq!(
+            r.0["msg"],
+            json!(
+                "Task failed: Error while evaluating conditional: Encountered untrusted template or expression."
+            )
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12: the default message, a custom one, and a list that stays
+    /// a list. An unknown argument is refused in a sentence of its own, unlike assert and pause.
+    ///
+    /// What would make this red: `msg` turned into a string, the default reworded, or the
+    /// refusal written like the other two.
+    #[tokio::test]
+    async fn fail_fails_with_its_message_as_given() {
+        let r = local("fail", json!({})).await;
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"changed": false, "failed": true, "msg": "Failed as requested from task"})
+        );
+        let r = local("fail", json!({"msg": "custom failure"})).await;
+        assert_eq!(r.0["msg"], json!("custom failure"));
+        let r = local("fail", json!({"msg": ["one", "two"]})).await;
+        assert_eq!(r.0["msg"], json!(["one", "two"]));
+        assert!(r.failed());
+        let r = local("fail", json!({"nosucharg": 1})).await;
+        assert_eq!(
+            r.0["msg"],
+            json!("Invalid options for ansible.builtin.fail: nosucharg")
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12: `seconds: 0` still waits one second and says so.
+    ///
+    /// What would make this red: a zero pause that does not wait, or a result whose keys or
+    /// wording differ from the reference's.
+    #[tokio::test]
+    async fn a_pause_of_zero_seconds_waits_one() {
+        let began = std::time::Instant::now();
+        let mut r = local("pause", json!({"seconds": 0})).await;
+        assert!(
+            began.elapsed() >= Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
+        for stamp in ["start", "stop"] {
+            let value = r.0.remove(stamp).expect(stamp);
+            assert_eq!(value.as_str().map(str::len), Some(26), "{value}");
+        }
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"changed": false, "delta": 1, "echo": true, "rc": 0, "stderr": "", "stdout": "Paused for 1.0 seconds", "user_input": ""})
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12, the two refusals of a pause.
+    ///
+    /// What would make this red: both durations accepted, one of them silently winning, or an
+    /// unknown argument accepted.
+    #[tokio::test]
+    async fn pause_refuses_what_the_reference_refuses() {
+        let r = local("pause", json!({"minutes": 1, "seconds": 1})).await;
+        assert!(r.failed());
+        assert_eq!(
+            r.0["msg"],
+            json!("parameters are mutually exclusive: minutes|seconds")
+        );
+        let r = local("pause", json!({"seconds": 1, "nosucharg": 1})).await;
+        assert!(r.failed());
+        assert_eq!(
+            r.0["msg"],
+            json!(
+                "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.pause) module: nosucharg. Supported parameters include: echo, minutes, prompt, seconds."
+            )
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12 with standard input not a terminal: a prompt warns, does
+    /// not wait, and reports in minutes.
+    ///
+    /// What would make this red: a prompt that waits for an answer nobody can type, or a result
+    /// that loses the warning.
+    #[tokio::test]
+    async fn a_prompt_without_a_terminal_warns_and_goes_on() {
+        let item = local_item(json!({"prompt": "Continue?"}));
+        let r = pause(&item, false, &mut watch::channel(false).1).await;
+        assert!(!r.failed(), "{:?}", r.0);
+        assert_eq!(r.0["delta"], json!(0));
+        assert_eq!(r.0["stdout"], json!("Paused for 0.0 minutes"));
+        assert_eq!(r.0["user_input"], json!(""));
+        assert_eq!(
+            r.0["warnings"],
+            json!(["Not waiting for response to prompt as stdin is not interactive"])
+        );
+    }
+
+    /// On a terminal a prompt is a person waiting to answer, and this release cannot read the
+    /// answer. Showing the prompt and going on would accept the task and not do it, so it is
+    /// refused, and so is a pause with no duration, which waits for Enter in the reference.
+    ///
+    /// What would make this red: a prompt on a terminal that returns `ok` without waiting.
+    #[tokio::test]
+    async fn a_prompt_on_a_terminal_is_refused() {
+        for args in [
+            json!({"prompt": "Continue?"}),
+            json!({}),
+            json!({"prompt": "Go?", "seconds": 1}),
+        ] {
+            let r = pause(
+                &local_item(args.clone()),
+                true,
+                &mut watch::channel(false).1,
+            )
+            .await;
+            assert!(r.failed(), "{args}: {:?}", r.0);
+            assert!(
+                r.0["msg"].as_str().is_some_and(|m| m.contains("prompt")),
+                "{args}: {:?}",
+                r.0
+            );
+        }
+    }
+
+    /// An interrupted run does not sit out the rest of a pause.
+    ///
+    /// What would make this red: a pause that waits on its timer alone, which holds a cancelled
+    /// run for as long as the playbook asked to wait.
+    #[tokio::test]
+    async fn an_interrupted_pause_ends_at_once() {
+        let (stop_tx, mut stop) = watch::channel(false);
+        let item = local_item(json!({"minutes": 10}));
+        let began = std::time::Instant::now();
+        let (r, ()) = tokio::join!(pause(&item, false, &mut stop), async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stop_tx.send(true).expect("the receiver is alive");
+        });
+        assert!(r.failed(), "{:?}", r.0);
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            began.elapsed()
+        );
     }
 
     /// Each complaint the argument check can make, in the reference's own words and in the order

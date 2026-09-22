@@ -695,7 +695,9 @@ pub(super) async fn drive_host(
                                         &templar,
                                         &store,
                                         verbosity,
-                                    ),
+                                        &mut driver.stop,
+                                    )
+                                    .await,
                                     &templar,
                                 );
                                 let Some(retry) = &retry else { break r };

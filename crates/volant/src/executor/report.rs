@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use volant_protocol::TaskResult;
 
 use crate::playbook::PlayTask;
+use crate::render::Dump;
 
 use super::coordinator::Event;
 use super::run::{classify, empty_loop_result, registered_value};
@@ -40,7 +41,7 @@ pub(super) async fn report_task(
     labels: &[Option<String>],
     retries: &[Vec<u32>],
     names: &[String],
-    dump: bool,
+    dump: Dump,
     rescuable: bool,
     delegate: Option<&str>,
 ) -> Option<TaskResult> {
@@ -113,7 +114,7 @@ pub(super) async fn report_task(
                 label: None,
                 outcome,
                 result: aggregate,
-                dump: false,
+                dump: Dump::No,
                 show,
                 counts: true,
                 censored,

@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{PythonPayload, TaskResult};
 
-use crate::modules::command::{CANCEL_POLL, kill_group, timed_out};
+use crate::modules::command::{CANCEL_POLL, kill_group};
 use crate::modules::{Context, Run};
 
 /// The parent, handed to the interpreter with `-c`. Embedded rather than written to the host:
@@ -200,7 +200,7 @@ impl Server {
                 kill_group(pid);
                 self.reap();
                 let seconds = context.timeout.unwrap_or_default().as_secs();
-                return Ok(Run::Done(timed_out(seconds)));
+                return Ok(Run::Done(TaskResult::timed_out(seconds)));
             }
             match self.frames.recv_timeout(CANCEL_POLL) {
                 Ok(frame) => {

@@ -23,8 +23,11 @@ The controller runs these itself, so they need no connection to the host.
 
 | Module | Free-form arguments | What it does |
 |---|---|---|
+| `assert` | no | Fail the task unless every condition in `that` holds. |
 | `debug` | no | Print a message or the value of a variable. |
+| `fail` | no | Fail the task with a message. |
 | `include_vars` | yes | Read a file of variables and set them on the host, for the rest of the run. |
+| `pause` | no | Wait for `seconds` or `minutes`. Volant cannot read an answer from the keyboard, so when standard input is a terminal it refuses a `prompt`, and a pause with no duration, where Ansible would wait for one. Without a terminal, a pause that asks for an answer prints a warning and goes on at once, as Ansible does. |
 | `set_fact` | no | Set facts for a host, for the rest of the run. |
 | `validate_argument_spec` | no | Check a role's arguments against the specification in `meta/argument_specs.yml`. |
 

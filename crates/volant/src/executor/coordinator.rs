@@ -14,7 +14,7 @@ use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{Compiled, Step, StepKind};
 use crate::inventory::Host;
 use crate::playbook::Play;
-use crate::render::Renderer;
+use crate::render::{Dump, Renderer};
 use crate::stats::{Outcome, Stats};
 use crate::template::Templar;
 
@@ -81,7 +81,7 @@ pub(super) enum Event {
         label: Option<String>,
         outcome: Outcome,
         result: TaskResult,
-        dump: bool,
+        dump: Dump,
         show: bool,
         counts: bool,
         /// The task's `no_log`. Carried on the event rather than applied to `result`, because
@@ -340,7 +340,7 @@ pub(super) async fn run_batch(
                                 .steps()
                                 .steps
                                 .get(key.1)
-                                .is_some_and(|s| s.task.runs_once());
+                                .is_some_and(|s| s.task.bypasses_host_loop());
                         if announced {
                             coordinator.run_once.insert(key.1, true);
                         }
@@ -392,7 +392,7 @@ pub(super) async fn run_batch(
                                 .steps()
                                 .steps
                                 .get(index)
-                                .is_some_and(|s| s.task.runs_once())
+                                .is_some_and(|s| s.task.bypasses_host_loop())
                         {
                             coordinator.run_once.entry(index).or_insert(false);
                         }
@@ -563,7 +563,7 @@ pub(super) async fn run_batch(
                         .steps()
                         .steps
                         .get(index)
-                        .is_some_and(|s| s.task.runs_once())
+                        .is_some_and(|s| s.task.bypasses_host_loop())
                 {
                     coordinator.run_once.entry(index).or_insert(false);
                 }
@@ -812,7 +812,7 @@ impl Coordinator<'_> {
         // nobody would run the step. Never an overwrite; see `Progress::elected`.
         let at = completed_through.map_or(0, |c| c + 1);
         if let Some(step) = steps.get(at)
-            && step.task.runs_once()
+            && step.task.bypasses_host_loop()
             && !self.elected.contains_key(&at)
             && let Some(runner) = live_hosts.iter().find(|h| {
                 step.hosts

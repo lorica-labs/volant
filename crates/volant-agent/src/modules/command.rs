@@ -233,7 +233,7 @@ pub(crate) fn execute(
                     kill_group(pid);
                     let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
                     let _ = done.recv();
-                    return Run::Done(timed_out(seconds));
+                    return Run::Done(TaskResult::timed_out(seconds));
                 }
                 Some(left) => left.min(CANCEL_POLL),
             },
@@ -287,7 +287,7 @@ pub(crate) fn execute(
             return Run::Cancelled;
         }
         let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
-        return Run::Done(timed_out(seconds));
+        return Run::Done(TaskResult::timed_out(seconds));
     };
     if strip_empty_ends {
         stdout.truncate(stdout.trim_end_matches(['\r', '\n']).len());
@@ -419,22 +419,6 @@ fn skipped(cmd: Value, msg: String, stdout: String) -> TaskResult {
     result.insert("changed".into(), json!(false));
     result.insert("skipped".into(), json!(true));
     result.insert("msg".into(), json!(msg));
-    TaskResult(result)
-}
-
-/// Matches `ansible-core`'s shape for the `timeout:` task keyword, not the module's own
-/// timeout mechanism: no `cmd`, no `rc`/`stdout`/`stderr` (the reference drops those too,
-/// even when the command had already produced output), and no `timedout.frame` (an
-/// Ansible-internal traceback hint we have nothing to reproduce).
-pub(crate) fn timed_out(seconds: u64) -> TaskResult {
-    let mut result = Map::new();
-    result.insert("changed".into(), json!(false));
-    result.insert("failed".into(), json!(true));
-    result.insert(
-        "msg".into(),
-        json!(format!("Task failed: Timed out after {seconds} second(s).")),
-    );
-    result.insert("timedout".into(), json!({"period": seconds}));
     TaskResult(result)
 }
 

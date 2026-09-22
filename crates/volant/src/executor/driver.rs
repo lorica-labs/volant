@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
-use volant_protocol::modules::short_name;
+use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
 use crate::agent::{AgentLink, AgentSource};
@@ -17,6 +17,7 @@ use crate::compile::{
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
 use crate::python::ModulePayload;
+use crate::render::Dump;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::VarStore;
@@ -372,8 +373,9 @@ pub(super) async fn drive_host(
             // for it. Measured again with an include a `when` kept one of three hosts out of:
             // the two the mask holds both read the registered value back, and the third runs
             // only what follows.
-            let follower =
-                task.runs_once() && !handlers_only && runner.as_deref().is_some_and(|h| h != name);
+            let follower = task.bypasses_host_loop()
+                && !handlers_only
+                && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind: every index the flush was asked for goes,
             // reached or not, so a handler runs once per notification. Measured on ansible-core
             // 2.19.12, both halves - `first handler` notified twice runs once and does **not**
@@ -621,7 +623,7 @@ pub(super) async fn drive_host(
                         &labels,
                         &[],
                         &[],
-                        false,
+                        Dump::No,
                         false,
                         None,
                     )
@@ -684,20 +686,27 @@ pub(super) async fn drive_host(
                             let mut attempt = 0;
                             loop {
                                 attempt += 1;
-                                let mut r = finish(
+                                // The `timeout` keyword holds on the controller as it does
+                                // on the agent, per attempt, and zero is no timeout: measured
+                                // on ansible-core 2.19.12. A `pause` is the one local module
+                                // that can run into it.
+                                let ran = run_local(
                                     task,
                                     item,
-                                    run_local(
-                                        task,
-                                        item,
-                                        step,
-                                        &fact_hosts,
-                                        &templar,
-                                        &store,
-                                        verbosity,
-                                    ),
+                                    step,
+                                    &fact_hosts,
                                     &templar,
+                                    &store,
+                                    verbosity,
+                                    &mut driver.stop,
                                 );
+                                let ran = match task.timeout.filter(|t| *t > 0) {
+                                    Some(t) => tokio::time::timeout(Duration::from_secs(t), ran)
+                                        .await
+                                        .unwrap_or_else(|_| TaskResult::timed_out(t)),
+                                    None => ran.await,
+                                };
+                                let mut r = finish(task, item, ran, &templar);
                                 let Some(retry) = &retry else { break r };
                                 r.0.insert("attempts".into(), json!(attempt));
                                 match until_holds(task, item, &r, retry, &templar) {
@@ -741,9 +750,20 @@ pub(super) async fn drive_host(
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
                     // body from `-v` on, measured: the dump is what puts the body on the line,
-                    // so it is the dump that goes.
-                    let dump =
-                        short_name(&task.module) == "debug" && !(task.censors() && verbosity == 0);
+                    // so it is the dump that goes. An `assert` dumps its whole result unless it
+                    // is `quiet`, measured on ansible-core 2.19.12, and `quiet` is the one
+                    // thing that argument does.
+                    let dump = match short_name(&task.module) {
+                        "debug" if !(task.censors() && verbosity == 0) => Dump::Debug,
+                        "assert"
+                            if !items.first().is_some_and(|i| {
+                                i.args.get("quiet").and_then(arg_bool) == Some(true)
+                            }) =>
+                        {
+                            Dump::Whole
+                        }
+                        _ => Dump::No,
+                    };
                     if let Some(result) = report_task(
                         &tx,
                         &name,
@@ -945,7 +965,7 @@ pub(super) async fn drive_host(
                         &[None],
                         &[],
                         &[],
-                        false,
+                        Dump::No,
                         rescuable,
                         batch_delegate.as_deref(),
                     )
@@ -1189,7 +1209,7 @@ pub(super) async fn drive_host(
                     &labels,
                     retried,
                     retried_names,
-                    false,
+                    Dump::No,
                     rescuable,
                     batch_delegate.as_deref(),
                 )
@@ -1263,7 +1283,7 @@ pub(super) async fn drive_host(
                 &[None],
                 &[],
                 &[],
-                false,
+                Dump::No,
                 rescuable,
                 None,
             )
@@ -1767,5 +1787,20 @@ mod tests {
             "the scan catches what no keyword spells"
         );
         assert!(!t.barrier(), "and it needs no keyword to do it");
+    }
+
+    /// Under `batching`, a host with a fork permit kept from the batch before gives it back
+    /// only in front of a boundary. A `pause` that is not one is waited out with the permit in
+    /// hand, so with `forks = 2` two hosts pause while the others cannot even start the task
+    /// before it, and the play takes several pause lengths where the reference takes one.
+    ///
+    /// What would make this red: a `pause` the batching driver walks into without meeting the
+    /// other hosts, permit and all.
+    #[test]
+    fn a_pause_is_a_boundary_under_batching() {
+        for module in ["pause", "ansible.builtin.pause"] {
+            assert!(is_boundary(&task(module), true), "{module}");
+        }
+        assert!(!is_boundary(&task("debug"), true));
     }
 }

@@ -9,6 +9,7 @@ use volant_protocol::TaskResult;
 
 use crate::compile::{Compiled, IncludeKind, IncludeParams, IncludeRequest, IncludeTarget, Step};
 use crate::playbook::PlayTask;
+use crate::render::Dump;
 use crate::stats::Outcome;
 use crate::template::Templar;
 use crate::transport::ConnectionDefaults;
@@ -308,7 +309,7 @@ pub(super) async fn report_include(
                 label: item.label.clone(),
                 outcome,
                 result: item.result.clone(),
-                dump: false,
+                dump: Dump::No,
                 show: true,
                 counts: !is_loop,
                 censored,
@@ -345,7 +346,7 @@ pub(super) async fn report_include(
                     label: None,
                     outcome,
                     result: aggregate,
-                    dump: false,
+                    dump: Dump::No,
                     show: empty,
                     counts: true,
                     censored,

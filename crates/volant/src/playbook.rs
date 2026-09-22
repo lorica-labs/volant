@@ -254,8 +254,24 @@ impl PlayTask {
         self.delegate_facts.unwrap_or(false)
     }
 
+    /// Whether one host of the batch runs this task and the others only wait for it: under
+    /// `run_once`, and for a `pause`, whose action plugin bypasses the host loop in the
+    /// reference. Measured on ansible-core 2.19.12 with two hosts: a `pause` shows `ok: [h1]`
+    /// alone, registers nothing on h2, a `when` that leaves h1 out skips it for both, and one
+    /// that fails takes h2 out of the play the way a failed `run_once` does. Where the two
+    /// differ is `register`, which `run_once` writes for every host: see `fact_targets`.
+    pub fn bypasses_host_loop(&self) -> bool {
+        self.runs_once() || self.pauses()
+    }
+
+    fn pauses(&self) -> bool {
+        short_name(&self.module) == "pause"
+    }
+
     /// Whether the hosts of the batch meet in front of this task before any of them runs it,
-    /// because of a keyword written on it.
+    /// because of a keyword written on it, or because it is a `pause`. The play waits out a
+    /// pause as a whole, and a host that walked into one with a fork permit kept from the batch
+    /// before would hold it for the whole wait, while the hosts behind it cannot start.
     ///
     /// Read out of [`crate::keywords`] rather than hard-coded here: the table is where a
     /// keyword's properties are declared, and a second list of barrier keywords beside it would
@@ -267,7 +283,7 @@ impl PlayTask {
     /// `keywords::tests::run_once_is_the_only_barrier_keyword`: a second row marked `barrier`
     /// would look declared and be ignored here, and that test refuses one.
     pub fn barrier(&self) -> bool {
-        self.runs_once() && crate::keywords::is_barrier("run_once")
+        (self.runs_once() && crate::keywords::is_barrier("run_once")) || self.pauses()
     }
 }
 

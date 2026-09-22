@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: loud
+      assert: {that: "1 == 1", success_msg: "looks good"}
+    - name: quiet
+      assert: {that: "1 == 1", success_msg: "looks good", quiet: true}
+    - name: censored
+      assert: {that: "1 == 1", success_msg: "secret"}
+      no_log: true

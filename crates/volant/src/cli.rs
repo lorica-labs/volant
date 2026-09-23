@@ -327,6 +327,8 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let extra_for_check = extra.clone();
     let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
     store.set_forks(forks);
+    let (run_tags, skip_tags) = selection.lists();
+    store.set_tags(run_tags, skip_tags);
     let mut state = RunState {
         templar: Arc::new(Templar::new(playbook_dir.clone())),
         vars: Arc::new(Mutex::new(store)),

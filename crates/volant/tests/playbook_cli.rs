@@ -7473,3 +7473,95 @@ fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a role applied with `tags: [t]` whose
+/// `tasks/main.yml` is one `include_tasks: inc.yml`, run with `--tags t`, shows `included:` and
+/// then runs the included `command` (`changed: [h1]`, `ok=2 changed=1`). The tasks of a file a
+/// role includes carry the role's tags. Volant shows the same `included:` line, then runs nothing
+/// from the file and reports `ok=1 changed=0`, exit 0. The same thing happened to every task of
+/// `geerlingguy.security` and `geerlingguy.nginx` that sits behind an `include_tasks`, under
+/// `--tags security,nginx` against a real host.
+///
+/// What would make this red: the file's tasks filtered out by the tags the run asked for, because
+/// they do not inherit the role's own, so the marker is never written and the run still exits 0.
+#[test]
+fn a_role_s_tags_reach_the_tasks_of_a_file_it_includes() {
+    let dir = probe_dir("include-role-tags");
+    let tasks = dir.join("roles/r/tasks");
+    std::fs::create_dir_all(&tasks).expect("a role");
+    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+    std::fs::write(tasks.join("main.yml"), "- include_tasks: inc.yml\n").expect("main.yml");
+    let marker = dir.join("marker");
+    std::fs::write(
+        tasks.join("inc.yml"),
+        format!("- command: touch {}\n", marker.display()),
+    )
+    .expect("inc.yml");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: h1\n  gather_facts: false\n  roles:\n    - { role: r, tags: [t] }\n",
+    )
+    .expect("the play");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+            "--tags",
+            "t",
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        marker.exists(),
+        "the included task never ran under --tags t:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a play whose only task is
+/// `include_tasks: inc.yml`, the file holding one `stat: path=/`, shows `included:` then
+/// `ok: [h1]` for the `stat`. Volant builds its one payload union before the first connection,
+/// from the modules the compiled plays name, and a file a dynamic include reads is not among
+/// them: the `stat` fails with "module 'stat' needs a python payload, and this run built none
+/// for it". Against a real host the same thing stopped `geerlingguy.security` at its first
+/// `package` task, which sits in `fail2ban.yml` behind an `include_tasks`.
+///
+/// What would make this red: a Python module in a dynamically included file refused because the
+/// union was built without it.
+#[test]
+fn a_python_module_in_a_dynamically_included_file_runs() {
+    let Ok(python) = std::env::var("VOLANT_PYTHON") else {
+        eprintln!(
+            "skipped: VOLANT_PYTHON not set. Set it to a real ansible-core python to run this test."
+        );
+        return;
+    };
+    let dir = probe_dir("include-python-module");
+    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+    std::fs::write(dir.join("inc.yml"), "- stat: path=/\n").expect("inc.yml");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - include_tasks: inc.yml\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && !stdout.contains("needs a python payload"),
+        "the included stat did not run:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

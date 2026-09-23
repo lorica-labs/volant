@@ -364,7 +364,7 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 /// A collection's module is resolved first, by the same helper, and only what resolves to a
 /// module it can build goes into the union. `named` is every `(task, module)` the compiled plays
 /// name themselves: one of those that is missing, or served by an action plugin, is refused here
-/// by [`crate::preflight::check_resolved`]. A collection's module found only in a role file is
+/// by `preflight::check_resolved`. A collection's module found only in a role file is
 /// dropped instead, because a file for another platform is no reason to refuse the run.
 pub fn union_for(
     modules: &std::collections::BTreeSet<String>,

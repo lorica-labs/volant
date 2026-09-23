@@ -89,10 +89,9 @@ picks is what runs, with `use` taken out of its arguments; a `setup` that fails 
 `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`, and a name that
 resolves to nothing this release can dispatch fails with
 `Could not find a matching action for the "<name>" package manager.` A name a host reports is
-never anything but a lookup key into this closed list: `setup`, `apt`, `dnf`, `dnf5`. Carrying all
-four backends and `setup` in the union, rather than only the one a run turns out to need, costs
-about 170 KB more on the wire than sending `apt` alone; nothing is built after the facts are
-known, so a plugin can only ever pick among what already travelled.
+never anything but a lookup key into this closed list: `setup`, `apt`, `dnf`, `dnf5`. The union
+carries all four backends rather than only the one a run turns out to need, because nothing is
+built after the facts are known: a plugin can only ever pick among what already travelled.
 
 ## `service`
 
@@ -104,6 +103,10 @@ Naming `systemd` itself drops the arguments that module does not take:
 `pattern`, `runlevel`, `sleep`, `arguments`, `args`, each with its own warning,
 `Ignoring "<name>" as it is not used in "systemd"`; a task spelling it out as
 `ansible.builtin.systemd` keeps them.
+
+A run naming both `package` and `service` carries every backend of both in the union before a
+single fact is known. Measured against ansible-core 2.19.12's own payload builder, that is about
+170 KB more sent once per link than `apt` and `systemd_service` alone would cost.
 
 ## `unarchive`
 

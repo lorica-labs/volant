@@ -555,6 +555,31 @@ fn results_by_task(stdout: &str) -> Map<String, Value> {
     results
 }
 
+/// What a comparison found: the differences, and the known differences it stepped over.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct Findings {
+    failures: Vec<String>,
+    spent: Vec<(String, String)>,
+}
+
+#[cfg(target_os = "linux")]
+impl Findings {
+    /// A known difference whose key neither side carried was never looked at, which is not the
+    /// same as still differing: the case stopped reporting that key, or stopped running, and the
+    /// entry would otherwise sit there excusing nothing until it excuses something new.
+    fn check_spent(&mut self, rules: &Rules) {
+        for (case, path) in rules.known {
+            if !self.spent.iter().any(|(c, p)| c == case && p == path) {
+                self.failures.push(format!(
+                    "{case}.{path}: listed as a known difference but neither side has it - delete \
+                     the entry"
+                ));
+            }
+        }
+    }
+}
+
 /// One module's result against the reference's, key by key, walking into `stat`'s nested map.
 #[cfg(target_os = "linux")]
 fn compare_keys(
@@ -564,7 +589,7 @@ fn compare_keys(
     got: &Map<String, Value>,
     id: &Identity,
     rules: &Rules,
-    failures: &mut Vec<String>,
+    findings: &mut Findings,
 ) {
     let mut keys: Vec<&String> = want.keys().chain(got.keys()).collect();
     keys.sort_unstable();
@@ -580,12 +605,13 @@ fn compare_keys(
             continue;
         }
         if rules.known.contains(&(module, path.as_str())) {
+            findings.spent.push((module.to_string(), path.clone()));
             // The exemption is spent here and checked back in below: a difference that has gone
             // away has to be taken off the list, not left to quietly excuse a future one.
             if !matches!((reference, ours), (Some(r), Some(o)) if same(r, o)) {
                 continue;
             }
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}.{path}: listed as a known difference but no longer differs - delete the \
                  KNOWN_DIFFERENCES entry (reference {reference:?}, ours {ours:?})"
             ));
@@ -595,14 +621,14 @@ fn compare_keys(
             continue;
         }
         let (Some(reference), Some(ours)) = (reference, ours) else {
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}.{path}: reference {reference:?}, ours {ours:?}"
             ));
             continue;
         };
         if let Some(mine) = ownership(&path, id) {
             if !same(ours, mine) {
-                failures.push(format!(
+                findings.failures.push(format!(
                     "{module}.{path}: this account is {mine}, ours reported {ours}"
                 ));
             }
@@ -613,7 +639,7 @@ fn compare_keys(
             let nullable = rules.may_be_null.contains(&path.as_str())
                 && (reference.is_null() || ours.is_null());
             if !nullable && kind(reference) != kind(ours) {
-                failures.push(format!(
+                findings.failures.push(format!(
                     "{module}.{path}: reference {reference} and ours {ours} are not even the same \
                      kind of value"
                 ));
@@ -622,10 +648,10 @@ fn compare_keys(
         }
         match (reference, ours) {
             (Value::Object(want), Value::Object(got)) => {
-                compare_keys(module, &path, want, got, id, rules, failures);
+                compare_keys(module, &path, want, got, id, rules, findings);
             }
             _ if same(reference, ours) => {}
-            _ => failures.push(format!(
+            _ => findings.failures.push(format!(
                 "{module}.{path}: reference {reference}, ours {ours}"
             )),
         }
@@ -652,10 +678,6 @@ fn reference_python() -> Option<std::path::PathBuf> {
 
 /// Runs `playbook`, already written under `dir`, against `localhost` over the local connection,
 /// at `-v`, and returns once it exits or panics at a deadline.
-///
-/// The umask is the one the recordings were taken under, 002: a directory created without a
-/// `mode`, as `unarchive`'s destination is, reads `0775` in the recording, and a contributor's
-/// usual 022 would make it `0755` for a reason that is not Volant's.
 #[cfg(target_os = "linux")]
 fn run_recorded_play(
     dir: &std::path::Path,
@@ -669,10 +691,8 @@ fn run_recorded_play(
     .expect("the inventory is written");
     let remote_tmp = dir.join("tmp");
     std::fs::create_dir_all(&remote_tmp).expect("the blob cache directory is writable");
-    let mut command = std::process::Command::new("sh");
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
     command
-        .args(["-c", "umask 002 && exec \"$0\" \"$@\""])
-        .arg(env!("CARGO_BIN_EXE_volant"))
         .arg("playbook")
         .args(["-i", &dir.join("hosts.ini").display().to_string()])
         .arg("-v")
@@ -786,7 +806,7 @@ fn a_python_module_returns_the_reference_s_own_keys() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
     let id = identity();
-    let mut failures = Vec::new();
+    let mut findings = Findings::default();
     for (module, recorded) in fixtures {
         let reference: Value = serde_json::from_str(recorded).expect("the fixture parses");
         // The fixture's own `action` is the one thing this comparison asks of that key: a
@@ -797,18 +817,22 @@ fn a_python_module_returns_the_reference_s_own_keys() {
             "{module}.json was recorded from a task that ran something else"
         );
         let Some(ours) = results.get(module) else {
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}: no result at all - the task did not run, or did not report"
             ));
             continue;
         };
         match (reference.as_object(), ours.as_object()) {
             (Some(want), Some(got)) => {
-                compare_keys(module, "", want, got, &id, &MODULE_RULES, &mut failures);
+                compare_keys(module, "", want, got, &id, &MODULE_RULES, &mut findings);
             }
-            _ => failures.push(format!("{module}: reference {reference}, ours {ours}")),
+            _ => findings
+                .failures
+                .push(format!("{module}: reference {reference}, ours {ours}")),
         }
     }
+    findings.check_spent(&MODULE_RULES);
+    let failures = findings.failures;
     let _ = std::fs::remove_dir_all(dir);
     assert!(
         failures.is_empty(),
@@ -844,15 +868,17 @@ const STAGED_PLACEHOLDER: &str = "<golden-staged-path>";
 #[cfg(target_os = "linux")]
 const STAGED_MARKERS: &[&str] = &["ansible-tmp-", "/tmp/ansible", ".ansible/tmp"];
 
-/// `service`'s `status` is a live `systemctl show`, recorded with every value replaced by this.
-/// Ours gets the same treatment, so the comparison is over the keys, one by one.
+/// Keys every `systemctl show` of a unit prints, whatever the systemd version.
 #[cfg(target_os = "linux")]
-const STATUS_PLACEHOLDER: &str = "<golden-systemd-value>";
+const STATUS_FLOOR: &[&str] = &["Id", "LoadState", "ActiveState", "SubState"];
 
 /// `apt`'s `cache_update_time` is the mtime of the host's package cache, a date that moves with
-/// every `apt update`.
+/// every `apt update`. `service`'s `status` is a live `systemctl show` of the unit, recorded with
+/// every value replaced by a placeholder, and its key set changes with the systemd version (the
+/// recording's has `BindLogSockets` and `CanLiveMount`, which a runner's systemd 255 lacks): by
+/// type, with `STATUS_FLOOR` checked on our side.
 #[cfg(target_os = "linux")]
-const ACTION_BY_TYPE: &[&str] = &["cache_update_time"];
+const ACTION_BY_TYPE: &[&str] = &["cache_update_time", "status"];
 
 /// Differences this release really has in its action plugins, as `(case, path)`, with the same
 /// contract as `KNOWN_DIFFERENCES`: an entry that stops differing fails the test. Each reason is
@@ -903,9 +929,10 @@ fn redact_staged(value: &mut Value, staged_root: &str) {
 /// the same directory, so each one meets the state the previous ones left: `copy-same` finds the
 /// file `copy-new` wrote, `copy-force-false` the one `copy-content` wrote. `dest`, `path`, `mode`,
 /// `size`, `checksum`, `md5sum`, `state`, `msg` and every other key are compared by value; the
-/// ownership keys against the account running the test; `cache_update_time` by type; `status` by
-/// its keys; `invocation` is dropped, and `diff` when it is `[]` on both sides. `unarchive-creates`
-/// is read back through `register`, because Volant prints no result on a `skipping:` line.
+/// ownership keys against the account running the test; `cache_update_time`, `status` and a
+/// directory's `size` by type; `invocation` is dropped, and `diff` when it is `[]` on both sides.
+/// `unarchive-creates` is read back through `register`, because Volant prints no result on a
+/// `skipping:` line.
 ///
 /// `package` and `service` escalate with `sudo -n` and ask systemd. A machine without either
 /// skips the test loudly, or fails it under `VOLANT_PYTHON`, which names a job that has to
@@ -1039,7 +1066,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     - name: copy-force-false
       copy: {{content: "y\n", dest: {dir}/content.txt, force: false}}
     - name: setup-4
-      file: {{path: {dir}/dir, state: directory}}
+      file: {{path: {dir}/dir, state: directory, mode: "0775"}}
     - name: copy-dest-dir
       copy: {{src: {src}/hello.txt, dest: {dir}/dir/, mode: "0644"}}
     - name: copy-validate-fail
@@ -1065,7 +1092,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
       become: true
       ignore_errors: true
     - name: setup-13
-      file: {{path: {dir}/unpacked, state: directory}}
+      file: {{path: {dir}/unpacked, state: directory, mode: "0775"}}
     - name: unarchive-local
       unarchive: {{src: {src}/bundle.tar.gz, dest: {dir}/unpacked}}
     - name: unarchive-creates
@@ -1097,7 +1124,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     let staged_root = format!("{ACTION_DIR}/tmp/");
     let id = identity();
     let empty = Value::Array(Vec::new());
-    let mut failures = Vec::new();
+    let mut findings = Findings::default();
     for (case, action, recorded) in fixtures {
         let reference: Value = serde_json::from_str(recorded).expect("the fixture parses");
         assert_eq!(
@@ -1106,7 +1133,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
             "{case}.json was recorded from a task that ran something else"
         );
         let Some(mut ours) = results.get(case).cloned() else {
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{case}: no result at all - the task did not run, or did not report"
             ));
             continue;
@@ -1114,22 +1141,44 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
         redact_staged(&mut ours, &staged_root);
         let (Value::Object(mut want), Value::Object(mut got)) = (reference.clone(), ours.clone())
         else {
-            failures.push(format!("{case}: reference {reference}, ours {ours}"));
+            findings
+                .failures
+                .push(format!("{case}: reference {reference}, ours {ours}"));
             continue;
         };
         if want.get("diff") == Some(&empty) && got.get("diff") == Some(&empty) {
             want.remove("diff");
             got.remove("diff");
         }
-        for side in [&mut want, &mut got] {
-            if let Some(Value::Object(status)) = side.get_mut("status") {
-                status
-                    .values_mut()
-                    .for_each(|v| *v = Value::from(STATUS_PLACEHOLDER));
+        // A directory's `size` is whatever the filesystem says it takes, 60 on the recording's
+        // tmpfs and 4096 on ext4, read by the module and never computed by Volant. A file's
+        // `size` stays by value.
+        if want.get("state") == Some(&Value::from("directory"))
+            && let (Some(reference), Some(ours)) = (want.remove("size"), got.remove("size"))
+            && std::mem::discriminant(&reference) != std::mem::discriminant(&ours)
+        {
+            findings.failures.push(format!(
+                "{case}.size: reference {reference} and ours {ours} are not even the same kind of \
+                 value"
+            ));
+        }
+        // `status` is compared by type, but an empty object is one too: ours has to be the
+        // unit's `systemctl show`, which always names these four.
+        if want.contains_key("status") {
+            let status = got.get("status").and_then(Value::as_object);
+            for key in STATUS_FLOOR {
+                if !status.is_some_and(|s| s.contains_key(*key)) {
+                    findings.failures.push(format!(
+                        "{case}.status.{key}: `systemctl show` always has it, ours {:?}",
+                        got.get("status")
+                    ));
+                }
             }
         }
-        compare_keys(case, "", &want, &got, &id, &ACTION_RULES, &mut failures);
+        compare_keys(case, "", &want, &got, &id, &ACTION_RULES, &mut findings);
     }
+    findings.check_spent(&ACTION_RULES);
+    let failures = findings.failures;
     let _ = std::fs::remove_dir_all(dir);
     assert!(
         failures.is_empty(),

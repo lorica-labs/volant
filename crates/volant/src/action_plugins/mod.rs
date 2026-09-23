@@ -27,32 +27,10 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
-use volant_protocol::modules::short_name;
+use volant_protocol::modules::{ACTION_PLUGINS, BUILTIN_ACTION_PLUGINS, short_name};
 
 use crate::template::Templar;
 use crate::vars::HostVars;
-
-/// The action plugins of the reference this release still refuses.
-///
-/// The names this release already implements are **not** here, whether natively (`command`,
-/// `shell`, `raw`), on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
-/// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`copy`, `package`,
-/// `service`, `template`, `unarchive`). `normal` is not here either: it is the only action plugin
-/// with no module of the same name, so no playbook can name it.
-pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
-    "add_host",
-    "assemble",
-    "async_status",
-    "dnf",
-    "fetch",
-    "gather_facts",
-    "group_by",
-    "reboot",
-    "script",
-    "set_stats",
-    "uri",
-    "wait_for_connection",
-];
 
 /// Whether a module name is spelled as one of the builtin modules: bare, or under one of the two
 /// prefixes that name the same modules. Any other collection is somebody else's module.
@@ -81,11 +59,15 @@ pub(crate) enum Kind {
 }
 
 /// The plugin this release runs for a module name, read as the builtin registry reads one.
+///
+/// Gated on [`ACTION_PLUGINS`], the list the modules page is built from, so a name this match
+/// knows and the page does not is never run.
 pub(crate) fn kind(module: &str) -> Option<Kind> {
-    if !builtin_spelling(module) {
+    let short = short_name(module);
+    if !builtin_spelling(module) || !ACTION_PLUGINS.iter().any(|(name, _)| *name == short) {
         return None;
     }
-    match short_name(module) {
+    match short {
         "copy" => Some(Kind::Copy),
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
@@ -218,10 +200,6 @@ mod tests {
     /// plugin this release runs left in, which refuses it before its dispatch is ever reached.
     #[test]
     fn the_list_names_only_what_this_release_cannot_run() {
-        let mut sorted = BUILTIN_ACTION_PLUGINS.to_vec();
-        sorted.sort_unstable();
-        assert_eq!(sorted, BUILTIN_ACTION_PLUGINS, "the list is kept sorted");
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 12);
         for absent in [
             "setup",
             "command",
@@ -260,6 +238,17 @@ mod tests {
         assert_eq!(kind("ansible.legacy.unarchive"), Some(Kind::Unarchive));
         assert_eq!(kind("community.general.unarchive"), None);
         assert_eq!(kind("reboot"), None);
+    }
+
+    /// Every plugin the modules page lists is one this release dispatches.
+    ///
+    /// What would make this red: a name added to `ACTION_PLUGINS` with no arm here, which the page
+    /// would then promise and the run would refuse.
+    #[test]
+    fn every_listed_plugin_has_a_kind() {
+        for (name, _) in ACTION_PLUGINS {
+            assert!(kind(name).is_some(), "{name}");
+        }
     }
 
     /// Every module a plugin can run is a builtin module ansible-core builds a payload for, and

@@ -22,15 +22,13 @@ The union blob for `ping`, `stat`, `file`, `lineinfile`, and `apt` is exactly 63
 
 ## Refused modules
 
-Volant refuses modules that ansible-core runs through an action plugin:
+Volant refuses modules that ansible-core runs through an action plugin Volant does not have yet:
 
 ```
-add_host assemble async_status copy dnf fetch gather_facts group_by package reboot
-script service set_stats template unarchive uri wait_for_connection
+add_host assemble async_status dnf fetch gather_facts group_by reboot script
+set_stats uri wait_for_connection
 ```
 
-`assert`, `fail` and `pause` have action plugins too. None of them calls a module, so Volant runs them on the controller.
-
-The action plugin contains behavior that the module alone cannot provide. `package` chooses the host's package manager, `service` chooses its init system, and `template` renders on the controller. Sending those modules without their action plugins would do something different from what the playbook requested.
+The action plugin contains behavior that the module alone cannot provide, so sending the module without it would do something different from what the playbook requested. Five plugins run on the controller instead: `copy`, `package`, `service`, `template` and `unarchive`, described in [Action plugins](actions.md). `assert`, `fail` and `pause` have action plugins too. None of them calls a module, so Volant runs them on the controller. [Modules](modules.md) lists every builtin module and where it runs.
 
 `setup` is not refused, so fact gathering works.

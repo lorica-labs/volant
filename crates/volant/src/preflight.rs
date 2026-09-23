@@ -929,6 +929,7 @@ mod tests {
             "copy",
             "template",
             "unarchive",
+            "fetch",
             "ansible.builtin.package",
         ] {
             let pb = parse(

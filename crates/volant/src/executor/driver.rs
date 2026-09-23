@@ -1087,6 +1087,7 @@ pub(super) async fn drive_host(
                                     std::slice::from_ref(item),
                                 ),
                                 delegated: delegate.is_some(),
+                                escalated: batch_escalation.is_some(),
                                 item_vars: &item.vars,
                                 templar: &templar,
                                 origin: &step.origin,

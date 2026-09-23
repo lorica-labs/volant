@@ -472,7 +472,6 @@ pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
     "async_status",
-    "fetch",
     "gather_facts",
     "group_by",
     "reboot",
@@ -491,6 +490,8 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
     (
         "dnf",
         "Install or remove packages with `dnf` or `dnf5`, whichever the host runs.",
+        "fetch",
+        "Copy a file from the host to the controller, under `dest` and nowhere else.",
     ),
     (
         "package",
@@ -942,7 +943,7 @@ mod tests {
                 assert!(is_builtin(m) && !is_known(m), "{m}");
             }
         }
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 11);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 10);
         assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
         for m in &implemented {
             assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");

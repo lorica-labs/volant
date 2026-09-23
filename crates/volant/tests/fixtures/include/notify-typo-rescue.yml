@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - include_tasks: notify-typo-inc.yml
+      rescue:
+        - debug: msg=rescued
+    - debug: msg=after
+  handlers:
+    - name: Reload app
+      debug: msg=reloaded

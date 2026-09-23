@@ -1,3 +1,4 @@
 - name: changes and notifies a misspelt handler
   command: /bin/true
   notify: Reoad app
+  ignore_errors: true

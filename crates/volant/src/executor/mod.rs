@@ -52,8 +52,52 @@ pub struct RunOptions {
     /// between two synchronisation points. Off by default, so the hosts of a batch meet in front
     /// of every task, which is what `linear` means.
     pub batching: bool,
-    /// Flips to `true` once when the user interrupts the run.
+    /// Flips to `true` once when the user interrupts the run, or when a host ends it through
+    /// [`Abort::raise`].
     pub stop: watch::Receiver<bool>,
+    /// The sending half of `stop`, and the reason a host ended the run, if one did.
+    pub abort: Arc<Abort>,
+}
+
+/// Ends the whole run from inside a play, the way a pre-flight refusal ends it before one: exit
+/// 1, the reason on its own, no recap, and nothing `ignore_errors` or a `rescue` can catch.
+/// Raising flips `stop`, so every driver stops as it does on an interruption; `run_play` then
+/// returns the reason as its error.
+///
+/// Measured by reading only: ansible-core 2.19.12's strategy raises `AnsibleError` from
+/// `_process_pending_results` for a handler it cannot find, with `ERROR_ON_MISSING_HANDLER` on
+/// by default, which leaves the play loop and the run.
+#[derive(Debug)]
+pub struct Abort {
+    stop: watch::Sender<bool>,
+    reason: Mutex<Option<String>>,
+}
+
+impl Abort {
+    pub fn new(stop: watch::Sender<bool>) -> Self {
+        Self {
+            stop,
+            reason: Mutex::new(None),
+        }
+    }
+
+    /// Stops the run without a reason: the operator's interruption.
+    pub fn interrupt(&self) {
+        self.stop.send_replace(true);
+    }
+
+    /// Stops the run and keeps `reason`, unless another host already gave one.
+    pub fn raise(&self, reason: String) {
+        self.reason
+            .lock()
+            .expect("abort lock")
+            .get_or_insert(reason);
+        self.stop.send_replace(true);
+    }
+
+    fn reason(&self) -> Option<String> {
+        self.reason.lock().expect("abort lock").clone()
+    }
 }
 
 /// Which agent a kept connection belongs to. The escalated user is part of the identity
@@ -198,6 +242,9 @@ pub async fn run_play(
             stats,
         )
         .await?;
+        if let Some(reason) = options.abort.reason() {
+            return Err(crate::stats::Refusal::at(1, reason));
+        }
         // The run ends where the reference ends it: a batch that had hosts to run and lost every
         // one of them. A batch that had none to begin with is not that - measured, `serial: 1`
         // over a host that failed in an earlier play prints its banner and the next batch runs.

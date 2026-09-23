@@ -11,7 +11,7 @@ use tokio::sync::watch;
 
 use crate::compile::{self, Compiled, TagSelection};
 use crate::config::Config;
-use crate::executor::{self, RunOptions, RunState};
+use crate::executor::{self, Abort, RunOptions, RunState};
 use crate::inventory::{Host, Inventory};
 use crate::listing::{self, Listing};
 use crate::render::Renderer;
@@ -298,7 +298,8 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let mut stats = Stats::default();
 
     let (stop_tx, stop_rx) = watch::channel(false);
-    spawn_signal_watcher(stop_tx);
+    let abort = Arc::new(Abort::new(stop_tx));
+    spawn_signal_watcher(Arc::clone(&abort));
     let options = RunOptions {
         defaults,
         forks,
@@ -307,6 +308,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         force_handlers: args.force_handlers || config.force_handlers,
         batching: config.batching,
         stop: stop_rx.clone(),
+        abort,
     };
 
     let playbook_dir = playbook::base_dir(&args.playbooks[0]);
@@ -559,7 +561,7 @@ fn ask_become_password() -> anyhow::Result<String> {
 
 /// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is
 /// printed, and the process exits with ansible-playbook's code 99.
-fn spawn_signal_watcher(stop: watch::Sender<bool>) {
+fn spawn_signal_watcher(stop: Arc<Abort>) {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
@@ -576,6 +578,6 @@ fn spawn_signal_watcher(stop: watch::Sender<bool>) {
         {
             let _ = tokio::signal::ctrl_c().await;
         }
-        let _ = stop.send(true);
+        stop.interrupt();
     });
 }

@@ -864,32 +864,29 @@ pub(super) fn take_warnings(results: &mut [(Option<Value>, TaskResult)]) -> Vec<
     out
 }
 
-/// Fails every changed result of a task whose `notify` names a handler the play does not have,
-/// with the sentence the pre-flight uses for the same name in the play itself.
+/// The reason to end the run when a task that changed notifies a handler the play does not
+/// have, in the sentence the pre-flight uses for the same name in the play itself.
 ///
 /// Only a task spliced in by a dynamic include can get here: the pre-flight checks every other
 /// `notify` before the first connection, and the handlers an included file may name are the
-/// play's, which are only in hand here. Run before the results are registered and reported, so
-/// the failure is what both see; a task that changed nothing notifies nothing and is left alone.
-pub(super) fn fail_unresolved_notify(
+/// play's, which are only in hand here. The reference raises it from its strategy
+/// (`ERROR_ON_MISSING_HANDLER`, on by default), so it ends the run rather than failing the task:
+/// no `ignore_errors` and no `rescue` can take it. A task that changed nothing notifies nothing.
+pub(super) fn unresolved_notify(
     compiled: &Compiled,
     task: &PlayTask,
-    results: &mut [(Option<Value>, TaskResult)],
-) {
-    let Some(name) = task
+    results: &[(Option<Value>, TaskResult)],
+) -> Option<String> {
+    if !results.iter().any(|(_, r)| r.changed()) {
+        return None;
+    }
+    let name = task
         .notify
         .iter()
-        .find(|name| crate::compile::resolve_notify(compiled, name).is_empty())
-    else {
-        return;
-    };
-    let msg = format!(
+        .find(|name| crate::compile::resolve_notify(compiled, name).is_empty())?;
+    Some(format!(
         "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
-    );
-    for (_, result) in results.iter_mut().filter(|(_, r)| r.changed()) {
-        result.0.insert("failed".into(), Value::Bool(true));
-        result.0.insert("msg".into(), Value::String(msg.clone()));
-    }
+    ))
 }
 
 /// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.

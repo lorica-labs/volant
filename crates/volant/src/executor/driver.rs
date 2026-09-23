@@ -28,10 +28,10 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Retry, chosen_interpreter, conditional_error, fact_targets, fail_unresolved_notify,
-    failed_task_value, finish, notify, python_for, record_facts, record_registered,
-    requested_interpreter, retry_plan, reuse_or_connect, run_agent_batch, run_local,
-    run_plugin_item, running_host_vars, step_tasks, take_warnings, until_holds,
+    Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
+    python_for, record_facts, record_registered, requested_interpreter, retry_plan,
+    reuse_or_connect, run_agent_batch, run_local, run_plugin_item, running_host_vars, step_tasks,
+    take_warnings, unresolved_notify, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -752,7 +752,10 @@ pub(super) async fn drive_host(
                         labels.push(item.label.clone());
                         lefts.push(mine);
                     }
-                    fail_unresolved_notify(&c, task, &mut results);
+                    if let Some(reason) = unresolved_notify(&c, task, &results) {
+                        options.abort.raise(reason);
+                        break 'run;
+                    }
                     for message in take_warnings(&mut results) {
                         let _ = tx
                             .send(Event::Warning {
@@ -1305,7 +1308,10 @@ pub(super) async fn drive_host(
                 if !reached && results.is_empty() {
                     break;
                 }
-                fail_unresolved_notify(&c, task, &mut results);
+                if let Some(reason) = unresolved_notify(&c, task, &results) {
+                    options.abort.raise(reason);
+                    break 'run;
+                }
                 for message in take_warnings(&mut results) {
                     let _ = tx
                         .send(Event::Warning {

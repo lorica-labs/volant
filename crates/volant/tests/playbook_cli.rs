@@ -3148,27 +3148,6 @@ fn a_flush_inside_an_include_runs_the_handlers_of_the_hosts_that_asked_for_it() 
     );
 }
 
-/// A local failure that steps over an include, with fewer forks than hosts.
-///
-/// `-f 1` and two hosts, so there is exactly one permit in the play. `h1` takes it for the remote
-/// task, keeps it - the task ends its batch on its `register`, not on a wait - and then fails at a
-/// `debug` the next step, with an empty batch. The jump its failure takes runs from that step to
-/// the rescue, and the `include_tasks` sits in between, so `h1` steps over a splice point and
-/// waits there for the coordinator. `h2` cannot get to that same index without a permit, and the
-/// coordinator cannot splice until it does.
-///
-/// The permit release at the end of a batch is skipped for an empty one, and the release at the
-/// top of the step loop asks `steps_over_a_splice_point`, which reads the step's **success**
-/// successor - the include itself, one step along, stepped over by nobody. Neither one looks at
-/// the range a failure is about to jump across. So the permit was still in hand at the wait.
-///
-/// Recap `rescued=1` for both hosts and exit 0, which is what the rescue makes of it.
-///
-/// Under the default the permit is already back before the `debug` runs, because every step is
-/// a boundary and the step loop releases it there, so this one no longer reads the failure
-/// path's own release. What it still guards is that both hosts get through the jump and into
-/// the rescue. The companion below is what holds the release on the failure path.
-///
 /// A templated `ignore_errors` decides, rendered per host, on an ordinary task and on an include
 /// statement alike: `"{{ true }}"`-like values let the play go on with the failure counted as
 /// ignored, `false` ones fail the host there.
@@ -3210,34 +3189,65 @@ fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     );
 }
 
-/// A `notify` in an included file naming a handler the play does not have fails the task that
-/// changed, in the words the pre-flight uses for the same typo in the play itself. The included
-/// file is read once the host reaches the statement, so the pre-flight never saw it.
+/// A `notify` in an included file naming a handler the play does not have ends the run, in the
+/// words the pre-flight uses for the same typo in the play itself: exit 1, no recap, and the
+/// task's `ignore_errors: true` or a `rescue:` around the statement changes nothing. The included
+/// file is read once the host reaches the statement, so the pre-flight never saw it. Read off
+/// ansible-core 2.19.12's strategy, which raises the sentence as an `AnsibleError` with
+/// `ERROR_ON_MISSING_HANDLER` on, its default.
 ///
-/// What would make this red: the name resolved to nothing and dropped, which runs no handler,
-/// shows no failure and exits 0 - a run that reports success without doing what it was asked.
+/// What would make this red: the name resolved to nothing and dropped, which runs no handler and
+/// exits 0; or the typo reported as a failure of the task, which `ignore_errors` and a `rescue`
+/// then swallow, and the run exits 0 all the same.
 #[test]
-fn a_notify_in_an_include_naming_no_handler_fails_the_task() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/notify-typo.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains(
-            "The requested handler 'Reoad app' was not found in either the main handlers list nor in the listening handlers list"
-        ),
-        "{text}"
-    );
-    assert!(!text.contains("reloaded"), "{text}");
+fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
+    for playbook in ["include/notify-typo.yml", "include/notify-typo-rescue.yml"] {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &fixture("include/inv.ini"),
+                &fixture(playbook),
+            ],
+            PROBE_DEADLINE,
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        let errors = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{playbook}: {text}{errors}");
+        assert!(
+            errors.contains(
+                "The requested handler 'Reoad app' was not found in either the main handlers list nor in the listening handlers list"
+            ),
+            "{playbook}: {errors}"
+        );
+        assert!(!text.contains("PLAY RECAP"), "{playbook}: {text}");
+        for never in ["reloaded", "rescued", "after", "...ignoring"] {
+            assert!(!text.contains(never), "{playbook} printed {never}: {text}");
+        }
+    }
 }
 
+/// A local failure that steps over an include, with fewer forks than hosts.
+///
+/// `-f 1` and two hosts, so there is exactly one permit in the play. `h1` takes it for the remote
+/// task, keeps it - the task ends its batch on its `register`, not on a wait - and then fails at a
+/// `debug` the next step, with an empty batch. The jump its failure takes runs from that step to
+/// the rescue, and the `include_tasks` sits in between, so `h1` steps over a splice point and
+/// waits there for the coordinator. `h2` cannot get to that same index without a permit, and the
+/// coordinator cannot splice until it does.
+///
+/// The permit release at the end of a batch is skipped for an empty one, and the release at the
+/// top of the step loop asks `steps_over_a_splice_point`, which reads the step's **success**
+/// successor - the include itself, one step along, stepped over by nobody. Neither one looks at
+/// the range a failure is about to jump across. So the permit was still in hand at the wait.
+///
+/// Recap `rescued=1` for both hosts and exit 0, which is what the rescue makes of it.
+///
+/// Under the default the permit is already back before the `debug` runs, because every step is
+/// a boundary and the step loop releases it there, so this one no longer reads the failure
+/// path's own release. What it still guards is that both hosts get through the jump and into
+/// the rescue. The companion below is what holds the release on the failure path.
+///
 /// What would make this red: the permit kept in front of a wait at all. The run then hangs and
 /// only the deadline sees it - both hosts sit in a wait, print nothing more, and no assertion
 /// on the output can fail on that.

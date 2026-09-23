@@ -266,7 +266,7 @@ ACTION_SRC = os.path.join(HERE, "action-src")
 # suffix, and it is rooted under the generating account's home directory), so any string that
 # carries one is replaced by a fixed placeholder, wherever it turns up: `unarchive`'s own
 # `extract_results.cmd` quotes it as one argument of the `tar` command line it ran, not only
-# under the `src` key generate.py's brief keys off.
+# under the `src` key.
 STAGED_SRC_MARKERS = ("ansible-tmp-", "/tmp/ansible", ".ansible/tmp")
 
 
@@ -280,6 +280,22 @@ def _redact_staged_paths(value):
     if isinstance(value, dict):
         return {k: _redact_staged_paths(v) for k, v in value.items()}
     return value
+
+
+STATUS_VALUE_PLACEHOLDER = "<golden-systemd-value>"
+
+
+def _redact_service_status(result):
+    # `service`'s `status` is the reference's own live `systemctl show` of the unit:
+    # ActiveEnterTimestamp, CPUUsageNSec, MemoryCurrent, InvocationID and every other value in
+    # it change on every query (a timestamp, a running counter, a per-boot id), which is exactly
+    # what would make two consecutive `just golden` runs disagree on this file. The golden test
+    # compares `status` by its keys only, so the keys are kept and every value replaced by one
+    # fixed placeholder.
+    status = result.get("status")
+    if isinstance(status, dict):
+        for key in status:
+            status[key] = STATUS_VALUE_PLACEHOLDER
 
 
 def _write_bundle(path):
@@ -494,6 +510,8 @@ def action_plugins():
         result.pop("invocation", None)
         _redact_account(result, ("owner", "group"), ("uid", "gid"))
         result = _redact_staged_paths(result)
+        if name == "service-started":
+            _redact_service_status(result)
         with open(os.path.join(destination, f"{name}.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False, sort_keys=True)
             f.write("\n")

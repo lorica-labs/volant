@@ -1,0 +1,3 @@
+- name: notifies a templated name
+  command: /bin/true
+  notify: "restart {{ svc }}"

@@ -133,20 +133,25 @@ pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result
 /// whole run. Letting the tasks in front of the refused one run first is the half-run the
 /// pre-flight exists to prevent, one level down.
 ///
-/// [`check_notify`] is deliberately left out. The expansion is compiled on its own, so the handler
-/// list it carries is not the play's, and a task notifying a handler the play defines would be
-/// refused here for a name that resolves perfectly once grafted.
+/// Of [`check_notify`], only the template-shape half runs here. The expansion is compiled on its
+/// own, so the handler list it carries is not the play's, and a task notifying a handler the play
+/// defines would be refused here for a name that resolves perfectly once grafted; a name nothing
+/// answers to is caught by the driver when the task notifies, and ends the run as the reference
+/// ends it. Nor does the pre-flight's `pause` check run here: a `pause` an include brings in is
+/// refused by `pause()` when it is reached.
 pub(crate) fn check_spliced(expanded: &crate::compile::Compiled) -> anyhow::Result<()> {
     for step in &expanded.steps {
         // As in `check_steps`: a flush point the compiler put in itself carries no task to judge.
         if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task)?;
         }
+        check_notify_shape(&step.task)?;
     }
     // An `include_role` hands its role's handlers to the running play, where they wait for a
     // flush. Nothing else looks at them either.
     for handler in &expanded.handlers {
         check_task(&handler.task)?;
+        check_notify_shape(&handler.task)?;
     }
     Ok(())
 }
@@ -164,16 +169,8 @@ pub(crate) fn check_spliced(expanded: &crate::compile::Compiled) -> anyhow::Resu
 /// then answers to nothing would have to fail a task that has already printed its result line.
 /// Refusing it by its own name is the smaller thing to be wrong about.
 fn check_notify(c: &crate::compile::Compiled, task: &PlayTask) -> anyhow::Result<()> {
+    check_notify_shape(task)?;
     for name in &task.notify {
-        if crate::template::Templar::is_template(name) {
-            return Err(Refusal::at(
-                CODE,
-                format!(
-                    "task '{}': a templated 'notify' is not supported yet",
-                    task.name
-                ),
-            ));
-        }
         if crate::compile::resolve_notify(c, name).is_empty() {
             return Err(Refusal::at(
                 1,
@@ -182,6 +179,24 @@ fn check_notify(c: &crate::compile::Compiled, task: &PlayTask) -> anyhow::Result
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// The half of [`check_notify`] that needs no handler list: a templated name, refused by name.
+fn check_notify_shape(task: &PlayTask) -> anyhow::Result<()> {
+    if task
+        .notify
+        .iter()
+        .any(|name| crate::template::Templar::is_template(name))
+    {
+        return Err(Refusal::at(
+            CODE,
+            format!(
+                "task '{}': a templated 'notify' is not supported yet",
+                task.name
+            ),
+        ));
     }
     Ok(())
 }
@@ -326,7 +341,7 @@ pub(crate) const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal becau
 /// at the task instead, it would stop the run after earlier tasks changed the hosts.
 ///
 /// Only a step that is sure to run is refused here. A `when` on it or on a block around it
-/// (folded into the task's own list), or a place inside a `rescue`, can leave the pause
+/// (folded into the task's own list), a `loop`, or a place inside a `rescue`, can leave the pause
 /// unreached; a `never` tag leaves it out of the compiled steps unless `--tags` asks for it, and the reference runs such a playbook to its end; `pause()` refuses the
 /// one that is reached, as it does for a `pause` a dynamic include names. Handlers are not
 /// steps, so they are left to it too.
@@ -348,11 +363,12 @@ fn check_pause(
 }
 
 /// Whether nothing written on a step or around it can leave it out: no `when` (a block's is
-/// folded into its tasks) and no `rescue` anywhere up its chain of blocks. A `never` tag needs no
+/// folded into its tasks), no `loop`, and no `rescue` anywhere up its chain of blocks. A `never` tag needs no
 /// test of its own: the compiler drops such a task unless `--tags` selects it, and a selected one
 /// runs.
 fn runs_whatever_happens(compiled: &crate::compile::Compiled, step: &crate::compile::Step) -> bool {
-    if !step.task.when.is_empty() {
+    // A loop may be over nothing, and then the task never runs.
+    if !step.task.when.is_empty() || step.task.loop_items.is_some() {
         return false;
     }
     let (mut section, mut block) = (step.section, step.block);
@@ -464,7 +480,7 @@ mod tests {
     /// What would make this red: the shape left to the task, which refuses it once the tasks
     /// before it have changed the hosts; a timed pause refused, which stops a playbook that runs
     /// the same under both engines; or a pause that may never run refused, which stops a playbook
-    /// the reference runs to its end (`when: confirm | default(false)`, a `never` tag, an
+    /// the reference runs to its end (`when: confirm | default(false)`, a `never` tag, a `loop` over nothing, an
     /// unreached `rescue`).
     #[test]
     fn a_pause_that_would_prompt_on_a_terminal_is_refused_only_when_sure_to_run() {
@@ -502,6 +518,7 @@ mod tests {
             "    - pause: {minutes: 1}\n",
             "    - pause: {prompt: Go?}\n      when: confirm | default(false)\n",
             "    - pause: {prompt: Go?}\n      tags: [never]\n",
+            "    - pause: {prompt: Go?}\n      loop: \"{{ pending | default([]) }}\"\n",
             "    - block:\n        - pause: {prompt: Go?}\n      when: confirm | default(false)\n",
             "    - block:\n        - debug: msg=hi\n      rescue:\n        - pause: {prompt: Go?}\n",
             "    - block:\n        - debug: msg=hi\n      rescue:\n        - block:\n            - pause: {prompt: Go?}\n",

@@ -9,6 +9,8 @@
 //! host lands in the file as text: `Templar::render_file` renders once, and nothing renders the
 //! result again.
 
+use std::collections::BTreeSet;
+
 use serde_json::{Map, Value};
 
 use super::copy::{CopyOf, copy_bytes, failing, local_mode};
@@ -16,6 +18,7 @@ use super::files::{not_found, refuse_host_named, search_paths};
 use super::{Context, Plugin};
 use crate::executor::as_bool_value;
 use crate::template::{FileRender, Vars};
+use crate::vars::HostVars;
 
 /// The delimiters Jinja reads, with the default each one has. A template written for others is
 /// refused rather than rendered as if it used these.
@@ -63,6 +66,33 @@ fn flag(args: &Map<String, Value>, name: &str, default: bool) -> bool {
     args.get(name).and_then(as_bool_value).unwrap_or(default)
 }
 
+/// A copy of the item's variables, its provenance kept, with the four the plugin adds.
+///
+/// `ansible_managed`, `template_path` and `template_fullpath` are the controller's own words: a
+/// `src` whose render read a host is refused before this is reached, so the path found cannot be
+/// one a host chose. `template_destpath` is the `dest` as rendered, and stays a host's value when
+/// its render read one.
+fn template_vars(
+    item_vars: &HostVars,
+    args_untrusted: &BTreeSet<String>,
+    src: &str,
+    fullpath: &str,
+    dest: &str,
+) -> HostVars {
+    let mut vars = item_vars.clone();
+    if vars.get("ansible_managed").is_none() {
+        vars.insert("ansible_managed".into(), Value::from("Ansible managed"));
+    }
+    vars.insert("template_path".into(), Value::from(src));
+    vars.insert("template_fullpath".into(), Value::from(fullpath));
+    if args_untrusted.contains("dest") {
+        vars.insert_untrusted("template_destpath".into(), Value::from(dest));
+    } else {
+        vars.insert("template_destpath".into(), Value::from(dest));
+    }
+    vars
+}
+
 /// The rendered template and the arguments `copy` gets, or the task's failure.
 fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     let args = ctx.args;
@@ -108,16 +138,13 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("could not read src={} as utf-8", found.display()))?;
 
-    // A copy of the item's variables, with its provenance: a host's value stays one. The four
-    // the plugin adds are the controller's own words.
-    let mut vars = ctx.item_vars.clone();
-    if vars.get("ansible_managed").is_none() {
-        vars.insert("ansible_managed".into(), Value::from("Ansible managed"));
-    }
-    let fullpath = found.display().to_string();
-    vars.insert("template_path".into(), Value::from(src.as_str()));
-    vars.insert("template_fullpath".into(), Value::from(fullpath));
-    vars.insert("template_destpath".into(), Value::from(dest.as_str()));
+    let vars = template_vars(
+        ctx.item_vars,
+        ctx.args_untrusted,
+        &src,
+        &found.display().to_string(),
+        &dest,
+    );
     let options = FileRender {
         trim_blocks: flag(args, "trim_blocks", true),
         lstrip_blocks: flag(args, "lstrip_blocks", false),
@@ -148,7 +175,6 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use serde_json::json;
@@ -158,15 +184,56 @@ mod tests {
     use super::*;
     use crate::action_plugins::files::MAX_FILE_LEN;
     use crate::action_plugins::{Step, Sub};
-    use crate::vars::HostVars;
+
+    /// A scratch playbook directory, removed when the test ends, a failed assertion included.
+    struct Scratch(PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     /// A playbook directory of this test process's own, holding `templates/<name>` with `text`.
-    fn with_template(dir: &str, name: &str, text: &str) -> PathBuf {
+    fn with_template(dir: &str, name: &str, text: &str) -> Scratch {
         let dir =
             std::env::temp_dir().join(format!("volant-template-{}-{dir}", std::process::id()));
         std::fs::create_dir_all(dir.join("templates")).unwrap();
         std::fs::write(dir.join("templates").join(name), text).unwrap();
-        dir
+        Scratch(dir)
+    }
+
+    /// The four variables the plugin adds are the controller's, except a `dest` whose render
+    /// read a managed host, which stays that host's value; and the item's own provenance is kept.
+    ///
+    /// What would make this red: `template_destpath` inserted trusted whatever `dest` read, which
+    /// hands a host's string to any later render as author content, or the clone losing the
+    /// item's untrusted names.
+    #[test]
+    fn a_dest_a_host_named_stays_the_host_s_value() {
+        let mut item = HostVars::default();
+        item.insert_untrusted("motd".into(), json!("from a host"));
+        let untrusted: BTreeSet<String> = ["dest".to_string()].into();
+        let vars = template_vars(&item, &untrusted, "t.j2", "/pb/templates/t.j2", "/tmp/x");
+        let names: Vec<&str> = vars.untrusted.iter().map(String::as_str).collect();
+        assert_eq!(names, ["motd", "template_destpath"]);
+        assert_eq!(vars.get("template_destpath"), Some(&json!("/tmp/x")));
+
+        let vars = template_vars(&item, &BTreeSet::new(), "t.j2", "/pb/templates/t.j2", "/x");
+        let names: Vec<&str> = vars.untrusted.iter().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            ["motd"],
+            "a `dest` the playbook wrote is the author's"
+        );
     }
 
     fn map(value: Value) -> Map<String, Value> {
@@ -408,7 +475,7 @@ mod tests {
         std::fs::write(dir.join("templates/latin.j2"), b"x\xe9\n").unwrap();
         let searched = search_paths(
             &crate::compile::Origin {
-                file_dir: dir.clone(),
+                file_dir: dir.to_path_buf(),
                 ..crate::compile::Origin::default()
             },
             &dir,

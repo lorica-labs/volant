@@ -547,10 +547,11 @@ fn b64_options(filter: &str, encoding: Option<String>, kwargs: &Kwargs) -> Resul
 }
 
 /// `base64.b64decode`, then the bytes read as UTF-8 text; `urlsafe` reads `-` and `_` for `+`
-/// and `/`.
+/// and `/`. Called without `validate`, Python's decoder skips whitespace, so this does too.
 fn b64decode(value: Value, encoding: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
     let urlsafe = b64_options("b64decode", encoding, &kwargs)?;
     let mut text = text_of(&value);
+    text.retain(|c| !c.is_ascii_whitespace());
     if urlsafe {
         text = text.replace('-', "+").replace('_', "/");
     }
@@ -996,6 +997,9 @@ mod tests {
     fn b64_and_to_uuid_fail_naming_what_was_wrong() {
         let err = render("{{ 'not base64!' | b64decode }}", serde_json::json!({})).unwrap_err();
         assert!(err.contains("b64decode"), "{err}");
+        // Whitespace is skipped, as `base64.b64decode` does without `validate=True`.
+        assert_eq!(text("{{ 'YWJj ' | b64decode }}"), "abc");
+        assert_eq!(text("{{ ' YW\tJj\n' | b64decode }}"), "abc");
         assert_eq!(text("{{ 'YWI_Pg==' | b64decode(urlsafe=true) }}"), "ab?>");
         assert_eq!(text("{{ 'ab?>' | b64encode(urlsafe=true) }}"), "YWI_Pg==");
         let err = render(

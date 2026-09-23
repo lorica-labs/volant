@@ -2,12 +2,13 @@
 //! `lookup(...)`: the lookup plugins the engine has, as one global function.
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
 
-use super::{Context, FileRender, Templar, Vars};
+use super::{Context, FileRender, Templar, TemplateError, Vars};
 
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     env.add_function(
@@ -113,7 +114,7 @@ fn lookup(
                 let text = std::fs::read_to_string(&path)
                     .map_err(|e| invalid(format!("template lookup: {}: {e}", path.display())))?;
                 taint();
-                render_template(state, &term_text, &text, base_dir)?
+                render_template(state, &term_text, &path, &text, base_dir)?
             }
             other => {
                 return Err(invalid(format!(
@@ -173,22 +174,25 @@ const MAX_TEMPLATE_DEPTH: usize = 32;
 /// and the trust of the render that called the lookup. A lookup reaches only the borrowed
 /// `Environment` behind its `State`, not a `Templar`, so it builds one: a render per lookup call
 /// does not make keeping one worth it.
-fn render_template(state: &State, name: &str, text: &str, base_dir: &Path) -> Result<Value, Error> {
-    let root = state.lookup(super::CONTEXT_KEY);
-    let empty = serde_json::Map::new();
-    let vars = match root
-        .as_ref()
-        .and_then(|r| r.downcast_object_ref::<Context>())
-    {
-        Some(ctx) => Vars {
-            map: &ctx.vars,
-            hostvars: ctx.hostvars.as_ref(),
-            shared: ctx.shared.as_ref(),
-            untrusted: Some(&ctx.untrusted),
-            untrusted_hosts: Some(&ctx.untrusted_hosts),
-        },
-        None => Vars::from(&empty),
-    };
+///
+/// Two things the reference's variables have that the calling context's map may not:
+///
+/// 1. A name the template reads is resolved first when it still holds a template of its own.
+///    The reference templates a variable lazily, when it is read; here the lookup can run inside
+///    `resolve_vars_tainted`'s pass, whose map still holds `a: "{{ b }}"`, and a single-pass
+///    render would write `{{ b }}` into the result, which is then data and never rendered again.
+///    A name from a managed host is left as it is: it is data, and rendering it is the hole.
+/// 2. `plugins/lookup/template.py` adds `generate_ansible_template_vars(path=term,
+///    fullpath=lookupfile, include_ansible_managed='ansible_managed' not in vars)`:
+///    `template_path`, `template_fullpath`, and `ansible_managed` only when it is absent, as the
+///    `template` action does. They are the controller's own words, so they are trusted.
+fn render_template(
+    state: &State,
+    name: &str,
+    path: &Path,
+    text: &str,
+    base_dir: &Path,
+) -> Result<Value, Error> {
     let depth = TEMPLATE_DEPTH.get();
     if depth >= MAX_TEMPLATE_DEPTH {
         return Err(invalid(format!(
@@ -196,23 +200,88 @@ fn render_template(state: &State, name: &str, text: &str, base_dir: &Path) -> Re
         )));
     }
     TEMPLATE_DEPTH.set(depth + 1);
-    let out = Templar::new(base_dir.to_path_buf()).render_file(text, vars, &FileRender::default());
+    let out = render_template_at(state, name, path, text, base_dir);
     TEMPLATE_DEPTH.set(depth);
-    out.map(Value::from).map_err(|e| {
-        if e.is_undefined() {
-            // Kept an undefined error, so the caller's own render reports it as one.
-            let detail =
-                e.0.strip_prefix(super::UNDEFINED)
-                    .unwrap_or(&e.0)
-                    .trim_start();
-            Error::new(
-                ErrorKind::UndefinedError,
-                format!("in the template {name}: {detail}"),
-            )
-        } else {
-            invalid(format!("in the template {name}: {e}"))
+    out.map(Value::from).map_err(|e| lookup_error(name, &e))
+}
+
+fn render_template_at(
+    state: &State,
+    name: &str,
+    path: &Path,
+    text: &str,
+    base_dir: &Path,
+) -> Result<String, TemplateError> {
+    let templar = Templar::new(base_dir.to_path_buf());
+    let root = state.lookup(super::CONTEXT_KEY);
+    let ctx = root
+        .as_ref()
+        .and_then(|r| r.downcast_object_ref::<Context>());
+    let mut map = ctx.map(|c| c.vars.clone()).unwrap_or_default();
+    let mut untrusted: BTreeSet<String> = ctx.map(|c| c.untrusted.clone()).unwrap_or_default();
+    let hostvars = ctx.and_then(|c| c.hostvars.as_ref());
+    let shared = ctx.and_then(|c| c.shared.as_ref());
+    let untrusted_hosts = ctx.map(|c| &c.untrusted_hosts);
+
+    let read = templar
+        .env
+        .template_from_str(text)
+        .map(|t| t.undeclared_variables(false))
+        .unwrap_or_default();
+    for var in read {
+        if untrusted.contains(&var) || !map.get(&var).is_some_and(super::holds_template) {
+            continue;
         }
-    })
+        let (resolved, from_host) = templar.render_value_tainted(
+            &map[&var],
+            Vars {
+                map: &map,
+                hostvars,
+                shared,
+                untrusted: Some(&untrusted),
+                untrusted_hosts,
+            },
+        )?;
+        if from_host {
+            untrusted.insert(var.clone());
+        }
+        map.insert(var, resolved);
+    }
+
+    if !map.contains_key("ansible_managed") {
+        map.insert("ansible_managed".into(), "Ansible managed".into());
+    }
+    map.insert("template_path".into(), name.into());
+    map.insert(
+        "template_fullpath".into(),
+        path.display().to_string().into(),
+    );
+    untrusted.remove("template_path");
+    untrusted.remove("template_fullpath");
+    let vars = Vars {
+        map: &map,
+        hostvars,
+        shared,
+        untrusted: Some(&untrusted),
+        untrusted_hosts,
+    };
+    templar.render_file(text, vars, &FileRender::default())
+}
+
+fn lookup_error(name: &str, e: &TemplateError) -> Error {
+    if e.is_undefined() {
+        // Kept an undefined error, so the caller's own render reports it as one.
+        let detail =
+            e.0.strip_prefix(super::UNDEFINED)
+                .unwrap_or(&e.0)
+                .trim_start();
+        Error::new(
+            ErrorKind::UndefinedError,
+            format!("in the template {name}: {detail}"),
+        )
+    } else {
+        invalid(format!("in the template {name}: {e}"))
+    }
 }
 
 /// `lookup('first_found', ...)`, `plugins/lookup/first_found.py`: every term, a name, a list of
@@ -226,20 +295,19 @@ fn first_found(
     kwargs: Kwargs,
     base_dir: &Path,
 ) -> Result<Value, Error> {
-    let mut skip = kwargs.get::<Option<bool>>("skip")?.unwrap_or(false);
-    let files: Option<Value> = kwargs.get("files")?;
-    let paths: Option<Value> = kwargs.get("paths")?;
+    let mut options = Options {
+        files: kwargs.get::<Option<Value>>("files")?.unwrap_or_default(),
+        paths: kwargs.get::<Option<Value>>("paths")?.unwrap_or_default(),
+        skip: kwargs.get::<Option<bool>>("skip")?.unwrap_or(false),
+    };
     kwargs.assert_all_used()?;
     let mut candidates = Vec::new();
     if terms.is_empty() {
-        let term = Value::from_iter([
-            ("files", files.unwrap_or_default()),
-            ("paths", paths.unwrap_or_default()),
-        ]);
-        candidates_of(&term, &mut candidates, &mut skip)?;
+        let files = split_on(&options.files, &[',', ';']);
+        push_candidates(files, &options.paths, &mut candidates);
     }
     for term in terms {
-        candidates_of(term, &mut candidates, &mut skip)?;
+        candidates_of(term, &mut candidates, &mut options)?;
     }
     let search = search_path(state, base_dir);
     for name in &candidates {
@@ -247,38 +315,40 @@ fn first_found(
             return Ok(Value::from(found.display().to_string()));
         }
     }
-    if skip {
+    if options.skip {
         return Ok(Value::from(Vec::<Value>::new()));
     }
     Err(invalid("No file was found when using first_found."))
 }
 
-/// `_process_terms`: a string is a list of names split on `,` and `;`; a mapping's `paths`,
-/// split on `,`, `:` and `;`, prefix each of its `files`; a list is each of its terms.
-fn candidates_of(term: &Value, out: &mut Vec<String>, skip: &mut bool) -> Result<(), Error> {
+/// The plugin's options as `first_found.py` holds them: set from the keywords, and replaced
+/// whole by `set_options(direct=term)` for each mapping term, so a mapping without `skip` resets
+/// it to false and its `paths` are the ones later string terms use.
+struct Options {
+    files: Value,
+    paths: Value,
+    skip: bool,
+}
+
+/// `_process_terms`: a string is a list of names split on `,` and `;`, joined to the options'
+/// `paths`; a mapping sets the options and its `files` joined to its `paths`; a list is each of
+/// its terms.
+fn candidates_of(term: &Value, out: &mut Vec<String>, options: &mut Options) -> Result<(), Error> {
     match term.kind() {
-        ValueKind::String => out.extend(split_on(term, &[',', ';'])),
+        ValueKind::String => push_candidates(split_on(term, &[',', ';']), &options.paths, out),
         ValueKind::Seq => {
             for t in term.try_iter()? {
-                candidates_of(&t, out, skip)?;
+                candidates_of(&t, out, options)?;
             }
         }
         ValueKind::Map => {
-            let skip_value = term.get_attr("skip")?;
-            if !skip_value.is_undefined() {
-                *skip = skip_value.is_true();
-            }
-            let files = split_on(&term.get_attr("files")?, &[',', ';']);
-            let paths = split_on(&term.get_attr("paths")?, &[',', ':', ';']);
-            if paths.is_empty() {
-                out.extend(files);
-            } else {
-                for path in &paths {
-                    for file in &files {
-                        out.push(Path::new(path).join(file).display().to_string());
-                    }
-                }
-            }
+            *options = Options {
+                files: term.get_attr("files")?,
+                paths: term.get_attr("paths")?,
+                skip: term.get_attr("skip")?.is_true(),
+            };
+            let files = split_on(&options.files, &[',', ';']);
+            push_candidates(files, &options.paths, out);
         }
         _ => {
             return Err(invalid(format!(
@@ -288,6 +358,20 @@ fn candidates_of(term: &Value, out: &mut Vec<String>, skip: &mut bool) -> Result
         }
     }
     Ok(())
+}
+
+/// Each file under each path (split on `,`, `:` and `;`), or the files alone without a path.
+fn push_candidates(files: Vec<String>, paths: &Value, out: &mut Vec<String>) {
+    let paths = split_on(paths, &[',', ':', ';']);
+    if paths.is_empty() {
+        out.extend(files);
+        return;
+    }
+    for path in &paths {
+        for file in &files {
+            out.push(Path::new(path).join(file).display().to_string());
+        }
+    }
 }
 
 /// `_split_on`: a string split on each of `seps`, empty pieces kept; a list, each of its items.
@@ -304,6 +388,7 @@ fn split_on(value: &Value, seps: &[char]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use serde_json::{Map, Value, json};
@@ -506,6 +591,103 @@ mod tests {
             ))
             .unwrap(),
             json!(found)
+        );
+    }
+
+    /// `_process_terms` joins a string term to the plugin's `paths` option, so the keyword
+    /// applies to plain names as the mapping's `paths` does. And a mapping term replaces the
+    /// options whole, so one without `skip` turns a `skip=true` keyword back off.
+    ///
+    /// What would make this red: `paths=` read only for a mapping (the name is then tried bare,
+    /// and `second.txt` is not found), or a mapping that keeps the keyword's `skip`.
+    #[test]
+    fn first_found_joins_the_paths_keyword_and_a_mapping_resets_the_options() {
+        let role = Role::new("ffopt");
+        role.write("role/files/second.txt", "2");
+        let t = templar(&role.dir);
+        let vars = role.vars();
+        let found = role.role().join("files/second.txt").display().to_string();
+        assert_eq!(
+            t.render(
+                "{{ lookup('first_found', 'second.txt', paths=['files']) }}",
+                &vars
+            )
+            .unwrap(),
+            json!(found)
+        );
+        let err = t
+            .render(
+                "{{ lookup('first_found', {'files': ['nope.txt']}, skip=true) }}",
+                &vars,
+            )
+            .unwrap_err();
+        assert!(
+            err.0.contains("No file was found when using first_found."),
+            "{err}"
+        );
+    }
+
+    /// The reference templates a variable when it is read, so a template read through the
+    /// lookup sees `a: "{{ b }}"` as `1` even while the task's variables are still being
+    /// resolved. Here the lookup can run inside that resolution, against a map that still holds
+    /// `{{ b }}`: the names the template reads are resolved first. The result is data all the
+    /// same, and a name from a managed host is not rendered on the way.
+    ///
+    /// What would make this red: the template rendered against the map as it stands, which
+    /// writes `{{ b }}` into a result nothing renders again; or the host's name rendered too.
+    #[test]
+    fn a_template_lookup_reads_a_chained_variable_resolved() {
+        let role = Role::new("chain");
+        role.write("role/templates/chain.j2", "{{ a }}");
+        let t = templar(&role.dir);
+        let mut map = role.vars();
+        map.insert("a".into(), json!("{{ b }}"));
+        map.insert("b".into(), json!(1));
+        map.insert("via".into(), json!("{{ lookup('template', 'chain.j2') }}"));
+        let (resolved, untrusted) = t.resolve_vars_tainted(&map);
+        assert_eq!(resolved["via"], json!("1"));
+        assert!(untrusted.contains("via"), "{untrusted:?}");
+
+        let from_host = BTreeSet::from(["a".to_string()]);
+        let vars = Vars {
+            map: &map,
+            hostvars: None,
+            shared: None,
+            untrusted: Some(&from_host),
+            untrusted_hosts: None,
+        };
+        assert_eq!(
+            t.render("{{ lookup('template', 'chain.j2') }}", vars)
+                .unwrap(),
+            json!("{{ b }}")
+        );
+    }
+
+    /// `plugins/lookup/template.py` gives the template `template_path`, `template_fullpath` and,
+    /// unless the variable exists, `ansible_managed`, as the `template` action does: the roles
+    /// measured write `{{ ansible_managed | comment }}` at the top of their templates.
+    ///
+    /// What would make this red: the lookup rendering against the caller's variables alone
+    /// (`ansible_managed` undefined), or overwriting an `ansible_managed` the playbook set.
+    #[test]
+    fn a_template_lookup_sets_the_template_variables() {
+        let role = Role::new("tvars");
+        role.write(
+            "role/templates/m.j2",
+            "{{ ansible_managed | comment }}\n{{ template_path }} {{ template_fullpath }}\n",
+        );
+        let t = templar(&role.dir);
+        let full = role.role().join("templates/m.j2").display().to_string();
+        assert_eq!(
+            t.render("{{ lookup('template', 'm.j2') }}", &role.vars())
+                .unwrap(),
+            json!(format!("#\n# Ansible managed\n#\nm.j2 {full}\n"))
+        );
+        let mut map = role.vars();
+        map.insert("ansible_managed".into(), json!("by hand"));
+        assert_eq!(
+            t.render("{{ lookup('template', 'm.j2') }}", &map).unwrap(),
+            json!(format!("#\n# by hand\n#\nm.j2 {full}\n"))
         );
     }
 }

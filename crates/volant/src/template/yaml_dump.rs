@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `to_yaml` and `to_nice_yaml`: PyYAML's `safe_dump` with `allow_unicode=True`, which is what
-//! ansible-core calls. The emitter below is PyYAML's own (`emitter.py`), cut down to what a
-//! document of plain data reaches: no anchors, no tags, no block scalars. It keeps PyYAML's state
-//! (`column`, `whitespace`, `indention`, the indent stack) and its function names, because the
-//! output is decided by those flags byte by byte and a rewrite in another shape drifts from it.
+//! ansible-core calls. ansible-core dumps through `CSafeDumper` whenever PyYAML was built with
+//! libyaml (`module_utils/common/yaml.py`), as it is on the reference controller, so the
+//! representer is PyYAML's and the emitter is **libyaml's**. The emitter below keeps the state
+//! both share (`column`, `whitespace`, `indention`, the indent stack) and PyYAML's function
+//! names, cut down to what a document of plain data reaches: no anchors, no tags, no block
+//! scalars. Where libyaml and `emitter.py` differ, libyaml is followed: no `...` after a plain
+//! root scalar, a character outside the Basic Multilingual Plane or `\x85` is not printable (the
+//! string is double-quoted, `"\U0001F600"`, `"\N"`), a double-quoted string folds only at a
+//! space, and a key is simple up to 128 bytes, the empty one included.
 
 use std::sync::LazyLock;
 
-use minijinja::value::Kwargs;
+use minijinja::value::{Kwargs, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, Value};
-use serde_json::Value as Json;
 
 use crate::yaml::{PYYAML_FALSE, PYYAML_TRUE};
 
@@ -55,7 +59,6 @@ fn dump(
         column: 0,
         whitespace: true,
         indention: true,
-        open_ended: false,
         indent: None,
         indents: Vec::new(),
         flow_level: 0,
@@ -64,15 +67,10 @@ fn dump(
         flow_style,
         sort_keys,
     };
-    let data = serde_json::to_value(value)
-        .map_err(|err| Error::new(ErrorKind::InvalidOperation, err.to_string()))?;
-    e.node(&data, true, false, false);
-    // Document end, then stream end, which closes an open-ended root scalar with `...`.
+    // The value itself, not its JSON form: JSON has no `inf` or `nan`, and no integer keys.
+    e.node(value, false, false);
+    // Document end. libyaml writes no `...` after an open-ended plain root scalar.
     e.write_indent();
-    if e.open_ended {
-        e.write_indicator("...", true, false, false);
-        e.write_indent();
-    }
     Ok(e.out)
 }
 
@@ -101,12 +99,42 @@ fn resolves_elsewhere(s: &str) -> bool {
     s.is_empty() || PYYAML_TRUE.contains(&s) || PYYAML_FALSE.contains(&s) || RESOLVED.is_match(s)
 }
 
+/// libyaml's `IS_BREAK`, which counts `\r` where `emitter.py` does not.
 fn is_break(c: char) -> bool {
-    matches!(c, '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
+    matches!(c, '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
 }
 
-fn is_scalar(v: &Json) -> bool {
-    !matches!(v, Json::Array(_) | Json::Object(_))
+/// libyaml's `IS_PRINTABLE`: the Basic Multilingual Plane's printable ranges only, so `\x85`
+/// and every character above U+FFFF are not, unlike `emitter.py`.
+fn is_printable(c: char) -> bool {
+    c == '\n'
+        || ('\x20'..='\x7e').contains(&c)
+        || ('\u{a0}'..='\u{d7ff}').contains(&c)
+        || (('\u{e000}'..='\u{fffd}').contains(&c) && c != '\u{feff}')
+}
+
+fn is_collection(v: &Value) -> bool {
+    matches!(
+        v.kind(),
+        ValueKind::Seq | ValueKind::Map | ValueKind::Iterable
+    )
+}
+
+/// A scalar's text as the representer writes it, and whether it may be written plain as far as
+/// its type is concerned (`implicit[0]`): a string that YAML 1.1 would read back as something
+/// else may not.
+fn scalar_text(v: &Value) -> (String, bool) {
+    match v.kind() {
+        ValueKind::Undefined | ValueKind::None => ("null".to_string(), true),
+        ValueKind::Bool => (v.is_true().to_string(), true),
+        ValueKind::Number if v.is_integer() => (v.to_string(), true),
+        ValueKind::Number => (py_float(f64::try_from(v.clone()).unwrap_or(f64::NAN)), true),
+        _ => {
+            let s = v.as_str().map_or_else(|| v.to_string(), str::to_string);
+            let implicit = !resolves_elsewhere(&s);
+            (s, implicit)
+        }
+    }
 }
 
 /// Python's `repr` of a float, then PyYAML's `represent_float`: lower case, and `.0` before an
@@ -202,15 +230,8 @@ fn analyze(s: &[char]) -> Analysis {
         if is_break(ch) {
             line_breaks = true;
         }
-        if !(ch == '\n' || ('\x20'..='\x7e').contains(&ch)) {
-            // `allow_unicode=True`: printable non-ASCII is written as it is.
-            let unicode = (ch == '\u{85}'
-                || ('\u{a0}'..='\u{d7ff}').contains(&ch)
-                || ('\u{e000}'..='\u{fffd}').contains(&ch)
-                || ('\u{10000}'..'\u{10ffff}').contains(&ch))
-                && ch != '\u{feff}';
-            special_characters |= !unicode;
-        }
+        // `allow_unicode=True`: printable non-ASCII is written as it is.
+        special_characters |= !is_printable(ch);
         if ch == ' ' {
             leading_space |= index == 0;
             trailing_space |= index == last;
@@ -270,7 +291,6 @@ struct Emitter {
     column: usize,
     whitespace: bool,
     indention: bool,
-    open_ended: bool,
     indent: Option<usize>,
     indents: Vec<Option<usize>>,
     flow_level: usize,
@@ -281,23 +301,30 @@ struct Emitter {
 }
 
 impl Emitter {
-    fn node(&mut self, v: &Json, root: bool, mapping: bool, simple_key: bool) {
-        match v {
-            Json::Array(items) => {
-                if self.flow(items.is_empty(), || items.iter().all(is_scalar)) {
-                    self.flow_sequence(items);
+    fn node(&mut self, v: &Value, mapping: bool, simple_key: bool) {
+        match v.kind() {
+            ValueKind::Map => {
+                let entries = self.entries(v);
+                let only_scalars = || {
+                    entries
+                        .iter()
+                        .all(|(k, v)| !is_collection(k) && !is_collection(v))
+                };
+                if self.flow(entries.is_empty(), only_scalars) {
+                    self.flow_mapping(&entries);
                 } else {
-                    self.block_sequence(items, mapping);
+                    self.block_mapping(&entries);
                 }
             }
-            Json::Object(map) => {
-                if self.flow(map.is_empty(), || map.values().all(is_scalar)) {
-                    self.flow_mapping(map);
+            ValueKind::Seq | ValueKind::Iterable => {
+                let items: Vec<Value> = v.try_iter().map(Iterator::collect).unwrap_or_default();
+                if self.flow(items.is_empty(), || !items.iter().any(is_collection)) {
+                    self.flow_sequence(&items);
                 } else {
-                    self.block_mapping(map);
+                    self.block_sequence(&items, mapping);
                 }
             }
-            _ => self.scalar(v, root, simple_key),
+            _ => self.scalar(v, simple_key),
         }
     }
 
@@ -308,20 +335,32 @@ impl Emitter {
         self.flow_level > 0 || empty || self.flow_style.unwrap_or_else(only_scalars)
     }
 
-    fn entries<'a>(&self, map: &'a serde_json::Map<String, Json>) -> Vec<(&'a String, &'a Json)> {
-        let mut entries: Vec<_> = map.iter().collect();
+    fn entries(&self, map: &Value) -> Vec<(Value, Value)> {
+        let mut entries: Vec<(Value, Value)> = map
+            .try_iter()
+            .map(|keys| {
+                keys.map(|k| {
+                    let v = map.get_item(&k).unwrap_or_default();
+                    (k, v)
+                })
+                .collect()
+            })
+            .unwrap_or_default();
         if self.sort_keys {
-            entries.sort_by(|a, b| a.0.cmp(b.0));
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
         }
         entries
     }
 
-    /// `check_simple_key` for a string key: shorter than 128 with its `!!str` tag, not empty
-    /// and on one line.
-    fn simple_key(key: &str) -> bool {
-        let chars: Vec<char> = key.chars().collect();
-        let a = analyze(&chars);
-        chars.len() + "!!str".len() < 128 && !a.empty && !a.multiline
+    /// libyaml's `yaml_emitter_check_simple_key` for a scalar key: on one line and no longer
+    /// than 128 bytes. A string key carries no tag to count, and the empty key is simple.
+    fn simple_key(key: &Value) -> bool {
+        if is_collection(key) {
+            return false;
+        }
+        let text = scalar_text(key).0;
+        let chars: Vec<char> = text.chars().collect();
+        text.len() <= 128 && !analyze(&chars).multiline
     }
 
     fn increase_indent(&mut self, flow: bool, indentless: bool) {
@@ -338,7 +377,7 @@ impl Emitter {
         self.indent = self.indents.pop().flatten();
     }
 
-    fn flow_sequence(&mut self, items: &[Json]) {
+    fn flow_sequence(&mut self, items: &[Value]) {
         self.write_indicator("[", true, true, false);
         self.flow_level += 1;
         self.increase_indent(true, false);
@@ -349,37 +388,36 @@ impl Emitter {
             if self.column > self.best_width {
                 self.write_indent();
             }
-            self.node(item, false, false, false);
+            self.node(item, false, false);
         }
         self.pop_indent();
         self.flow_level -= 1;
         self.write_indicator("]", false, false, false);
     }
 
-    fn flow_mapping(&mut self, map: &serde_json::Map<String, Json>) {
+    fn flow_mapping(&mut self, entries: &[(Value, Value)]) {
         self.write_indicator("{", true, true, false);
         self.flow_level += 1;
         self.increase_indent(true, false);
-        for (i, (k, v)) in self.entries(map).into_iter().enumerate() {
+        for (i, (k, v)) in entries.iter().enumerate() {
             if i > 0 {
                 self.write_indicator(",", false, false, false);
             }
             if self.column > self.best_width {
                 self.write_indent();
             }
-            let key = Json::String(k.clone());
             if Self::simple_key(k) {
-                self.node(&key, false, true, true);
+                self.node(k, true, true);
                 self.write_indicator(":", false, false, false);
             } else {
                 self.write_indicator("?", true, false, false);
-                self.node(&key, false, true, false);
+                self.node(k, true, false);
                 if self.column > self.best_width {
                     self.write_indent();
                 }
                 self.write_indicator(":", true, false, false);
             }
-            self.node(v, false, true, false);
+            self.node(v, true, false);
         }
         self.pop_indent();
         self.flow_level -= 1;
@@ -387,47 +425,37 @@ impl Emitter {
     }
 
     /// A sequence that is a mapping's value is not indented under its key.
-    fn block_sequence(&mut self, items: &[Json], mapping: bool) {
+    fn block_sequence(&mut self, items: &[Value], mapping: bool) {
         let indentless = mapping && !self.indention;
         self.increase_indent(false, indentless);
         for item in items {
             self.write_indent();
             self.write_indicator("-", true, false, true);
-            self.node(item, false, false, false);
+            self.node(item, false, false);
         }
         self.pop_indent();
     }
 
-    fn block_mapping(&mut self, map: &serde_json::Map<String, Json>) {
+    fn block_mapping(&mut self, entries: &[(Value, Value)]) {
         self.increase_indent(false, false);
-        for (k, v) in self.entries(map) {
+        for (k, v) in entries {
             self.write_indent();
-            let key = Json::String(k.clone());
             if Self::simple_key(k) {
-                self.node(&key, false, true, true);
+                self.node(k, true, true);
                 self.write_indicator(":", false, false, false);
             } else {
                 self.write_indicator("?", true, false, true);
-                self.node(&key, false, true, false);
+                self.node(k, true, false);
                 self.write_indent();
                 self.write_indicator(":", true, false, true);
             }
-            self.node(v, false, true, false);
+            self.node(v, true, false);
         }
         self.pop_indent();
     }
 
-    fn scalar(&mut self, v: &Json, root: bool, simple_key: bool) {
-        let (text, implicit) = match v {
-            Json::Null => ("null".to_string(), true),
-            Json::Bool(b) => (b.to_string(), true),
-            Json::Number(n) => match n.as_f64() {
-                Some(f) if n.is_f64() => (py_float(f), true),
-                _ => (n.to_string(), true),
-            },
-            Json::String(s) => (s.clone(), !resolves_elsewhere(s)),
-            Json::Array(_) | Json::Object(_) => unreachable!("collections are not scalars"),
-        };
+    fn scalar(&mut self, v: &Value, simple_key: bool) {
+        let (text, implicit) = scalar_text(v);
         let chars: Vec<char> = text.chars().collect();
         let a = analyze(&chars);
         let plain_here = if self.flow_level > 0 {
@@ -445,7 +473,7 @@ impl Emitter {
         self.increase_indent(true, false);
         let split = !simple_key;
         match style {
-            Style::Plain => self.write_plain(&chars, split, root),
+            Style::Plain => self.write_plain(&chars, split),
             Style::Single => self.write_single_quoted(&chars, split),
             Style::Double => self.write_double_quoted(&chars, split),
         }
@@ -472,7 +500,6 @@ impl Emitter {
         self.column += indicator.chars().count();
         self.whitespace = whitespace;
         self.indention = self.indention && indention;
-        self.open_ended = false;
     }
 
     fn write_indent(&mut self) {
@@ -495,10 +522,7 @@ impl Emitter {
         self.out.push(br);
     }
 
-    fn write_plain(&mut self, text: &[char], split: bool, root: bool) {
-        if root {
-            self.open_ended = true;
-        }
+    fn write_plain(&mut self, text: &[char], split: bool) {
         if text.is_empty() {
             return;
         }
@@ -584,69 +608,55 @@ impl Emitter {
         self.write_indicator("'", false, false, false);
     }
 
+    /// libyaml's `yaml_emitter_write_double_quoted`: a character that is not printable, a
+    /// break, the byte order mark, `"` and `\` are escaped; past the width, the line folds at
+    /// a single space, which the fold stands for, with a `\` kept before a second space.
     fn write_double_quoted(&mut self, text: &[char], split: bool) {
         self.write_indicator("\"", true, false, false);
-        let (mut start, mut end) = (0, 0);
-        while end <= text.len() {
-            let ch = text.get(end).copied();
-            let escaped = ch.is_none_or(|c| {
-                matches!(
-                    c,
-                    '"' | '\\' | '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{feff}'
-                ) || !(('\x20'..='\x7e').contains(&c)
-                    || ('\u{a0}'..='\u{d7ff}').contains(&c)
-                    || ('\u{e000}'..='\u{fffd}').contains(&c))
-            });
-            if escaped {
-                if start < end {
-                    self.write(&text[start..end]);
-                    start = end;
+        let mut spaces = false;
+        for (i, &c) in text.iter().enumerate() {
+            if !is_printable(c) || c == '\u{feff}' || is_break(c) || c == '"' || c == '\\' {
+                let data = match c {
+                    '\0' => "\\0".to_string(),
+                    '\x07' => "\\a".to_string(),
+                    '\x08' => "\\b".to_string(),
+                    '\t' => "\\t".to_string(),
+                    '\n' => "\\n".to_string(),
+                    '\x0b' => "\\v".to_string(),
+                    '\x0c' => "\\f".to_string(),
+                    '\r' => "\\r".to_string(),
+                    '\x1b' => "\\e".to_string(),
+                    '"' => "\\\"".to_string(),
+                    '\\' => "\\\\".to_string(),
+                    '\u{85}' => "\\N".to_string(),
+                    '\u{2028}' => "\\L".to_string(),
+                    '\u{2029}' => "\\P".to_string(),
+                    c if u32::from(c) <= 0xff => format!("\\x{:02X}", u32::from(c)),
+                    c if u32::from(c) <= 0xffff => format!("\\u{:04X}", u32::from(c)),
+                    c => format!("\\U{:08X}", u32::from(c)),
+                };
+                let data: Vec<char> = data.chars().collect();
+                self.write(&data);
+                spaces = false;
+            } else if c == ' ' {
+                if split
+                    && !spaces
+                    && self.column > self.best_width
+                    && i != 0
+                    && i + 1 != text.len()
+                {
+                    self.write_indent();
+                    if text.get(i + 1) == Some(&' ') {
+                        self.write(&['\\']);
+                    }
+                } else {
+                    self.write(&[' ']);
                 }
-                if let Some(c) = ch {
-                    let data = match c {
-                        '\0' => "\\0".to_string(),
-                        '\x07' => "\\a".to_string(),
-                        '\x08' => "\\b".to_string(),
-                        '\t' => "\\t".to_string(),
-                        '\n' => "\\n".to_string(),
-                        '\x0b' => "\\v".to_string(),
-                        '\x0c' => "\\f".to_string(),
-                        '\r' => "\\r".to_string(),
-                        '\x1b' => "\\e".to_string(),
-                        '"' => "\\\"".to_string(),
-                        '\\' => "\\\\".to_string(),
-                        '\u{85}' => "\\N".to_string(),
-                        '\u{2028}' => "\\L".to_string(),
-                        '\u{2029}' => "\\P".to_string(),
-                        c if u32::from(c) <= 0xff => format!("\\x{:02X}", u32::from(c)),
-                        c if u32::from(c) <= 0xffff => format!("\\u{:04X}", u32::from(c)),
-                        c => format!("\\U{:08X}", u32::from(c)),
-                    };
-                    let data: Vec<char> = data.chars().collect();
-                    self.write(&data);
-                    start = end + 1;
-                }
+                spaces = true;
+            } else {
+                self.write(&[c]);
+                spaces = false;
             }
-            // Past the width, at a space or right after an escape, the line folds with a `\`.
-            if 0 < end
-                && end + 1 < text.len()
-                && (ch == Some(' ') || start >= end)
-                && (self.column + end) as isize - start as isize > self.best_width as isize
-                && split
-            {
-                if start < end {
-                    self.write(&text[start..end]);
-                    start = end;
-                }
-                self.write(&['\\']);
-                self.write_indent();
-                self.whitespace = false;
-                self.indention = false;
-                if text[start] == ' ' {
-                    self.write(&['\\']);
-                }
-            }
-            end += 1;
         }
         self.write_indicator("\"", false, false, false);
     }
@@ -705,8 +715,9 @@ mod tests {
     }
 
     /// One string per rule that stops PyYAML writing a string plain. Beyond the two measured
-    /// outputs, each line here was checked against PyYAML 6.0.3's `safe_dump` with
-    /// `allow_unicode=True, default_flow_style=False, indent=4`.
+    /// outputs, each line here was checked against PyYAML 6.0.3 with `Dumper=CSafeDumper`
+    /// (libyaml, what ansible-core uses when it is there), `allow_unicode=True,
+    /// default_flow_style=False, indent=4`; the pure-Python `SafeDumper` agrees on every one.
     #[test]
     fn a_string_is_quoted_exactly_when_pyyaml_quotes_it() {
         let cases: &[(&str, &str)] = &[
@@ -764,8 +775,8 @@ mod tests {
         }
     }
 
-    /// PyYAML folds a plain scalar at a single space once the line has passed 80 columns, and
-    /// `width` moves that limit; checked against PyYAML 6.0.3.
+    /// libyaml folds a plain scalar at a single space once the line has passed 80 columns, and
+    /// `width` moves that limit; checked against PyYAML 6.0.3's `CSafeDumper`.
     #[test]
     fn a_long_line_folds_at_the_width_pyyaml_uses() {
         let words = ["aaaa"; 20].join(" ");
@@ -785,7 +796,7 @@ mod tests {
 
     /// `to_yaml` keeps PyYAML's default flow style: a collection that holds only scalars is
     /// written inline, the others as blocks, with an indent of 2. A plain scalar at the root is
-    /// followed by the document end marker, as PyYAML writes it.
+    /// not followed by `...`: that marker is `emitter.py`'s, and libyaml does not write it.
     #[test]
     fn to_yaml_writes_a_collection_of_scalars_inline() {
         assert_eq!(
@@ -799,7 +810,9 @@ mod tests {
             dump("to_yaml", json!({"a": "yes", "b": 1})),
             "{a: 'yes', b: 1}\n"
         );
-        assert_eq!(dump("to_yaml", json!("abc")), "abc\n...\n");
+        assert_eq!(dump("to_yaml", json!("abc")), "abc\n");
+        assert_eq!(dump("to_yaml", json!(8080)), "8080\n");
+        assert_eq!(dump("to_yaml", json!(null)), "null\n");
         assert_eq!(dump("to_yaml", json!("yes")), "'yes'\n");
         assert_eq!(dump("to_yaml", json!([])), "[]\n");
         assert_eq!(dump("to_nice_yaml", json!({})), "{}\n");
@@ -810,6 +823,107 @@ mod tests {
         assert_eq!(
             dump("to_nice_yaml", json!({"k": 1e17, "l": -0.0, "m": 1e-5})),
             "k: 1.0e+17\nl: -0.0\nm: 1.0e-05\n"
+        );
+    }
+
+    fn render(text: &str, vars: Value) -> String {
+        match Templar::new(std::env::temp_dir())
+            .render(text, vars.as_object().unwrap())
+            .unwrap()
+        {
+            Value::String(s) => s,
+            other => panic!("not a string: {other}"),
+        }
+    }
+
+    /// Where libyaml's emitter and `emitter.py` part, ansible-core's output is libyaml's, and
+    /// so is this. Each vector was printed by PyYAML 6.0.3's `CSafeDumper`.
+    ///
+    /// What would make this red: `emitter.py`'s printable set (an emoji or `\x85` written as
+    /// they are), its fold of a long double-quoted run at any escape, its `...` after a root
+    /// scalar, or its 122-character limit on a simple key.
+    #[test]
+    fn where_libyaml_and_emitter_py_differ_this_is_libyaml() {
+        assert_eq!(
+            dump(
+                "to_nice_yaml",
+                json!({"k": "\u{1F600}\tx", "l": "\u{1F600}"})
+            ),
+            "k: \"\\U0001F600\\tx\"\nl: \"\\U0001F600\"\n"
+        );
+        assert_eq!(
+            dump(
+                "to_nice_yaml",
+                json!({"k": ["\u{85}x", "\u{feff}x", "a\u{2028}b", "a\rb", "\u{a0}x"]})
+            ),
+            "k:\n- \"\\Nx\"\n- \"\\uFEFFx\"\n- 'a\u{2028}    b'\n- \"a\\rb\"\n- \u{a0}x\n"
+        );
+        assert_eq!(
+            dump("to_nice_yaml", json!({"k": "abc\t".repeat(30)})),
+            format!("k: \"{}\"\n", "abc\\t".repeat(30))
+        );
+        assert_eq!(
+            dump("to_nice_yaml", json!({"k": "a\tb ".repeat(30)})),
+            format!(
+                "k: \"{}a\\tb\n    {} \"\n",
+                "a\\tb ".repeat(15),
+                ["a\\tb"; 14].join(" ")
+            )
+        );
+        assert_eq!(
+            dump("to_nice_yaml", json!({"k": "a\tb  ".repeat(20)})),
+            format!(
+                "k: \"{}a\\tb\n    \\ {}\"\n",
+                "a\\tb  ".repeat(13),
+                "a\\tb  ".repeat(6)
+            )
+        );
+        assert_eq!(dump("to_nice_yaml", json!({"": 1})), "'': 1\n");
+        let key = "k".repeat(128);
+        assert_eq!(
+            dump(
+                "to_nice_yaml",
+                Value::Object(Map::from_iter([(key.clone(), json!(1))]))
+            ),
+            format!("{key}: 1\n")
+        );
+        let key = "k".repeat(129);
+        assert_eq!(
+            dump(
+                "to_nice_yaml",
+                Value::Object(Map::from_iter([(key.clone(), json!(1))]))
+            ),
+            format!("? {key}\n: 1\n")
+        );
+        assert_eq!(
+            dump("to_nice_yaml", json!({"a\nb": 1})),
+            "? 'a\n\n    b'\n: 1\n"
+        );
+        assert_eq!(
+            dump("to_nice_yaml", json!({"k": "a\n\nb\n", "j": "x\ny"})),
+            "j: 'x\n\n    y'\nk: 'a\n\n\n    b\n\n    '\n"
+        );
+        assert_eq!(
+            dump("to_yaml", json!({"": 1, "a": "x y"})),
+            "{'': 1, a: x y}\n"
+        );
+    }
+
+    /// The value is dumped as it is, not through JSON, which has no infinity, no NaN and no
+    /// integer keys: PyYAML writes `.inf`, `-.inf`, `.nan`, and sorts integer keys as numbers.
+    #[test]
+    fn infinities_nan_and_integer_keys_are_pyyaml_s() {
+        assert_eq!(
+            render(
+                "{{ {'k': 'inf' | float, 'l': '-inf' | float, 'm': 'nan' | float} | to_nice_yaml }}",
+                json!({})
+            ),
+            "k: .inf\nl: -.inf\nm: .nan\n"
+        );
+        assert_eq!(render("{{ 'inf' | float | to_yaml }}", json!({})), ".inf\n");
+        assert_eq!(
+            render("{{ {1: 'a', 10: 'b', 9: 'c'} | to_nice_yaml }}", json!({})),
+            "1: a\n9: c\n10: b\n"
         );
     }
 }

@@ -60,7 +60,7 @@ pub struct Union {
     pub modules: BTreeMap<String, ModuleFacts>,
     /// A collection's module a role file named and the controller's ansible-core did not resolve
     /// to a module it can build, with the refusal the pre-flight gives a play naming it
-    /// ([`crate::preflight::refusal_of`]): kept out of the union, and said by the include that
+    /// (`preflight::refusal_of`): kept out of the union, and said by the include that
     /// reaches it. A union may hold only these, with no zip and no module: nothing is sent then,
     /// since no task has a payload.
     pub refused: BTreeMap<String, String>,

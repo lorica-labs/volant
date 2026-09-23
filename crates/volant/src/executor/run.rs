@@ -774,7 +774,11 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
             "become_user" => json!(task.become_user),
             "changed_when" => strings(&task.changed_when),
             "failed_when" => strings(&task.failed_when),
-            "ignore_errors" => json!(task.ignore_errors),
+            "ignore_errors" => match &task.ignore_errors {
+                Some(crate::playbook::Flag::Fixed(b)) => json!(b),
+                Some(crate::playbook::Flag::Template(t)) => json!(t),
+                None => Value::Null,
+            },
             "loop" => task.loop_items.clone().unwrap_or(Value::Null),
             "loop_control" => json!({"loop_var": task.loop_var, "label": task.loop_label}),
             "name" => json!(task.name),
@@ -1741,6 +1745,7 @@ mod tests {
                 args_untrusted: BTreeSet::new(),
                 vars: HostVars::default(),
                 environment: BTreeMap::new(),
+                ignore_errors: None,
                 skipped: None,
             };
             // Arguments are deliberately empty: what is asserted is that the name is known, not
@@ -1774,6 +1779,7 @@ mod tests {
             args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
+            ignore_errors: None,
             skipped: None,
         }
     }
@@ -2196,6 +2202,7 @@ mod tests {
                 args_untrusted: BTreeSet::new(),
                 vars: hvars(host),
                 environment: BTreeMap::new(),
+                ignore_errors: None,
                 skipped: None,
             };
             validate_argument_spec(&item)
@@ -2356,6 +2363,7 @@ mod tests {
             args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
+            ignore_errors: None,
             skipped: None,
         };
         let failed = |r: Value| {
@@ -2405,6 +2413,7 @@ mod tests {
             args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
+            ignore_errors: None,
             skipped: None,
         };
         let plain = task("command");
@@ -2456,6 +2465,7 @@ mod tests {
             args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
+            ignore_errors: None,
             skipped: None,
         };
         let r = apply_conditions(
@@ -3884,6 +3894,7 @@ mod tests {
             args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
+            ignore_errors: None,
             skipped: None,
         }
     }

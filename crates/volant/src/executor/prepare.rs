@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rendering one task for one host: variables, escalation, environment and loop items.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
@@ -9,8 +11,8 @@ use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
 use crate::action_plugins::Kind;
-use crate::compile::{Compiled, IncludeParams, Step};
-use crate::playbook::{PlayTask, python_repr};
+use crate::compile::{Compiled, IncludeParams, Origin, Step};
+use crate::playbook::{Flag, PlayTask, python_repr};
 use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError, Vars};
@@ -333,6 +335,9 @@ pub(super) struct Item {
     pub(super) environment: BTreeMap<String, String>,
     /// Set when `when` was false: the skip result to report.
     pub(super) skipped: Option<TaskResult>,
+    /// The task's `ignore_errors` as rendered for this host, when it was written as a template.
+    /// The same on every item of the task: see [`as_run`].
+    pub(super) ignore_errors: Option<bool>,
 }
 
 /// One task's `environment`, layer by layer: the play's, then each block's, then the task's,
@@ -409,7 +414,7 @@ pub(super) fn prepare(
     warnings: &mut Vec<String>,
 ) -> Result<Prepared, TemplateError> {
     let task = &step.task;
-    let base = host_vars(
+    let mut base = host_vars(
         host,
         plan,
         &task.vars,
@@ -419,6 +424,12 @@ pub(super) fn prepare(
         templar,
         store,
     );
+    let playbook_dir = store
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    insert_search_path(&mut base, &step.origin, &playbook_dir);
     // Whether the list this loop walks came from a managed host. A loop over a literal list the
     // playbook wrote binds author content; one over `{{ r.stdout_lines }}` binds data, and the
     // items of such a loop are never rendered again.
@@ -510,10 +521,17 @@ pub(super) fn prepare(
             vars,
             environment,
             skipped,
+            ignore_errors: None,
         });
     }
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
+    }
+    if let Some(Flag::Template(raw)) = &task.ignore_errors {
+        let verdict = ignore_errors_for(raw, &base, templar)?;
+        for item in &mut items {
+            item.ignore_errors = Some(verdict);
+        }
     }
     let delegate = delegate_for(task, &base, templar)?;
     if is_local(&task.module) {
@@ -615,6 +633,76 @@ fn delegate_for(
     Ok(Some(name).filter(|n| !n.is_empty()))
 }
 
+/// `role_path` and `ansible_search_path`, which a role's tasks and the `first_found` and
+/// `template` lookups read to find files. Measured on ansible-core 2.19.12, in a role's task:
+/// `role_path` is the role's directory and `ansible_search_path` is `[<role>, <role>/tasks,
+/// <playbook>]`. Outside a role the path is `[<playbook>]` and `role_path` is not defined, so
+/// reading it fails on the undefined name, as in the reference.
+///
+/// The middle entry is the directory of the file the task was written in, and a directory already
+/// listed is not listed again, which is how a playbook's own task ends up with one entry.
+/// Inserted as author content: the controller chose every one of these paths, and a host fact of
+/// the same name does not outlive them.
+fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path) {
+    let mut search: Vec<&Path> = Vec::new();
+    for dir in origin
+        .role_dir
+        .as_deref()
+        .into_iter()
+        .chain([origin.file_dir.as_path(), playbook_dir])
+    {
+        if !search.contains(&dir) {
+            search.push(dir);
+        }
+    }
+    let search = search
+        .iter()
+        .map(|dir| Value::String(dir.display().to_string()))
+        .collect();
+    vars.insert("ansible_search_path".into(), Value::Array(search));
+    if let Some(role) = &origin.role_dir {
+        vars.insert(
+            "role_path".into(),
+            Value::String(role.display().to_string()),
+        );
+    }
+}
+
+/// `ignore_errors` written as a template, rendered and read the way a boolean variable is.
+/// Measured on ansible-core 2.19.12, the reference renders it when the task runs, and a value
+/// that is not a boolean fails the task with the sentence the loader refuses a literal with.
+///
+/// Rendered once, against the task's variables and not one loop item's, the way `delegate_to`
+/// is: the verdict is the task's, and every line and the recap read the one verdict. A task a
+/// `when` skipped never renders it, as in the reference.
+fn ignore_errors_for(raw: &str, vars: &HostVars, templar: &Templar) -> Result<bool, TemplateError> {
+    let keyword = |detail: String| {
+        TemplateError(format!(
+            "Error processing keyword 'ignore_errors': {detail}"
+        ))
+    };
+    let rendered = templar.render(raw, vars).map_err(|e| keyword(e.0))?;
+    as_bool_value(&rendered).ok_or_else(|| {
+        keyword(format!(
+            "The value {} could not be converted to 'bool'.",
+            python_repr(&rendered)
+        ))
+    })
+}
+
+/// The task as the driver runs and reports it for this host: an `ignore_errors` template
+/// replaced by what `prepare` rendered it to. Every other task is borrowed as it stands.
+pub(super) fn as_run<'a>(task: &'a PlayTask, items: &[Item]) -> Cow<'a, PlayTask> {
+    match items.first().and_then(|item| item.ignore_errors) {
+        Some(verdict) => {
+            let mut task = task.clone();
+            task.ignore_errors = Some(Flag::Fixed(verdict));
+            Cow::Owned(task)
+        }
+        None => Cow::Borrowed(task),
+    }
+}
+
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
     list.into_iter()
         .flat_map(|v| match v {
@@ -713,7 +801,7 @@ mod tests {
                 block: None,
                 section: crate::compile::Section::Body,
                 role: None,
-                origin: Arc::new(crate::compile::Origin::default()),
+                origin: Arc::new(Origin::default()),
                 include_params: None,
                 hosts: None,
             };
@@ -750,6 +838,169 @@ mod tests {
             payload_of("ansible.builtin.package"),
             (None, Some(Kind::Package))
         );
+    }
+
+    fn store_at(playbook_dir: &Path) -> Mutex<VarStore> {
+        let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
+        Mutex::new(VarStore::new(&inventory, None, playbook_dir, Map::new()).expect("a var store"))
+    }
+
+    fn step_of(task: PlayTask, origin: Origin) -> Step {
+        Step {
+            kind: crate::compile::StepKind::Task,
+            task,
+            block: None,
+            section: crate::compile::Section::Body,
+            role: None,
+            origin: Arc::new(origin),
+            include_params: None,
+            hosts: None,
+        }
+    }
+
+    fn prepared(step: &Step, store: &Mutex<VarStore>) -> Result<Vec<Item>, TemplateError> {
+        let prepared = prepare(
+            step,
+            "h1",
+            &plan(),
+            &Progress::default(),
+            &Templar::new(PathBuf::from(".")),
+            store,
+            &defaults(),
+            &mut Vec::new(),
+        )?;
+        Ok(match prepared {
+            Prepared::Skipped(items)
+            | Prepared::Local(items, _)
+            | Prepared::Remote(items, _, _, _, _) => items,
+        })
+    }
+
+    fn failing(ignore_errors: &str) -> Step {
+        let mut t = task("command");
+        t.args.insert("_raw_params".into(), json!("false"));
+        t.ignore_errors = Some(Flag::Template(ignore_errors.into()));
+        step_of(t, Origin::default())
+    }
+
+    /// `ignore_errors` written as a template is rendered for the host that runs the task, and
+    /// the driver reads the task with the verdict in the template's place. Measured on
+    /// ansible-core 2.19.12: `ignore_errors: "{{ ansible_check_mode }}"` on a failing `command`
+    /// fails the task outside `--check`, and a render that is not a boolean fails it with
+    /// `Error processing keyword 'ignore_errors': The value ... could not be converted to 'bool'.`
+    ///
+    /// What would make this red: the render in `prepare` removed, which leaves the template in
+    /// place and every template reads as not ignoring, `"{{ true }}"` included; `as_run` handing
+    /// back the task as written; or a render that is not a boolean read as `false` rather than
+    /// refused.
+    #[test]
+    fn a_templated_ignore_errors_is_rendered_when_the_task_runs() {
+        let store = store_at(Path::new("."));
+        let step = failing("{{ ansible_check_mode }}");
+        let items = prepared(&step, &store).unwrap();
+        let run = as_run(&step.task, &items);
+        assert_eq!(run.ignore_errors, Some(Flag::Fixed(false)));
+        assert!(!run.ignores_errors());
+
+        let step = failing("{{ true }}");
+        let items = prepared(&step, &store).unwrap();
+        assert!(as_run(&step.task, &items).ignores_errors());
+
+        let Err(err) = prepared(&failing("{{ 'maybe' }}"), &store) else {
+            panic!("a render that is not a boolean is refused");
+        };
+        assert!(
+            err.0.contains(
+                "Error processing keyword 'ignore_errors': The value 'maybe' could not be converted to 'bool'."
+            ),
+            "{}",
+            err.0
+        );
+
+        // A task a `when` left out never renders it, so a template it could not render is not
+        // its problem.
+        let mut step = failing("{{ nosuch }}");
+        step.task.when = vec!["false".into()];
+        assert!(prepared(&step, &store).is_ok());
+
+        let step = step_of(task("command"), Origin::default());
+        let items = prepared(&step, &store).unwrap();
+        assert!(matches!(as_run(&step.task, &items), Cow::Borrowed(_)));
+    }
+
+    /// A step an include brought in goes through the same `prepare`, so its templated
+    /// `ignore_errors` is rendered too, and against what the include handed down.
+    ///
+    /// What would make this red: the render tied to steps compiled with the play rather than
+    /// to every step `prepare` is given.
+    #[test]
+    fn a_templated_ignore_errors_in_an_included_file_is_rendered_too() {
+        let store = store_at(Path::new("."));
+        let mut step = failing("{{ lenient }}");
+        step.origin = Arc::new(Origin {
+            depth: 1,
+            ..Origin::default()
+        });
+        let mut values = Map::new();
+        values.insert("lenient".into(), json!(true));
+        step.include_params = Some(Arc::new(IncludeParams {
+            values,
+            untrusted: BTreeSet::new(),
+        }));
+        let items = prepared(&step, &store).unwrap();
+        assert!(as_run(&step.task, &items).ignores_errors());
+    }
+
+    /// `role_path` and `ansible_search_path` in a role's task and in a playbook's. Measured on
+    /// ansible-core 2.19.12 (sanitised): `role_path=~/.../roles/probe | search=['~/.../roles/probe',
+    /// '~/.../roles/probe/tasks', '~/...']`, and outside a role the path is the playbook's
+    /// directory alone with `role_path` undefined.
+    ///
+    /// What would make this red: the playbook's task listing its directory twice; `role_path`
+    /// defined outside a role; or either inserted as data, which leaves a host fact of the same
+    /// name in charge of where the lookups look.
+    #[test]
+    fn a_role_s_task_carries_its_role_path_and_search_path() {
+        let play = PathBuf::from("/srv/play");
+        let role = play.join("roles/probe");
+        let store = store_at(&play);
+        store.lock().unwrap().set_untrusted_fact(
+            "h1",
+            "ansible_search_path",
+            json!(["/from/a/host"]),
+        );
+        let in_role = step_of(
+            task("command"),
+            Origin {
+                file_dir: role.join("tasks"),
+                role_dir: Some(role.clone()),
+                depth: 0,
+            },
+        );
+        let vars = &prepared(&in_role, &store).unwrap()[0].vars;
+        assert_eq!(vars.map["role_path"], json!("/srv/play/roles/probe"));
+        assert_eq!(
+            vars.map["ansible_search_path"],
+            json!([
+                "/srv/play/roles/probe",
+                "/srv/play/roles/probe/tasks",
+                "/srv/play"
+            ])
+        );
+        assert!(!vars.untrusted.contains("ansible_search_path"));
+        assert!(!vars.untrusted.contains("role_path"));
+
+        let in_play = step_of(
+            task("command"),
+            Origin {
+                file_dir: play.clone(),
+                role_dir: None,
+                depth: 0,
+            },
+        );
+        let vars = &prepared(&in_play, &store).unwrap()[0].vars;
+        assert_eq!(vars.map["ansible_search_path"], json!(["/srv/play"]));
+        assert!(!vars.map.contains_key("role_path"));
     }
 
     fn plan() -> PlayPlan {

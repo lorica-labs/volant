@@ -135,7 +135,7 @@ pub struct PlayTask {
     /// three-state value: measured on ansible-core 2.19.12, a block with `ignore_errors: true`
     /// and a task with `ignore_errors: false` inside it fails the run, so the task's own `false`
     /// has to be told apart from its silence.
-    pub ignore_errors: Option<bool>,
+    pub ignore_errors: Option<Flag>,
     pub timeout: Option<u64>,
     pub vars: Map<String, Value>,
     /// Conditions that must all hold, as Jinja2 expressions.
@@ -197,8 +197,12 @@ impl PlayTask {
     /// Whether a failure here leaves the host in the play. Silence means no: the keyword is
     /// three-state only so a block and the task under it can disagree, and by the time the
     /// executor reads a task the compiler has already resolved that.
+    ///
+    /// A template here has not been rendered: `prepare` renders it for the host that runs the
+    /// task, and hands the readers a task holding the verdict. One read unrendered is not an
+    /// ignored failure.
     pub fn ignores_errors(&self) -> bool {
-        self.ignore_errors.unwrap_or(false)
+        self.ignore_errors == Some(Flag::Fixed(true))
     }
 
     /// A task with nothing in it, for the two shapes the loader builds without reading a
@@ -339,7 +343,8 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
 ///
 /// All three are refused here, at load. That is one step earlier than the reference refuses
 /// `ignore_errors` and `become`, and the divergence is deliberate: no task has run yet, so
-/// there is nothing half-applied to explain.
+/// there is nothing half-applied to explain. A template is the one exception, for
+/// `ignore_errors`: see [`flag`].
 fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
@@ -350,6 +355,26 @@ fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
                 shown(node)
             ),
         },
+    }
+}
+
+/// A boolean keyword as written: a literal, or a template rendered when the task runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Flag {
+    Fixed(bool),
+    Template(String),
+}
+
+/// `ignore_errors`, which may be a template. Measured on ansible-core 2.19.12:
+/// `ignore_errors: "{{ ansible_check_mode }}"`, which `geerlingguy.ntp` and `geerlingguy.docker`
+/// write, is rendered when the task runs, so it is kept as written here and rendered by
+/// `prepare`. Anything else that is not a boolean is still refused by [`boolean`].
+fn flag(yaml: &Yaml, key: &str) -> anyhow::Result<Option<Flag>> {
+    match field(yaml, key) {
+        Some(Yaml::Value(Scalar::String(s))) if crate::template::Templar::is_template(s) => {
+            Ok(Some(Flag::Template(s.to_string())))
+        }
+        _ => Ok(boolean(yaml, key)?.map(Flag::Fixed)),
     }
 }
 
@@ -761,7 +786,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         keywords: PlayTask {
             name: String::new(),
             tags: tags(yaml, &context)?,
-            ignore_errors: boolean(yaml, "ignore_errors")?,
+            ignore_errors: flag(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
             when: conditions(yaml, "when", &context)?,
@@ -889,7 +914,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
         keywords: PlayTask {
             name,
             tags: tags(yaml, &context)?,
-            ignore_errors: boolean(yaml, "ignore_errors")?,
+            ignore_errors: flag(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
             when: conditions(yaml, "when", &context)?,
@@ -1035,7 +1060,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         }
     }
     let context = format!("task '{label}': ");
-    let ignore_errors = boolean(yaml, "ignore_errors")?;
+    let ignore_errors = flag(yaml, "ignore_errors")?;
     let timeout = timeout(yaml, &context)?;
     let vars = mapping(yaml, "vars", &context)?;
     let when = conditions(yaml, "when", &context)?;
@@ -1821,6 +1846,40 @@ mod tests {
         );
     }
 
+    /// `ignore_errors` written as a template loads as written, on a task and on a block, and is
+    /// left for the run to render. Measured on ansible-core 2.19.12:
+    /// `ignore_errors: "{{ ansible_check_mode }}"` is rendered when the task runs, while
+    /// `ignore_errors: maybe` still exits 4 (held by the test above).
+    ///
+    /// What would make this red: the template arm of `flag` removed, which refuses
+    /// `geerlingguy.ntp` at load.
+    #[test]
+    fn a_templated_ignore_errors_is_kept_as_written() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - command: \"false\"\n      ignore_errors: \"{{ ansible_check_mode }}\"\n    - block:\n        - command: echo hi\n      ignore_errors: \"{{ true }}\"\n",
+            "x.yml",
+        )
+        .unwrap();
+        let TaskOrBlock::Task(t) = &pb.plays[0].tasks[0] else {
+            panic!("a task");
+        };
+        assert_eq!(
+            t.ignore_errors,
+            Some(Flag::Template("{{ ansible_check_mode }}".into()))
+        );
+        assert!(
+            !t.ignores_errors(),
+            "an unrendered template ignores nothing"
+        );
+        let TaskOrBlock::Block(b) = &pb.plays[0].tasks[1] else {
+            panic!("a block");
+        };
+        assert_eq!(
+            b.keywords.ignore_errors,
+            Some(Flag::Template("{{ true }}".into()))
+        );
+    }
+
     /// A construct with no module of its own is loaded empty and refused whole by the
     /// pre-flight, rather than blamed for a module it never named. `local_action` is the shape
     /// that is left now that a block is compiled.
@@ -1861,7 +1920,7 @@ mod tests {
         assert_eq!(b.keywords.name, "Grouped");
         assert_eq!(b.keywords.when, ["ready"]);
         assert_eq!(b.keywords.r#become, Some(true));
-        assert_eq!(b.keywords.ignore_errors, Some(true));
+        assert_eq!(b.keywords.ignore_errors, Some(Flag::Fixed(true)));
         assert_eq!(b.keywords.vars["a"], serde_json::json!(1));
         assert!(
             b.keywords.module.is_empty(),

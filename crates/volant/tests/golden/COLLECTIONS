@@ -1,0 +1,4 @@
+ansible.posix 2.2.2
+community.general 13.4.0
+ansible.utils 6.1.1
+netaddr 1.3.0

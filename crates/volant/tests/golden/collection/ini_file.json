@@ -1,0 +1,20 @@
+{
+  "_ansible_no_log": false,
+  "action": "community.general.ini_file",
+  "changed": true,
+  "diff": {
+    "after": "",
+    "after_header": "/tmp/volant16-golden-collection/test.ini (content)",
+    "before": "",
+    "before_header": "/tmp/volant16-golden-collection/test.ini (content)"
+  },
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "mode": "0644",
+  "msg": "section and option added",
+  "owner": "<golden-generator-account>",
+  "path": "/tmp/volant16-golden-collection/test.ini",
+  "size": 23,
+  "state": "file",
+  "uid": 999999999
+}

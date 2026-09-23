@@ -32,9 +32,9 @@ use crate::vars::HostVars;
 ///
 /// The names this release already implements are **not** here, whether natively (`command`,
 /// `shell`, `raw`), on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
-/// `set_fact`, `validate_argument_spec`) or through a plugin of its own ([`Kind`]). `normal` is
-/// not here either: it is the only action plugin with no module of the same name, so no playbook
-/// can name it.
+/// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`package`, `service`).
+/// `normal` is not here either: it is the only action plugin with no module of the same name, so
+/// no playbook can name it.
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",

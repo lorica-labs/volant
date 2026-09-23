@@ -1797,11 +1797,16 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
 /// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
 /// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
 /// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
-/// a host that already has git. Red while volant prints the two item lines and not the third.
+/// a host that already has git.
+///
+/// What would make this red: the task's own line left out after its items, the two item lines
+/// alone.
 #[test]
-#[ignore = "red: a loop whose every item is skipped does not print the task's own skipping line"]
 fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
-    let out = volant(&["playbook", &fixture("loop-all-skipped.yml")]);
+    let out = volant_within(
+        &["playbook", &fixture("loop-all-skipped.yml")],
+        PROBE_DEADLINE,
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     // The first line is what is left of the banner's row of stars.
     let lines: Vec<&str> = section(&text, "Every item skipped")

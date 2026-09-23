@@ -54,6 +54,7 @@ Handlers do not appear in any listing, and neither do the three automatic flush 
 ## Differences from Ansible
 
 - A `notify` that names a handler that does not exist is rejected before the first connection, with the reference's own message and exit code 1. Ansible prints the notifying task's banner first. With Volant, nothing has run when you read the error.
-- A `notify` whose value is a template is rejected with exit code 4. Resolving it per host and per loop item would mean failing a task that has already printed its result.
+- The one exception is a `notify` in a file a dynamic include brings in, which only a running host reaches. It is checked when the task reports `changed` without failing, as in Ansible, and it ends the run with exit code 1: `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`. No `ignore_errors` and no `rescue` can catch it.
+- A `notify` whose value is a template is rejected with exit code 4. Resolving it per host and per loop item would mean failing a task that has already printed its result. In a file a dynamic include brings in, it fails that include instead, with `a templated 'notify' is not supported yet`.
 - A block inside a `handlers:` list is rejected. A flush has nowhere to put a block's `rescue`.
 - A `force_handlers` value that is neither true nor false leaves the setting unchanged. Ansible reads it as false.

@@ -92,7 +92,7 @@ The exceptions are the modules the reference runs through an action plugin Volan
 
 ## Through an action plugin
 
-The controller runs these as the reference's action plugins do: it picks, or renders, what actually reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.
+The controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.
 
 | Module | What it does |
 |---|---|

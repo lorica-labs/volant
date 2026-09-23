@@ -587,7 +587,7 @@ pub fn documentation_table() -> String {
         let _ = writeln!(out, "| `{m}` | {how} |");
     }
     out.push_str(
-        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks, or renders, what actually reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.\n\n| Module | What it does |\n|---|---|\n",
+        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.\n\n| Module | What it does |\n|---|---|\n",
     );
     for (m, summary) in ACTION_PLUGINS {
         let _ = writeln!(out, "| `{m}` | {summary} |");

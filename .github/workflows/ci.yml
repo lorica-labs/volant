@@ -152,6 +152,14 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install ansible-core==2.19.12
           echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+      - name: Install the pinned collections
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m pip install netaddr==1.3.0
+          .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" \
+            ansible.posix==2.2.2 community.general==13.4.0 ansible.utils==6.1.1 \
+            community.library_inventory_filtering_v1==1.1.5
+          echo "ANSIBLE_COLLECTIONS_PATH=$PWD/.collections" >> "$GITHUB_ENV"
       - name: Check the host and controller Pythons are distinct
         run: |
           set -euo pipefail

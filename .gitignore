@@ -15,3 +15,6 @@
 
 # the controller Python the ssh job builds at the checkout root
 /.venv/
+
+# the collections the ssh job installs beside it
+/.collections/

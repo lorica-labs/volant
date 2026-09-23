@@ -21,10 +21,67 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REFERENCE = open(os.path.join(HERE, "ANSIBLE_VERSION"), encoding="utf-8").read().strip()
 
 
+def _read_pins(name):
+    pins = {}
+    with open(os.path.join(HERE, name), encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                key, version = line.split()
+                pins[key] = version
+    return pins
+
+
+# The collection versions this golden is recorded against, plus `netaddr`: not a collection, but
+# pinned the same way because `ansible.utils.ipwrap` needs it in the same controller environment
+# and a mismatched one would silently change what a filter measured against it returns.
+COLLECTIONS = _read_pins("COLLECTIONS")
+
+
+def _installed_collections():
+    """What the controller's own ansible-core actually has, read the way it reads it: a
+    collection's version comes from its own `MANIFEST.json`, on whichever of its configured
+    collection paths carries that collection; `netaddr` is a plain import next to it."""
+    from ansible import constants as ansible_constants
+
+    versions = {}
+    for fqcn in COLLECTIONS:
+        if fqcn == "netaddr":
+            continue
+        namespace, name = fqcn.split(".", 1)
+        for root in ansible_constants.COLLECTIONS_PATHS:
+            manifest = os.path.join(os.path.expanduser(root), "ansible_collections", namespace, name, "MANIFEST.json")
+            if os.path.exists(manifest):
+                with open(manifest, encoding="utf-8") as f:
+                    versions[fqcn] = json.load(f)["collection_info"]["version"]
+                break
+    try:
+        import netaddr
+
+        versions["netaddr"] = netaddr.__version__
+    except ImportError:
+        pass
+    return versions
+
+
+def collection_mismatches():
+    """What in COLLECTIONS the controller does not actually have installed, one line per pin."""
+    installed = _installed_collections()
+    return [
+        f"{name} is {installed.get(name, 'not installed')}, not {version}"
+        for name, version in COLLECTIONS.items()
+        if installed.get(name) != version
+    ]
+
+
 def main() -> int:
     version = subprocess.run(["ansible-playbook", "--version"], capture_output=True, text=True, check=True).stdout
     if REFERENCE not in version.splitlines()[0]:
         print(f"ansible-playbook is not {REFERENCE}: {version.splitlines()[0]}", file=sys.stderr)
+        return 1
+    mismatched = collection_mismatches()
+    if mismatched:
+        print("collections do not match COLLECTIONS: " + "; ".join(mismatched), file=sys.stderr)
         return 1
     with open(os.path.join(HERE, "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
@@ -102,10 +159,11 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
-    # action_plugins() is now the newest and most environment-sensitive: `package` and `service`
-    # need `become` and a real package manager or systemd. It goes last so a failure there cannot
-    # also cost the three pre-existing, unrelated goldens.
-    return inventory() or listings() or python_modules() or action_plugins()
+    # action_plugins() is the most environment-sensitive: `package` and `service` need `become`
+    # and a real package manager or systemd. collection_modules() needs the pinned collections
+    # instead, checked above before any of this ran. Both go after the pre-existing, unrelated
+    # goldens so a failure in either cannot also cost those.
+    return inventory() or listings() or python_modules() or action_plugins() or collection_modules()
 
 
 # A fixed, non-temporary path: `stat`, `file` and `lineinfile` all read or write under it, and
@@ -519,6 +577,95 @@ def action_plugins():
             f.write("\n")
         count += 1
     print(f"action plugin goldens recorded: {count}/{len(recorded)} cases")
+    return 0
+
+
+# A fixed, non-temporary path, cleared at the top of every run for the same reason ACTION_TMP is:
+# `community.general.ini_file` is idempotent, and a file left over from a previous run would turn
+# a recorded "section and option added" into "no change".
+COLLECTION_TMP = "/tmp/volant16-golden-collection"
+
+
+def collection_modules():
+    """Record raw results from two collection modules that touch no host state at all: neither is
+    served by an action plugin, so each runs as a plain Python module, the same way python_modules()
+    does, over `connection: local`.
+
+    `ansible.posix.sysctl` writes to `sysctl_file` alone (`sysctl_set` and `reload` both false):
+    the form measured on a managed host with no kernel effect. `community.general.ini_file` is a
+    module of a different collection with no system effect of its own, so the pair also proves the
+    union carries more than one collection's modules without a name conflict.
+    """
+    modules = [
+        {
+            "name": "sysctl",
+            "module": "ansible.posix.sysctl",
+            "args": {
+                "name": "net.ipv4.ip_forward",
+                "value": "1",
+                "sysctl_file": f"{COLLECTION_TMP}/sysctl.conf",
+                "sysctl_set": False,
+                "reload": False,
+            },
+        },
+        {
+            "name": "ini_file",
+            "module": "community.general.ini_file",
+            "args": {
+                "path": f"{COLLECTION_TMP}/test.ini",
+                "section": "golden",
+                "option": "color",
+                "value": "blue",
+                # An explicit mode, not the umask-dependent default: ini_file reports it back, and
+                # left to the umask it would name whoever ran the generator.
+                "mode": "0644",
+            },
+        },
+    ]
+    tasks = [{"name": m["name"], m["module"]: m["args"]} for m in modules]
+    play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": tasks}]
+    env = dict(
+        os.environ,
+        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        ANSIBLE_NOCOLOR="1",
+        # Same reasoning as python_modules(): naming the interpreter outright skips discovery, so
+        # neither its warning nor the fact it would set ever reaches these results.
+        ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
+    )
+    shutil.rmtree(COLLECTION_TMP, ignore_errors=True)
+    os.makedirs(COLLECTION_TMP, exist_ok=True)
+    playbook = os.path.join(COLLECTION_TMP, "collection-modules.yml")
+    with open(playbook, "w", encoding="utf-8") as f:
+        yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    run = subprocess.run(
+        ["ansible-playbook", "-i", "localhost,", playbook],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        print(
+            f"ansible-playbook exited {run.returncode} while recording the collection modules",
+            file=sys.stderr,
+        )
+        if run.stderr:
+            print(run.stderr, file=sys.stderr)
+        return 1
+    report = json.loads(run.stdout)
+    outcomes = {task["task"]["name"]: task["hosts"]["localhost"] for task in report["plays"][0]["tasks"]}
+    destination = os.path.join(HERE, "collection")
+    os.makedirs(destination, exist_ok=True)
+    recorded = 0
+    for m in modules:
+        name = m["name"]
+        result = dict(outcomes[name])
+        result.pop("invocation", None)
+        _redact_account(result, ("owner", "group"), ("uid", "gid"))
+        with open(os.path.join(destination, f"{name}.json"), "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False, sort_keys=True)
+            f.write("\n")
+        recorded += 1
+    print(f"collection module goldens recorded: {recorded}/{len(modules)} modules")
     return 0
 
 

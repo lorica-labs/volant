@@ -15,15 +15,17 @@ use std::sync::LazyLock;
 use minijinja::value::{Kwargs, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, Value};
 
+use super::add_filter;
 use crate::yaml::{PYYAML_FALSE, PYYAML_TRUE};
 
 pub fn register(env: &mut Environment<'static>) {
     // `to_yaml` keeps PyYAML's default flow style (`None`: a collection of scalars inline),
     // `to_nice_yaml` asks for block style everywhere. Both sort keys.
-    env.add_filter("to_yaml", |v: Value, kwargs: Kwargs| {
+    add_filter(env, "to_yaml", |v: Value, kwargs: Kwargs| {
         dump(&v, None, kwargs, 2, None)
     });
-    env.add_filter(
+    add_filter(
+        env,
         "to_nice_yaml",
         |v: Value, indent: Option<usize>, kwargs: Kwargs| dump(&v, indent, kwargs, 4, Some(false)),
     );

@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use minijinja::value::{Enumerator, Object};
+use minijinja::functions::Function;
+use minijinja::value::{Enumerator, FunctionArgs, FunctionResult, Object};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior};
 use serde_json::{Map, Value};
 
@@ -603,6 +604,34 @@ fn type_name(v: &Value) -> &'static str {
         Value::Array(_) => "list",
         Value::Object(_) => "dict",
     }
+}
+
+/// Registers a filter under `name` and again under `ansible.builtin.<name>`: every filter and
+/// test ansible-core ships lives in that collection, and a role is free to spell it out in full.
+/// Measured (A9): minijinja's parser accepts a dotted name after `|` or `is` as a single filter
+/// or test name — `{{ "x" | ansible.builtin.default("y") }}` fails by `unknown filter: filter
+/// ansible.builtin.default is unknown`, not by a syntax error — so registering the qualified
+/// string is all a name needs. `ansible.utils.ipwrap` is registered on its own, never through
+/// this: the reference never exposes it under `ansible.builtin`.
+pub(crate) fn add_filter<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
+where
+    F: Function<Rv, Args> + Copy,
+    Rv: FunctionResult,
+    Args: for<'a> FunctionArgs<'a>,
+{
+    env.add_filter(name.to_string(), f);
+    env.add_filter(format!("ansible.builtin.{name}"), f);
+}
+
+/// The test equivalent of [`add_filter`].
+pub(crate) fn add_test<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
+where
+    F: Function<Rv, Args> + Copy,
+    Rv: FunctionResult,
+    Args: for<'a> FunctionArgs<'a>,
+{
+    env.add_test(name.to_string(), f);
+    env.add_test(format!("ansible.builtin.{name}"), f);
 }
 
 /// Python truthiness, for messages and for filters that need it.

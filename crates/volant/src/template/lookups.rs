@@ -35,6 +35,9 @@ fn lookup(
     if matches!(name, "first_found" | "ansible.builtin.first_found") {
         return first_found(state, terms, kwargs, base_dir);
     }
+    if matches!(name, "fileglob" | "ansible.builtin.fileglob") {
+        return fileglob(state, terms, kwargs, base_dir);
+    }
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
     kwargs.assert_all_used()?;
     // Whatever a lookup read at run time is data: a file's text, a command's output, an
@@ -289,6 +292,126 @@ fn lookup_error(name: &str, e: &TemplateError) -> Error {
     } else {
         invalid(format!("in the template {name}: {e}"))
     }
+}
+
+/// `lookup('fileglob', pattern...)`, `plugins/lookup/fileglob.py`, read on the dev machine
+/// (ansible-core 2.19.12): a pattern with no directory of its own is globbed under `files/` of
+/// each entry of `ansible_search_path`, then under the entry itself, the first entry with a
+/// match winning; a pattern that already names a directory - an absolute one, measured on the
+/// two static `with_fileglob` patterns of the `airgap` role, or a relative one under a search
+/// entry - is globbed at that directory directly. Only files match, several terms concatenate
+/// into one list, and the whole result is sorted; no match anywhere is an empty list, never an
+/// error, the same as the reference's own `ret = []`.
+///
+/// The result is controller content, not tainted: a matched name is a path the pattern's author
+/// named and the controller's filesystem confirmed, the same standing `lookup('first_found')`
+/// gives the path it finds. Nothing here reads a managed host.
+fn fileglob(
+    state: &State,
+    terms: &[Value],
+    kwargs: Kwargs,
+    base_dir: &Path,
+) -> Result<Value, Error> {
+    kwargs.assert_all_used()?;
+    let search = search_path(state, base_dir);
+    let mut out: Vec<String> = Vec::new();
+    for term in terms {
+        let pattern = text_of(term);
+        for dir in fileglob_dirs(&pattern, &search) {
+            let matched = glob_files(&dir, fileglob_file(&pattern));
+            if !matched.is_empty() {
+                out.extend(matched);
+                break;
+            }
+        }
+    }
+    out.sort();
+    Ok(Value::from(
+        out.into_iter().map(Value::from).collect::<Vec<_>>(),
+    ))
+}
+
+/// The glob part of a pattern: everything after its last `/`, or the whole pattern when it names
+/// no directory.
+fn fileglob_file(pattern: &str) -> &str {
+    pattern.rsplit('/').next().unwrap_or(pattern)
+}
+
+/// The directories a pattern is globbed in, in the order they are tried. A pattern with no `/`
+/// is the reference's bare-name case: `files/` of each search entry, then the entry itself. A
+/// pattern that names its own directory is globbed there directly - the entry itself when that
+/// directory is absolute (the `airgap` role's own patterns, `{{ airgap_dir }}/*.tar.gz` rendered
+/// to an absolute path), each search entry's own copy of it otherwise.
+fn fileglob_dirs(pattern: &str, search: &[PathBuf]) -> Vec<PathBuf> {
+    match pattern.rsplit_once('/') {
+        None => search
+            .iter()
+            .flat_map(|dir| [dir.join("files"), dir.clone()])
+            .collect(),
+        Some(("", _)) => vec![PathBuf::from("/")],
+        Some((dir, _)) if Path::new(dir).is_absolute() => vec![PathBuf::from(dir)],
+        Some((dir, _)) => search
+            .iter()
+            .flat_map(|entry| [entry.join("files").join(dir), entry.join(dir)])
+            .collect(),
+    }
+}
+
+/// One directory read non-recursively for the files (not the directories) whose name matches a
+/// shell glob pattern (`*`, `?`, `[...]`, `[!...]`), Python's `fnmatch` set. A directory that
+/// does not exist, or a pattern that fails to compile, matches nothing rather than erroring: the
+/// reference's own `glob.glob` answers the same way for a directory that is not there.
+fn glob_files(dir: &Path, pattern: &str) -> Vec<String> {
+    let Ok(re) = regex::Regex::new(&fnmatch_to_regex(pattern)) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| re.is_match(name))
+        })
+        .map(|entry| entry.path().display().to_string())
+        .collect()
+}
+
+/// A shell glob pattern (`*`, `?`, a `[...]` or negated `[!...]` character class, everything else
+/// literal) as an anchored regular expression.
+fn fnmatch_to_regex(pattern: &str) -> String {
+    let mut re = String::from("(?s)^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '[' => {
+                re.push('[');
+                if chars.peek() == Some(&'!') {
+                    re.push('^');
+                    chars.next();
+                }
+                for c in chars.by_ref() {
+                    if c == ']' {
+                        break;
+                    }
+                    if "\\^]".contains(c) {
+                        re.push('\\');
+                    }
+                    re.push(c);
+                }
+                re.push(']');
+            }
+            other => re.push_str(&regex::escape(&other.to_string())),
+        }
+    }
+    re.push('$');
+    re
 }
 
 /// `lookup('first_found', ...)`, `plugins/lookup/first_found.py`: every term, a name, a list of
@@ -547,6 +670,147 @@ mod tests {
             .render("{{ lookup('template', 'self.j2') }}", &role.vars())
             .unwrap_err();
         assert!(err.0.contains("recursion"), "{err}");
+    }
+
+    /// A plain directory of files, for the absolute-pattern case `lookup('fileglob')` takes
+    /// straight: no role, no search path, just a controller directory the pattern already names.
+    struct Dir {
+        path: PathBuf,
+    }
+
+    impl Dir {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("volant-fileglob-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(path.join("sub")).unwrap();
+            Self { path }
+        }
+
+        fn write(&self, name: &str) -> &Self {
+            std::fs::write(self.path.join(name), "x").unwrap();
+            self
+        }
+
+        fn pattern(&self, glob: &str) -> String {
+            format!("{}/{glob}", self.path.display())
+        }
+
+        fn full(&self, name: &str) -> String {
+            self.path.join(name).display().to_string()
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// The two static `with_fileglob` patterns of the `airgap` role, against a fixture
+    /// directory: `k3s-selinux*.rpm` and `*.tar.gz`, both rendered to an absolute pattern the
+    /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
+    /// matched and not just the extension, `sub/` proves a directory never matches, and the
+    /// result is sorted.
+    ///
+    /// What would make this red: the absolute pattern read as a search-path entry instead of
+    /// globbed directly, a directory counted as a match, or the result left in read-dir order.
+    #[test]
+    fn fileglob_matches_the_two_static_airgap_patterns() {
+        let dir = Dir::new("airgap");
+        dir.write("container-selinux-1.rpm")
+            .write("k3s-selinux-1.rpm")
+            .write("k3s-selinux-1.el8.rpm")
+            .write("other.txt");
+        let t = Templar::new(dir.path.clone());
+        let rpm = dir.pattern("k3s-selinux*.rpm");
+        assert_eq!(
+            t.render(
+                &format!("{{{{ lookup('fileglob', '{rpm}') }}}}"),
+                &Map::new()
+            )
+            .unwrap(),
+            json!([
+                dir.full("k3s-selinux-1.el8.rpm"),
+                dir.full("k3s-selinux-1.rpm")
+            ])
+        );
+
+        dir.write("images-2.tar.gz").write("images-1.tar.gz");
+        let images = dir.pattern("*.tar.gz");
+        assert_eq!(
+            t.render(
+                &format!("{{{{ lookup('fileglob', '{images}') }}}}"),
+                &Map::new()
+            )
+            .unwrap(),
+            json!([dir.full("images-1.tar.gz"), dir.full("images-2.tar.gz")])
+        );
+    }
+
+    /// A pattern with no directory of its own: `files/` of the search path wins over the entry
+    /// itself when both would match, and the entry itself only when `files/` has nothing at
+    /// all - measured behaviour of `plugins/lookup/fileglob.py`, read on the dev machine.
+    ///
+    /// What would make this red: reading the entry itself before `files/`, or merging matches
+    /// from both instead of stopping at the first that has any.
+    #[test]
+    fn fileglob_prefers_files_over_the_entry_itself() {
+        let role = Role::new("fileglob");
+        role.write("role/files/only-in-files.conf", "f")
+            .write("role/only-in-role.conf", "r")
+            .write("role/both.conf", "role's own")
+            .write("role/files/both.conf", "files' own");
+        let t = templar(&role.dir);
+        let vars = role.vars();
+        assert_eq!(
+            t.render("{{ lookup('fileglob', 'only-in-files.conf') }}", &vars)
+                .unwrap(),
+            json!([role
+                .role()
+                .join("files/only-in-files.conf")
+                .display()
+                .to_string()])
+        );
+        assert_eq!(
+            t.render("{{ lookup('fileglob', 'only-in-role.conf') }}", &vars)
+                .unwrap(),
+            json!([role.role().join("only-in-role.conf").display().to_string()])
+        );
+        assert_eq!(
+            t.render("{{ lookup('fileglob', 'both.conf') }}", &vars)
+                .unwrap(),
+            json!([role.role().join("files/both.conf").display().to_string()])
+        );
+    }
+
+    /// No match anywhere is an empty list, never an error - the reference's own `ret = []`.
+    #[test]
+    fn fileglob_with_no_match_is_an_empty_list_not_an_error() {
+        let role = Role::new("fileglob-empty");
+        let t = templar(&role.dir);
+        assert_eq!(
+            t.render("{{ lookup('fileglob', 'nope*.txt') }}", &role.vars())
+                .unwrap(),
+            json!([])
+        );
+    }
+
+    /// `ansible.builtin.fileglob` answers exactly as the bare name does (A9: minijinja accepts
+    /// a qualified lookup name the same as a qualified filter or test name).
+    #[test]
+    fn fileglob_answers_under_its_ansible_builtin_alias_too() {
+        let role = Role::new("fileglob-alias");
+        role.write("role/files/x.conf", "x");
+        let t = templar(&role.dir);
+        assert_eq!(
+            t.render(
+                "{{ lookup('ansible.builtin.fileglob', 'x.conf') }}",
+                &role.vars()
+            )
+            .unwrap(),
+            json!([role.role().join("files/x.conf").display().to_string()])
+        );
     }
 
     /// The five `first_found` lines measured on ansible-core 2.19.12 in a role holding

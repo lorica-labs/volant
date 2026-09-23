@@ -438,6 +438,11 @@ pub(super) fn prepare(
     let mut items_from_host = false;
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
+        Some(raw) if let Some(lookup) = &task.loop_with => {
+            let (list, tainted) = with_lookup_items(templar, lookup, raw, &base)?;
+            items_from_host = tainted;
+            list.into_iter().map(Some).collect()
+        }
         Some(raw) => {
             let (rendered, tainted) = templar.render_value_tainted(raw, &base)?;
             items_from_host = tainted;
@@ -728,6 +733,86 @@ fn strict_boolean(value: &Value) -> Option<bool> {
         "n" | "no" | "off" | "0" | "0.0" | "-0.0" | "false" | "f" => Some(false),
         _ => None,
     }
+}
+
+/// The items of a `with_<lookup>` loop: the terms, rendered, handed to the lookup as its
+/// arguments, and what it returns taken as a list. Read from ansible-core 2.19.12's
+/// `TaskExecutor._get_loop_items`: a string term is resolved and anything that is not a list
+/// becomes a list of one, and the lookup runs with `wantlist=True`.
+///
+/// `with_first_found` alone drops, at any depth, a term that renders undefined: its plugin does
+/// that when it is invoked as `with_` (`_recurse_terms(terms, omit_undefined=True)`). This is what
+/// lets the `raspberrypi` role's task, which names `detected_distribution` before any host has
+/// set it, reach its `when` on a host that is not a Pi.
+///
+/// The second half of the answer is whether the terms read a managed host. A path the lookup
+/// found is controller content, but one built from a fact is not the playbook's own choice, so
+/// the items of such a loop are bound as data, like those of a `loop:` over a registered list.
+fn with_lookup_items(
+    templar: &Templar,
+    lookup: &str,
+    raw: &Value,
+    vars: &HostVars,
+) -> Result<(Vec<Value>, bool), TemplateError> {
+    let mut tainted = false;
+    let terms = render_terms(templar, raw, vars, lookup == "first_found", &mut tainted)?;
+    let terms = match terms {
+        Some(Value::Array(terms)) => terms,
+        Some(term) => vec![term],
+        None => Vec::new(),
+    };
+    // Bound in a copy only this call reads, under a name no playbook writes: the terms reach the
+    // lookup as values, never as text to compile.
+    const TERMS: &str = "__volant_with_terms";
+    let mut scope = vars.clone();
+    scope.insert(TERMS.into(), Value::Array(terms));
+    let found = templar.evaluate(&format!("lookup({lookup:?}, *{TERMS})"), &scope)?;
+    // `wantlist=True` for the two lookups this runs: `lookup()` answers no result with an empty
+    // string and one result bare, and neither of them can find an empty name.
+    let list = match found {
+        Value::Array(list) => list,
+        Value::String(s) if s.is_empty() => Vec::new(),
+        one => vec![one],
+    };
+    Ok((list, tainted))
+}
+
+/// Every string of `raw` rendered on its own, so an undefined one can be left out rather than
+/// fail the whole list when `omit_undefined` says so. `None` is a value left out.
+fn render_terms(
+    templar: &Templar,
+    raw: &Value,
+    vars: &HostVars,
+    omit_undefined: bool,
+    tainted: &mut bool,
+) -> Result<Option<Value>, TemplateError> {
+    Ok(Some(match raw {
+        Value::String(_) => match templar.render_value_tainted(raw, vars) {
+            Ok((value, from_host)) => {
+                *tainted |= from_host;
+                value
+            }
+            Err(e) if omit_undefined && e.is_undefined() => return Ok(None),
+            Err(e) => return Err(e),
+        },
+        Value::Array(items) => {
+            let mut out = Vec::new();
+            for item in items {
+                out.extend(render_terms(templar, item, vars, omit_undefined, tainted)?);
+            }
+            Value::Array(out)
+        }
+        Value::Object(map) => {
+            let mut out = Map::new();
+            for (key, value) in map {
+                if let Some(value) = render_terms(templar, value, vars, omit_undefined, tainted)? {
+                    out.insert(key.clone(), value);
+                }
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }))
 }
 
 fn flatten_once(list: Vec<Value>) -> Vec<Value> {
@@ -1465,5 +1550,179 @@ mod tests {
             None,
             "an unknown name is an ssh target of that name, not a refusal"
         );
+    }
+
+    /// A directory of fixture files, removed when the test ends however it ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("volant-with-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("the scratch directory");
+            // Canonical, so a path the lookup prints compares equal on a machine whose temporary
+            // directory is a symlink.
+            Scratch(dir.canonicalize().expect("the scratch directory resolves"))
+        }
+
+        fn write(&self, rel: &str) -> String {
+            let path = self.0.join(rel);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("the parent");
+            std::fs::write(&path, "x").expect("the fixture file");
+            path.display().to_string()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The one task of `yaml`, read by the loader, as a step written in `origin`.
+    fn loaded(yaml: &str, origin: Origin) -> Step {
+        let pb = crate::playbook::parse(yaml, "x.yml").expect("the playbook loads");
+        let Some(crate::playbook::TaskOrBlock::Task(t)) = pb.plays[0].tasks.first() else {
+            panic!("one task");
+        };
+        step_of(t.clone(), origin)
+    }
+
+    /// What each item binds the loop variable to, and whether it binds it as data.
+    fn bound(step: &Step, store: &Mutex<VarStore>) -> Result<Vec<(Value, bool)>, TemplateError> {
+        Ok(prepared(step, store)?
+            .iter()
+            .map(|item| {
+                let var = &step.task.loop_var;
+                (
+                    item.vars.map[var].clone(),
+                    item.vars.untrusted.contains(var),
+                )
+            })
+            .collect())
+    }
+
+    /// The `airgap` role's `Distribute K3s binary` task, as `site.yml` lists it statically:
+    /// `copy` over `with_first_found` with one mapping term naming two absolute candidates and
+    /// `skip: true`. The first candidate that exists is the one item; with neither there, `skip`
+    /// makes it a loop over nothing, which reports the task skipped; without `skip` it fails in
+    /// the plugin's words, `No file was found when using first_found.`
+    ///
+    /// What would make this red: the terms handed to the lookup as one string rather than as its
+    /// terms, the lookup's bare-string answer walked as it stands (no item, or a failure on a
+    /// loop that is not a list), `skip` read as a failure, or the order of the candidates lost.
+    #[test]
+    fn with_first_found_walks_the_file_it_found_and_nothing_under_skip() {
+        let dir = Scratch::new("first-found");
+        let task = |skip: &str| {
+            format!(
+                "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{{{ airgap_dir }}}}/k3s-{{{{ k3s_arch }}}}\"\n            - \"{{{{ airgap_dir }}}}/k3s\"\n{skip}      vars:\n        airgap_dir: {}\n        k3s_arch: arm64\n",
+                dir.0.display()
+            )
+        };
+        let store = store_at(&dir.0);
+        let step = loaded(&task("          skip: true\n"), Origin::default());
+        assert_eq!(step.task.loop_with.as_deref(), Some("first_found"));
+
+        assert_eq!(bound(&step, &store).unwrap(), []);
+        let plain = dir.write("k3s");
+        assert_eq!(bound(&step, &store).unwrap(), [(json!(plain), false)]);
+        let arch = dir.write("k3s-arm64");
+        assert_eq!(bound(&step, &store).unwrap(), [(json!(arch), false)]);
+
+        std::fs::remove_file(&arch).expect("the file goes");
+        std::fs::remove_file(&plain).expect("the file goes");
+        let strict = loaded(&task(""), Origin::default());
+        let err = bound(&strict, &store).expect_err("nothing found and no skip");
+        assert!(
+            err.0.contains("No file was found when using first_found."),
+            "{}",
+            err.0
+        );
+    }
+
+    /// The `airgap` role's two static `with_fileglob` tasks: a pattern under `airgap_dir` walks
+    /// every file it matches, sorted, and one match is still a loop of one, not the path's bare
+    /// string. A term that renders undefined fails here, where `first_found` would drop it.
+    ///
+    /// What would make this red: the lookup's single-match answer, a bare string, walked as it
+    /// stands; no match read as one empty item; or the undefined term dropped for every lookup
+    /// rather than for `first_found` alone.
+    #[test]
+    fn with_fileglob_walks_every_match_and_one_match_is_a_list_of_one() {
+        let dir = Scratch::new("fileglob");
+        let task = |pattern: &str| {
+            format!(
+                "- hosts: all\n  tasks:\n    - name: Distribute K3s images\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{pattern}\"\n      vars:\n        airgap_dir: {}\n",
+                dir.0.display()
+            )
+        };
+        let store = store_at(&dir.0);
+        let step = loaded(&task("{{ airgap_dir }}/*.tar.gz"), Origin::default());
+        assert_eq!(step.task.loop_with.as_deref(), Some("fileglob"));
+        assert_eq!(bound(&step, &store).unwrap(), []);
+
+        let one = dir.write("images-2.tar.gz");
+        assert_eq!(bound(&step, &store).unwrap(), [(json!(one), false)]);
+        let first = dir.write("images-1.tar.gz");
+        dir.write("images.txt");
+        assert_eq!(
+            bound(&step, &store).unwrap(),
+            [(json!(first), false), (json!(one), false)]
+        );
+
+        let undefined = loaded(&task("{{ nosuch }}/*.rpm"), Origin::default());
+        let err = bound(&undefined, &store).expect_err("an undefined term fails fileglob");
+        assert!(err.is_undefined(), "{}", err.0);
+    }
+
+    /// The `raspberrypi` role's `include_tasks` over `with_first_found`, which `site.yml` lists
+    /// statically and runs on every host. On a host that is not a Pi, `detected_distribution` was
+    /// never set, so the terms that name it render undefined and are dropped - the plugin's own
+    /// rule when it is invoked as `with_` - and the search goes on to the ones that render. The
+    /// file is found beside the task, in the role's `tasks/`, and the task's `when` then skips
+    /// each item.
+    ///
+    /// A term built from a fact is the host's choice of file, so the items are bound as data
+    /// then, and as the playbook's own when only author terms were read.
+    ///
+    /// What would make this red: an undefined term failing the task on every host that is not a
+    /// Pi, the `when` evaluated before the loop, or an item named by a fact bound as author
+    /// content.
+    #[test]
+    fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_choice_as_data()
+    {
+        let dir = Scratch::new("raspberrypi");
+        let role = dir.0.join("roles/raspberrypi");
+        let default = dir.write("roles/raspberrypi/tasks/setup/default.yml");
+        let ubuntu = dir.write("roles/raspberrypi/tasks/setup/Ubuntu.yml");
+        let yaml = "- hosts: all\n  tasks:\n    - name: Execute OS related tasks on the Raspberry Pi - {{ action_ }}\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"{{ action_ }}/{{ detected_distribution }}-{{ detected_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ detected_distribution }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}.yml\"\n        - \"{{ action_ }}/default.yml\"\n      vars:\n        state: present\n        action_: >-\n          {% if state == 'present' %}setup{% else %}teardown{% endif %}\n      when:\n        - raspberry_pi | default(false)\n";
+        let step = loaded(
+            yaml,
+            Origin {
+                file_dir: role.join("tasks"),
+                role_dir: Some(role.clone()),
+                depth: 0,
+                inherited: None,
+            },
+        );
+        let store = store_at(&dir.0);
+        let items = prepared(&step, &store).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].vars.map["item"], json!(default));
+        assert!(!items[0].vars.untrusted.contains("item"));
+        assert!(items[0].skipped.is_some(), "the task's `when` skips it");
+
+        store
+            .lock()
+            .unwrap()
+            .set_untrusted_fact("h1", "ansible_distribution", json!("Ubuntu"));
+        store.lock().unwrap().set_untrusted_fact(
+            "h1",
+            "ansible_distribution_major_version",
+            json!("24"),
+        );
+        assert_eq!(bound(&step, &store).unwrap(), [(json!(ubuntu), true)]);
     }
 }

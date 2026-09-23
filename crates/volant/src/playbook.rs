@@ -146,6 +146,10 @@ pub struct PlayTask {
     /// Whether `loop_items` came from `with_items` rather than `loop`: `with_items` flattens
     /// one level, `loop` does not.
     pub with_items: bool,
+    /// The lookup a `with_<lookup>` loop runs its terms through, when `loop_items` came from one
+    /// other than `with_items`: the loop walks what that lookup returns as a list, the way the
+    /// reference's `loop_with` does.
+    pub loop_with: Option<String>,
     pub loop_var: String,
     pub loop_label: Option<String>,
     pub register: Option<String>,
@@ -221,6 +225,7 @@ impl PlayTask {
             when: Vec::new(),
             loop_items: None,
             with_items: false,
+            loop_with: None,
             loop_var: "item".to_string(),
             loop_label: None,
             register: None,
@@ -1078,17 +1083,27 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
         Some(_) => bail!("task '{label}': 'register' must be a variable name"),
     };
-    let (loop_items, with_items) = match (field(yaml, "loop"), field(yaml, "with_items")) {
-        (Some(_), Some(_)) => bail!("task '{label}': 'loop' and 'with_items' cannot both be given"),
-        (Some(v), None) => (
-            Some(to_json(v).with_context(|| format!("task '{label}': loop"))?),
-            false,
+    // Every loop keyword this release runs: `loop`, `with_items`, and each `with_<lookup>` whose
+    // row says it runs. The others were parked above for the pre-flight.
+    let mut loops = map.iter().filter_map(|(key, value)| {
+        let key = key.as_str()?;
+        let runs = key == "loop"
+            || (key.starts_with("with_")
+                && task_keyword(key).is_some_and(|k| k.support != Support::Preflight));
+        runs.then_some((key, value))
+    });
+    let (loop_items, with_items, loop_with) = match (loops.next(), loops.next()) {
+        (Some((first, _)), Some((second, _))) => {
+            bail!("task '{label}': '{first}' and '{second}' cannot both be given")
+        }
+        (Some((key, v)), None) => (
+            Some(to_json(v).with_context(|| format!("task '{label}': {key}"))?),
+            key == "with_items",
+            key.strip_prefix("with_")
+                .filter(|lookup| *lookup != "items")
+                .map(str::to_string),
         ),
-        (None, Some(v)) => (
-            Some(to_json(v).with_context(|| format!("task '{label}': with_items"))?),
-            true,
-        ),
-        (None, None) => (None, false),
+        (None, _) => (None, false, None),
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
     let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
@@ -1104,6 +1119,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         when,
         loop_items,
         with_items,
+        loop_with,
         loop_var,
         loop_label,
         register,
@@ -1793,6 +1809,16 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("loop"));
+        let err = parse(
+            "- hosts: all\n  tasks:\n    - debug:\n      with_fileglob: ['*']\n      with_first_found: [a]\n",
+            "x.yml",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}")
+                .contains("'with_fileglob' and 'with_first_found' cannot both be given"),
+            "{err:#}"
+        );
     }
 
     /// A keyword this release cannot execute is parked on the task rather than refused, so the

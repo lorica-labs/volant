@@ -57,7 +57,14 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
     // reference's rather than this table's: `ping` is a module here and a payload there, so the
     // payload decides before the name is looked up at all.
     if let Some(payload) = &task.payload {
-        return crate::python::run(payload, &task.args, &context, cancelled);
+        return staged(task, |args| {
+            crate::python::run(payload, args, &context, cancelled)
+        });
+    }
+    if !task.files.is_empty() {
+        return Run::Done(TaskResult::failed_with(format!(
+            "the module {name} cannot take staged files"
+        )));
     }
     match MODULES.iter().find(|m| m.spec.name == name) {
         Some(module) => match unsupported_parameters(module.spec, &task.args)
@@ -70,6 +77,58 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
             "The module {name} is not available on the agent yet"
         ))),
     }
+}
+
+/// Runs `module` with each of the task's files taken out of the cache and named in its
+/// arguments, then removes whatever the module left of them.
+///
+/// A file that cannot be staged fails the task before the module starts, and the files already
+/// staged are removed all the same. Removal runs whatever the module did - succeeded, failed or
+/// was cancelled - and a file that is already gone is the ordinary case, since `copy` moves its
+/// source.
+fn staged(task: &Task, module: impl FnOnce(&Map<String, Value>) -> Run) -> Run {
+    let remote_tmp = crate::blobs::remote_tmp();
+    let mut args = task.args.clone();
+    let mut paths = Vec::new();
+    let mut refused = None;
+    for file in &task.files {
+        match crate::blobs::take(&remote_tmp, &file.blob) {
+            Ok(path) => {
+                args.insert(
+                    file.arg.clone(),
+                    Value::String(path.to_string_lossy().into_owned()),
+                );
+                paths.push(path);
+            }
+            Err(err) => {
+                refused = Some(format!(
+                    "staging file {} for '{}': {err}",
+                    file.blob, file.arg
+                ));
+                break;
+            }
+        }
+    }
+    let mut run = match refused {
+        Some(msg) => Run::Done(TaskResult::failed_with(msg)),
+        None => module(&args),
+    };
+    for path in paths {
+        match std::fs::remove_file(&path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                // A staged file that outlives its task may hold a rendered secret, so failing to
+                // remove it is the task's failure rather than a note nobody reads.
+                if let Run::Done(result) = &mut run {
+                    *result = TaskResult::failed_with(format!(
+                        "removing staged file {}: {err}",
+                        path.display()
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    run
 }
 
 /// The reference's own answer for an argument it does not have, word for word, or `None` when

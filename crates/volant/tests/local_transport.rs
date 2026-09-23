@@ -69,6 +69,7 @@ async fn runs_a_batch_through_the_local_transport() {
             timeout: None,
             environment: BTreeMap::default(),
             payload: None,
+            files: Vec::new(),
         }],
     })
     .await
@@ -118,6 +119,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
             timeout: None,
             environment: BTreeMap::default(),
             payload: None,
+            files: Vec::new(),
         }],
     })
     .await
@@ -159,6 +161,7 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
             timeout: None,
             environment: BTreeMap::default(),
             payload: None,
+            files: Vec::new(),
         }],
     })
     .await

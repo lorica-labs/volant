@@ -7261,7 +7261,11 @@ fn fake_python(dir: &Path) -> std::path::PathBuf {
     script
 }
 
-/// Every `.zip` the agent cached under `remote_tmp`, whatever uid the cache directory carries.
+/// Every blob the agent cached under `remote_tmp`, whatever uid the cache directory carries.
+///
+/// A cache entry is named by its hash alone since protocol 5, so the name is what is matched: 64
+/// lowercase hex characters. A staged copy is `stage-<hash>-...` and must not count, and the scan
+/// also walks the agent's own `volant-agent-<version>/` directory.
 fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(remote_tmp) else {
         return Vec::new();
@@ -7272,7 +7276,9 @@ fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
             continue;
         };
         for file in files.flatten() {
-            if file.path().extension().is_some_and(|e| e == "zip") {
+            let name = file.file_name();
+            let name = name.to_string_lossy();
+            if name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
                 out.push(file.path());
             }
         }

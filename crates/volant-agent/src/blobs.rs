@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The agent's cache of module payloads, addressed by the blake3 hash of the zip they hold.
+//! The agent's cache of module payloads and of the files a task stages, addressed by the blake3
+//! hash of the bytes they hold.
 //!
 //! One rule holds the whole file together: a payload is the right payload because its bytes hash
 //! to its name, never because a file of that name exists. `remote_tmp` is `/var/tmp` on many
@@ -11,8 +12,9 @@
 
 use std::fs;
 use std::io::{self, Write};
-
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use volant_protocol::{FromAgent, LogLevel, ToAgent};
 
 /// Where the agent keeps payloads, and where it reads `remote_tmp` from.
@@ -92,7 +94,36 @@ pub fn path(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
             format!("'{hash}' is not a payload name: 64 lowercase hex characters"),
         ));
     }
-    Ok(dir(remote_tmp).join(format!("{hash}.zip")))
+    Ok(dir(remote_tmp).join(hash))
+}
+
+/// Takes a blob out of the cache for one task, and hands back where it now is.
+///
+/// Renamed rather than copied, to a name `path` can never produce, so the blob is gone from the
+/// cache the moment it is staged: the `copy` module **moves** its source, which would otherwise
+/// empty the cache under a controller that believes the link still holds it, and a rendered
+/// template often carries a secret that must not outlive the run. The bytes are hashed first, so
+/// a blob that does not match its name is never staged; it stays where it is for the next
+/// `put_blob` to replace.
+pub fn take(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
+    static STAGED: AtomicU64 = AtomicU64::new(0);
+
+    let at = path(remote_tmp, hash)?;
+    let dir = cache_dir(remote_tmp)?;
+    let actual = blake3::hash(&fs::read(&at)?).to_hex().to_string();
+    if actual != hash {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("blob '{hash}' holds bytes that hash to '{actual}'"),
+        ));
+    }
+    let staged = dir.join(format!(
+        "stage-{hash}-{}-{}",
+        std::process::id(),
+        STAGED.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::rename(&at, &staged)?;
+    Ok(staged)
 }
 
 /// Whether the cache holds this payload **and** its bytes still hash to its name.

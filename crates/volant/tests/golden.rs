@@ -693,12 +693,25 @@ fn pinned_collections() -> Vec<(String, String)> {
 /// `netaddr` is a plain import next to it. Kept in the interpreter this refuses to run without
 /// (`reference_python()`) rather than reimplemented in Rust, because a manifest's shape and a
 /// collection's path list are ansible-core's own to read.
+///
+/// The tuple of names is built from `pinned_collections()` rather than written out a second time:
+/// `COLLECTIONS` gaining a fourth pin (or losing one) must not also require editing this string
+/// by hand to match.
 #[cfg(target_os = "linux")]
-const COLLECTION_VERSION_SCRIPT: &str = r#"
+fn collection_version_script() -> String {
+    let tuple = pinned_collections()
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| name != "netaddr")
+        .map(|name| format!("{name:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"
 import json, os
 from ansible import constants as C
-versions = {}
-for fqcn in ("ansible.posix", "community.general", "ansible.utils"):
+versions = {{}}
+for fqcn in ({tuple},):
     namespace, name = fqcn.split(".", 1)
     for root in C.COLLECTIONS_PATHS:
         manifest = os.path.join(os.path.expanduser(root), "ansible_collections", namespace, name, "MANIFEST.json")
@@ -712,7 +725,9 @@ try:
 except ImportError:
     pass
 print(json.dumps(versions))
-"#;
+"#
+    )
+}
 
 /// What in `COLLECTIONS` this `python` does not actually have installed, one line per pin, on the
 /// model of `controller_python`'s own version check: a collection found alone at another version
@@ -720,7 +735,7 @@ print(json.dumps(versions))
 #[cfg(target_os = "linux")]
 fn collection_mismatches(python: &std::path::Path) -> Vec<String> {
     let out = std::process::Command::new(python)
-        .args(["-c", COLLECTION_VERSION_SCRIPT])
+        .args(["-c", &collection_version_script()])
         .output()
         .expect("python runs");
     let installed: std::collections::BTreeMap<String, String> =
@@ -739,13 +754,35 @@ fn collection_mismatches(python: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
+/// `ANSIBLE_COLLECTIONS_PATHS`/`ANSIBLE_COLLECTIONS_PATH` from this test process's own
+/// environment, to forward through `run_recorded_play` to the child it otherwise strips along
+/// with every other `ANSIBLE_*`.
+///
+/// The `ssh` job installs the pinned collections under its own job directory and sets this
+/// variable to it, outside every path `default_collections_path` (`config.rs`) tries on its own.
+/// Stripping it unconditionally made the collection golden pass on the dev machine, where the
+/// pinned collections also happen to sit on that default path, for a reason that does not hold in
+/// the job: there, Volant would search only the empty defaults and find nothing.
+#[cfg(target_os = "linux")]
+fn collections_path_env() -> Vec<(&'static str, String)> {
+    ["ANSIBLE_COLLECTIONS_PATHS", "ANSIBLE_COLLECTIONS_PATH"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name, value)))
+        .collect()
+}
+
 /// Runs `playbook`, already written under `dir`, against `localhost` over the local connection,
 /// at `-v`, and returns once it exits or panics at a deadline.
+///
+/// `extra_env` is set on the child after every `ANSIBLE_*` variable is stripped from it, so a
+/// caller can forward the one or two names it actually needs (`collections_path_env()`) without
+/// reopening the door to the rest of this process's own `ANSIBLE_*` environment.
 #[cfg(target_os = "linux")]
 fn run_recorded_play(
     dir: &std::path::Path,
     playbook: &str,
     python: &std::path::Path,
+    extra_env: &[(&str, String)],
 ) -> std::process::Output {
     std::fs::write(
         dir.join("hosts.ini"),
@@ -773,6 +810,9 @@ fn run_recorded_play(
         if name.starts_with("ANSIBLE_") {
             command.env_remove(name);
         }
+    }
+    for (name, value) in extra_env {
+        command.env(name, value);
     }
     let mut child = command.spawn().expect("volant starts");
     // A play that cannot reach its host waits rather than returning, and a hung test says
@@ -865,7 +905,7 @@ fn a_python_module_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    let out = run_recorded_play(dir, "python-modules.yml", &python);
+    let out = run_recorded_play(dir, "python-modules.yml", &python, &[]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
     let id = identity();
@@ -1163,7 +1203,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    let out = run_recorded_play(dir, "action-plugins.yml", &python);
+    let out = run_recorded_play(dir, "action-plugins.yml", &python, &[]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut results = results_by_task(&stdout);
     // Read back through `register`, where the recording's JSON callback line shows keys the
@@ -1340,7 +1380,12 @@ fn a_collection_module_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    let out = run_recorded_play(dir, "collection-modules.yml", &python);
+    let out = run_recorded_play(
+        dir,
+        "collection-modules.yml",
+        &python,
+        &collections_path_env(),
+    );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
     let id = identity();

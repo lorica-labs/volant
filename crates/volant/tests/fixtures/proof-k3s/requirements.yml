@@ -1,6 +1,8 @@
-# The three collections the pinned k3s-ansible commit needs, pinned in turn. Installed by
-# `just proof-k3s` into target/collections, never copied into this repository: Volant never
-# installs a collection itself, so what runs is the published archive.
+# The three collections the pinned k3s-ansible commit needs, pinned in turn, plus the one
+# dependency Galaxy resolves for community.general on install, pinned too so it cannot drift
+# under it unnoticed. Installed by `just proof-k3s` into target/collections, never copied into
+# this repository: Volant never installs a collection itself, so what runs is the published
+# archive.
 collections:
   - name: ansible.posix
     version: 2.2.2
@@ -8,3 +10,5 @@ collections:
     version: 13.4.0
   - name: ansible.utils
     version: 6.1.1
+  - name: community.library_inventory_filtering_v1
+    version: 1.1.5

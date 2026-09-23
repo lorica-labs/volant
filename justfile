@@ -386,20 +386,26 @@ _k3s-kubectl:
       chmod +x target/bin/kubectl
     fi
 
-# The INI inventory k3s-ansible's own roles read, written fresh on every call: Volant does not
-# read the reference's YAML inventory, so this writes the equivalent groups by hand.
-# `ansible_user` and `api_endpoint` are read from the server host itself, and `token` is random
-# per run; none of the three is ever printed or committed, and the file is `0600` because
-# `token` is a cluster secret. `k3s_version` is pinned to the kubectl build above, so
-# `kubectl get nodes` and the cluster it is pointed at always name the same version.
+# The INI inventory k3s-ansible's own roles read, written on every call: Volant does not read the
+# reference's YAML inventory, so this writes the equivalent groups by hand. `ansible_user` and
+# `api_endpoint` are read from the server host itself. `token` is kept across calls when an
+# inventory already exists: a new token on every pass changes the server's config and restarts
+# k3s, which would stop a second pass from reproducing the first pass's recap; `proof-k3s-reset`
+# removes the file once the hosts are actually clean, so a fresh series still gets a fresh token.
+# None of the three is ever printed or committed. `umask 077` plus the `chmod` below keep the
+# file `0600` from the moment it is created, because `token` is a cluster secret. `k3s_version`
+# is pinned to the kubectl build above, so `kubectl get nodes` and the cluster it is pointed at
+# always name the same version.
 _k3s-inventory:
     #!/usr/bin/env bash
     set -euo pipefail
+    umask 077
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
     ansible_user="$(ssh "$VOLANT_TARGET_HOST" whoami)"
     api_endpoint="$(ssh "$VOLANT_TARGET_HOST" ip -4 -o route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
-    token="$(openssl rand -hex 16)"
+    token="$(sed -n 's/^token=//p' target/k3s-inventory.ini 2>/dev/null | head -1)"
+    [ -n "$token" ] || token="$(openssl rand -hex 16)"
     {
       printf '[server]\n%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST"
       printf '[agent]\n%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_SECOND_HOST" "$VOLANT_SECOND_HOST"
@@ -413,31 +419,54 @@ _k3s-inventory:
     chmod 600 target/k3s-inventory.ini
 
 # Arm the dead-man switch on both hosts before a run touches k3s: thirty minutes from now, each
-# host runs whichever of the reference's own uninstall scripts applies there. Reset first, so a
-# switch a previous run already spent does not refuse to arm again.
+# host runs whichever of the reference's own uninstall scripts applies there. Checked first, not
+# just reset: `systemd-run --unit=NAME` names both a `.timer` and the `.service` it triggers, and
+# refuses to arm again over one still running, so an already-armed switch aborts here with a
+# clear message instead of a raw systemd error two lines down.
 _k3s-deadman-arm:
     #!/usr/bin/env bash
     set -euo pipefail
     for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
-      ssh "$host" '
-        sudo systemctl reset-failed volant-k3s-deadman.service > /dev/null 2>&1 || true
+      if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" 'systemctl is-active --quiet volant-k3s-deadman.timer' 2>/dev/null; then
+        echo "dead-man switch already armed on $host" >&2
+        exit 1
+      fi
+    done
+    for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
+      ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+        sudo systemctl reset-failed volant-k3s-deadman.timer volant-k3s-deadman.service > /dev/null 2>&1 || true
         sudo systemd-run --unit=volant-k3s-deadman --on-active=30min /bin/sh -c \
           "[ -x /usr/local/bin/k3s-uninstall.sh ] && /usr/local/bin/k3s-uninstall.sh; [ -x /usr/local/bin/k3s-agent-uninstall.sh ] && /usr/local/bin/k3s-agent-uninstall.sh; true"
       '
     done
 
-# Cancel the dead-man switch, but only once both hosts still answer over ssh: a host that stopped
-# answering is exactly the situation the switch exists for, so it is left armed and the run
-# reports what happened instead of disarming blind.
+# Cancel the dead-man switch, but only once both hosts still answer over ssh (a short retrying
+# probe: a host still settling right after the run just finished is not yet the unreachable case
+# this switch exists for). A host that stays unreachable is left armed, and the recipe fails
+# instead of disarming blind. `systemd-run --unit=NAME` names the `.timer` doing the scheduling,
+# not just the `.service` it triggers, so that is what has to stop; a trailing `|| true` here
+# would hide a stop that failed and leave the timer ticking toward an uninstall.
 _k3s-deadman-disarm:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ssh "$VOLANT_TARGET_HOST" true 2>/dev/null && ssh "$VOLANT_SECOND_HOST" true 2>/dev/null; then
+    reachable() {
+      local host="$1" attempt
+      for attempt in 1 2 3; do
+        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" true 2>/dev/null && return 0
+        sleep 5
+      done
+      return 1
+    }
+    if reachable "$VOLANT_TARGET_HOST" && reachable "$VOLANT_SECOND_HOST"; then
       for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
-        ssh "$host" 'sudo systemctl stop volant-k3s-deadman.service > /dev/null 2>&1 || true'
+        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+          sudo systemctl stop volant-k3s-deadman.timer
+          ! systemctl is-active --quiet volant-k3s-deadman.timer
+        '
       done
     else
       echo "a host did not answer: leaving the dead-man switch armed" >&2
+      exit 1
     fi
 
 # Run the official k3s-ansible playbook (the pinned commit above) against the two hosts named by
@@ -447,28 +476,41 @@ _k3s-deadman-disarm:
 #
 # `-e kubeconfig=...` points the server role's kubeconfig away from its own default
 # (`~/.kube/config.new`), so a run from this machine never merges the cluster into this
-# machine's own `~/.kube/config`. `ANSIBLE_COLLECTIONS_PATH` is exported for both engines, since
-# Volant reads it exactly as the reference does; `ANSIBLE_PIPELINING` is read only by the
-# reference, for the same reason as `proof-roles`. The dead-man switch is armed on both hosts
-# before the run and disarmed after.
+# machine's own `~/.kube/config`. `ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` are
+# exported for both engines, since Volant reads both exactly as the reference does and `site.yml`
+# names its roles bare, resolved only through one of these or an `ansible.cfg` in the current
+# directory. Neither engine `cd`s into target/k3s-ansible to pick that file's own `ansible.cfg`
+# up on its own: it also sets `pipelining = True`, and running from there would enable it even
+# for a pass this recipe means to label `pipelining=False`. `ANSIBLE_PIPELINING` itself is read
+# only by the reference, for the same reason as `proof-roles`. The dead-man switch is armed on
+# both hosts after the build (so a build failure never arms it for nothing) and disarmed on
+# every exit path (`trap ... EXIT`), not just a clean one.
 proof-k3s engine="volant" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
+    case "{{engine}}" in
+      volant|reference) ;;
+      *) echo "engine must be 'volant' or 'reference'"; exit 1 ;;
+    esac
     just _k3s-clone
     just _k3s-collections
     just _k3s-kubectl
     just _k3s-inventory
     export ANSIBLE_COLLECTIONS_PATH="$PWD/target/collections"
+    export ANSIBLE_ROLES_PATH="$PWD/target/k3s-ansible/roles"
     export PATH="$PWD/target/bin:$PATH"
     play=target/k3s-ansible/playbooks/site.yml
     kubeconfig="$PWD/target/k3s-kubeconfig"
+    if [ "{{engine}}" = "volant" ]; then
+      just agent-musl
+      cargo build --release -p volant
+    fi
     just _k3s-deadman-arm
+    trap 'just _k3s-deadman-disarm' EXIT
     case "{{engine}}" in
       volant)
-        just agent-musl
-        cargo build --release -p volant
         VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
         VOLANT_AGENT_DIR="$PWD/target/agents" \
           /usr/bin/time -f 'proof-k3s volant %e s' \
@@ -478,15 +520,13 @@ proof-k3s engine="volant" *args:
         /usr/bin/time -f "proof-k3s reference (pipelining ${ANSIBLE_PIPELINING:-False}) %e s" \
           "$(uv tool dir)/ansible-core/bin/ansible-playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" {{args}}
         ;;
-      *)
-        echo "engine must be 'volant' or 'reference'"; exit 1
-        ;;
     esac
-    just _k3s-deadman-disarm
 
 # Undo what `proof-k3s` leaves on both hosts: the reference's own `playbooks/reset.yml`, then a
 # check that k3s actually left no trace. The recap `ansible-playbook` prints is not proof of a
-# clean host by itself; the checks below are.
+# clean host by itself; the checks below are. The inventory is removed once both hosts check out
+# clean, so the next `proof-k3s` call starts a fresh series with a fresh token (see
+# `_k3s-inventory`).
 proof-k3s-reset:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -496,10 +536,16 @@ proof-k3s-reset:
     just _k3s-inventory
     "$(uv tool dir)/ansible-core/bin/ansible-playbook" -i target/k3s-inventory.ini target/k3s-ansible/playbooks/reset.yml
     for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
-      ssh "$host" '
+      ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
         set -euo pipefail
         test ! -e /usr/local/bin/k3s || { echo "k3s still present"; exit 1; }
-        ! sudo iptables -S | grep -Eq "kube|flannel|cni" || { echo "leftover k3s iptables rules"; exit 1; }
+        ! systemctl is-active --quiet volant-k3s-deadman.timer || { echo "dead-man switch still armed"; exit 1; }
+        rules="$(sudo iptables -S)"
+        if grep -Eiq "kube|flannel|cni" <<<"$rules"; then
+          echo "leftover k3s iptables rules"
+          exit 1
+        fi
       '
     done
+    rm -f target/k3s-inventory.ini
     echo "k3s-reset ok"

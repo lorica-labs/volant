@@ -2866,16 +2866,11 @@ mod tests {
             json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
         );
         let result = ran.expect("the item finished");
-        // Measure 4: `p1` registers the module's result as it is.
-        assert_eq!(
-            Value::Object(result.0.clone()),
-            json!({"cache_updated": false, "changed": false})
-        );
 
         // The result goes where every remote result goes, and the `setup` it took to choose the
         // module leaves nothing there.
         let mut store = one_host_store();
-        record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+        record_facts(&mut store, &["h1".to_string()], &[(None, result.clone())]);
         let host = store.for_host("h1", &crate::vars::Scope::default());
         assert!(!host.contains_key("ansible_pkg_mgr"), "{host:?}");
         assert!(
@@ -2883,6 +2878,11 @@ mod tests {
                 .and_then(|f| f.get("pkg_mgr"))
                 .is_none(),
             "{host:?}"
+        );
+        // Measure 4: `p1` registers the module's result as it is.
+        assert_eq!(
+            Value::Object(result.0),
+            json!({"cache_updated": false, "changed": false})
         );
     }
 

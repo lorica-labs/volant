@@ -93,8 +93,9 @@ pub fn is_python_module(module: &str) -> bool {
         && include_module(module).is_none()
         && short_name(module) != crate::playbook::META
         && !crate::action_plugins::is_action_backed(module)
-        // A plugin this release runs is not a module either: it picks one. Without this line
-        // `package`, gone from the refused list, would be built and sent as itself.
+        // A plugin this release runs is not a module either: it picks one, and the sub-tasks it
+        // asks for carry the payloads. `package` is gone from the refused list, so without this
+        // line it would read here as a module of its own.
         && crate::action_plugins::kind(module).is_none()
 }
 

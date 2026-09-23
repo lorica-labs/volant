@@ -7408,3 +7408,67 @@ fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The two lookups a role reads, end to end, against the search path the controller gives a
+/// role's task. Measured on ansible-core 2.19.12: `lookup('first_found', ['files/x.txt'])`
+/// answers the role's own `files/x.txt`, and `lookup('template', 't.j2')`, with `templates/t.j2`
+/// holding `{{ '{{ 1 + 1 }}' }}`, shows `{{ 1 + 1 }}` under `debug: msg:`, never `2`.
+///
+/// What would make this red: `ansible_search_path` missing from a role task's variables (both
+/// lookups then look beside the playbook and fail), or the `template` arm of `lookup` not
+/// marking what it rendered as data (the debug shows `2`).
+#[test]
+fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
+    let dir = std::env::temp_dir().join(format!("volant-role-lookups-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in [
+        "roles/probe/tasks",
+        "roles/probe/templates",
+        "roles/probe/files",
+    ] {
+        std::fs::create_dir_all(dir.join(sub)).expect("the role's directories");
+    }
+    let write = |rel: &str, text: &str| std::fs::write(dir.join(rel), text).expect(rel);
+    write("roles/probe/files/x.txt", "x\n");
+    write("roles/probe/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");
+    write(
+        "roles/probe/templates/snip.j2",
+        "from role templates {{ who }}\n",
+    );
+    write(
+        "roles/probe/tasks/main.yml",
+        "- name: Via lookup, rendered\n  debug:\n    msg: \"{{ via_lookup }}\"\n  vars:\n    via_lookup: \"{{ lookup('template', 't.j2') }}\"\n\
+         - name: First found\n  debug:\n    msg: \"found={{ lookup('first_found', ['files/x.txt']) }}\"\n\
+         - name: Snippet\n  debug:\n    msg: \"{{ lookup('template', 'snip.j2') }}\"\n  vars:\n    who: me\n",
+    );
+    write(
+        "site.yml",
+        "- hosts: all\n  gather_facts: false\n  roles:\n    - probe\n",
+    );
+    write("inv.ini", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("site.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains(r#""msg": "{{ 1 + 1 }}""#),
+        "debug: msg: rendered what the template lookup returned:\n{stdout}"
+    );
+    let found = dir.join("roles/probe/files/x.txt");
+    assert!(
+        stdout.contains(&format!("\"msg\": \"found={}\"", found.display())),
+        "first_found did not answer the role's own file:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(r#""msg": "from role templates me\n""#),
+        "the role's template was not rendered:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

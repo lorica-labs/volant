@@ -449,13 +449,20 @@ pub fn is_meta(task: &PlayTask) -> bool {
     short_name(&task.module) == META
 }
 
+/// The collection modules the reference reads a string argument of as one command line: the two
+/// of `ansible.windows` in ansible-core 2.19.12's `FREEFORM_ACTIONS`, whose other entries are all
+/// builtin names.
+pub(crate) const FREE_FORM_COLLECTION_MODULES: &[&str] =
+    &["ansible.windows.win_command", "ansible.windows.win_shell"];
+
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 ///
 /// The three registries answer for their own rows, so a module moving between them keeps the
 /// form its table gives it. `include_tasks: sub.yml` and `include_vars: v.yml` name a file the
 /// way `import_tasks: sub.yml` does, and `include_role` wants `name=` like `import_role`.
 fn is_free_form(module: &str) -> bool {
-    native(module).is_some_and(|m| m.free_form)
+    FREE_FORM_COLLECTION_MODULES.contains(&module)
+        || native(module).is_some_and(|m| m.free_form)
         || local(module).is_some_and(|m| m.free_form)
         || import_module(module) == Some(true)
         || include_module(module) == Some(true)
@@ -1277,6 +1284,30 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::Value(Scalar::Boolean(b)) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(b.to_string()));
         }
+        // A collection's module, read as the reference's `parse_kv` reads it: a word without `=`
+        // is kept in `_raw_params`, and a string that does not split is kept whole, for the
+        // pre-flight to refuse when a task is checked. Refused here instead, a role's file for
+        // another platform - read only to build the union - would refuse a run no host of which
+        // reaches it.
+        Yaml::Value(Scalar::String(s)) if crate::python::is_collection_name(module) => {
+            let mut raw = Vec::new();
+            match shlex::split(s) {
+                Some(words) => {
+                    for word in words {
+                        match word.split_once('=') {
+                            Some((k, v)) => {
+                                args.insert(k.to_string(), Value::String(v.to_string()));
+                            }
+                            None => raw.push(word),
+                        }
+                    }
+                }
+                None => raw.push(s.to_string()),
+            }
+            if !raw.is_empty() {
+                args.insert("_raw_params".into(), Value::String(raw.join(" ")));
+            }
+        }
         Yaml::Value(Scalar::String(s)) => {
             for word in shlex::split(s).ok_or_else(|| anyhow!("unbalanced quotes in '{s}'"))? {
                 let (k, v) = word
@@ -1594,6 +1625,53 @@ mod tests {
                 });
                 assert_eq!(got, *value, "{module}: '{key}'");
             }
+        }
+    }
+
+    /// A collection module's string argument is read as the reference's `parse_kv` reads it:
+    /// `key=value` words become options, the rest is kept in `_raw_params` for the pre-flight,
+    /// and a free-form module keeps the whole line.
+    ///
+    /// What would make this red: the loader refusing a word without `=`, which refuses a Linux
+    /// run over a cross-platform role's Windows file (`win_shell: Get-Service foo`) or over
+    /// `port={{ x }}`, both read only to build the union; or the stray word dropped, which runs
+    /// the module without it and says nothing.
+    #[test]
+    fn a_collection_module_keeps_what_is_not_key_value() {
+        for (module, text, expect) in [
+            (
+                "ansible.windows.win_shell",
+                "Get-Service foo",
+                &[("_raw_params", "Get-Service foo")][..],
+            ),
+            (
+                "ns.coll.mod",
+                "port={{ x }}",
+                &[("port", "{{"), ("_raw_params", "x }}")][..],
+            ),
+            (
+                "ns.coll.mod",
+                "a=1 stray",
+                &[("a", "1"), ("_raw_params", "stray")][..],
+            ),
+            ("ns.coll.mod", "a='open", &[("_raw_params", "a='open")][..]),
+        ] {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - {module}: {text}\n"),
+                "x.yml",
+            )
+            .unwrap_or_else(|e| panic!("{module}: {text}: {e:#}"));
+            let task = first(&pb);
+            let got: Vec<(&str, &str)> = task
+                .args
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default()))
+                .collect();
+            let mut want = expect.to_vec();
+            want.sort();
+            let mut got = got;
+            got.sort();
+            assert_eq!(got, want, "{module}: {text}");
         }
     }
 

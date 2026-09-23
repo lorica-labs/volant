@@ -121,48 +121,58 @@ def loaders():
         LOADED.append(True)
 
 
-def union(modules):
-    """The union blob and the per-module facts, for every module named."""
+def build(name):
+    """One module's zip and facts, or RuntimeError saying why it cannot be shipped.
+
+    Looked up with `mod_type=".py"`: a Windows module is a `.ps1` beside a `.py` that holds only
+    its documentation, and the loader left to itself returns whichever it meets first.
+    """
     from ansible.executor import module_common
     from ansible.parsing.dataloader import DataLoader
     from ansible.plugins.loader import module_loader
     from ansible.template import Templar
 
     loaders()
-    templar = Templar(loader=DataLoader())
+    path = module_loader.find_plugin(name, mod_type=".py")
+    if path is None:
+        raise RuntimeError("ansible-core has no module %r" % name)
+    try:
+        # The interpreter in `task_vars` only shapes the shebang of a wrapper this path never
+        # ships: the agent runs the module under the interpreter its own host resolved. The zip
+        # itself is the same bytes whatever is named here.
+        built = module_common.modify_module(
+            module_name=name,
+            module_path=path,
+            module_args={},
+            templar=Templar(loader=DataLoader()),
+            task_vars={"ansible_python_interpreter": "/usr/bin/python3"},
+        )
+    except Exception as failure:
+        raise RuntimeError("building module %r: %s" % (name, failure))
+    # A module built `old` has no zip at all: its whole body is the payload, and what makes it
+    # work is an action plugin on the controller, or it is a documentation stub. `resolve`
+    # answers those as unusable before a task can name them; this is the belt to that pair of
+    # braces.
+    if built.module_style != "new":
+        raise RuntimeError(
+            "module %r is built as %r, which has no module_utils zip to ship"
+            % (name, built.module_style)
+        )
+    # `validate=True` so a byte that is not base64 raises here rather than being dropped on the
+    # way to a zip that then opens short of an entry.
+    zip_data = group(ZIP_DATA, built.b_module_data, "zip_data of %r" % name)
+    return base64.b64decode(zip_data, validate=True), facts(built.b_module_data.decode())
+
+
+def union(modules):
+    """The union blob and the per-module facts, for every module named."""
     entries = {}
     owners = {}
     facts_by_module = {}
     for name in modules:
-        path = module_loader.find_plugin(name)
-        if path is None:
-            raise RuntimeError("ansible-core has no module %r" % name)
-        try:
-            # The interpreter in `task_vars` only shapes the shebang of a wrapper this path
-            # never ships: the agent runs the module under the interpreter its own host
-            # resolved. The zip itself is the same bytes whatever is named here.
-            built = module_common.modify_module(
-                module_name=name,
-                module_path=path,
-                module_args={},
-                templar=templar,
-                task_vars={"ansible_python_interpreter": "/usr/bin/python3"},
-            )
-        except Exception as failure:
-            raise RuntimeError("building module %r: %s" % (name, failure))
-        # A module built `old` has no zip at all: its whole body is the payload, and what makes
-        # it work is an action plugin on the controller. The pre-flight refuses those by name
-        # already; this is the belt to that pair of braces.
-        if built.module_style != "new":
-            raise RuntimeError(
-                "module %r is built as %r, which has no module_utils zip to ship"
-                % (name, built.module_style)
-            )
-        # `validate=True` so a byte that is not base64 raises here rather than being dropped
-        # on the way to a zip that then opens short of an entry.
-        zip_data = group(ZIP_DATA, built.b_module_data, "zip_data of %r" % name)
-        merge(entries, owners, name, base64.b64decode(zip_data, validate=True))
-        facts_by_module[name] = facts(built.b_module_data.decode())
+        raw, found = build(name)
+        merge(entries, owners, name, raw)
+        facts_by_module[name] = found
     blob = pack(entries)
     return {
         "zip_b64": base64.b64encode(blob).decode(),
@@ -195,40 +205,69 @@ def version_of(directory):
         return "*"
 
 
+def collection_of(name):
+    """The `namespace.collection` a dotted module name lives in, or None for a shorter name."""
+    parts = name.split(".")
+    return ".".join(parts[:2]) if len(parts) > 2 else None
+
+
 def resolve(names):
-    """What ansible-core makes of each name: a module it can build, a module its collection runs
-    through an action plugin, or nothing, and then which collection would have to be installed.
+    """What ansible-core makes of each name, one answer per name.
+
+    Each name is answered on its own, so one that raises - a `runtime.yml` tombstone raises
+    `AnsiblePluginRemovedError` - is that name's answer and not the whole run's: the pre-flight
+    refuses it only if a task names it.
+    """
+    loaders()
+    answers = {}
+    for name in names:
+        try:
+            answers[name] = resolve_one(name)
+        except Exception as failure:
+            answers[name] = {"unusable": "%s: %s" % (type(failure).__name__, failure)}
+    return {"resolved": answers}
+
+
+def resolve_one(name):
+    """A module it can build, a module its collection runs through an action plugin, a name it
+    knows and cannot run, or nothing, and then which collection would have to be installed.
 
     The collection is looked for before the module: asking the module loader for a name in a
     collection that is not there prints a loader warning the operator has no use for.
     """
     from ansible.plugins.loader import action_loader, module_loader
 
-    loaders()
-    answers = {}
-    for name in names:
-        parts = name.split(".")
-        collection = ".".join(parts[:2]) if len(parts) > 2 else None
-        if collection is not None and collection_dir(collection) is None:
-            answers[name] = {"missing": collection}
-            continue
-        module = module_loader.find_plugin_with_context(name)
-        if not module.resolved:
-            answers[name] = {"missing": None}
-            continue
-        # Every module resolves to `normal` when nothing else claims it, so that one is the
-        # absence of an action plugin, not one.
-        action = action_loader.find_plugin_with_context(name)
-        if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
-            answers[name] = {"action_plugin": module.resolved_fqcn}
-            continue
-        owner = module.plugin_resolved_collection
-        where = collection_dir(owner) if owner and owner != "ansible.builtin" else None
-        answers[name] = {
-            "module": module.resolved_fqcn,
-            "collection": [owner, version_of(where)] if where else None,
-        }
-    return {"resolved": answers}
+    collection = collection_of(name)
+    if collection is not None and collection_dir(collection) is None:
+        return {"missing": collection}
+    module = module_loader.find_plugin_with_context(name, mod_type=".py")
+    if not module.resolved:
+        # A `runtime.yml` redirect into a collection nobody installed: the install hint names
+        # the collection at the end of the chain, not the one the playbook wrote.
+        last = module.redirect_list[-1] if module.redirect_list else name
+        hop = collection_of(last)
+        if last != name and hop is not None and collection_dir(hop) is None:
+            return {"missing": hop}
+        return {"missing": None}
+    # As `TaskExecutor._get_action_handler_with_module_context` reads it: the action plugin
+    # `runtime.yml` routes the module to comes first, then one of the module's own name. Every
+    # module resolves to `normal` when nothing else claims it, so that one is the absence of an
+    # action plugin, not one.
+    if module.action_plugin:
+        return {"action_plugin": module.resolved_fqcn}
+    action = action_loader.find_plugin_with_context(name)
+    if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
+        return {"action_plugin": module.resolved_fqcn}
+    try:
+        build(name)
+    except RuntimeError as unbuildable:
+        return {"unusable": str(unbuildable)}
+    owner = module.plugin_resolved_collection
+    where = collection_dir(owner) if owner and owner != "ansible.builtin" else None
+    return {
+        "module": module.resolved_fqcn,
+        "collection": [owner, version_of(where)] if where else None,
+    }
 
 
 def read_frame(stream):

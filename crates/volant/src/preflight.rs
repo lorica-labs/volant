@@ -327,6 +327,19 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // ansible-core knows which collections are installed, and it is asked once, after both
         // passes, before the union is built ([`check_resolved`]).
         if crate::python::is_collection_name(&task.module) {
+            // What the loader kept of a string argument that is not `key=value`, refused here
+            // rather than at load, as the reference's `ModuleArgsParser` refuses it after
+            // `parse_kv` kept it: a role file for another platform is parsed for the union and
+            // never checked, so its free-form Windows task cannot refuse a Linux run.
+            if task.args.contains_key("_raw_params")
+                && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+            {
+                bail!(
+                    "task '{}': this task '{}' has extra params, which is only allowed in the free-form modules: command, shell, raw, script, win_command, win_shell and their ansible.builtin, ansible.legacy and ansible.windows names",
+                    task.name,
+                    task.module
+                );
+            }
             return Ok(());
         }
         bail!(unresolved(&task.name, &task.module));
@@ -377,6 +390,10 @@ pub(crate) fn check_resolved(
                 "task '{task}': module '{fqcn}' needs an action plugin from its collection, which this release does not run"
             ),
         )),
+        Resolved::Unusable { reason } => Err(Refusal::at(
+            CODE,
+            format!("task '{task}': module '{module}' cannot run: {reason}"),
+        )),
         Resolved::Missing { collection: None } => Err(Refusal::at(CODE, unresolved(task, module))),
         Resolved::Missing {
             collection: Some(collection),
@@ -388,6 +405,18 @@ pub(crate) fn check_resolved(
             ),
         )),
     }
+}
+
+/// A name outside `ansible.builtin` a task gives, on a controller where no ansible-core could be
+/// asked what it is: the reference's sentence, then why nothing could look.
+pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -> anyhow::Error {
+    Refusal::at(
+        CODE,
+        format!(
+            "{} Only the controller's ansible-core can resolve a name outside ansible.builtin, and {why:#}",
+            unresolved(task, module)
+        ),
+    )
 }
 
 /// A collection's module an include brought in, refused unless the union holds it.
@@ -679,6 +708,22 @@ mod tests {
                 ("Reload".to_string(), "community.general.ufw".to_string()),
             ]
         );
+        // A word that is not `key=value` is kept by the loader and refused here, where a task is
+        // checked, unless the module is free-form. Red if the loader refuses it instead (a role's
+        // Windows file would refuse a Linux run) or if nothing refuses it (the module runs with
+        // an argument it never declared).
+        let text =
+            refusal("- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n");
+        assert!(
+            text.contains("task 'Stray': this task 'ns.coll.mod' has extra params"),
+            "{text}"
+        );
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - ansible.windows.win_shell: Get-Service foo\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("a free-form collection module takes its command line");
         let text =
             refusal("- hosts: all\n  tasks:\n    - name: T\n      ansible.builtin.nosuch: x=1\n");
         assert!(

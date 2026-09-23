@@ -123,6 +123,175 @@ pub fn modules_to_build<'a>(
     out
 }
 
+/// Every module a run's union needs: the ones its compiled plays name, and the ones written in
+/// every file a dynamic include may read once the run is under way.
+///
+/// The union is built once, before the first connection, and an include is read only when a host
+/// reaches it - often under a name like `setup-{{ ansible_os_family }}.yml` that nothing can
+/// resolve before the facts are in. So what is in reach goes in: every `.yml` and `.yaml` file
+/// under `tasks/` and `handlers/` of each role the plays use, and every file an include or an
+/// import names by a literal path, followed down. A name that is not a module this release builds
+/// is dropped by [`modules_to_build`]: a file for another platform naming a collection's module
+/// costs nothing here, and is refused by name by the include if a host ever reaches it.
+///
+/// A role file that cannot be read or parsed refuses the run, naming the file: the role is broken.
+/// A literal include target that cannot be is left to the include, which fails the host reaching
+/// it the way the reference does.
+pub(crate) fn modules_for_run(
+    plays: &[&crate::compile::Compiled],
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let mut reach = Reach::default();
+    for play in plays {
+        for step in &play.steps {
+            reach.modules.push(step.task.module.clone());
+            if let Some(role) = &step.origin.role_dir {
+                reach.role(role, &play.search)?;
+            }
+            let origin = &step.origin;
+            reach.statement(
+                &step.task,
+                &origin.file_dir,
+                origin.role_dir.as_deref(),
+                &play.search,
+            )?;
+        }
+        reach
+            .modules
+            .extend(play.handlers.iter().map(|h| h.task.module.clone()));
+    }
+    Ok(modules_to_build(reach.modules.iter().map(String::as_str)))
+}
+
+/// The walk behind [`modules_for_run`], with what it has already read so a ring of includes ends.
+#[derive(Default)]
+struct Reach {
+    roles: std::collections::BTreeSet<std::path::PathBuf>,
+    files: std::collections::BTreeSet<std::path::PathBuf>,
+    modules: Vec<String>,
+}
+
+impl Reach {
+    fn role(
+        &mut self,
+        dir: &std::path::Path,
+        search: &crate::roles::RoleSearch,
+    ) -> anyhow::Result<()> {
+        if !self.roles.insert(dir.to_path_buf()) {
+            return Ok(());
+        }
+        for sub in ["tasks", "handlers"] {
+            for path in yaml_files(&dir.join(sub))? {
+                self.files.insert(path.clone());
+                let tasks = if sub == "tasks" {
+                    let mut tasks = Vec::new();
+                    flatten(&crate::playbook::parse_tasks_file(&path)?, &mut tasks);
+                    tasks
+                } else {
+                    crate::playbook::parse_handlers_file(&path)?
+                        .into_iter()
+                        .map(|h| h.task)
+                        .collect()
+                };
+                self.tasks(&tasks, path.parent().unwrap_or(dir), Some(dir), search)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn tasks(
+        &mut self,
+        tasks: &[crate::playbook::PlayTask],
+        file_dir: &std::path::Path,
+        role_dir: Option<&std::path::Path>,
+        search: &crate::roles::RoleSearch,
+    ) -> anyhow::Result<()> {
+        for task in tasks {
+            self.modules.push(task.module.clone());
+            self.statement(task, file_dir, role_dir, search)?;
+        }
+        Ok(())
+    }
+
+    /// Follows what an include or an import names by a literal path. A templated name is read as
+    /// it is written, names no file and no role, and is left to the include.
+    fn statement(
+        &mut self,
+        task: &crate::playbook::PlayTask,
+        file_dir: &std::path::Path,
+        role_dir: Option<&std::path::Path>,
+        search: &crate::roles::RoleSearch,
+    ) -> anyhow::Result<()> {
+        let literal = |key: &str| task.args.get(key).and_then(Value::as_str);
+        match short_name(&task.module) {
+            "include_tasks" | "import_tasks" => {
+                let Some(name) = literal("file").or_else(|| literal("_raw_params")) else {
+                    return Ok(());
+                };
+                let path = crate::compile::beside_or_in_role(file_dir, role_dir, name);
+                if !self.files.insert(path.clone()) {
+                    return Ok(());
+                }
+                let Ok(items) = crate::playbook::parse_tasks_file(&path) else {
+                    return Ok(());
+                };
+                let mut tasks = Vec::new();
+                flatten(&items, &mut tasks);
+                self.tasks(&tasks, path.parent().unwrap_or(file_dir), role_dir, search)?;
+            }
+            "include_role" | "import_role" => {
+                if let Some(Ok(dir)) = literal("name")
+                    .or_else(|| literal("role"))
+                    .map(|name| search.locate(name))
+                {
+                    self.role(&dir, search)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// Every task of a list, blocks and all three of their sections included.
+fn flatten(items: &[crate::playbook::TaskOrBlock], out: &mut Vec<crate::playbook::PlayTask>) {
+    for item in items {
+        match item {
+            crate::playbook::TaskOrBlock::Task(task) => out.push(task.clone()),
+            crate::playbook::TaskOrBlock::Block(b) => {
+                for section in [&b.body, &b.rescue, &b.always] {
+                    flatten(section, out);
+                }
+            }
+        }
+    }
+}
+
+/// The `.yml` and `.yaml` files under `dir`, at any depth, in a stable order. A directory that is
+/// not there has none.
+fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut out = Vec::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    let mut entries = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .map(|e| e.map(|e| e.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("reading {}", dir.display()))?;
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            out.extend(yaml_files(&path)?);
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext == "yml" || ext == "yaml")
+        {
+            out.push(path);
+        }
+    }
+    Ok(out)
+}
+
 /// One union blob for a whole run, or `None` when no task of it needs one.
 ///
 /// Built once, before the first connection, under a helper that lives no longer than the build:
@@ -614,6 +783,75 @@ mod tests {
             ]
         );
         assert!(!built.contains(&"package"), "{built:?}");
+    }
+
+    /// The union a run builds, for the first play of `text` written at `dir`.
+    fn union_of(dir: &std::path::Path, text: &str) -> anyhow::Result<Vec<String>> {
+        let pb = crate::playbook::parse(text, dir.join("play.yml").to_str().unwrap())?;
+        let search = crate::roles::RoleSearch {
+            paths: vec![dir.join("roles")],
+            collections: Vec::new(),
+        };
+        let selection = crate::compile::TagSelection::new(Vec::new(), Vec::new());
+        let play = crate::compile::compile(&pb.plays[0], &search, &selection)?;
+        Ok(modules_for_run(&[&play])?.into_iter().collect())
+    }
+
+    /// A module written only in a file a dynamic include reads goes into the union, and so does
+    /// one in a role file nothing includes by a name the compiler can read.
+    ///
+    /// Measured on ansible-core 2.19.12, `connection: local`: a play whose only task is
+    /// `include_tasks: inc.yml`, the file holding one `stat`, runs the `stat` (`ok: [h1]`).
+    /// `geerlingguy.security` and `geerlingguy.nginx` put their `package` and `apt` tasks behind
+    /// `include_tasks: setup-{{ ansible_os_family }}.yml`, a name no compiler can resolve before
+    /// the facts are in, and the union built from the compiled steps alone left them out: the
+    /// run stopped at `module 'apt' needs a python payload, and this run built none for it`.
+    ///
+    /// What would make this red: the union built from the compiled steps alone, which leaves
+    /// out `apt`, `stat` and `ping`; or a collection's module in the other platform's file
+    /// refused, when nothing will ever run it on this host.
+    #[test]
+    fn the_union_holds_what_a_dynamic_include_may_read() {
+        let dir = std::env::temp_dir().join(format!("volant-union-reach-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tasks = dir.join("roles/r/tasks");
+        std::fs::create_dir_all(tasks.join("sub")).unwrap();
+        std::fs::create_dir_all(dir.join("roles/r/handlers")).unwrap();
+        let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+        write(
+            "roles/r/tasks/main.yml",
+            "- include_tasks: \"setup-{{ ansible_os_family }}.yml\"\n",
+        );
+        write(
+            "roles/r/tasks/setup-Debian.yml",
+            "- block:\n    - apt: name=x\n",
+        );
+        write(
+            "roles/r/tasks/setup-Suse.yml",
+            "- community.general.zypper: name=x\n",
+        );
+        write(
+            "roles/r/tasks/sub/deep.yaml",
+            "- lineinfile: path=/x line=y\n",
+        );
+        write(
+            "roles/r/handlers/main.yml",
+            "- name: h\n  systemd: name=x\n",
+        );
+        write("inc.yml", "- stat: path=/\n- include_tasks: inner.yml\n");
+        write("inner.yml", "- ping:\n");
+        let union = union_of(
+            &dir,
+            "- hosts: all\n  gather_facts: false\n  roles: [r]\n  tasks:\n    - include_tasks: inc.yml\n",
+        )
+        .unwrap();
+        assert_eq!(union, ["apt", "lineinfile", "ping", "stat", "systemd"]);
+
+        // A role file that is not YAML is a broken role, refused by its own name.
+        write("roles/r/tasks/broken.yml", "- apt: [\n");
+        let err = union_of(&dir, "- hosts: all\n  roles: [r]\n").unwrap_err();
+        assert!(format!("{err:#}").contains("broken.yml"), "{err:#}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A run that names no Python module builds nothing, so a controller without ansible-core

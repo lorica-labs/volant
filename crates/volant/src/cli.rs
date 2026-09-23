@@ -212,27 +212,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
             preflight::check_steps(play)?;
         }
     }
-    // Every Python module the compiled plays name, built into one payload before the first
-    // connection. Here rather than per play: one helper start, one union, and a controller that
+    // Every Python module the compiled plays name or a dynamic include may read, built into one
+    // payload before the first connection. Here rather than per play: one helper start, one union, and a controller that
     // cannot build payloads at all refuses the run now - with the interpreters it tried - instead
     // of connecting and failing the first Python task of the first play.
     //
     // A run of native tasks alone names no Python module, builds nothing, and needs no
     // ansible-core on the controller.
-    let python_modules = python::modules_to_build(
-        compiled
-            .iter()
-            .flatten()
-            .flat_map(|play| play.steps.iter())
-            .map(|step| step.task.module.as_str())
-            .chain(
-                compiled
-                    .iter()
-                    .flatten()
-                    .flat_map(|play| play.handlers.iter())
-                    .map(|handler| handler.task.module.as_str()),
-            ),
-    );
+    let python_modules = python::modules_for_run(&compiled.iter().flatten().collect::<Vec<_>>())
+        .map_err(|e| Refusal::or(4, e))?;
     let python = python::union_for(&python_modules).map_err(|e| Refusal::or(4, e))?;
 
     let agents = agent::AgentSource::discover();

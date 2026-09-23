@@ -251,7 +251,7 @@ fn variables(role: &Path, sub: &str, from: &str) -> anyhow::Result<Map<String, V
 }
 
 /// `meta/main.yml`: the roles this one depends on, and whether two identical entries run twice.
-fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool)> {
+pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool)> {
     let Some(files) = files(role, "meta", "main", false)? else {
         return Ok((Vec::new(), false));
     };

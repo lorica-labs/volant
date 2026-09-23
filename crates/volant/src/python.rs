@@ -129,7 +129,8 @@ pub fn modules_to_build<'a>(
 /// The union is built once, before the first connection, and an include is read only when a host
 /// reaches it - often under a name like `setup-{{ ansible_os_family }}.yml` that nothing can
 /// resolve before the facts are in. So what is in reach goes in: every `.yml` and `.yaml` file
-/// under `tasks/` and `handlers/` of each role the plays use, and every file an include or an
+/// under `tasks/` and `handlers/` of each role the plays use or an include names, and of its
+/// `meta/main.yml` dependencies, and every file an include or an
 /// import names by a literal path, followed down. A name that is not a module this release builds
 /// is dropped by [`modules_to_build`]: a file for another platform naming a collection's module
 /// costs nothing here, and is refused by name by the include if a host ever reaches it.
@@ -178,6 +179,12 @@ impl Reach {
     ) -> anyhow::Result<()> {
         if !self.roles.insert(dir.to_path_buf()) {
             return Ok(());
+        }
+        // Its `meta/main.yml` dependencies run with it, wherever it was reached from.
+        for dependency in crate::roles::meta(dir)?.0 {
+            if let Ok(found) = search.locate(&dependency.name) {
+                self.role(&found, search)?;
+            }
         }
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
@@ -839,13 +846,30 @@ mod tests {
             "- name: h\n  systemd: name=x\n",
         );
         write("inc.yml", "- stat: path=/\n- include_tasks: inner.yml\n");
-        write("inner.yml", "- ping:\n");
+        write("inner.yml", "- ping:\n- include_role: {name: dyn}\n");
+        // A role reached only through that `include_role`, and its dependency.
+        for role in ["dyn/tasks", "dyn/meta", "dep/tasks"] {
+            std::fs::create_dir_all(dir.join("roles").join(role)).unwrap();
+        }
+        write("roles/dyn/tasks/main.yml", "- debug: msg=x\n");
+        write("roles/dyn/meta/main.yml", "dependencies: [dep]\n");
+        write("roles/dep/tasks/main.yml", "- apt_repository: repo=x\n");
         let union = union_of(
             &dir,
             "- hosts: all\n  gather_facts: false\n  roles: [r]\n  tasks:\n    - include_tasks: inc.yml\n",
         )
         .unwrap();
-        assert_eq!(union, ["apt", "lineinfile", "ping", "stat", "systemd"]);
+        assert_eq!(
+            union,
+            [
+                "apt",
+                "apt_repository",
+                "lineinfile",
+                "ping",
+                "stat",
+                "systemd"
+            ]
+        );
 
         // A role file that is not YAML is a broken role, refused by its own name.
         write("roles/r/tasks/broken.yml", "- apt: [\n");

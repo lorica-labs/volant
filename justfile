@@ -340,3 +340,243 @@ proof-roles-reset:
       sudo rm -rf /etc/nginx /etc/fail2ban/jail.local /etc/apt/apt.conf.d/10periodic /etc/apt/apt.conf.d/50unattended-upgrades
       echo reset
     '
+
+# The commit the k3s proof's playbooks are pinned to, so what runs never drifts out from under
+# the recipe. The kubectl build the proof downloads and the k3s version the inventory pins are
+# kept together here too, so a version bump touches one place.
+K3S_ANSIBLE_SHA := "1a600b60d37e0f8a6e2e79b0e474147b5b108ae5"   # k3s-io/k3s-ansible
+K3S_VERSION := "v1.31.12+k3s1"
+KUBECTL_VERSION := "v1.31.12"
+
+# The pinned k3s-ansible commit, cloned under target/ and never advanced or copied into this
+# repository. Fetched again only when the pinned commit is missing locally, on the same pattern
+# as `bench-compile`'s corpus: a developer offline with it already checked out is not forced back
+# online, and `--force` lands back on the pinned commit past any stray edit.
+_k3s-clone:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target
+    if [ ! -d target/k3s-ansible/.git ]; then
+      git clone -q https://github.com/k3s-io/k3s-ansible target/k3s-ansible
+    fi
+    git -C target/k3s-ansible cat-file -e {{K3S_ANSIBLE_SHA}}^{commit} 2>/dev/null \
+      || git -C target/k3s-ansible fetch -q origin {{K3S_ANSIBLE_SHA}}
+    git -C target/k3s-ansible checkout -q --force {{K3S_ANSIBLE_SHA}}
+
+# The three collections the pinned commit's roles call, pinned again in this repository's own
+# fixture (Volant never installs a collection on its own) and installed once into
+# target/collections. `ansible-galaxy collection install` decides "already installed" against
+# whatever `ANSIBLE_COLLECTIONS_PATH` names, not against `-p` alone: measured without it, a
+# collection already sitting in this account's default collections cache made the command skip
+# `-p target/collections` entirely and leave it empty, so it has to be set here too, scoped to
+# this one call, for the check and the install to agree on the same directory.
+_k3s-collections:
+    ANSIBLE_COLLECTIONS_PATH="$PWD/target/collections" "$(uv tool dir)/ansible-core/bin/ansible-galaxy" collection install -r crates/volant/tests/fixtures/proof-k3s/requirements.yml -p target/collections
+
+# The official kubectl, pinned and checksummed against its own published `.sha256`, put under
+# target/bin so the recipes that need it can put that directory first on PATH. The k3s_server
+# role's `fetch` task only runs when kubectl is found, so without this the proof cannot reach
+# measurement 2 of its own criteria (`kubectl get nodes`). A binary already at this version is
+# left alone.
+_k3s-kubectl:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/bin
+    if ! target/bin/kubectl version --client 2>/dev/null | grep -q "{{KUBECTL_VERSION}}"; then
+      curl -fsSL -o target/bin/kubectl "https://dl.k8s.io/release/{{KUBECTL_VERSION}}/bin/linux/amd64/kubectl"
+      curl -fsSL -o target/bin/kubectl.sha256 "https://dl.k8s.io/release/{{KUBECTL_VERSION}}/bin/linux/amd64/kubectl.sha256"
+      echo "$(cat target/bin/kubectl.sha256)  target/bin/kubectl" | sha256sum -c -
+      chmod +x target/bin/kubectl
+    fi
+
+# The INI inventory k3s-ansible's own roles read, written on every call: Volant does not read the
+# reference's YAML inventory, so this writes the equivalent groups by hand. `ansible_user` and
+# `api_endpoint` are read from the server host itself. `token` is kept across calls when an
+# inventory already exists: a new token on every pass changes the server's config and restarts
+# k3s, which would stop a second pass from reproducing the first pass's recap; `proof-k3s-reset`
+# removes the file once the hosts are actually clean, so a fresh series still gets a fresh token.
+# The `sed` reading it back carries its own `|| true`: with no inventory file yet (the very first
+# call, or right after a reset), `sed` on a missing path fails and `head` still exits 0, and under
+# `pipefail` that failure alone would exit the recipe silently before it ever gets to generate one.
+# None of the three is ever printed or committed. `umask 077` plus the `chmod` below keep the
+# file `0600` from the moment it is created, because `token` is a cluster secret. `k3s_version`
+# is pinned to the kubectl build above, so `kubectl get nodes` and the cluster it is pointed at
+# always name the same version.
+_k3s-inventory:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    umask 077
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
+    ansible_user="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VOLANT_TARGET_HOST" whoami)"
+    api_endpoint="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VOLANT_TARGET_HOST" ip -4 -o route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
+    token="$(sed -n 's/^token=//p' target/k3s-inventory.ini 2>/dev/null | head -1 || true)"
+    [ -n "$token" ] || token="$(openssl rand -hex 16)"
+    {
+      printf '[server]\n%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST"
+      printf '[agent]\n%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_SECOND_HOST" "$VOLANT_SECOND_HOST"
+      printf '[k3s_cluster:children]\nserver\nagent\n'
+      printf '[k3s_cluster:vars]\n'
+      printf 'ansible_user=%s\n' "$ansible_user"
+      printf 'k3s_version=%s\n' "{{K3S_VERSION}}"
+      printf 'token=%s\n' "$token"
+      printf 'api_endpoint=%s\n' "$api_endpoint"
+    } > target/k3s-inventory.ini
+    chmod 600 target/k3s-inventory.ini
+
+# Arm the dead-man switch on both hosts before a run touches k3s: thirty minutes from now, each
+# host runs whichever of the reference's own uninstall scripts applies there. Checked first, not
+# just reset: `systemd-run --unit=NAME` names both a `.timer` and the `.service` it triggers, and
+# refuses to arm again over one still running, so an already-armed switch aborts here with a
+# clear message instead of a raw systemd error two lines down. The check captures `is-active`'s
+# own text instead of testing its exit code under `2>/dev/null`: a failed ssh (exit 255) has to
+# abort the recipe here, same as any other ssh failure would, rather than read as "not armed" and
+# arm blind over a host it never actually reached. If arming the second host fails, the first
+# host's timer is stopped again before this recipe exits, so a partial arm never leaves one host
+# ticking toward an uninstall with nothing left to disarm it.
+_k3s-deadman-arm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
+      state="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" 'systemctl is-active volant-k3s-deadman.timer || true')"
+      [ "$state" != active ] || { echo "dead-man switch already armed on $host" >&2; exit 1; }
+    done
+    armed=()
+    for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
+      if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+        sudo systemctl reset-failed volant-k3s-deadman.timer volant-k3s-deadman.service > /dev/null 2>&1 || true
+        sudo systemd-run --unit=volant-k3s-deadman --on-active=30min /bin/sh -c \
+          "[ -x /usr/local/bin/k3s-uninstall.sh ] && /usr/local/bin/k3s-uninstall.sh; [ -x /usr/local/bin/k3s-agent-uninstall.sh ] && /usr/local/bin/k3s-agent-uninstall.sh; true"
+      '; then
+        armed+=("$host")
+      else
+        for done_host in "${armed[@]}"; do
+          ssh -o ConnectTimeout=10 -o BatchMode=yes "$done_host" 'sudo systemctl stop volant-k3s-deadman.timer' 2>/dev/null || true
+        done
+        echo "failed to arm the dead-man switch on $host" >&2
+        exit 1
+      fi
+    done
+
+# Cancel the dead-man switch, but only once both hosts answer twice, two minutes apart: the play
+# ending is not the same moment as the cluster settling, and disarming a second after `site.yml`
+# returns would race kube-proxy and flannel still installing their own iptables rules. A host
+# that fails either round is left armed, and the recipe fails instead of disarming blind.
+# `systemd-run --unit=NAME` names the `.timer` doing the scheduling, not just the `.service` it
+# triggers, so that is what has to stop; a trailing `|| true` here would hide a stop that failed
+# and leave the timer ticking toward an uninstall.
+_k3s-deadman-disarm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    reachable() {
+      local host="$1" attempt
+      for attempt in 1 2 3; do
+        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" true 2>/dev/null && return 0
+        sleep 5
+      done
+      return 1
+    }
+    both_reachable() {
+      reachable "$VOLANT_TARGET_HOST" && reachable "$VOLANT_SECOND_HOST"
+    }
+    settled=false
+    if both_reachable; then
+      sleep 120
+      both_reachable && settled=true
+    fi
+    if [ "$settled" = true ]; then
+      for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
+        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+          sudo systemctl stop volant-k3s-deadman.timer
+          ! systemctl is-active --quiet volant-k3s-deadman.timer
+        '
+      done
+    else
+      echo "a host did not answer: leaving the dead-man switch armed" >&2
+      exit 1
+    fi
+
+# Run the official k3s-ansible playbook (the pinned commit above) against the two hosts named by
+# VOLANT_TARGET_HOST (the k3s server) and VOLANT_SECOND_HOST (the k3s agent), under either engine
+# (never in CI), and print the wall clock of the run itself without the build, the clone, the
+# collection install or the kubectl download in front of it.
+#
+# `-e kubeconfig=...` points the server role's kubeconfig away from its own default
+# (`~/.kube/config.new`), so a run from this machine never merges the cluster into this
+# machine's own `~/.kube/config`. `ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` are
+# exported for both engines, since Volant reads both exactly as the reference does and `site.yml`
+# names its roles bare, resolved only through one of these or an `ansible.cfg` in the current
+# directory. Neither engine `cd`s into target/k3s-ansible to pick that file's own `ansible.cfg`
+# up on its own: it also sets `pipelining = True`, and running from there would enable it even
+# for a pass this recipe means to label `pipelining=False`. `ANSIBLE_PIPELINING` itself is read
+# only by the reference, for the same reason as `proof-roles`. `umask 077` covers the whole
+# recipe, both engines: the `fetch`ed `kubeconfig` this run writes under target/ carries the
+# cluster's admin credentials, and the process umask is what either engine's own file-writing
+# tasks inherit. The dead-man switch is armed on both hosts after the build (so a build failure
+# never arms it for nothing) and disarmed on every exit path (`trap ... EXIT`), not just a clean
+# one.
+proof-k3s engine="volant" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    umask 077
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
+    case "{{engine}}" in
+      volant|reference) ;;
+      *) echo "engine must be 'volant' or 'reference'"; exit 1 ;;
+    esac
+    just _k3s-clone
+    just _k3s-collections
+    just _k3s-kubectl
+    just _k3s-inventory
+    export ANSIBLE_COLLECTIONS_PATH="$PWD/target/collections"
+    export ANSIBLE_ROLES_PATH="$PWD/target/k3s-ansible/roles"
+    export PATH="$PWD/target/bin:$PATH"
+    play=target/k3s-ansible/playbooks/site.yml
+    kubeconfig="$PWD/target/k3s-kubeconfig"
+    if [ "{{engine}}" = "volant" ]; then
+      just agent-musl
+      cargo build --release -p volant
+    fi
+    just _k3s-deadman-arm
+    trap 'just _k3s-deadman-disarm' EXIT
+    case "{{engine}}" in
+      volant)
+        VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+        VOLANT_AGENT_DIR="$PWD/target/agents" \
+          /usr/bin/time -f 'proof-k3s volant %e s' \
+          ./target/release/volant playbook -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" {{args}}
+        ;;
+      reference)
+        /usr/bin/time -f "proof-k3s reference (pipelining ${ANSIBLE_PIPELINING:-False}) %e s" \
+          "$(uv tool dir)/ansible-core/bin/ansible-playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" {{args}}
+        ;;
+    esac
+
+# Undo what `proof-k3s` leaves on both hosts: the reference's own `playbooks/reset.yml`, then a
+# check that k3s actually left no trace. The recap `ansible-playbook` prints is not proof of a
+# clean host by itself; the checks below are. The inventory is removed once both hosts check out
+# clean, so the next `proof-k3s` call starts a fresh series with a fresh token (see
+# `_k3s-inventory`).
+proof-k3s-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
+    just _k3s-clone
+    just _k3s-inventory
+    "$(uv tool dir)/ansible-core/bin/ansible-playbook" -i target/k3s-inventory.ini target/k3s-ansible/playbooks/reset.yml
+    for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
+      ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+        set -euo pipefail
+        test ! -e /usr/local/bin/k3s || { echo "k3s still present"; exit 1; }
+        ! systemctl is-active --quiet volant-k3s-deadman.timer || { echo "dead-man switch still armed"; exit 1; }
+        rules="$(sudo iptables -S)"
+        if grep -Eiq "kube|flannel|cni" <<<"$rules"; then
+          echo "leftover k3s iptables rules"
+          exit 1
+        fi
+      '
+    done
+    rm -f target/k3s-inventory.ini
+    echo "k3s-reset ok"

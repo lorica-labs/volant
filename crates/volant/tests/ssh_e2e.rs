@@ -11,10 +11,12 @@
 //! `~/.ansible/tmp` itself and says why.
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -603,6 +605,7 @@ fn ssh_runs_a_python_module_and_changes_the_disk() {
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_a_python_module_s_result_is_never_evaluated() {
+    assert_host_and_controller_pythons_are_distinct();
     let dir = tmp("pytrust");
     let inv = inventory(&dir, &[("box", "")]);
     let marker = dir.join("marker");
@@ -672,7 +675,7 @@ fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(500));
     let killed = Command::new("kill")
         .args(["-INT", &child.id().to_string()])
         .status()
@@ -691,4 +694,358 @@ fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
         String::from_utf8_lossy(&survivors.stdout)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The unit `ssh/actions.yml` asks to be started. Present and running wherever systemd is the
+/// init system, which the CI runner and the development machine both are, so the task changes
+/// nothing on either.
+const RUNNING_UNIT: &str = "systemd-journald.service";
+
+/// What `ssh/actions.yml` needs of the host beyond the ssh link, checked before anything runs so
+/// a missing piece fails here, saying which, rather than as a task failure or a `changed` count
+/// that happens to match. The host is localhost, so it is asked directly.
+fn assert_host_can_run_the_action_play() {
+    let sudo = Command::new("sudo")
+        .args(["-n", "true"])
+        .output()
+        .unwrap_or_else(|e| panic!("running 'sudo -n true': {e}"));
+    assert!(
+        sudo.status.success(),
+        "the play's package and service tasks escalate, and 'sudo -n true' failed: {}",
+        String::from_utf8_lossy(&sudo.stderr)
+    );
+    let show = Command::new("systemctl")
+        .args(["show", "-p", "LoadState", "--value", RUNNING_UNIT])
+        .output()
+        .unwrap_or_else(|e| panic!("the play's service task needs systemctl: {e}"));
+    assert_eq!(
+        String::from_utf8_lossy(&show.stdout).trim(),
+        "loaded",
+        "the play starts {RUNNING_UNIT}, which this host does not have"
+    );
+    let active = Command::new("systemctl")
+        .args(["is-active", RUNNING_UNIT])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&active.stdout).trim(),
+        "active",
+        "{RUNNING_UNIT} must already run, or the first pass would count one change more"
+    );
+}
+
+/// [`volant`], ended at a deadline. A plugin is several sub-tasks over one link, and a sub-task
+/// whose result never comes back is a run that waits for ever rather than one that fails.
+fn volant_within(args: &[&str], deadline: Duration) -> Output {
+    let child = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    rx.recv_timeout(deadline).map_or_else(
+        |_| {
+            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            panic!("volant did not finish within {deadline:?}, so a sub-task never came back");
+        },
+        Result::unwrap,
+    )
+}
+
+/// One `ssh/actions.yml` run, `secret` being what its template renders.
+fn run_actions(inv: &str, secret: &str) -> Output {
+    volant_within(
+        &[
+            "playbook",
+            "-i",
+            inv,
+            "-e",
+            &format!("secret={secret}"),
+            &fixture("ssh/actions.yml"),
+        ],
+        Duration::from_secs(180),
+    )
+}
+
+/// A destination of its own for each inventory name, with the `unpacked` directory `unarchive`
+/// needs already there, handed to the play as the host variable `dest`.
+fn dest_for(dir: &Path, host: &str) -> (PathBuf, String) {
+    let dest = dir.join(format!("dest-{host}"));
+    std::fs::create_dir_all(dest.join("unpacked")).unwrap();
+    let var = format!("dest={}", dest.display());
+    (dest, var)
+}
+
+/// The `PLAY RECAP` counters of one host, `ok=6 changed=4 ...` read into a map. Empty when the
+/// recap has no line for the host, which every caller asserts against.
+fn recap(text: &str, host: &str) -> BTreeMap<String, u32> {
+    let Some(line) = text.lines().find(|line| {
+        let mut words = line.split_whitespace();
+        words.next() == Some(host) && words.next() == Some(":")
+    }) else {
+        return BTreeMap::new();
+    };
+    line.split_whitespace()
+        .filter_map(|word| word.split_once('='))
+        .filter_map(|(key, value)| Some((key.to_string(), value.parse().ok()?)))
+        .collect()
+}
+
+fn assert_recap(text: &str, host: &str, changed: u32) {
+    let counts = recap(text, host);
+    assert_eq!(counts.get("changed"), Some(&changed), "{host}: {text}");
+    assert_eq!(counts.get("failed"), Some(&0), "{host}: {text}");
+    assert_eq!(counts.get("unreachable"), Some(&0), "{host}: {text}");
+}
+
+/// A command run as root that has to succeed, for what the escalated tasks' own agent left under
+/// `remote_tmp`: its cache is root's, mode 0700, and this account cannot read it.
+fn as_root(args: &[&str]) -> String {
+    let out = Command::new("sudo").arg("-n").args(args).output().unwrap();
+    assert!(
+        out.status.success(),
+        "'sudo -n {}': {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// Every `volant-blobs-*` cache the run left under `remote_tmp`, one per account an agent ran as.
+fn blob_caches(dir: &Path) -> Vec<PathBuf> {
+    let mut caches: Vec<PathBuf> = std::fs::read_dir(remote_tmp(dir))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("volant-blobs-"))
+        })
+        .collect();
+    caches.sort();
+    caches
+}
+
+/// The name of the one entry a cache holds, asserted to be the union: a payload name, whose bytes
+/// are a zip. A staged file is neither a zip nor, once its connection has ended, anywhere at all.
+fn the_union_in(cache: &Path) -> String {
+    let entries = as_root(&["ls", "-A", &cache.display().to_string()]);
+    let entries: Vec<&str> = entries.lines().collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "{} holds more than the union: {entries:?}",
+        cache.display()
+    );
+    let name = entries[0];
+    assert!(
+        name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{} holds '{name}', which is no payload name",
+        cache.display()
+    );
+    let magic = as_root(&[
+        "od",
+        "-An",
+        "-c",
+        "-N",
+        "4",
+        &cache.join(name).display().to_string(),
+    ]);
+    assert_eq!(
+        magic.split_whitespace().collect::<Vec<_>>(),
+        ["P", "K", "003", "004"],
+        "{}/{name} is not the union's zip",
+        cache.display()
+    );
+    name.to_string()
+}
+
+/// The escalated tasks leave root's cache behind, which this account cannot remove.
+fn remove_as_root(dir: &Path) {
+    let _ = Command::new("sudo")
+        .args(["-n", "rm", "-rf", &dir.display().to_string()])
+        .status();
+}
+
+/// Every action plugin over a real ssh link, twice. The first pass writes four files and finds
+/// the package and the unit already as asked; the second finds everything in place. Each file is
+/// read back and compared byte for byte, and its mode, which the play sets so the host's umask
+/// cannot decide it.
+///
+/// Measured on ansible-core 2.19.12 with the play's six action tasks over `-c local` (the
+/// seventh reads this engine's own cache and changes nothing): `ok=6 changed=4` then
+/// `ok=6 changed=0`, and the template rendered as `secret=<secret>\nline 1\nline 2\n`
+/// (`trim_blocks`, one trailing newline kept).
+///
+/// What would make this red: a plugin that reports success without its last sub-task having
+/// written anything (a file missing or holding other bytes), a plugin that rewrites what is
+/// already there (a second pass with `changed` above 0), or a sub-task's result lost between two
+/// turns (a failed or unreachable count, or the deadline).
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_copy_and_template_converge_on_a_real_host() {
+    assert_host_can_run_the_action_play();
+    assert_host_and_controller_pythons_are_distinct();
+    let dir = tmp("actions");
+    let (dest, var) = dest_for(&dir, "box");
+    let inv = inventory(&dir, &[("box", var.as_str())]);
+    let secret = "converge-secret";
+    let expected: [(&str, Vec<u8>, u32); 4] = [
+        (
+            "copied.txt",
+            std::fs::read(fixture("ssh/files/greeting.txt")).unwrap(),
+            0o644,
+        ),
+        ("content.txt", b"inline content\n".to_vec(), 0o644),
+        (
+            "rendered.txt",
+            format!("secret={secret}\nline 1\nline 2\n").into_bytes(),
+            0o600,
+        ),
+        (
+            "unpacked/unpacked.txt",
+            b"from the archive\n".to_vec(),
+            0o644,
+        ),
+    ];
+    for (pass, changed) in [("first", 4), ("second", 0)] {
+        let out = run_actions(&inv, secret);
+        let text = both(&out);
+        assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");
+        assert_recap(&text, "box", changed);
+        for (name, bytes, mode) in &expected {
+            let path = dest.join(name);
+            let written = std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("{pass} pass, {}: {e}\n{text}", path.display()));
+            assert!(
+                written == *bytes,
+                "{pass} pass, {} holds {:?} where {:?} was expected",
+                path.display(),
+                String::from_utf8_lossy(&written),
+                String::from_utf8_lossy(bytes)
+            );
+            let actual = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(actual, *mode, "{pass} pass, mode of {}", path.display());
+        }
+    }
+    remove_as_root(&dir);
+}
+
+/// After the play, the agents' caches on the host hold the union and nothing else: no file a
+/// task staged, taken or not, and no connection's staging directory. A rendered template often
+/// carries a secret, and a staged copy of it outliving its task is a copy nobody would ever
+/// remove; the rendered value is also looked for anywhere under `remote_tmp`.
+///
+/// The escalated tasks run an agent as root with a cache of its own, so there are two caches,
+/// and both are read. A file kept past its own task but removed with its connection's directory
+/// would not show here; the play's own `No staged file outlives its task` looks for that while
+/// the link is still open, and fails the run.
+///
+/// What would make this red: the agent keeping a staged file after its module ran (that task
+/// fails), or keeping a connection's staging directory after the controller left (a `stage-*`
+/// entry beside the union).
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_a_rendered_file_leaves_nothing_in_the_agent_cache() {
+    assert_host_can_run_the_action_play();
+    assert_host_and_controller_pythons_are_distinct();
+    let dir = tmp("nothingstaged");
+    let (dest, var) = dest_for(&dir, "box");
+    let inv = inventory(&dir, &[("box", var.as_str())]);
+    let secret = format!("staged-secret-{}", std::process::id());
+    let out = run_actions(&inv, &secret);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_recap(&text, "box", 4);
+    assert!(
+        std::fs::read_to_string(dest.join("rendered.txt"))
+            .unwrap()
+            .contains(&secret),
+        "the template did not render the secret, so looking for it proves nothing"
+    );
+    let caches = blob_caches(&dir);
+    assert_eq!(
+        caches.len(),
+        2,
+        "one cache for the connecting account and one for root: {caches:?}"
+    );
+    let unions: Vec<String> = caches.iter().map(|cache| the_union_in(cache)).collect();
+    assert_eq!(unions[0], unions[1], "both agents hold the run's one union");
+    let found = Command::new("sudo")
+        .args(["-n", "grep", "-rlF", &secret])
+        .arg(remote_tmp(&dir))
+        .output()
+        .unwrap();
+    assert_eq!(
+        found.status.code(),
+        Some(1),
+        "the rendered secret is still under remote_tmp: {}{}",
+        String::from_utf8_lossy(&found.stdout),
+        String::from_utf8_lossy(&found.stderr)
+    );
+    remove_as_root(&dir);
+}
+
+/// Two inventory names for the one sshd, so two links, and two more for the escalated tasks,
+/// all on one account's caches. Both hosts copy the same file, which is the same staged blob on
+/// two links at once: each link stages its own copy, and both tasks succeed.
+///
+/// There is no trace of the wire to read, so this reads what the host keeps. The union's inode
+/// and mtime are taken after a first run and again after a second one: a union that either
+/// link's end, or the other agent's start, removed would come back as a new file, and so would
+/// one written again. A `put_blob` of the bytes already there is not visible here, since `store`
+/// returns before writing when the file already matches; `a_payload_travels_once_per_link` in
+/// `executor::run` counts those against a scripted agent.
+///
+/// What would make this red: a copy that fails on one of the two links, or the union written
+/// again, or removed and re-sent, on the second run.
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_two_links_reuse_the_union_the_host_holds() {
+    assert_host_can_run_the_action_play();
+    assert_host_and_controller_pythons_are_distinct();
+    let dir = tmp("twolinks");
+    let (a_dest, a_var) = dest_for(&dir, "a");
+    let (b_dest, b_var) = dest_for(&dir, "b");
+    let inv = inventory(&dir, &[("a", a_var.as_str()), ("b", b_var.as_str())]);
+    let greeting = std::fs::read(fixture("ssh/files/greeting.txt")).unwrap();
+    let mut held = Vec::new();
+    for (pass, changed) in [("first", 4), ("second", 0)] {
+        let out = run_actions(&inv, "two-links-secret");
+        let text = both(&out);
+        assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");
+        for host in ["a", "b"] {
+            assert_recap(&text, host, changed);
+        }
+        for dest in [&a_dest, &b_dest] {
+            assert_eq!(
+                std::fs::read(dest.join("copied.txt")).unwrap(),
+                greeting,
+                "{pass} pass, {}",
+                dest.display()
+            );
+        }
+        let caches = blob_caches(&dir);
+        assert_eq!(caches.len(), 2, "{pass} pass: {caches:?}");
+        let stamps: Vec<String> = caches
+            .iter()
+            .map(|cache| {
+                let union = cache.join(the_union_in(cache));
+                as_root(&["stat", "-c", "%n %i %y", &union.display().to_string()])
+            })
+            .collect();
+        held.push(stamps);
+    }
+    assert_eq!(
+        held[0], held[1],
+        "the second run wrote the union again instead of reusing it"
+    );
+    remove_as_root(&dir);
 }

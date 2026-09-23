@@ -7395,8 +7395,9 @@ fn fake_python(dir: &Path) -> std::path::PathBuf {
 /// Every blob the agent cached under `remote_tmp`, whatever uid the cache directory carries.
 ///
 /// A cache entry is named by its hash alone since protocol 5, so the name is what is matched: 64
-/// lowercase hex characters. A staged copy is `stage-<hash>-...` and must not count, and the scan
-/// also walks the agent's own `volant-agent-<version>/` directory.
+/// lowercase hex characters. A staged copy lives in the connection's own `stage-<host>-<pid>/`
+/// directory, which this one-level scan never enters and which is gone once the connection ends;
+/// the scan also walks the agent's own `volant-agent-<version>/` directory.
 fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(remote_tmp) else {
         return Vec::new();

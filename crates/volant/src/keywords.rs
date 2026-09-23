@@ -385,7 +385,8 @@ pub fn documentation() -> String {
          refuses by name the one value it cannot do.\n- `partial`: it is accepted and answered, \
          but not with the whole of what the reference does with it. What is missing is spelled \
          out under the table.\n- `refused`: it loads, and the run stops \
-         before anything connects.\n- `not accepted`: it cannot be written there, and a playbook \
+         before anything connects. In a file a dynamic include names, the statement fails when a \
+         host reaches it instead.\n- `not accepted`: it cannot be written there, and a playbook \
          that writes it there is refused when it is read, as the reference refuses it.\n\nThis \
          page is generated from the tables in the source, so it cannot drift from them. Run `just \
          docs-keywords` after changing a table.\n\n| Keyword | Play | Block | Task |\n|---|---|---|\
@@ -740,6 +741,25 @@ mod tests {
         assert!(!is_barrier("name"));
         // Not a keyword at all: a lookup that ignores its argument would say yes.
         assert!(!is_barrier("not_a_real_keyword"));
+    }
+
+    /// The `refused` legend says what the introduction says: a keyword in a file only a dynamic
+    /// include names is refused when a host reaches the statement, not before anything connects.
+    ///
+    /// What would make this red: the legend promising a refusal before the first connection for
+    /// every refused cell, which an operator reads and then watches ten tasks run before an
+    /// included file's `throttle` fails the statement.
+    #[test]
+    fn the_refused_legend_names_the_include_path() {
+        let page = documentation();
+        let legend = page
+            .lines()
+            .find(|l| l.starts_with("- `refused`:"))
+            .expect("the legend has a refused line");
+        assert!(
+            legend.contains("before anything connects") && legend.contains("dynamic"),
+            "{legend}"
+        );
     }
 
     /// What would make this red: a keyword added, removed or flipped between `Runs`, `Partial`

@@ -1,0 +1,50 @@
+---
+// Top navigation next to the social icons, so every page, the home page included, has a way into
+// the documentation without scrolling.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const links = [
+  { label: 'Docs', href: `${base}/`, section: '/' },
+  { label: 'Reference', href: `${base}/reference/cli/`, section: '/reference/' },
+  { label: 'Changelog', href: `${base}/changelog/`, section: '/changelog/' },
+];
+const path = Astro.url.pathname.slice(base.length);
+const current = links.findLast((link) => path.startsWith(link.section))?.label;
+---
+
+<nav class="header-links" aria-label="Main">
+  {
+    links.map((link) => (
+      <a href={link.href} aria-current={link.label === current ? 'page' : undefined}>
+        {link.label}
+      </a>
+    ))
+  }
+</nav>
+<Default />
+
+<style>
+  .header-links {
+    display: flex;
+    gap: 1.25rem;
+    margin-inline-end: 0.5rem;
+  }
+  .header-links a {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .header-links a:hover,
+  .header-links a[aria-current='page'] {
+    color: var(--sl-color-text-accent);
+  }
+  /* On narrow screens the same links live in the sidebar menu. */
+  @media (max-width: 60rem) {
+    .header-links {
+      display: none;
+    }
+  }
+</style>

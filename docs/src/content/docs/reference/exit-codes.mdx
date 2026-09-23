@@ -1,0 +1,42 @@
+---
+title: Exit codes
+description: What each exit code means, and where Volant matches ansible-playbook.
+---
+
+import Option from '../../../components/Option.astro';
+
+Volant exits with the codes `ansible-playbook` uses, so scripts and CI jobs written for Ansible keep working.
+
+## The codes
+
+<Option name="0" id="code-0">
+  Every host finished without a failure.
+</Option>
+
+<Option name="1" id="code-1">
+  A general error: a playbook or a role that cannot be found, an unknown `notify` name or `meta` action, or a host pattern that leaves no hosts.
+</Option>
+
+<Option name="2" id="code-2">
+  At least one host failed, or a setting was rejected, such as an escalation method this release does not support yet.
+</Option>
+
+<Option name="4" id="code-4">
+  At least one host was unreachable, or the playbook stopped before the run: it does not parse, or it uses something this release does not support yet.
+</Option>
+
+<Option name="6" id="code-6">
+  Some hosts failed and some were unreachable: 2 and 4 combined.
+</Option>
+
+## After a run
+
+After a run, the code comes from the recap: 2 is added when any host failed, and 4 when any host was unreachable. A `serial` play stops at the first batch that lost every live host, with 2 if they failed and 4 if they all became unreachable.
+
+## Before a run
+
+A playbook stopped by the [pre-flight check](/playbooks/preflight/) exits with 4 before any connection, which is what Ansible uses for a playbook it cannot load. Cases whose code was measured on Ansible keep that code: 1 for a missing role, an unknown `meta` action or an unknown `notify` name.
+
+## Where Ansible crashes
+
+In a few cases ansible-core crashes with exit code 250, for example on a playbook that imports itself or on `serial: abc`. Volant rejects those cases instead, with a clear message and one of the codes above. Each case is listed under *Differences from Ansible* on the page that covers it.

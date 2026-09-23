@@ -1,0 +1,125 @@
+---
+// Two hosts, two tasks, under each setting: web1 is fast, web2 is slow. Under `linear` web1
+// waits at the barrier in front of task 2; under batching it runs task 2 straight away.
+// Time is in arbitrary units: the page makes no timing claim with this figure.
+type Segment = { from: number; to: number; text: string; wait?: boolean };
+const groups: { title: string; note: string; barrier?: number; hosts: { name: string; segments: Segment[] }[] }[] = [
+  {
+    title: 'linear (default)',
+    note: 'every host meets in front of every task',
+    barrier: 4,
+    hosts: [
+      { name: 'web1', segments: [ { from: 0, to: 2, text: 'task 1' }, { from: 2, to: 4, text: 'waits', wait: true }, { from: 4, to: 6, text: 'task 2' } ] },
+      { name: 'web2', segments: [ { from: 0, to: 4, text: 'task 1' }, { from: 4, to: 6, text: 'task 2' } ] },
+    ],
+  },
+  {
+    title: 'batching = true',
+    note: 'a host only waits at a synchronization point',
+    hosts: [
+      { name: 'web1', segments: [ { from: 0, to: 2, text: 'task 1' }, { from: 2, to: 4, text: 'task 2' } ] },
+      { name: 'web2', segments: [ { from: 0, to: 4, text: 'task 1' }, { from: 4, to: 6, text: 'task 2' } ] },
+    ],
+  },
+];
+const span = 6;
+const pos = (t: number) => `${(t / span) * 100}%`;
+---
+
+<figure class="timeline not-content">
+  {
+    groups.map((group) => (
+      <div class="tl-group">
+        <p class="tl-head">
+          <span class="tl-title">{group.title}</span>
+          <span class="tl-note">{group.note}</span>
+        </p>
+        {group.hosts.map((host) => (
+          <div class="tl-row">
+            <span class="tl-host">{host.name}</span>
+            <span class="tl-track">
+              {host.segments.map((s) => (
+                <span
+                  class:list={['tl-seg', { 'is-wait': s.wait }]}
+                  style={`left: ${pos(s.from)}; width: calc(${pos(s.to - s.from)} - 2px)`}
+                >
+                  {s.text}
+                </span>
+              ))}
+              {group.barrier !== undefined && <span class="tl-barrier" style={`left: ${pos(group.barrier)}`} />}
+            </span>
+          </div>
+        ))}
+      </div>
+    ))
+  }
+  <figcaption>Time runs left to right. The dashed line is the barrier in front of task 2.</figcaption>
+</figure>
+
+<style>
+  .timeline {
+    display: grid;
+    gap: 1.5rem;
+    margin-block: 1.75rem;
+    font-size: var(--sl-text-sm);
+  }
+  .tl-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0 0 0.6rem;
+  }
+  .tl-title {
+    color: var(--sl-color-white);
+    font-weight: 600;
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+  }
+  .tl-note {
+    color: var(--sl-color-gray-3);
+  }
+  .tl-row {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.4rem;
+  }
+  .tl-host {
+    color: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+  }
+  .tl-track {
+    position: relative;
+    height: 1.75rem;
+  }
+  .tl-seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    padding-inline: 0.6rem;
+    border: 1px solid var(--sl-color-accent);
+    border-radius: 0.4rem;
+    background: var(--sl-color-accent-low);
+    color: var(--sl-color-white);
+    white-space: nowrap;
+  }
+  .tl-seg.is-wait {
+    border: 1px dashed var(--sl-color-gray-4);
+    background: transparent;
+    color: var(--sl-color-gray-3);
+  }
+  .tl-barrier {
+    position: absolute;
+    top: -0.35rem;
+    bottom: -0.35rem;
+    border-left: 1px dashed var(--sl-color-gray-3);
+  }
+  figcaption {
+    color: var(--sl-color-gray-3);
+  }
+</style>

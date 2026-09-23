@@ -79,10 +79,10 @@ const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
 
 /// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
 /// and another about the task under it.
-const CHECK_MODE_MISSING: &str = "only `false` is accepted, and it is honoured by running for real; \
-    `true` is refused by name, because this release has no check mode: before the first connection \
-    when the playbook itself writes it, and at the statement that read the file when a dynamic \
-    include brought it in";
+const CHECK_MODE_MISSING: &str = "only `false` is accepted, and the task runs for real. `true` is \
+    not supported yet because this release has no check mode: the run stops before the first \
+    connection when the playbook writes it, and at the include statement when a dynamic include \
+    brings it in";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
@@ -354,43 +354,53 @@ pub fn handler_keyword(name: &str) -> Option<&'static Keyword> {
     HANDLER_KEYWORDS.iter().find(|k| k.name == name)
 }
 
-/// What one table says about `name`, as the published page spells it.
+/// What one table says about `name`, as the published page spells it, with the class the site
+/// draws it by.
 fn status(table: &[Keyword], name: &str) -> &'static str {
     match table.iter().find(|k| k.name == name) {
-        Some(k) if k.support == Runs => "runs",
-        Some(k) if k.support == Partial => "partial",
-        Some(_) => "refused",
-        None => "not accepted",
+        Some(k) if k.support == Runs => r#"<span class="kw kw-runs">runs</span>"#,
+        Some(k) if k.support == Partial => r#"<span class="kw kw-partial">partial</span>"#,
+        Some(_) => r#"<span class="kw kw-notyet">not yet</span>"#,
+        None => r#"<span class="kw kw-no">not accepted</span>"#,
     }
 }
 
-/// The Markdown page published in the documentation, generated from the tables above so it
-/// cannot say something the loader and the pre-flight do not do.
+/// The page published in the documentation, generated from the tables above so it cannot say
+/// something the loader and the pre-flight do not do. The legend and the main grid are HTML, so the
+/// site can draw each status as a shape and filter the grid; everything reads without scripts.
 ///
 /// The status is per place a keyword can be written rather than per keyword, because the two
-/// differ: `ignore_errors` runs on a block and on a task and is refused on a play, and a single
-/// column would have to pick one of the two and be wrong about the other.
+/// differ: `ignore_errors` runs on a block and on a task and is not supported on a play, and a
+/// single column would have to pick one of the two and be wrong about the other.
 pub fn documentation() -> String {
     let mut out = String::from(
-        "# Keywords\n\nEvery play, block and task keyword ansible-core 2.19 knows, and what this \
-         release does with each one.\n\nA playbook is loaded against the whole grammar, so it \
-         parses here as it parses there. What this release cannot execute is refused by name, \
-         rather than accepted and then ignored. A keyword the playbook writes is refused before \
-         the first connection. A file that a dynamic `include_tasks` or `include_role` names is \
-         read when a host reaches the statement, so a keyword written there is refused at that \
-         moment instead: the statement fails for the host that asked, a `rescue` around it can \
-         take that failure, and nothing in the file runs. \
-         What `import_tasks` and `import_role` name is compiled with the play and checked with \
-         it.\n\nA keyword carries a status per place it can be written:\n\n- `runs`: this release honours it, or \
-         refuses by name the one value it cannot do.\n- `partial`: it is accepted and answered, \
-         but not with the whole of what the reference does with it. What is missing is spelled \
-         out under the table.\n- `refused`: it loads, and the run stops \
-         before anything connects. In a file a dynamic include names, the statement fails when a \
-         host reaches it instead.\n- `not accepted`: it cannot be written there, and a playbook \
-         that writes it there is refused when it is read, as the reference refuses it.\n\nThis \
-         page is generated from the tables in the source, so it cannot drift from them. Run `just \
-         docs-keywords` after changing a table.\n\n| Keyword | Play | Block | Task |\n|---|---|---|\
-         ---|\n",
+        "---\ntitle: Keywords\ndescription: Every play, block and task keyword ansible-core 2.19 \
+         knows, and what Volant does with each one.\n---\n\n<!-- Generated from \
+         crates/volant/src/keywords.rs by `just docs-keywords`. Do not edit by hand. -->\n\n\
+         Volant loads a playbook against the whole ansible-core 2.19 grammar, so it parses here \
+         as it parses under Ansible. What this release does not support yet is named before the \
+         run starts, never accepted and then ignored. Each keyword has a status for each place it \
+         can be written.\n\n\
+         <ul class=\"kw-legend not-content\">\n\
+         <li><span class=\"kw kw-runs\">runs</span><span>Volant honors it, or names the one value \
+         it does not support yet.</span></li>\n\
+         <li><span class=\"kw kw-partial\">partial</span><span>Accepted and honored, but not \
+         everything Ansible does with it. The gap is listed below the grid.</span></li>\n\
+         <li><span class=\"kw kw-notyet\">not yet</span><span>Not supported yet. The playbook \
+         loads, and the run stops before anything connects. In a file a dynamic include names, \
+         the statement fails when a host reaches it instead.</span></li>\n\
+         <li><span class=\"kw kw-no\">not accepted</span><span>Cannot be written there. Ansible \
+         rejects it too, when it reads the playbook.</span></li>\n\
+         </ul>\n\n\
+         A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is \
+         checked when a host reaches that statement: if it is not supported yet, the statement \
+         fails for that host, a `rescue` around it can catch the failure, and nothing in the file \
+         runs. See [Includes and imports](/playbooks/includes/).\n\n\
+         This page is generated from the tables the loader and the pre-flight read, so it always \
+         describes the release it ships with.\n\n\
+         ## All keywords\n\n\
+         <div class=\"kw-grid-wrap not-content\">\n<table class=\"kw-grid\">\n<thead><tr>\
+         <th>Keyword</th><th>Play</th><th>Block</th><th>Task</th></tr></thead>\n<tbody>\n",
     );
     let mut names: Vec<&str> = [TASK_KEYWORDS, PLAY_KEYWORDS, BLOCK_KEYWORDS]
         .iter()
@@ -402,12 +412,13 @@ pub fn documentation() -> String {
     for name in names {
         let _ = writeln!(
             out,
-            "| `{name}` | {} | {} | {} |",
+            "<tr><td><code>{name}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
             status(PLAY_KEYWORDS, name),
             status(BLOCK_KEYWORDS, name),
             status(TASK_KEYWORDS, name)
         );
     }
+    out.push_str("</tbody>\n</table>\n</div>\n");
     let mut partial: Vec<(&str, &str)> = [
         TASK_KEYWORDS,
         PLAY_KEYWORDS,
@@ -422,16 +433,15 @@ pub fn documentation() -> String {
     partial.sort_unstable();
     partial.dedup();
     out.push_str(
-        "\n## What `partial` leaves out\n\nA keyword below is accepted wherever the grid says \
-         `partial`, and answered the same way in each of those places.\n\n| Keyword | What is \
-         missing |\n|---|---|\n",
+        "\n## What partial leaves out\n\nEach keyword below behaves the same way in every place \
+         the grid marks it `partial`.\n\n| Keyword | What is missing |\n|---|---|\n",
     );
     for (name, missing) in partial {
         let _ = writeln!(out, "| `{name}` | {missing} |");
     }
 
     out.push_str(
-        "\n## Handlers\n\nA handler takes every task keyword above, and one of its own.\n\n\
+        "\n## Handlers\n\nA handler accepts every task keyword above, plus one of its own.\n\n\
          | Keyword | Status |\n|---|---|\n",
     );
     for k in HANDLER_KEYWORDS {
@@ -443,8 +453,8 @@ pub fn documentation() -> String {
         );
     }
     out.push_str(
-        "\n## Under `loop_control`\n\nA sub-key ansible-core does not have is refused when the \
-         playbook is read.\n\n| Sub-key | Status |\n|---|---|\n",
+        "\n## Under loop_control\n\nA sub-key ansible-core does not know is rejected when the \
+         playbook loads.\n\n| Sub-key | Status |\n|---|---|\n",
     );
     for k in LOOP_CONTROL_KEYWORDS {
         let _ = writeln!(
@@ -743,19 +753,20 @@ mod tests {
         assert!(!is_barrier("not_a_real_keyword"));
     }
 
-    /// The `refused` legend says what the introduction says: a keyword in a file only a dynamic
-    /// include names is refused when a host reaches the statement, not before anything connects.
+    /// The `not yet` legend says what the introduction says: a keyword in a file only a dynamic
+    /// include names stops the statement when a host reaches it, not the run before anything
+    /// connects.
     ///
-    /// What would make this red: the legend promising a refusal before the first connection for
-    /// every refused cell, which an operator reads and then watches ten tasks run before an
+    /// What would make this red: the legend promising a stop before the first connection for
+    /// every `not yet` cell, which an operator reads and then watches ten tasks run before an
     /// included file's `throttle` fails the statement.
     #[test]
-    fn the_refused_legend_names_the_include_path() {
+    fn the_not_yet_legend_names_the_include_path() {
         let page = documentation();
         let legend = page
             .lines()
-            .find(|l| l.starts_with("- `refused`:"))
-            .expect("the legend has a refused line");
+            .find(|l| l.starts_with(r#"<li><span class="kw kw-notyet">"#))
+            .expect("the legend has a not yet entry");
         assert!(
             legend.contains("before anything connects") && legend.contains("dynamic"),
             "{legend}"
@@ -768,8 +779,8 @@ mod tests {
     /// the pre-flight refuses it, or the other way round.
     #[test]
     fn the_keyword_page_matches_the_tables() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/keywords.md");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/src/content/docs/reference/keywords.md");
         let expected = documentation();
         if std::env::var_os("VOLANT_UPDATE_DOCS").is_some() {
             std::fs::write(&path, &expected).unwrap();
@@ -777,7 +788,7 @@ mod tests {
         let actual = std::fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(
             actual, expected,
-            "run `just docs-keywords` to regenerate docs/src/keywords.md"
+            "run `just docs-keywords` to regenerate docs/src/content/docs/reference/keywords.md"
         );
     }
 }

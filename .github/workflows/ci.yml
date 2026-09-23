@@ -67,6 +67,16 @@ jobs:
         with:
           tool: nextest,cargo-llvm-cov,just
       - run: just coverage
+      # The report reuses the profile data `just coverage` left behind rather than running the
+      # tests again.
+      - run: cargo llvm-cov report --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # A pull request from a fork has no access to the token, and coverage upload is not a
+          # reason to fail it: the floor above is the gate.
+          fail_ci_if_error: false
 
   musl:
     runs-on: ubuntu-latest

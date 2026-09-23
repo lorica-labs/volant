@@ -1,0 +1,114 @@
+---
+title: Installation
+description: Install Volant with one command, check what the controller and the hosts need, and keep it up to date.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+## Install
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh
+```
+
+The script works on Linux and macOS, on x86_64 and arm64. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. It asks for no root access and changes nothing outside those two directories. You can [read it](https://volant.sh/install.sh) before you run it.
+
+Check that it worked:
+
+```sh
+volant --version
+```
+
+If your shell cannot find `volant`, add `~/.local/bin` to your `PATH`. The script prints the line to add when it is missing.
+
+### Options
+
+The script reads three environment variables:
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `VOLANT_VERSION` | the newest release | The release to install, such as `v0.1.0-alpha.7`. |
+| `VOLANT_HOME` | `~/.local/share/volant` | Where releases are unpacked. |
+| `VOLANT_BIN_DIR` | `~/.local/bin` | Where the `volant` and `volant-playbook` links go. |
+
+```sh
+curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.7 sh
+```
+
+## What you get
+
+A release holds the controller and the agents it uploads to your hosts. The script keeps them together, because the controller looks for its agents next to its own executable:
+
+| File | What it is |
+|---|---|
+| `volant` | The controller, the command you run. |
+| `volant-playbook` | The same controller under a name that reads like `ansible-playbook`. |
+| `volant-agent` | The agent for the machine you run on, used by `ansible_connection=local`. |
+| `volant-agent-x86_64-unknown-linux-musl` | The agent uploaded to x86_64 Linux hosts. |
+| `volant-agent-aarch64-unknown-linux-musl` | The agent uploaded to arm64 Linux hosts. |
+
+## What the machines need
+
+<Tabs>
+  <TabItem label="Controller">
+    - Linux or macOS.
+    - The OpenSSH client on your `PATH`. Volant runs `ssh` itself, so your `~/.ssh/config` applies.
+    - For Python modules and fact gathering, a Python 3 with `ansible-core` installed. Volant uses ansible-core to build module payloads. It picks `VOLANT_PYTHON` first, then the active virtual environment, then `python3` on your `PATH`.
+
+    A playbook made only of `command`, `shell`, `raw` and controller-side modules, with `gather_facts: false`, needs no Python at all.
+  </TabItem>
+  <TabItem label="Managed hosts">
+    - Linux, x86_64 or arm64.
+    - An SSH server and an account you can log into with a key or an ssh-agent.
+    - A Python 3 interpreter for Python modules and fact gathering. The host does not need ansible-core: Volant sends every file a module imports.
+    - `sudo` if you use `become`.
+
+    Nothing has to be installed by hand. The controller uploads the agent with the first task and caches it under `~/.ansible/tmp`.
+  </TabItem>
+</Tabs>
+
+## Update
+
+Run the install command again. It installs the newest release next to the ones you have and points the links at it. Older releases stay under `~/.local/share/volant`, so going back is a matter of setting `VOLANT_VERSION`.
+
+## Other ways to install
+
+<Tabs>
+  <TabItem label="Manual download">
+    Every release on the [releases page](https://github.com/lorica-labs/volant/releases) has one archive per platform, named `volant-<target>.tar.xz`, with a `.sha256` file next to it. Unpack it, keep the directory whole, and link `volant` onto your `PATH`:
+
+    ```sh
+    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz
+    mv volant-x86_64-unknown-linux-musl ~/.local/share/volant/manual
+    ln -sf ~/.local/share/volant/manual/volant ~/.local/bin/volant
+    ```
+  </TabItem>
+  <TabItem label="cargo binstall">
+    ```sh
+    # Only pre-releases exist so far, so name the version.
+    cargo binstall volant@0.1.0-alpha.7
+    ```
+
+    This installs the controller without its agents. Point `VOLANT_AGENT_DIR` at a directory that holds them, such as an unpacked release archive.
+  </TabItem>
+  <TabItem label="From source">
+    ```sh
+    cargo install --git https://github.com/lorica-labs/volant volant
+    ```
+
+    This also installs the controller without its agents: set `VOLANT_AGENT_DIR` as above. From a checkout, `cargo build` leaves a local agent next to the controller it just built, and `just agent-musl` builds the x86_64 Linux agent.
+  </TabItem>
+</Tabs>
+
+<Aside type="note">
+A Homebrew formula is planned. The [roadmap](/project/roadmap/) tracks it.
+</Aside>
+
+## Uninstall
+
+Remove the release directory and the links. On each host, the agent cache is one directory per account the run acted as:
+
+```sh
+rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook
+ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-*'
+```

@@ -1,0 +1,87 @@
+---
+title: Templating
+description: Jinja2 in strict mode, conditions, the filters, tests and lookups Volant provides, and how template files render.
+---
+
+import BarChart from '../../../components/BarChart.astro';
+
+
+Volant renders Jinja2 on the controller with [MiniJinja](https://github.com/mitsuhiko/minijinja) and adds Ansible's filters, tests and lookups on top.
+
+## Strict by default
+
+Templates render in strict mode. An undefined variable is an error, not an empty string, unless you guard it:
+
+```yaml
+- debug:
+    msg: "{{ release | default('latest') }}"
+  when: release is defined or use_latest | bool
+```
+
+A `when` whose value is not a boolean is rejected as well.
+
+## Conditions
+
+`when`, `changed_when`, `failed_when` and `until` take one expression or a list of them. With a list, every expression must hold.
+
+```yaml
+- command: /opt/app/migrate.sh
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when:
+    - migrate.rc != 0
+    - "'already up to date' not in migrate.stderr"
+```
+
+## What is available
+
+On top of MiniJinja's own Jinja2 builtins, Volant adds these from Ansible:
+
+| Kind | Names |
+|---|---|
+| Filters | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed`, `failed`, `succeeded`, `skipped`, `version` (and `version_compare`) |
+| Lookups | `env`, `file`, `vars`, `pipe`, `first_found`, `template`, under their short name and their `ansible.builtin.*` name |
+
+A filter, test or lookup that is not in this list fails with its own name, never silently. Each one is checked against ansible-core in the golden test corpus under `crates/volant/tests/golden`.
+
+A value also answers a handful of Python methods: `.split()`, `.startswith()` and `.find()` on a string, `.keys()` on a mapping, and the others that `minijinja-contrib`'s Python compatibility layer provides. A method neither that layer nor the engine knows fails with its own name rather than silently doing nothing.
+
+`difference`, `intersect` and `union` build a Python `set` in ansible-core, whose order is its own: small integers happen to come out sorted, and strings come out in an order that changes with `PYTHONHASHSEED` from one run to the next. Volant sorts the result when every element is an integer, which matches every integer case measured, and otherwise keeps the order in which the elements first appeared. On strings, that order is not guaranteed to match a given run of ansible-core.
+
+## Rendering a template file
+
+The `template` module and `lookup('template')` share one render, and it differs from a task argument's render in one way: it renders the file's text **once**. A task argument goes through further passes, which is how a value that still holds `{{ ... }}` after rendering can be read as a template again. A template file does not get that second pass, so a value a managed host contributed lands in the written file as plain text and never runs as a template of its own.
+
+It takes the options the `template` module reads:
+
+| Option | Default | Effect |
+|---|---|---|
+| `trim_blocks` | on | Remove the first newline after a block tag. |
+| `lstrip_blocks` | off | Strip the whitespace before a block tag on its line. |
+| `newline_sequence` | `\n` | Line endings of the written file: `\n`, `\r` or `\r\n`, escaped or literal. |
+
+The file's own trailing newline survives the render. [Action plugins](/reference/action-plugins/#template) covers the rest of what the `template` module does.
+
+## Not there yet
+
+- The `!vault` and `!unsafe` YAML tags are detected and not supported yet. There is no decryption and no unsafe marking yet.
+- Other Ansible filters, tests and lookups, such as `hash`, `password_hash`, `ipaddr`, the `version` filter and `json_query`, are not supported yet.
+- In a template file, `template_host`, `template_uid` and `template_run_date` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
+- In a template file, `{% include %}` and `{% import %}` fail: nothing loads a second file during a render.
+- The six delimiter options (`variable_start_string` and its five relatives) and an `output_encoding` other than UTF-8 are not supported yet.
+
+## Performance on large inventories
+
+Resolving variables costs more than linear time in the number of hosts. Two changes have removed most of that cost: every host reads one shared `hostvars` map, and inventory-wide values such as `groups` are built once per batch instead of once per host and task. Nothing in a playbook, an inventory or `ansible.cfg` changes this cost.
+
+<BarChart
+  title="Run time by inventory size"
+  subtitle="Debug build, twenty local tasks. Read it as the shape of the curve, not as timings to expect."
+  unit="s"
+  rows={[
+    { label: '50 hosts', value: 0.16 },
+    { label: '100 hosts', value: 0.5 },
+    { label: '200 hosts', value: 1.45 },
+  ]}
+/>

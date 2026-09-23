@@ -8,7 +8,7 @@ edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/lorica-labs/volant"
-homepage = "https://github.com/lorica-labs/volant"
+homepage = "https://volant.sh"
 authors = ["Hugo Planque"]
 
 [workspace.lints.rust]

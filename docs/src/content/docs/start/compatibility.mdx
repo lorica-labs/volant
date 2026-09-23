@@ -1,0 +1,67 @@
+---
+title: Will my playbook run?
+description: Check an existing Ansible project against this release in a few seconds, without touching a host.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Volant loads the whole ansible-core 2.19 grammar, so your playbook parses here as it parses under Ansible. Whatever this release does not support yet is named before the first connection, and the run stops there. You find out in seconds, and nothing half-runs.
+
+## Check a project
+
+<Steps>
+
+1. Read it without running it. Listings and `--syntax-check` never stop on an unsupported module or keyword, so they work even on a playbook this release cannot run yet:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --syntax-check
+   volant playbook -i inventory.ini site.yml --list-tasks
+   ```
+
+   If the task list matches what `ansible-playbook --list-tasks` prints, Volant compiled your roles, imports and tags the same way.
+
+2. Ask for a real run against one host you can afford to touch:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --limit test1
+   ```
+
+   Anything this release cannot execute stops the run before it connects. The message names the module, the keyword or the value, and the run exits with code 4.
+
+3. Fix or wait. Everything not supported yet is listed in [Keywords](/reference/keywords/) or [Modules](/reference/modules/), and most have a workaround below.
+
+</Steps>
+
+<Aside type="note">
+A file that only a dynamic `include_tasks` or `include_role` names is read when a host reaches that statement, so an unsupported module or keyword inside it stops the run at that point instead of before it. See [Includes and imports](/playbooks/includes/).
+</Aside>
+
+## At a glance
+
+| Area | Runs today | Not yet |
+|---|---|---|
+| Plays | `pre_tasks`, roles, `tasks`, `post_tasks`, handlers, `serial`, `strategy: linear` | `any_errors_fatal`, `max_fail_percentage`, `order`, `throttle` |
+| Tasks | `when`, `loop`, `with_items`, `register`, `until`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, `timeout`, `tags` | `async`, other `with_*` lookups, `check_mode: true`, `diff` |
+| Blocks | `block`, `rescue`, `always` | |
+| Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | collections, `include_vars: dir` |
+| Delegation | `delegate_to`, `delegate_facts`, `run_once` | `local_action` |
+| Modules | `command`, `shell`, `raw`, controller modules, `copy`, `package`, `service`, `template`, `unarchive`, most ansible-core Python modules | a few modules backed by an action plugin: `fetch`, `reboot`, `uri`, `script` and others |
+| Inventories | static INI files, `group_vars`, `host_vars` | YAML inventories, inventory directories, dynamic inventories |
+| Connections | `ssh` with keys or an ssh-agent, `local` | SSH passwords, Windows, network devices |
+| Escalation | `become` through `sudo`, with or without a password | `su`, `doas` and other methods |
+| Templating | Jinja2 with the common Ansible filters, tests and lookups | `!vault`, `!unsafe`, some filters such as `to_yaml` or `password_hash` |
+| Run modes | normal runs, the four listing commands | `--check`, `--diff`, `--start-at-task`, `--step` |
+
+## Common blockers and what to do
+
+| Not supported yet | Why | What you can do today |
+|---|---|---|
+| `fetch`, `reboot`, `uri`, `script` | These modules rely on an action plugin that runs on the controller first, and Volant does not have theirs yet. | Use a module without an action plugin, such as `get_url` or `lineinfile`, or `command` and `shell`. |
+| A collection name such as `community.general.ufw` | Collections are not loaded yet. | Keep the play under `ansible-playbook` for now. |
+| `local_action` | It is not supported yet. | Write `delegate_to: localhost`, which does the same job and runs. |
+| `with_dict`, `with_fileglob` and the other `with_*` | Only `with_items` has a loop. | Rewrite with `loop` and a filter, such as `loop: "{{ users \| dict2items }}"`. |
+| `check_mode: true` or `--check` | There is no check mode yet. | Run against a test host. |
+| An inventory in YAML | Only INI inventories are read. | Convert it to INI, or keep it under Ansible for now. |
+| `gather_subset` | Not supported yet. | Remove it: the play gets every fact. |
+
+If a playbook behaves differently under Volant and `ansible-playbook` without being reported as unsupported, that is a bug. Please [open a compatibility report](https://github.com/lorica-labs/volant/issues/new?template=compat.yml) with a minimal playbook.

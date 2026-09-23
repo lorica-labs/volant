@@ -11,7 +11,7 @@ default:
 # Install git hooks, sign-off, and the tools the other recipes need
 setup:
     git config core.hooksPath .githooks
-    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor mdbook cargo-insta cargo-llvm-cov cargo-mutants
+    cargo binstall -y cargo-nextest cargo-deny cargo-machete cargo-about cargo-dist release-plz typos-cli taplo-cli zizmor cargo-insta cargo-llvm-cov cargo-mutants
 
 # Accept pending insta snapshots after reading them
 insta-accept:
@@ -86,13 +86,21 @@ mutants file="crates/volant/src/keywords.rs":
     cargo build --workspace
     TMPDIR="$HOME/.cache/volant-mutants" cargo mutants --file {{file}} --timeout 120 --jobs 3 --no-shuffle --test-tool nextest --copy-target true
 
-# Regenerate docs/src/modules.md from the module registry
+# Regenerate the modules reference page from the module registry
 docs-modules:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant-protocol the_documentation_table_matches_the_registry
 
-# Regenerate docs/src/keywords.md from the keyword tables
+# Regenerate the keywords reference page from the keyword tables
 docs-keywords:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant the_keyword_page_matches_the_tables
+
+# Serve the documentation site with live reload (needs Node.js)
+docs-dev:
+    cd docs && npm ci && npx astro dev
+
+# Build the documentation site and check every internal link (needs Node.js)
+docs-build:
+    cd docs && npm ci && npx astro build
 
 # Run the CI workflow locally (needs Docker)
 ci-local:

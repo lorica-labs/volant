@@ -1,0 +1,122 @@
+---
+// A left-to-right sequence of steps, one row per lane. A step marked `key` carries the accent,
+// `muted` recedes, and `point` is a small marker such as a handler flush. Used where a diagram is
+// only an ordered list with arrows.
+interface Step {
+  text: string;
+  kind?: 'key' | 'muted' | 'point';
+}
+interface Lane {
+  label?: string;
+  note?: string;
+  steps: Step[];
+}
+interface Props {
+  lanes: Lane[];
+}
+
+const { lanes } = Astro.props;
+---
+
+<figure class="flow not-content">
+  {
+    lanes.map((lane) => (
+      <div class="flow-lane">
+        {lane.label && (
+          <p class="flow-head">
+            <span class="flow-label">{lane.label}</span>
+            {lane.note && <span class="flow-note">{lane.note}</span>}
+          </p>
+        )}
+        <ol class="flow-steps">
+          {lane.steps.map((step) => (
+            <li class:list={['flow-step', step.kind && `is-${step.kind}`]}>
+              <span class="flow-box">{step.text}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    ))
+  }
+</figure>
+
+<style>
+  .flow {
+    display: grid;
+    gap: 1.5rem;
+    margin-block: 1.75rem;
+    font-size: var(--sl-text-sm);
+  }
+  .flow-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0 0 0.6rem;
+  }
+  .flow-label {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  .flow-note {
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Every step carries the same left margin, and the list pulls itself back by that much, so a
+     wrapped line starts flush. The connector is drawn inside that margin, out of the flow: hiding
+     it on the first step of a line moves nothing. */
+  .flow-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 0.6rem;
+    margin: 0 0 0 -1.7rem;
+    padding: 0;
+    list-style: none;
+  }
+  .flow-step {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0 0 0 1.7rem;
+  }
+  .flow-step::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: -1.45rem;
+    width: 1.2rem;
+    height: 1px;
+    background: var(--v-hairline-strong);
+  }
+  .flow-step:first-child::before,
+  .flow-step.is-line-start::before {
+    display: none;
+  }
+
+  .flow-box {
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--v-hairline-strong);
+    border-radius: 0.5rem;
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-gray-1);
+    white-space: nowrap;
+  }
+  .is-key .flow-box {
+    border-color: var(--sl-color-accent);
+    background: var(--sl-color-accent-low);
+    color: var(--sl-color-white);
+  }
+  .is-muted .flow-box {
+    background: transparent;
+    color: var(--sl-color-gray-2);
+  }
+  .is-point .flow-box {
+    padding: 0.2rem 0.55rem;
+    border-style: dashed;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+  }
+</style>

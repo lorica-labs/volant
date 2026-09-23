@@ -1,0 +1,320 @@
+---
+// Horizontal bar chart for measured values. One series by default, with `highlight` on the row
+// the page is about; pass `series` for grouped bars, where the series marked `accent` carries the
+// accent color and a legend names each series. Every bar shows its label and value as text, so
+// color is never the only way to read it, and the same numbers are one click away as a table.
+interface Row {
+  label: string;
+  value?: number;
+  values?: number[];
+  highlight?: boolean;
+  note?: string;
+}
+interface Series {
+  name: string;
+  accent?: boolean;
+}
+interface Props {
+  title: string;
+  subtitle?: string;
+  unit: string;
+  decimals?: number;
+  rows: Row[];
+  series?: Series[];
+}
+
+const { title, subtitle, unit, decimals, rows, series } = Astro.props;
+const grouped = Boolean(series && series.length > 1);
+const valuesOf = (row: Row) => row.values ?? [row.value ?? 0];
+const top = Math.max(...rows.flatMap(valuesOf));
+
+// A clean axis end just above the largest value, then the largest round step that cuts it into
+// three to six intervals: 30 s gives 0, 10, 20, 30; 800 ms gives 0, 200 ... 800.
+const magnitude = 10 ** Math.floor(Math.log10(top));
+const max = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => m * magnitude).find((m) => m >= top) ?? top;
+const steps = [5, 2.5, 2, 1, 0.5, 0.25, 0.2, 0.1].map((k) => k * magnitude);
+const step =
+  steps.find((s) => {
+    const n = max / s;
+    return Math.abs(n - Math.round(n)) < 1e-9 && n >= 3 && n <= 6;
+  }) ?? max / 4;
+const ticks = Array.from({ length: Math.round(max / step) + 1 }, (_, i) => +(i * step).toPrecision(6));
+
+const pct = (v: number) => `${(v / max) * 100}%`;
+const places = (v: number) => decimals ?? (v >= 100 ? 0 : v >= 10 ? 1 : 2);
+const fmt = (v: number) => `${v.toLocaleString('en-US', { minimumFractionDigits: places(v), maximumFractionDigits: places(v) })} ${unit}`;
+const tick = (v: number) => `${v.toLocaleString('en-US')} ${unit}`;
+const accentOf = (row: Row, i: number) => (grouped ? Boolean(series![i]?.accent) : Boolean(row.highlight));
+---
+
+<figure class="bench not-content" style={`--gridlines: ${ticks.length - 1}`}>
+  <figcaption>
+    <span class="bench-title">{title}</span>
+    {subtitle && <span class="bench-sub" set:html={subtitle} />}
+  </figcaption>
+
+  {
+    grouped && (
+      <ul class="bench-legend" aria-label="Legend">
+        {series!.map((s) => (
+          <li class:list={{ 'is-accent': s.accent }}>
+            <span class="bench-swatch" />
+            {s.name}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  <ul class="bench-rows">
+    {
+      rows.map((row) => (
+        <li class:list={['bench-row', { 'is-accent': !grouped && row.highlight }]} tabindex="0">
+          <span class="bench-label">{row.label}</span>
+          <span class="bench-bars">
+            {valuesOf(row).map((v, i) => (
+              <span class:list={['bench-plot', { 'is-accent': accentOf(row, i) }]}>
+                <span class="bench-bar" style={`width: ${pct(v)}`} />
+                <span class="bench-value">{fmt(v)}</span>
+              </span>
+            ))}
+            <span class="bench-tip" role="tooltip">
+              <strong>{row.label}</strong>
+              {valuesOf(row).map((v, i) => (
+                <span>{grouped ? `${series![i].name}: ${fmt(v)}` : fmt(v)}</span>
+              ))}
+              {row.note && <span>{row.note}</span>}
+            </span>
+          </span>
+        </li>
+      ))
+    }
+  </ul>
+
+  <div class="bench-axis" aria-hidden="true">
+    <span class="bench-label" />
+    <span class="bench-plot">
+      {ticks.map((t) => <span class="bench-tick" style={`left: ${pct(t)}`}>{tick(t)}</span>)}
+    </span>
+  </div>
+
+  <details class="bench-table">
+    <summary>Show as a table</summary>
+    <table>
+      <thead>
+        <tr>
+          <th />
+          {grouped ? series!.map((s) => <th>{s.name}</th>) : <th>{title}</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {
+          rows.map((row) => (
+            <tr>
+              <td>{row.label}</td>
+              {valuesOf(row).map((v) => <td>{fmt(v)}</td>)}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </details>
+</figure>
+
+<style>
+  /* Validated pairs: accent against muted, in both themes, with the dataviz palette checks. */
+  .bench {
+    --bench-accent: #14b8a6;
+    --bench-muted: #5d6d74;
+    --bench-grid: var(--v-hairline-strong, var(--sl-color-gray-5));
+    margin-block: 2rem;
+    font-size: var(--sl-text-sm);
+  }
+  :global(:root[data-theme='light']) .bench {
+    --bench-accent: #0f766e;
+    --bench-muted: #86939a;
+    --bench-grid: var(--v-hairline-strong, var(--sl-color-gray-6));
+  }
+
+  figcaption {
+    display: grid;
+    gap: 0.2rem;
+    margin-bottom: 1.25rem;
+  }
+  .bench-title {
+    color: var(--sl-color-white);
+    font-weight: 600;
+    font-size: var(--sl-text-base);
+  }
+  .bench-sub {
+    color: var(--sl-color-gray-3);
+  }
+
+  .bench-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    margin: 0 0 1rem;
+    padding: 0;
+    list-style: none;
+    color: var(--sl-color-gray-2);
+  }
+  .bench-legend li {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0;
+  }
+  .bench-swatch {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 3px;
+    background: var(--bench-muted);
+  }
+  .bench-legend .is-accent .bench-swatch {
+    background: var(--bench-accent);
+  }
+
+  .bench-rows {
+    display: grid;
+    gap: 0.9rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .bench-row,
+  .bench-axis {
+    display: grid;
+    grid-template-columns: minmax(8rem, 13rem) 1fr;
+    align-items: center;
+    column-gap: 1rem;
+  }
+  .bench-row {
+    margin: 0;
+    border-radius: 0.25rem;
+    outline-offset: 4px;
+  }
+  .bench-label {
+    color: var(--sl-color-gray-2);
+  }
+  .bench-row.is-accent .bench-label {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .bench-bars {
+    position: relative;
+    display: grid;
+    gap: 2px;
+  }
+  /* The plot area carries the gridlines, so every bar lines up on the same scale. */
+  .bench-plot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 1.5rem;
+    margin-inline-end: 5rem;
+    background-image: linear-gradient(to right, var(--bench-grid) 1px, transparent 1px);
+    background-size: calc(100% / var(--gridlines)) 100%;
+  }
+  .bench-bars .bench-plot:not(:only-child) {
+    height: 1.1rem;
+  }
+  .bench-bar {
+    height: 100%;
+    min-width: 2px;
+    background: var(--bench-muted);
+    border-radius: 0 4px 4px 0;
+  }
+  .is-accent > .bench-bar,
+  .bench-row.is-accent .bench-bar {
+    background: var(--bench-accent);
+  }
+  /* The label sits on the figure's surface, so a gridline passing behind it never cuts the digits. */
+  .bench-value {
+    position: relative;
+    margin-inline-start: 0.25rem;
+    padding-inline: 0.25rem;
+    background: var(--v-core, var(--sl-color-bg));
+    color: var(--sl-color-gray-2);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .bench-row.is-accent .bench-value,
+  .is-accent > .bench-value {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .bench-tip {
+    position: absolute;
+    inset-block-end: calc(100% + 0.5rem);
+    inset-inline-start: 0;
+    display: none;
+    gap: 0.15rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--v-hairline-strong, var(--sl-color-gray-5));
+    border-radius: 0.5rem;
+    background: var(--sl-color-bg-nav);
+    color: var(--sl-color-gray-2);
+    white-space: nowrap;
+    z-index: 1;
+  }
+  .bench-tip strong {
+    color: var(--sl-color-white);
+  }
+  .bench-row:hover .bench-tip,
+  .bench-row:focus .bench-tip {
+    display: grid;
+  }
+
+  .bench-axis {
+    margin-top: 0.5rem;
+  }
+  .bench-axis .bench-plot {
+    height: 1rem;
+    background: none;
+  }
+  .bench-tick {
+    position: absolute;
+    transform: translateX(-50%);
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .bench-tick:first-child {
+    transform: none;
+  }
+
+  .bench-table {
+    margin-top: 1rem;
+    color: var(--sl-color-gray-3);
+  }
+  .bench-table summary {
+    cursor: pointer;
+  }
+  .bench-table table {
+    width: 100%;
+    margin-top: 0.75rem;
+    border-collapse: collapse;
+  }
+  .bench-table th,
+  .bench-table td {
+    padding: 0.35rem 0.5rem;
+    text-align: start;
+    border-bottom: 1px solid var(--sl-color-gray-6);
+  }
+
+  /* On narrow screens the label sits above its bars. */
+  @media (max-width: 40rem) {
+    .bench-row,
+    .bench-axis {
+      grid-template-columns: 1fr;
+      row-gap: 0.35rem;
+    }
+    .bench-axis .bench-label {
+      display: none;
+    }
+  }
+</style>

@@ -1,0 +1,92 @@
+---
+title: Why Volant
+description: What Volant is, where the speed comes from, and what it promises.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Flow from '../../components/Flow.astro';
+import BarChart from '../../components/BarChart.astro';
+
+Volant is an engine for Ansible playbooks. It reads the playbooks, roles and inventories you already have, in Ansible's own formats, and runs them against Linux hosts over SSH. You do not convert anything, and the same files keep working with `ansible-playbook`.
+
+The name is French: a *volant* is a steering wheel. You steer your infrastructure with it.
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh
+volant playbook -i inventory.ini site.yml
+```
+
+Volant is in pre-alpha: it runs real playbooks end to end, but not every playbook yet, and it names anything it does not support yet before it touches a host. [Installation](/start/installation/) and the [quickstart](/start/quickstart/) take it from here, and [Will my playbook run?](/start/compatibility/) checks an existing project in a few seconds.
+
+## Where the time goes in Ansible
+
+For every task on every host, `ansible-playbook` builds a module payload, sends it over SSH, and starts a fresh Python interpreter on the host to run it. Pipelining removes the temporary file, but each task still pays for a new interpreter and a new round of imports.
+
+Volant pays those costs once per run:
+
+- A small static agent is uploaded to each host the first time and cached there. Later runs reuse it.
+- The controller keeps one SSH connection per host open for the whole run and streams tasks over it.
+- Python modules travel to the host once, in a single archive. A Python server on the host loads the shared code once and forks a child for each task.
+
+<Flow
+  lanes={[
+    {
+      label: 'ansible-playbook',
+      note: 'for every task, on every host',
+      steps: [
+        { text: 'build the payload', kind: 'muted' },
+        { text: 'open ssh', kind: 'muted' },
+        { text: 'start Python', kind: 'muted' },
+        { text: 'import module_utils', kind: 'muted' },
+        { text: 'run the module' },
+      ],
+    },
+    {
+      label: 'Volant',
+      note: 'for every task, once the run has started',
+      steps: [
+        { text: 'send over the open link', kind: 'key' },
+        { text: 'fork the warm server', kind: 'key' },
+        { text: 'run the module' },
+      ],
+    },
+  ]}
+/>
+
+## Measured
+
+These numbers come from a 35-task playbook against one Ubuntu 24.04 host. It installs packages, creates directories, edits a configuration file line by line and keeps a service running, all under `become: true`. Each figure is the median of three passes against a host that had already converged, so every pass did the same work. The full method is in [decision record 0006](/decisions/0006-warm-python-path/).
+
+<BarChart
+  title="Wall clock for a 35-task playbook"
+  subtitle="One host, <code>become: true</code>, median of three runs. Shorter is faster."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'Volant', value: 7.9, highlight: true, note: '226 ms per task' },
+    { label: 'ansible-core, pipelining', value: 19.72, note: '564 ms per task, 2.5× Volant' },
+    { label: 'ansible-core, defaults', value: 27.69, note: '791 ms per task, 3.5× Volant' },
+  ]}
+/>
+
+A module that does real work still takes as long as that work. `apt` spends about 755 ms talking to `dpkg` under either engine. Volant removes the overhead around a module, not the module itself.
+
+<Aside type="note">
+These figures describe one playbook on one host. Your own numbers depend on your network latency, on what your tasks do, and on how many hosts you drive at once.
+</Aside>
+
+## What Volant promises
+
+Your files stay yours. Volant reads Ansible's YAML and follows its variable precedence and its templating, so there is no new format to learn.
+
+It stops instead of guessing. Anything this release does not support yet is named before the first connection, so a run never reports success after quietly skipping something you asked for.
+
+It targets Linux over SSH first. The controller runs on Linux or macOS and drives Linux hosts. Windows and network devices come later.
+
+It collects no telemetry and makes no network call other than the ones your playbook asks for.
+
+## How it compares to Ansible
+
+Volant reproduces [ansible-core 2.19](/decisions/0002-ansible-core-2-19-as-reference/), which this documentation calls *the reference*. A difference from the reference is a bug, unless a page lists it as a deliberate choice under *Differences from Ansible*.
+
+Some features are not there yet: check mode, vault, YAML inventories, collections, and a few modules that depend on an action plugin, such as `fetch` or `uri`. The [roadmap](/project/roadmap/) says what comes next.

@@ -1,0 +1,5 @@
+# Search engines and documentation tools are welcome to read everything here.
+User-agent: *
+Allow: /
+
+Sitemap: https://volant.sh/sitemap-index.xml

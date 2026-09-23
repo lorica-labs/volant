@@ -1,0 +1,48 @@
+---
+title: Trusted and untrusted values
+description: Why a value that came from a managed host is never rendered as a template on the controller.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A template you wrote is code. A value a managed host sent back is data. Volant keeps the two apart the way ansible-core 2.19 does, so a string a host controls never runs as a template on the controller.
+
+<Aside type="caution">
+This is a security boundary. If you find a way for host data to be evaluated as a template on the controller, report it privately as described in the [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
+</Aside>
+
+## Which values are untrusted
+
+| Untrusted, because a host or the run produced it | Trusted, because the playbook carries it |
+|---|---|
+| `register` results and module results | play and task `vars` |
+| gathered facts | `--extra-vars` |
+| `set_fact` values | inventory variables |
+| `lookup('file')`, `lookup('pipe')`, `lookup('env')` | `vars_files` and `include_vars` |
+
+## What changes for an untrusted value
+
+An untrusted value renders once. If the result looks like a template again, it stays as text and is not rendered a second time, which is what Ansible does:
+
+```yaml
+# Say someone wrote {{ lookup('pipe', 'id') }} into /etc/motd on the host.
+- command: cat /etc/motd
+  register: motd
+
+- debug:
+    msg: "{{ motd.stdout }}"   # prints the braces as text, runs nothing
+```
+
+`debug: var:` evaluates an expression. When the name itself came from a host, the task fails with the reference's own message:
+
+```text
+Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
+```
+
+Writing the name yourself, as in `debug: var: result.stdout`, works as usual. It is `debug: var: "{{ from_a_host }}"` that stops.
+
+## How fine-grained it is
+
+Volant tracks trust per variable, not per string. Ansible tags each string object, so a trusted string keeps its trust through a template and loses it only when an expression builds a new string from it. In Volant, a value is untrusted when the render that produced it read something a host contributed. The answer is the same wherever a host took part. Volant is more permissive on a value the playbook computed from its own text.
+
+A managed host also cannot change its own connection settings through the facts a module returns. Volant strips the names ansible-core strips, such as `ansible_host`, `ansible_user` or `ansible_ssh_common_args`, plus `ansible_remote_tmp`, and prints the same warning.

@@ -3,6 +3,8 @@ extend-exclude = [
   "CHANGELOG.md",
   "Cargo.lock",
   "target/",
-  "docs/book/",
+  "docs/node_modules/",
+  "docs/dist/",
+  "docs/package-lock.json",
   "crates/volant/tests/golden/python-modules/",
 ]

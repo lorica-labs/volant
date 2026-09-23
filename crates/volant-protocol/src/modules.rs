@@ -142,7 +142,7 @@ const fn command_args(executable: ArgStatus, expand_argument_vars: ArgStatus) ->
         // five characters `$HOME` when it is off. This release expands nothing, which is what `false`
         // asks for, so on `command` only `true` is refused: refusing `false` would stop a playbook
         // that ran the same under both engines. The default is the value that diverges, and it is
-        // the one nobody writes; `docs/src/modules.md` says so, because no refusal can.
+        // the one nobody writes; the modules reference page says so, because no refusal can.
         ModuleArg {
             name: "expand_argument_vars",
             status: expand_argument_vars,
@@ -256,7 +256,7 @@ pub const FAIL: ModuleSpec = ModuleSpec {
 pub const PAUSE: ModuleSpec = ModuleSpec {
     name: "pause",
     free_form: false,
-    summary: "Wait for `seconds` or `minutes`. Volant cannot read an answer from the keyboard, so when standard input is a terminal it refuses a `prompt`, and a pause with no duration, where Ansible would wait for one. Without a terminal, a pause that asks for an answer prints a warning and goes on at once, as Ansible does.",
+    summary: "Wait for `seconds` or `minutes`. Volant cannot read keyboard input, so when standard input is a terminal, `prompt` and a pause with no duration are not supported yet. Without a terminal, a pause that asks for input prints a warning and continues at once, as Ansible does.",
     args: &[
         honoured("echo"),
         honoured("minutes"),
@@ -510,7 +510,7 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "# Modules\n\nThese are the modules Volant runs. A playbook naming any other module is refused when it is loaded, before the first task, the way Ansible refuses a module it cannot resolve. A file a dynamic `include_tasks` or `include_role` names is read when a host reaches the statement, so a module named there is refused at that moment instead: the statement fails for the host that asked, and nothing in the file runs. What `import_tasks` and `import_role` name is compiled with the play and checked with it. Everything else waits on the warm Python path.\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads, and each is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths, which expands `~` and `$VAR` in them before the value is used; this release does not, so `creates: ~/.provisioned` looks for a directory named `~`. No other argument is expanded either. Ansible runs `command: /bin/echo $HOME` with the variable already replaced, and here the program is handed the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding rather than the module. The list under the table names the arguments Ansible has and this release refuses.\n\n| Module | Free-form arguments | Arguments | What it does |\n|---|---|---|---|\n",
+        "---\ntitle: Modules\ndescription: Which modules Volant runs, where each one runs, and which ones are not supported yet.\n---\n\n<!-- Generated from crates/volant-protocol/src/modules.rs by `just docs-modules`. Do not edit by hand. -->\n\nVolant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.\n\nA module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads.\n\nEach argument is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`. No other argument is expanded either: Ansible runs `command: /bin/echo $HOME` with the variable already replaced, while Volant hands the program the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding, not the module.\n\n| Module | Free-form | Arguments | What it does |\n|---|---|---|---|\n",
     );
     // The internal keys carry the command line itself rather than being written in a playbook,
     // so they are in the registry and out of the page.
@@ -563,15 +563,26 @@ pub fn documentation_table() -> String {
         })
         .collect();
     if !notes.is_empty() {
-        out.push_str("\nVolant refuses these before the run reaches a host:\n\n");
+        out.push_str(
+            "\nThese arguments exist in Ansible and are not supported yet: a playbook that uses them stops before the run reaches a host.\n\n",
+        );
         out.push_str(&notes);
     }
     out.push_str(
-        "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
+        "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form | What it does |\n|---|---|---|\n",
     );
     rows(LOCAL_MODULES, false, &mut out);
     out.push_str(
-        "\n## On the warm Python path\n\nEverything else ansible-core ships is a Python module, and Volant runs it as one. The modules a run needs travel to the host together, once, in a single archive named by its own content. A Python server the agent keeps warm runs each of them in a fork of itself. The agent keeps the archive, so a host that already has it is sent nothing, and the interpreter comes from the list the agent reported when it started.\n\nThe exceptions are the modules the reference runs through an action plugin Volant does not have yet. Volant refuses those by name before the run reaches a host, because what the playbook asks for lives in the plugin and not in the module. Sending the module on its own would run something else and call it a success.\n\n| Module | How it runs |\n|---|---|\n",
+        "
+## On the warm Python path
+
+Every other module ansible-core ships is a Python module, and Volant runs it as one. The host needs a Python 3 interpreter, and the controller needs ansible-core to build the payload. [The warm Python path](/internals/python/) explains how it works.
+
+The exceptions are the modules ansible-core runs through an action plugin that Volant does not have yet. What the playbook asks for lives in the plugin, not in the module, so sending the module alone would do something else and call it a success. Those modules are not supported yet: Volant names them before the run reaches a host. Fact gathering still works: a play's `gather_facts` runs the `setup` module directly.
+
+| Module | How it runs |
+|---|---|
+",
     );
     let statement =
         |m: &str| import_module(m).is_some() || include_module(m).is_some() || m == "meta";
@@ -580,14 +591,14 @@ pub fn documentation_table() -> String {
             continue;
         }
         let how = if BUILTIN_ACTION_PLUGINS.contains(m) {
-            format!("refused: waits on the `{m}` action plugin")
+            format!("not supported yet: needs the `{m}` action plugin")
         } else {
             "Python module".to_string()
         };
         let _ = writeln!(out, "| `{m}` | {how} |");
     }
     out.push_str(
-        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.\n\n| Module | What it does |\n|---|---|\n",
+        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](/reference/action-plugins/) describes each one.\n\n| Module | What it does |\n|---|---|\n",
     );
     for (m, summary) in ACTION_PLUGINS {
         let _ = writeln!(out, "| `{m}` | {summary} |");
@@ -951,8 +962,8 @@ mod tests {
 
     #[test]
     fn the_documentation_table_matches_the_registry() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/modules.md");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/src/content/docs/reference/modules.md");
         let expected = documentation_table();
         if std::env::var_os("VOLANT_UPDATE_DOCS").is_some() {
             std::fs::write(&path, &expected).unwrap();
@@ -960,7 +971,7 @@ mod tests {
         let actual = std::fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(
             actual, expected,
-            "run `just docs-modules` to regenerate docs/src/modules.md"
+            "run `just docs-modules` to regenerate docs/src/content/docs/reference/modules.md"
         );
     }
 }

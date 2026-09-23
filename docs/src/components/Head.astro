@@ -1,0 +1,162 @@
+---
+// Starlight's own head, plus the script that frames every diagram and chart, lets each one open
+// full screen, and fades figures in as they scroll into view.
+import Default from '@astrojs/starlight/components/Head.astro';
+import geist from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
+---
+
+<Default />
+<!-- Loaded early so diagrams measure their labels with the font they are drawn in. -->
+<link rel="preload" href={geist} as="font" type="font/woff2" crossorigin />
+
+<script>
+  const selector = 'pre.mermaid, figure.flow, figure.timeline, figure.bench';
+  const expandIcon =
+    '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+
+  function dialog(): HTMLDialogElement {
+    let d = document.querySelector<HTMLDialogElement>('dialog.expand-dialog');
+    if (d) return d;
+    d = document.createElement('dialog');
+    d.className = 'expand-dialog';
+    d.setAttribute('aria-label', 'Figure, full screen');
+    d.innerHTML =
+      '<div class="expand-bar"><button type="button" class="expand-btn expand-close">Close</button></div>' +
+      '<div class="expand-body"></div>';
+    d.querySelector('.expand-close')!.addEventListener('click', () => d!.close());
+    // A click on the backdrop lands on the dialog itself, outside its content.
+    d.addEventListener('click', (event) => {
+      if (event.target === d) d!.close();
+    });
+    document.body.append(d);
+    return d;
+  }
+
+  function open(source: Element) {
+    const d = dialog();
+    const copy = source.cloneNode(true) as Element;
+    copy.querySelectorAll('.expand-btn').forEach((b) => b.remove());
+    d.querySelector('.expand-body')!.replaceChildren(copy);
+    d.showModal();
+    markLineStarts(copy);
+  }
+
+  // A step that wraps to a new line does not get the connector in front of it: mark the first
+  // step of every line, and redo it whenever the list changes width.
+  function markLineStarts(root: ParentNode) {
+    for (const list of root.querySelectorAll<HTMLElement>('.flow-steps')) {
+      const steps = [...list.children] as HTMLElement[];
+      steps.forEach((step) => step.classList.remove('is-line-start'));
+      // Steps of different heights share a line, so a step opens a new line only when it starts
+      // below the bottom of everything on the line before it.
+      let lineBottom = -Infinity;
+      for (const step of steps) {
+        if (step.offsetTop >= lineBottom - 1) {
+          step.classList.add('is-line-start');
+          lineBottom = step.offsetTop + step.offsetHeight;
+        } else {
+          lineBottom = Math.max(lineBottom, step.offsetTop + step.offsetHeight);
+        }
+      }
+    }
+  }
+  // Each step is watched, not only the list: a web font arriving widens the steps and moves them
+  // between lines without changing the size of the list itself.
+  const relayout = new ResizeObserver((entries) => {
+    const lists = new Set(entries.map((entry) => entry.target.closest('.flow')).filter(Boolean));
+    lists.forEach((flow) => markLineStarts(flow!));
+  });
+  document.querySelectorAll('.flow-step').forEach((step) => relayout.observe(step));
+  markLineStarts(document);
+  document.fonts?.ready.then(() => markLineStarts(document));
+
+  // The keyword grid gets a search field and status filters. Without the script it is the same
+  // grid, unfiltered.
+  const grid = document.querySelector<HTMLTableElement>('table.kw-grid');
+  if (grid) {
+    const rows = [...grid.tBodies[0].rows];
+    const statuses = [
+      ['all', 'All'],
+      ['runs', 'Runs'],
+      ['partial', 'Partial'],
+      ['notyet', 'Not yet'],
+    ] as const;
+    const count = (status: string) =>
+      status === 'all' ? rows.length : rows.filter((row) => row.querySelector(`.kw-${status}`)).length;
+
+    const controls = document.createElement('div');
+    controls.className = 'kw-controls not-content';
+    controls.innerHTML =
+      '<input class="kw-search" type="search" placeholder="Filter keywords" aria-label="Filter keywords" />' +
+      '<div class="kw-filters" role="group" aria-label="Show keywords that">' +
+      statuses
+        .map(
+          ([key, label], i) =>
+            `<button type="button" class="kw-filter" data-status="${key}" aria-pressed="${i === 0}">` +
+            (key === 'all' ? label : `<span class="kw kw-${key}">${label}</span>`) +
+            `<span class="kw-count">${count(key)}</span></button>`,
+        )
+        .join('') +
+      '</div>';
+    const empty = document.createElement('p');
+    empty.className = 'kw-empty';
+    empty.hidden = true;
+    empty.textContent = 'No keyword matches this filter.';
+    const wrap = grid.closest('.kw-grid-wrap')!;
+    wrap.before(controls);
+    wrap.after(empty);
+
+    let status = 'all';
+    const search = controls.querySelector<HTMLInputElement>('.kw-search')!;
+    const apply = () => {
+      const needle = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of rows) {
+        const name = row.cells[0].textContent!.toLowerCase();
+        const visible =
+          name.includes(needle) && (status === 'all' || row.querySelector(`.kw-${status}`) !== null);
+        row.hidden = !visible;
+        if (visible) shown++;
+      }
+      empty.hidden = shown > 0;
+    };
+    search.addEventListener('input', apply);
+    controls.querySelectorAll<HTMLButtonElement>('.kw-filter').forEach((button) => {
+      button.addEventListener('click', () => {
+        status = button.dataset.status!;
+        controls
+          .querySelectorAll('.kw-filter')
+          .forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+        apply();
+      });
+    });
+  }
+
+  const reveal = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.classList.add('is-visible');
+        reveal.unobserve(entry.target);
+      }
+    },
+    { rootMargin: '0px 0px -10% 0px' },
+  );
+
+  // The button lives in a wrapper, not inside the figure: Mermaid replaces the contents of its
+  // block when it renders, which would take a button inside it along.
+  for (const el of document.querySelectorAll(selector)) {
+    if (el.closest('.expand-dialog')) continue;
+    const wrap = document.createElement('div');
+    wrap.className = 'expandable reveal';
+    el.replaceWith(wrap);
+    wrap.append(el);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'expand-btn';
+    button.innerHTML = `${expandIcon}<span>Full screen</span>`;
+    button.addEventListener('click', () => open(el));
+    wrap.append(button);
+    reveal.observe(wrap);
+  }
+</script>

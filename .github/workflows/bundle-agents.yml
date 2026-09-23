@@ -91,7 +91,7 @@ jobs:
           done
           # Every sha256 of a controller archive is written down four times: in its own
           # .sha256 file, in sha256.sum, in dist-manifest.json, and in the shell installer,
-          # which refuses to install an archive whose digest it does not recognise. Repacking
+          # which refuses to install an archive whose digest it does not recognize. Repacking
           # invalidates all four, so each one is rewritten here and the count is asserted: a
           # record dist stops writing, or starts writing twice, fails this job rather than
           # shipping an installer that no longer matches its archive.

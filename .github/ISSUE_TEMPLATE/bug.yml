@@ -2,6 +2,10 @@ name: Bug report
 description: Something does not work as documented
 labels: ["type/bug", "status/needs-triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        If the same playbook behaves differently under `ansible-playbook`, use the **Ansible compatibility gap** template instead. Security problems go through the [security policy](https://github.com/lorica-labs/volant/security/policy), never a public issue.
   - type: input
     id: version
     attributes:
@@ -13,8 +17,15 @@ body:
     id: os
     attributes:
       label: Controller and target operating systems
+      placeholder: macOS 15 controller, Ubuntu 24.04 targets
     validations:
       required: true
+  - type: input
+    id: python
+    attributes:
+      label: ansible-core on the controller, Python on the targets
+      description: Only needed when the playbook gathers facts or uses Python modules
+      placeholder: ansible-core 2.19.12, Python 3.12
   - type: textarea
     id: steps
     attributes:
@@ -26,13 +37,14 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: Expected behaviour
+      label: Expected behavior
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behaviour
+      label: Actual behavior
       description: Include the full output, with `-vvv` if possible
+      render: text
     validations:
       required: true

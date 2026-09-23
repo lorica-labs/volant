@@ -334,20 +334,29 @@ pub fn run(
 }
 
 /// What `Servers::verify` compares to decide that a blob is still the file it hashed: device,
-/// inode, length and modification time. `store` renames a new file over an old one, which
-/// changes the inode whatever the length and the time say.
-type Fingerprint = (u64, u64, u64, std::time::SystemTime);
+/// inode, length, modification time and change time. `store` renames a new file over an old one,
+/// which changes the inode whatever the length and the time say; a write in place that puts the
+/// old modification time back (`touch -r`, `cp --preserve=timestamps`) still moves the change
+/// time, which no unprivileged call can set.
+type Fingerprint = (u64, u64, u64, std::time::SystemTime, i64, i64);
 
 fn fingerprint(at: &Path) -> Option<Fingerprint> {
     let meta = std::fs::metadata(at).ok()?;
     #[cfg(unix)]
-    let (dev, ino) = {
+    let (dev, ino, ctime, ctime_nsec) = {
         use std::os::unix::fs::MetadataExt;
-        (meta.dev(), meta.ino())
+        (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
     };
     #[cfg(not(unix))]
-    let (dev, ino) = (0, 0);
-    Some((dev, ino, meta.len(), meta.modified().ok()?))
+    let (dev, ino, ctime, ctime_nsec) = (0, 0, 0, 0);
+    Some((
+        dev,
+        ino,
+        meta.len(),
+        meta.modified().ok()?,
+        ctime,
+        ctime_nsec,
+    ))
 }
 
 /// Called at the start of every batch. The allowance for restarting a server that dies is per
@@ -929,55 +938,65 @@ mod tests {
         assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
     }
 
-    /// A payload replaced under a live server is verified again before the next task uses it.
-    /// The replacement is the shape `store` itself writes, a new file renamed over the old one,
-    /// with the old length and modification time: only the inode tells the two apart.
+    /// A payload replaced under a live server is verified again before the next task uses it,
+    /// both ways a file can change under the same name with its old length and modification
+    /// time: a new file renamed over it, the shape `store` writes, where only the inode moves;
+    /// and a write in place with the time put back, as `touch -r` does, where only the change
+    /// time moves.
     ///
     /// What would make this red: the fingerprint left out of the decision to skip the hash, or
-    /// the inode left out of the fingerprint. The second task then runs against bytes nobody
-    /// checked.
+    /// the inode or the change time left out of the fingerprint. The second task then runs
+    /// against bytes nobody checked.
     #[test]
     fn a_payload_replaced_under_a_live_server_is_verified_again() {
-        let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
-        let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
-        batch_started();
-        let first = done(run(
-            &payload,
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(!first.failed(), "{:?}", first.0);
+        for renamed in [true, false] {
+            let root = tempdir();
+            // SAFETY: nextest runs each test in its own process, so this reaches no other test.
+            unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+            let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
+            batch_started();
+            let first = done(run(
+                &payload,
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert!(!first.failed(), "{:?}", first.0);
 
-        let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
-        let old = std::fs::metadata(&at).unwrap();
-        let mut bytes = std::fs::read(&at).unwrap();
-        let last = bytes.len() - 1;
-        bytes[last] ^= 0xff;
-        let fresh = at.with_extension("fresh");
-        std::fs::write(&fresh, &bytes).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&fresh)
-            .unwrap()
-            .set_modified(old.modified().unwrap())
-            .unwrap();
-        std::fs::rename(&fresh, &at).unwrap();
+            let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
+            let old = std::fs::metadata(&at).unwrap();
+            let mut bytes = std::fs::read(&at).unwrap();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 0xff;
+            let target = if renamed {
+                at.with_extension("fresh")
+            } else {
+                at.clone()
+            };
+            std::fs::write(&target, &bytes).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&target)
+                .unwrap()
+                .set_modified(old.modified().unwrap())
+                .unwrap();
+            if renamed {
+                std::fs::rename(&target, &at).unwrap();
+            }
 
-        let second = done(run(
-            &payload,
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            second.0["msg"],
-            format!("payload {} is not on this host", payload.blob),
-            "{:?}",
-            second.0
-        );
+            let second = done(run(
+                &payload,
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(
+                second.0["msg"],
+                format!("payload {} is not on this host", payload.blob),
+                "renamed {renamed}: {:?}",
+                second.0
+            );
+        }
     }
 
     /// A module that fails the way Ansible modules fail - a result saying `failed` - is reported

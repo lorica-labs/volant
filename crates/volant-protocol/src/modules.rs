@@ -490,6 +490,8 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
     (
         "dnf",
         "Install or remove packages with `dnf` or `dnf5`, whichever the host runs.",
+    ),
+    (
         "fetch",
         "Copy a file from the host to the controller, under `dest` and nowhere else.",
     ),

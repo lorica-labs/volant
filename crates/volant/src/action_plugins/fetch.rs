@@ -476,7 +476,6 @@ mod tests {
             args_untrusted: untrusted,
             running_vars: &running,
             delegated: false,
-            delegated: false,
             escalated,
             item_vars: &item_vars,
             templar: &templar,

@@ -255,6 +255,40 @@ fn a_pause_runs_once_for_the_first_host() {
     assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
 }
 
+/// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
+/// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
+/// registered result has no `warnings` key. The driver shows every result's `warnings` that way,
+/// a module's as well as a controller-side action's.
+///
+/// What would make this red: the warnings left in the result, which prints nothing and registers
+/// a key the reference does not.
+#[test]
+fn a_result_s_warnings_are_shown_and_not_registered() {
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/pause-warning.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some(""),
+        &[],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert_eq!(
+        errors
+            .matches("[WARNING]: Not waiting for response to prompt as stdin is not interactive")
+            .count(),
+        1,
+        "{text}{errors}"
+    );
+    assert!(
+        text.contains(r#""q.warnings": "VARIABLE IS NOT DEFINED!"#),
+        "{text}"
+    );
+}
+
 /// Measured on ansible-core 2.19.12: `timeout` applies to a controller-side action as it does
 /// to a module, and a `pause: {seconds: 5}` under `timeout: 1` fails after one second with the
 /// message `command` gives. `frame` is left out, as the agent leaves it out.
@@ -3103,6 +3137,75 @@ fn a_flush_inside_an_include_runs_the_handlers_of_the_hosts_that_asked_for_it() 
 /// path's own release. What it still guards is that both hosts get through the jump and into
 /// the rescue. The companion below is what holds the release on the failure path.
 ///
+/// A templated `ignore_errors` decides, rendered per host, on an ordinary task and on an include
+/// statement alike: `"{{ true }}"`-like values let the play go on with the failure counted as
+/// ignored, `false` ones fail the host there.
+///
+/// What would make this red: the template read as "not ignored" on either, which is what an
+/// include statement did (`report_include` read the keyword as written); or the verdict rendered
+/// and then dropped on the way from `prepare` to the driver.
+#[test]
+fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
+    let run = |cmd: &str, inc: &str| {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &fixture("include/inv.ini"),
+                &fixture("include/ignore-templated.yml"),
+                "-e",
+                &format!("cmd_lenient={cmd} inc_lenient={inc}"),
+            ],
+            PROBE_DEADLINE,
+        );
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    let (code, text) = run("true", "true");
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains("\"msg\": \"after\""), "{text}");
+    assert!(text.contains("ignored=2"), "{text}");
+
+    let (code, text) = run("false", "true");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(!text.contains("a missing file"), "{text}");
+
+    let (code, text) = run("true", "false");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(!text.contains("\"msg\": \"after\""), "{text}");
+    assert!(
+        text.contains("failed=1") && text.contains("ignored=1"),
+        "{text}"
+    );
+}
+
+/// A `notify` in an included file naming a handler the play does not have fails the task that
+/// changed, in the words the pre-flight uses for the same typo in the play itself. The included
+/// file is read once the host reaches the statement, so the pre-flight never saw it.
+///
+/// What would make this red: the name resolved to nothing and dropped, which runs no handler,
+/// shows no failure and exits 0 - a run that reports success without doing what it was asked.
+#[test]
+fn a_notify_in_an_include_naming_no_handler_fails_the_task() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/notify-typo.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains(
+            "The requested handler 'Reoad app' was not found in either the main handlers list nor in the listening handlers list"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("reloaded"), "{text}");
+}
+
 /// What would make this red: the permit kept in front of a wait at all. The run then hangs and
 /// only the deadline sees it - both hosts sit in a wait, print nothing more, and no assertion
 /// on the output can fail on that.

@@ -80,6 +80,7 @@ pub(super) fn resolve_include(
                     label: None,
                     result: TaskResult::failed_with(format!("Task failed: {}", err.0)),
                     failed: true,
+                    ignored: None,
                 }],
             );
         }
@@ -93,6 +94,7 @@ pub(super) fn resolve_include(
                 label: item.label.clone(),
                 result: skipped.clone(),
                 failed: false,
+                ignored: None,
             });
             continue;
         }
@@ -129,6 +131,7 @@ pub(super) fn resolve_include(
             label: item.label,
             result,
             failed: true,
+            ignored: item.ignore_errors,
         });
     }
     (groups, shown)
@@ -145,6 +148,9 @@ pub(super) struct Shown {
     /// `{"changed": false, "include": "nosuch.yml", "reason": "..."}` - measured, with no
     /// `failed` in it - and a key put there to be classified by would be a key on the line.
     failed: bool,
+    /// The statement's `ignore_errors` as `prepare` rendered it for this item, when it is a
+    /// template; `None` reads the keyword as written.
+    ignored: Option<bool>,
 }
 
 /// One item's request, or the result that item fails with.
@@ -289,10 +295,13 @@ pub(super) async fn report_include(
 ) -> Option<TaskResult> {
     let is_loop = task.loop_items.is_some();
     let censored = task.censors();
-    let ignored = task.ignores_errors();
     let mut any_failed = false;
+    // A failure no item's `ignore_errors` swallowed: that is what fails the host.
+    let mut unignored = false;
     let mut failure: Option<TaskResult> = None;
     for item in shown {
+        let ignored = item.ignored.unwrap_or_else(|| task.ignores_errors());
+        unignored |= item.failed && !ignored;
         let outcome = match (item.failed, ignored) {
             (false, _) => Outcome::Skipped,
             (true, true) => Outcome::Ignored,
@@ -338,7 +347,7 @@ pub(super) async fn report_include(
                     _ => TaskResult::default(),
                 }
             };
-            let outcome = classify(&aggregate, task.ignores_errors(), rescuable);
+            let outcome = classify(&aggregate, !unignored, rescuable);
             if any_failed {
                 failure = Some(aggregate.clone());
             }
@@ -358,7 +367,7 @@ pub(super) async fn report_include(
                 .await;
         }
     }
-    if any_failed && !task.ignores_errors() {
+    if unignored {
         failure.or_else(|| Some(TaskResult::default()))
     } else {
         None

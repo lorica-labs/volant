@@ -19,8 +19,12 @@
 //! it out upward would mean compiling every play twice. Neither is worth it, and a later change
 //! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
+use std::io::IsTerminal as _;
+
 use anyhow::bail;
-use volant_protocol::modules::{ArgStatus, import_module, include_module, is_builtin, is_known};
+use volant_protocol::modules::{
+    ArgStatus, import_module, include_module, is_builtin, is_known, short_name,
+};
 
 use crate::action_plugins;
 use crate::compile::{META_ACTIONS, meta_action};
@@ -298,7 +302,9 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
                     task.module
                 );
             }
-            return check_arguments(task);
+            // No argument check here: a Python module validates its own arguments on the host,
+            // and `check_arguments` knows only the native modules.
+            return Ok(());
         }
         bail!(
             "task '{}': couldn't resolve module/action '{}'. This often indicates a misspelling, missing collection, or incorrect module path.",
@@ -306,7 +312,27 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.module
         );
     }
+    check_pause(task, std::io::stdin().is_terminal())?;
     check_arguments(task)
+}
+
+/// Why a `pause` that would wait for an answer is refused on a terminal.
+pub(crate) const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant does not read the answer and would carry on without waiting for one. Give the pause seconds or minutes and no prompt, or redirect standard input.";
+
+/// A `pause` that would wait for an answer, refused before the first connection when standard
+/// input is a terminal. Both halves are known before anything runs: the shape is written in the
+/// playbook (a `prompt`, or neither `seconds` nor `minutes`), and the terminal is this process's.
+/// Refused at the task instead, it would stop the run after earlier tasks changed the hosts. The
+/// driver still refuses it when reached, for a `pause` a dynamic include names.
+fn check_pause(task: &PlayTask, interactive: bool) -> anyhow::Result<()> {
+    if !interactive || short_name(&task.module) != "pause" {
+        return Ok(());
+    }
+    let has = |key: &str| task.args.contains_key(key);
+    if has("prompt") || !(has("seconds") || has("minutes")) {
+        bail!("task '{}': {PROMPT_REFUSED}", task.name);
+    }
+    Ok(())
 }
 
 /// Refuses `until`, `retries` and `delay` on a task that has nowhere to retry them, naming the
@@ -397,6 +423,38 @@ mod tests {
     use super::*;
     use crate::playbook::parse;
     use crate::stats::error_code;
+
+    /// A `pause` that would wait for an answer is refused before anything connects when standard
+    /// input is a terminal, and a timed one, or any on a pipe, is not.
+    ///
+    /// What would make this red: the shape left to the task, which refuses it once the tasks
+    /// before it have changed the hosts; or a timed pause refused, which stops a playbook that
+    /// runs the same under both engines.
+    #[test]
+    fn a_pause_that_would_prompt_on_a_terminal_is_refused_before_the_run() {
+        let pause = |args: &str| {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Wait\n      pause: {args}\n"),
+                "x.yml",
+            )
+            .unwrap();
+            pb.plays[0].tasks[0].clone()
+        };
+        for args in ["{prompt: Go?}", "{}", "{prompt: Go?, seconds: 1}"] {
+            let TaskOrBlock::Task(task) = pause(args) else {
+                unreachable!()
+            };
+            let err = check_pause(&task, true).expect_err(args);
+            assert_eq!(format!("{err:#}"), format!("task 'Wait': {PROMPT_REFUSED}"));
+            assert!(check_pause(&task, false).is_ok(), "{args}");
+        }
+        for args in ["{seconds: 1}", "{minutes: 1}"] {
+            let TaskOrBlock::Task(task) = pause(args) else {
+                unreachable!()
+            };
+            assert!(check_pause(&task, true).is_ok(), "{args}");
+        }
+    }
 
     fn refusal(text: &str) -> String {
         let pb = parse(text, "x.yml").expect("the loader accepts the whole grammar");

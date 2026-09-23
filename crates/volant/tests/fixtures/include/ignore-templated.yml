@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a failing command
+      command: "false"
+      ignore_errors: "{{ cmd_lenient }}"
+    - name: a missing file
+      include_tasks: nosuch.yml
+      ignore_errors: "{{ inc_lenient }}"
+    - debug: msg=after

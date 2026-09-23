@@ -392,6 +392,9 @@ _k3s-kubectl:
 # inventory already exists: a new token on every pass changes the server's config and restarts
 # k3s, which would stop a second pass from reproducing the first pass's recap; `proof-k3s-reset`
 # removes the file once the hosts are actually clean, so a fresh series still gets a fresh token.
+# The `sed` reading it back carries its own `|| true`: with no inventory file yet (the very first
+# call, or right after a reset), `sed` on a missing path fails and `head` still exits 0, and under
+# `pipefail` that failure alone would exit the recipe silently before it ever gets to generate one.
 # None of the three is ever printed or committed. `umask 077` plus the `chmod` below keep the
 # file `0600` from the moment it is created, because `token` is a cluster secret. `k3s_version`
 # is pinned to the kubectl build above, so `kubectl get nodes` and the cluster it is pointed at
@@ -402,9 +405,9 @@ _k3s-inventory:
     umask 077
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
-    ansible_user="$(ssh "$VOLANT_TARGET_HOST" whoami)"
-    api_endpoint="$(ssh "$VOLANT_TARGET_HOST" ip -4 -o route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
-    token="$(sed -n 's/^token=//p' target/k3s-inventory.ini 2>/dev/null | head -1)"
+    ansible_user="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VOLANT_TARGET_HOST" whoami)"
+    api_endpoint="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VOLANT_TARGET_HOST" ip -4 -o route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
+    token="$(sed -n 's/^token=//p' target/k3s-inventory.ini 2>/dev/null | head -1 || true)"
     [ -n "$token" ] || token="$(openssl rand -hex 16)"
     {
       printf '[server]\n%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST"
@@ -422,30 +425,43 @@ _k3s-inventory:
 # host runs whichever of the reference's own uninstall scripts applies there. Checked first, not
 # just reset: `systemd-run --unit=NAME` names both a `.timer` and the `.service` it triggers, and
 # refuses to arm again over one still running, so an already-armed switch aborts here with a
-# clear message instead of a raw systemd error two lines down.
+# clear message instead of a raw systemd error two lines down. The check captures `is-active`'s
+# own text instead of testing its exit code under `2>/dev/null`: a failed ssh (exit 255) has to
+# abort the recipe here, same as any other ssh failure would, rather than read as "not armed" and
+# arm blind over a host it never actually reached. If arming the second host fails, the first
+# host's timer is stopped again before this recipe exits, so a partial arm never leaves one host
+# ticking toward an uninstall with nothing left to disarm it.
 _k3s-deadman-arm:
     #!/usr/bin/env bash
     set -euo pipefail
     for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
-      if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" 'systemctl is-active --quiet volant-k3s-deadman.timer' 2>/dev/null; then
-        echo "dead-man switch already armed on $host" >&2
-        exit 1
-      fi
+      state="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" 'systemctl is-active volant-k3s-deadman.timer || true')"
+      [ "$state" != active ] || { echo "dead-man switch already armed on $host" >&2; exit 1; }
     done
+    armed=()
     for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
-      ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
+      if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
         sudo systemctl reset-failed volant-k3s-deadman.timer volant-k3s-deadman.service > /dev/null 2>&1 || true
         sudo systemd-run --unit=volant-k3s-deadman --on-active=30min /bin/sh -c \
           "[ -x /usr/local/bin/k3s-uninstall.sh ] && /usr/local/bin/k3s-uninstall.sh; [ -x /usr/local/bin/k3s-agent-uninstall.sh ] && /usr/local/bin/k3s-agent-uninstall.sh; true"
-      '
+      '; then
+        armed+=("$host")
+      else
+        for done_host in "${armed[@]}"; do
+          ssh -o ConnectTimeout=10 -o BatchMode=yes "$done_host" 'sudo systemctl stop volant-k3s-deadman.timer' 2>/dev/null || true
+        done
+        echo "failed to arm the dead-man switch on $host" >&2
+        exit 1
+      fi
     done
 
-# Cancel the dead-man switch, but only once both hosts still answer over ssh (a short retrying
-# probe: a host still settling right after the run just finished is not yet the unreachable case
-# this switch exists for). A host that stays unreachable is left armed, and the recipe fails
-# instead of disarming blind. `systemd-run --unit=NAME` names the `.timer` doing the scheduling,
-# not just the `.service` it triggers, so that is what has to stop; a trailing `|| true` here
-# would hide a stop that failed and leave the timer ticking toward an uninstall.
+# Cancel the dead-man switch, but only once both hosts answer twice, two minutes apart: the play
+# ending is not the same moment as the cluster settling, and disarming a second after `site.yml`
+# returns would race kube-proxy and flannel still installing their own iptables rules. A host
+# that fails either round is left armed, and the recipe fails instead of disarming blind.
+# `systemd-run --unit=NAME` names the `.timer` doing the scheduling, not just the `.service` it
+# triggers, so that is what has to stop; a trailing `|| true` here would hide a stop that failed
+# and leave the timer ticking toward an uninstall.
 _k3s-deadman-disarm:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -457,7 +473,15 @@ _k3s-deadman-disarm:
       done
       return 1
     }
-    if reachable "$VOLANT_TARGET_HOST" && reachable "$VOLANT_SECOND_HOST"; then
+    both_reachable() {
+      reachable "$VOLANT_TARGET_HOST" && reachable "$VOLANT_SECOND_HOST"
+    }
+    settled=false
+    if both_reachable; then
+      sleep 120
+      both_reachable && settled=true
+    fi
+    if [ "$settled" = true ]; then
       for host in "$VOLANT_TARGET_HOST" "$VOLANT_SECOND_HOST"; do
         ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" '
           sudo systemctl stop volant-k3s-deadman.timer
@@ -482,12 +506,16 @@ _k3s-deadman-disarm:
 # directory. Neither engine `cd`s into target/k3s-ansible to pick that file's own `ansible.cfg`
 # up on its own: it also sets `pipelining = True`, and running from there would enable it even
 # for a pass this recipe means to label `pipelining=False`. `ANSIBLE_PIPELINING` itself is read
-# only by the reference, for the same reason as `proof-roles`. The dead-man switch is armed on
-# both hosts after the build (so a build failure never arms it for nothing) and disarmed on
-# every exit path (`trap ... EXIT`), not just a clean one.
+# only by the reference, for the same reason as `proof-roles`. `umask 077` covers the whole
+# recipe, both engines: the `fetch`ed `kubeconfig` this run writes under target/ carries the
+# cluster's admin credentials, and the process umask is what either engine's own file-writing
+# tasks inherit. The dead-man switch is armed on both hosts after the build (so a build failure
+# never arms it for nothing) and disarmed on every exit path (`trap ... EXIT`), not just a clean
+# one.
 proof-k3s engine="volant" *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    umask 077
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
     case "{{engine}}" in

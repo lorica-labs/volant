@@ -21,6 +21,7 @@
 
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -106,6 +107,11 @@ impl Fetch {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        // A loop variable named `inventory_hostname` whose value came from a host would let it
+        // pick which host's directory it writes into.
+        if !flat && ctx.item_vars.untrusted.contains("inventory_hostname") {
+            return Err("the 'inventory_hostname' of this item was named by a managed host, and a controller path a host chose is never written".into());
+        }
         // Without `flat` the host's name is a directory under `dest`: `..` or a `/` in it would
         // put one host's files outside its own directory.
         let mut parts = Path::new(&host).components();
@@ -167,10 +173,17 @@ impl Fetch {
     /// directory, and a symbolic link anywhere below `dest`.
     fn target(&self, source: &str) -> Result<PathBuf, String> {
         let path = self.place(source)?;
-        if self.flat && !self.dest.ends_with('/') && path.is_dir() {
-            return Err("dest is an existing directory, use a trailing slash if you want to fetch src into that directory".into());
-        }
         walk(self.walk_root(), &path, false)?;
+        if self.flat && path.is_dir() {
+            return Err(if self.dest.ends_with('/') {
+                format!(
+                    "calculated dest '{}' is an existing directory, use another path that does not point to an existing directory",
+                    path.display()
+                )
+            } else {
+                "dest is an existing directory, use a trailing slash if you want to fetch src into that directory".into()
+            });
+        }
         Ok(path)
     }
 
@@ -197,7 +210,18 @@ impl Fetch {
             }
         };
         if found.get("isdir").and_then(Value::as_bool) == Some(true) {
-            return Step::Done(TaskResult::failed_with(IS_A_DIRECTORY));
+            let mut out = Map::new();
+            if self.fail_on_missing {
+                out.insert("changed".into(), Value::Bool(false));
+                out.insert("failed".into(), Value::Bool(true));
+                out.insert("msg".into(), Value::String(IS_A_DIRECTORY.into()));
+            } else {
+                out.insert(
+                    "msg".into(),
+                    Value::String(format!("{IS_A_DIRECTORY}, not transferring, ignored")),
+                );
+            }
+            return Step::Done(TaskResult(out));
         }
         let exists = found.get("exists").and_then(Value::as_bool) == Some(true);
         if let Some(path) = found.get("path").and_then(Value::as_str) {
@@ -258,14 +282,17 @@ impl Fetch {
         if result.failed() {
             let msg = result.0.get("msg").and_then(Value::as_str).unwrap_or("");
             let msg = if msg.contains("not found") {
-                "the remote file does not exist, not transferring, ignored".to_string()
+                "the remote file does not exist, not transferring, ignored"
             } else if msg.starts_with("source is a directory") {
-                IS_A_DIRECTORY.to_string()
+                IS_A_DIRECTORY
             } else {
-                msg.to_string()
+                // Any other failure - the agent refusing an answer too big to carry, a read the
+                // host denied - fails the task in its own words, whatever `fail_on_missing` says:
+                // the file is there and nothing was written.
+                return result;
             };
-            // The module's own result under `fail_on_missing`, as the reference hands it back;
-            // an agent that refused an oversized answer is named there as it said it.
+            let msg = msg.to_string();
+            // The module's own result under `fail_on_missing`, as the reference hands it back.
             let mut out = if self.fail_on_missing {
                 result
             } else {
@@ -301,14 +328,28 @@ impl Fetch {
 
     /// The bytes written next to their place, checked, then renamed over it.
     fn write(&self, path: PathBuf, data: &[u8], remote: &str) -> TaskResult {
+        // A name of this write's own: two hosts fetching `flat` to one path run at once, each on
+        // its own driver, and a shared temporary name would mix their bytes.
+        static WRITES: AtomicU64 = AtomicU64::new(0);
         let mut tmp = path.clone().into_os_string();
-        tmp.push(".volant-tmp");
+        tmp.push(format!(
+            ".{}-{}.volant-tmp",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
         let tmp = PathBuf::from(tmp);
         let written = walk(self.walk_root(), &path, true).and_then(|()| {
             let fail = |err: std::io::Error| format!("Failed to fetch the file: {err}");
-            // A leftover of an interrupted run; removing it never follows a link.
-            let _ = std::fs::remove_file(&tmp);
+            // The file being replaced keeps its mode, as the reference's write in place does: a
+            // `0600` kubeconfig fetched again stays `0600`. `walk` refused a link at `path`.
+            let kept = std::fs::symlink_metadata(&path)
+                .ok()
+                .filter(std::fs::Metadata::is_file)
+                .map(|m| m.permissions());
             let mut file = std::fs::File::create_new(&tmp).map_err(fail)?;
+            if let Some(kept) = kept {
+                file.set_permissions(kept).map_err(fail)?;
+            }
             file.write_all(data).map_err(fail)?;
             drop(file);
             std::fs::read(&tmp).map(|b| sha1_hex(&b)).map_err(fail)
@@ -461,12 +502,21 @@ mod tests {
         host: &str,
         escalated: bool,
     ) -> Box<dyn Plugin> {
+        let mut item_vars = HostVars::default();
+        item_vars.insert("inventory_hostname".into(), json!(host));
+        start_vars(args, untrusted, &item_vars, escalated)
+    }
+
+    fn start_vars(
+        args: Value,
+        untrusted: &BTreeSet<String>,
+        item_vars: &HostVars,
+        escalated: bool,
+    ) -> Box<dyn Plugin> {
         let Value::Object(args) = args else {
             unreachable!()
         };
         let running = Map::new();
-        let mut item_vars = HostVars::default();
-        item_vars.insert("inventory_hostname".into(), json!(host));
         let dir = std::env::temp_dir();
         let templar = crate::template::Templar::new(dir.clone());
         let origin = crate::compile::Origin::default();
@@ -477,7 +527,7 @@ mod tests {
             running_vars: &running,
             delegated: false,
             escalated,
-            item_vars: &item_vars,
+            item_vars,
             templar: &templar,
             origin: &origin,
             playbook_dir: &dir,
@@ -516,6 +566,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The temporary files left in `dir`.
+    fn temps(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().ends_with(".volant-tmp"))
+            .collect()
     }
 
     fn modules(subs: &[Sub]) -> Vec<&str> {
@@ -764,9 +823,7 @@ mod tests {
                    "md5sum": null, "remote_checksum": sum, "remote_md5sum": null})
         );
         assert_eq!(std::fs::read(&file).unwrap(), data);
-        let mut tmp = file.clone().into_os_string();
-        tmp.push(".volant-tmp");
-        assert!(!Path::new(&tmp).exists(), "the temporary file was left");
+        assert_eq!(temps(file.parent().unwrap()), Vec::<PathBuf>::new());
 
         let mut plugin = start_plain(args);
         let (subs, result) = drive(plugin.as_mut(), data, "/tmp/v/d/one.txt");
@@ -828,6 +885,19 @@ mod tests {
             )
         );
         assert!(dir.join("into").is_dir());
+
+        // With the `/`, a name inside it that is itself a directory, in the reference's words.
+        std::fs::create_dir_all(dir.join("into/sub.d")).unwrap();
+        let mut plugin = start_plain(json!({"src": "/etc/sub.d", "dest": into, "flat": true}));
+        let (_, result) = drive(plugin.as_mut(), b"three", "/etc/sub.d");
+        assert_eq!(
+            result["msg"],
+            json!(format!(
+                "calculated dest '{}' is an existing directory, use another path that does not point to an existing directory",
+                dir.join("into/sub.d").display()
+            ))
+        );
+        assert!(dir.join("into/sub.d").is_dir());
     }
 
     /// A source that is not there follows `fail_on_missing`, and a directory is refused.
@@ -864,38 +934,59 @@ mod tests {
         }
         assert!(!dir.join("fetched").exists());
 
-        let mut plugin = start_plain(json!({"src": "/etc", "dest": dest}));
-        plugin.next(None);
-        let Step::Done(done) = plugin.next(Some(result(
-            json!({"stat": {"exists": true, "isdir": true}}),
-        ))) else {
-            panic!("not done")
-        };
-        assert_eq!(done.0["msg"], json!(IS_A_DIRECTORY));
-
-        // Under `become` it is `slurp` that says so, and an answer the agent refused as too big
-        // comes back in its own words.
-        for (msg, want) in [
-            ("source is a directory and must be a file", IS_A_DIRECTORY),
+        // A directory, from `stat`: `ok` and ignored, or failed with `changed: false`.
+        for (fail_on_missing, want) in [
             (
-                "the answer exceeds 4194304 bytes",
-                "the answer exceeds 4194304 bytes",
+                false,
+                json!({"msg": format!("{IS_A_DIRECTORY}, not transferring, ignored")}),
+            ),
+            (
+                true,
+                json!({"changed": false, "failed": true, "msg": IS_A_DIRECTORY}),
             ),
         ] {
-            let mut plugin = start_with(
-                json!({"src": "/etc", "dest": dest}),
-                &BTreeSet::new(),
-                "probe-hostname",
-                true,
+            let mut plugin = start_plain(
+                json!({"src": "/etc", "dest": dest, "fail_on_missing": fail_on_missing}),
             );
             plugin.next(None);
-            let Step::Done(done) = plugin.next(Some(result(json!({"failed": true, "msg": msg}))))
-            else {
+            let Step::Done(done) = plugin.next(Some(result(
+                json!({"stat": {"exists": true, "isdir": true}}),
+            ))) else {
                 panic!("not done")
             };
-            assert_eq!(done.0["failed"], json!(true));
-            assert_eq!(done.0["msg"], json!(want));
+            assert_eq!(Value::Object(done.0), want);
         }
+
+        // Under `become` it is `slurp` that says so, and an answer the agent refused as too big
+        // fails in its own words whatever `fail_on_missing` says: the file is there, and nothing
+        // was written.
+        let too_big = "the module wrote more than 4194304 bytes, which is more than a result can carry (exit status 0)";
+        for fail_on_missing in [true, false] {
+            for (msg, want, failed) in [
+                (
+                    "source is a directory and must be a file",
+                    IS_A_DIRECTORY,
+                    fail_on_missing,
+                ),
+                (too_big, too_big, true),
+            ] {
+                let mut plugin = start_with(
+                    json!({"src": "/etc", "dest": dest, "fail_on_missing": fail_on_missing}),
+                    &BTreeSet::new(),
+                    "probe-hostname",
+                    true,
+                );
+                plugin.next(None);
+                let Step::Done(done) =
+                    plugin.next(Some(result(json!({"failed": true, "msg": msg}))))
+                else {
+                    panic!("not done")
+                };
+                assert_eq!(done.failed(), failed, "{msg}: {:?}", done.0);
+                assert_eq!(done.0["msg"], json!(want));
+            }
+        }
+        assert!(!dir.join("fetched").exists());
     }
 
     /// A file whose bytes do not match the sum `stat` reported is not written, and the result
@@ -955,7 +1046,111 @@ mod tests {
                 .starts_with("Failed to fetch the file: "),
             "{result}"
         );
-        assert!(!dest.join("probe-hostname/one.txt.volant-tmp").exists());
+        assert_eq!(temps(&dest.join("probe-hostname")), Vec::<PathBuf>::new());
+    }
+
+    /// Two hosts fetching `flat` to the same path at once each write through a temporary file of
+    /// their own: every result is its own bytes' and consistent, and no temporary file is left.
+    ///
+    /// Each host's driver runs on its own task, so the two writes can interleave. What would make
+    /// this red: one temporary name for both, where one host removes or renames the other's file,
+    /// and a write fails, mismatches, or reports `changed` for a file holding the other's bytes.
+    #[test]
+    fn two_hosts_fetching_to_one_path_do_not_mix_their_bytes() {
+        let dir = scratch("concurrent");
+        let target = dir.join("kubeconfig");
+        for round in 0..20 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let writers: Vec<_> = b"ab"
+                .iter()
+                .map(|&byte| {
+                    let barrier = barrier.clone();
+                    let target = target.clone();
+                    std::thread::spawn(move || {
+                        let data = vec![byte; 256 * 1024 + round];
+                        let mut plugin = start_with(
+                            json!({"src": "/k.yaml", "dest": target.display().to_string(),
+                                   "flat": true}),
+                            &BTreeSet::new(),
+                            "probe-hostname",
+                            true,
+                        );
+                        assert!(matches!(plugin.next(None), Step::Run(_)));
+                        barrier.wait();
+                        let Step::Done(done) = plugin.next(Some(result(json!({
+                            "content": b64_encode(&data), "source": "/k.yaml",
+                            "encoding": "base64"}))))
+                        else {
+                            panic!("not done")
+                        };
+                        (sha1_hex(&data), Value::Object(done.0))
+                    })
+                })
+                .collect();
+            let sums: Vec<String> = writers
+                .into_iter()
+                .map(|w| {
+                    let (sum, done) = w.join().unwrap();
+                    assert_eq!(done["failed"], Value::Null, "{done}");
+                    assert_eq!(done["checksum"], json!(sum), "{done}");
+                    sum
+                })
+                .collect();
+            let on_disk = sha1_hex(&std::fs::read(&target).unwrap());
+            assert!(sums.contains(&on_disk), "round {round}: torn file");
+            assert_eq!(temps(&dir), Vec::<PathBuf>::new(), "round {round}");
+            std::fs::remove_file(&target).unwrap();
+        }
+    }
+
+    /// A file fetched again keeps its mode, as the reference's write in place does.
+    ///
+    /// What would make this red: the replacement created with the default mode, which turns a
+    /// `0600` kubeconfig into a `0644` one at the second fetch.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_fetched_again_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("mode");
+        let target = dir.join("kubeconfig");
+        std::fs::write(&target, "old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut plugin = start_plain(
+            json!({"src": "/k.yaml", "dest": target.display().to_string(), "flat": true}),
+        );
+        let (_, done) = drive(plugin.as_mut(), b"new", "/k.yaml");
+        assert_eq!(done["changed"], json!(true), "{done}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o600);
+    }
+
+    /// An `inventory_hostname` a managed host set - a loop variable of that name over a
+    /// registered list - is refused without `flat`, as a host-named `dest` is.
+    ///
+    /// What would make this red: the value used as the directory, which lets a host file its
+    /// fetches in another host's directory under `dest`.
+    #[test]
+    fn a_host_directory_a_host_named_is_refused() {
+        let dir = scratch("loop-var");
+        let dest = dir.join("fetched");
+        let mut vars = HostVars::default();
+        vars.insert_untrusted("inventory_hostname".into(), json!("other-host"));
+        let mut plugin = start_vars(
+            json!({"src": "/etc/one.txt", "dest": dest.display().to_string()}),
+            &BTreeSet::new(),
+            &vars,
+            false,
+        );
+        let (subs, done) = drive(plugin.as_mut(), b"x", "/etc/one.txt");
+        assert!(subs.is_empty(), "{:?}", modules(&subs));
+        assert_eq!(
+            done["msg"],
+            json!(
+                "the 'inventory_hostname' of this item was named by a managed host, and a controller path a host chose is never written"
+            )
+        );
+        assert!(!dest.exists());
     }
 
     /// What is refused before any sub-task, in the reference's words.

@@ -293,11 +293,11 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.module
         );
     }
-    // A plugin this release runs. `until`, `retries` and `delay` are refused on it: the driver's
-    // retry loop runs one module per attempt and the plugin's loop runs several per item, and the
-    // two do not compose. No role this release was measured against writes one on a plugin.
+    // A plugin this release runs. `until`, `retries` and `delay` run on it: each attempt replays
+    // the plugin's whole sequence of sub-tasks and `until` reads the result it ended with, as a
+    // module's retry does - `k3s_server` retries a `remote_src` copy three times.
     if action_plugins::kind(&task.module).is_some() {
-        return refuse_retries(task);
+        return Ok(());
     }
     if !is_known(&task.module) {
         // A module ansible-core ships, that this release runs neither natively nor on the
@@ -323,13 +323,133 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             // and `check_arguments` knows only the native modules.
             return Ok(());
         }
-        bail!(
-            "task '{}': couldn't resolve module/action '{}'. This often indicates a misspelling, missing collection, or incorrect module path.",
-            task.name,
-            task.module
-        );
+        // A collection's module is set aside rather than judged: only the controller's
+        // ansible-core knows which collections are installed, and it is asked once, after both
+        // passes, before the union is built ([`check_resolved`]).
+        if crate::python::is_collection_name(&task.module) {
+            // What the loader kept of a string argument that is not `key=value`, refused here
+            // rather than at load, as the reference's `ModuleArgsParser` refuses it after
+            // `parse_kv` kept it: a role file for another platform is parsed for the union and
+            // never checked, so its free-form Windows task cannot refuse a Linux run.
+            if task.args.contains_key("_raw_params")
+                && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+            {
+                // ansible-core 2.19.12's sentence (`task.py`), which `import_playbook` written as
+                // a task gets too.
+                bail!(
+                    "task '{}': Action '{}' does not support raw params.",
+                    task.name,
+                    task.module
+                );
+            }
+            return Ok(());
+        }
+        bail!(unresolved(&task.name, &task.module));
     }
     check_arguments(task)
+}
+
+/// The reference's sentence for a name nothing answers to.
+fn unresolved(task: &str, module: &str) -> String {
+    format!("task '{task}': {}", unresolved_tail(module))
+}
+
+fn unresolved_tail(module: &str) -> String {
+    format!(
+        "couldn't resolve module/action '{module}'. This often indicates a misspelling, missing collection, or incorrect module path."
+    )
+}
+
+/// Every `(task, module)` of a compiled play whose module only a collection can answer, set
+/// aside by [`check_task`] for the controller's ansible-core to resolve.
+pub(crate) fn collection_modules(compiled: &crate::compile::Compiled) -> Vec<(String, String)> {
+    compiled
+        .steps
+        .iter()
+        .filter(|step| !matches!(step.kind, crate::compile::StepKind::Flush { .. }))
+        .map(|step| &step.task)
+        .chain(compiled.handlers.iter().map(|handler| &handler.task))
+        .filter(|task| crate::python::is_collection_name(&task.module))
+        .map(|task| (task.name.clone(), task.module.clone()))
+        .collect()
+}
+
+/// What the controller's ansible-core made of a collection's module a task names, refused
+/// before the first connection unless it is a module the union can hold.
+///
+/// Volant never installs a collection, and never runs a collection's action plugin: the plugin
+/// is controller code this release does not execute, and sending its module alone would run
+/// something the playbook did not ask for. A missing collection is named, with the command that
+/// installs it; a module missing from a collection that is installed is the reference's typo
+/// sentence alone.
+pub(crate) fn check_resolved(
+    task: &str,
+    module: &str,
+    answer: &crate::python::Resolved,
+) -> anyhow::Result<()> {
+    match refusal_of(module, answer) {
+        None => Ok(()),
+        Some(why) => Err(Refusal::at(CODE, format!("task '{task}': {why}"))),
+    }
+}
+
+/// Why a collection's module the controller resolved cannot run, as the refusal says it after
+/// the task's name, or `None` for a module the union can hold. Kept in [`crate::python::Union`]
+/// for the names a play does not name itself, so an include reaching one says the same.
+pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Option<String> {
+    use crate::python::Resolved;
+    match answer {
+        Resolved::Module { .. } => None,
+        Resolved::ActionPlugin { fqcn } => Some(format!(
+            "module '{fqcn}' needs an action plugin from its collection, which this release does not run"
+        )),
+        Resolved::Unusable { reason } => Some(format!("module '{module}' cannot run: {reason}")),
+        Resolved::Missing { collection: None } => Some(unresolved_tail(module)),
+        Resolved::Missing {
+            collection: Some(collection),
+        } => Some(format!(
+            "{} The collection '{collection}' is not installed on the controller: install it with ansible-galaxy collection install {collection}",
+            unresolved_tail(module)
+        )),
+    }
+}
+
+/// A name outside `ansible.builtin` a task gives, on a controller where no ansible-core could be
+/// asked what it is: the reference's sentence, then why nothing could look.
+pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -> anyhow::Error {
+    Refusal::at(
+        CODE,
+        format!(
+            "{} Only the controller's ansible-core can resolve a name outside ansible.builtin, and {why:#}",
+            unresolved(task, module)
+        ),
+    )
+}
+
+/// A collection's module an include brought in, refused unless the union holds it.
+///
+/// The union was built before the first connection, from what the plays and their role files
+/// name, and a collection's module is in it only if the controller's ansible-core resolved it to
+/// a module it could build. One that is not was missing, is served by an action plugin, or sits
+/// in a file nothing read before the run; the include fails for the host that reached it, before
+/// any of the file's tasks run, like any other refusal of an included file.
+pub(crate) fn check_built(
+    expanded: &crate::compile::Compiled,
+    union: Option<&crate::python::Union>,
+) -> anyhow::Result<()> {
+    for (task, module) in collection_modules(expanded) {
+        if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(&module))) {
+            // What the controller made of a name it set aside, as the pre-flight says it for one
+            // a play names.
+            if let Some(why) = union.and_then(|u| u.refused.get(&module)) {
+                bail!("task '{task}': {why}");
+            }
+            bail!(
+                "task '{task}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Why a `pause` that would wait for an answer is refused on a terminal.
@@ -574,6 +694,165 @@ mod tests {
         assert!(check(&pb).is_ok(), "an implemented module passes");
     }
 
+    /// A collection's module passes both passes and is collected for the controller to resolve;
+    /// a name in the namespace ansible-core owns whole is still the reference's typo.
+    ///
+    /// What would make this red: the collection arm left out, which refuses
+    /// `ansible.posix.sysctl` with "couldn't resolve" before anything has looked for it; or the
+    /// arm taking `ansible.builtin.nosuch`, which no collection can ever supply; or a handler's
+    /// module left out of what is collected, which would reach a host unresolved.
+    #[test]
+    fn a_collection_module_is_set_aside_for_the_controller() {
+        let text = "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Forward\n      ansible.posix.sysctl: name=net.ipv4.ip_forward value=1\n    - debug: msg=x\n  handlers:\n    - name: Reload\n      community.general.ufw: state=reloaded\n";
+        let pb = parse(text, "x.yml").unwrap();
+        check(&pb).expect("a collection's module waits for the controller's answer");
+        let compiled = crate::compile::compile(
+            &pb.plays[0],
+            &crate::roles::RoleSearch::default(),
+            &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+        )
+        .unwrap();
+        check_steps(&compiled).expect("and so does the second pass");
+        assert_eq!(
+            collection_modules(&compiled),
+            [
+                ("Forward".to_string(), "ansible.posix.sysctl".to_string()),
+                ("Reload".to_string(), "community.general.ufw".to_string()),
+            ]
+        );
+        // A word that is not `key=value` is kept by the loader and refused here, where a task is
+        // checked, unless the module is free-form. Red if the loader refuses it instead (a role's
+        // Windows file would refuse a Linux run) or if nothing refuses it (the module runs with
+        // an argument it never declared).
+        let text =
+            refusal("- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n");
+        assert!(
+            text.contains("task 'Stray': Action 'ns.coll.mod' does not support raw params."),
+            "{text}"
+        );
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - ansible.windows.win_shell: Get-Service foo\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("a free-form collection module takes its command line");
+        let text =
+            refusal("- hosts: all\n  tasks:\n    - name: T\n      ansible.builtin.nosuch: x=1\n");
+        assert!(
+            text.contains("couldn't resolve module/action 'ansible.builtin.nosuch'"),
+            "{text}"
+        );
+    }
+
+    /// What the controller made of a collection's module, in the refusal the operator reads.
+    ///
+    /// What would make this red: a missing collection answered with the typo sentence alone,
+    /// which sends the operator hunting for a misspelling when the fix is one install; the
+    /// install hint on a collection that is installed, which is wrong advice; an action plugin
+    /// let through, which runs the module without the controller half the playbook relies on;
+    /// or any of them at another code than the pre-flight's 4.
+    #[test]
+    fn a_collection_module_is_refused_by_what_the_controller_made_of_it() {
+        use crate::python::Resolved;
+        let verdict = |answer: Resolved| {
+            check_resolved("T", "ns.coll.mod", &answer).map_err(|err| {
+                assert_eq!(error_code(&err), 4, "{err:#}");
+                format!("{err:#}")
+            })
+        };
+        assert!(
+            verdict(Resolved::Module {
+                fqcn: "ns.coll.mod".into(),
+                collection: Some(("ns.coll".into(), "1.0.0".into())),
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            verdict(Resolved::ActionPlugin {
+                fqcn: "ns.coll.mod".into()
+            }),
+            Err("task 'T': module 'ns.coll.mod' needs an action plugin from its collection, which this release does not run".to_string())
+        );
+        let typo = "task 'T': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path.";
+        assert_eq!(
+            verdict(Resolved::Missing { collection: None }),
+            Err(typo.to_string())
+        );
+        assert_eq!(
+            verdict(Resolved::Missing {
+                collection: Some("ns.coll".into())
+            }),
+            Err(format!(
+                "{typo} The collection 'ns.coll' is not installed on the controller: install it with ansible-galaxy collection install ns.coll"
+            ))
+        );
+    }
+
+    /// A collection's module an include brings in runs only if the union holds it, and the
+    /// include fails naming it otherwise.
+    ///
+    /// What would make this red: the check left out, which runs the included tasks in front of
+    /// the collection's module and only then fails the host on a missing payload - the half-run
+    /// the pre-flight exists to prevent; or a lookup by a key other than `payload_key`, which
+    /// refuses a module the union holds.
+    #[test]
+    fn an_included_collection_module_needs_its_payload_built() {
+        let pb = parse(
+            "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Forward\n      ansible.posix.sysctl: name=x value=1\n",
+            "x.yml",
+        )
+        .unwrap();
+        let compiled = crate::compile::compile(
+            &pb.plays[0],
+            &crate::roles::RoleSearch::default(),
+            &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+        )
+        .unwrap();
+        let union = |keys: &[&str]| crate::python::Union {
+            hash: "ab".into(),
+            zip_b64: "UEsDBA==".into(),
+            modules: keys
+                .iter()
+                .map(|k| {
+                    (
+                        k.to_string(),
+                        crate::python::ModuleFacts {
+                            module_fqn: format!("fqn.{k}"),
+                            profile: "legacy".into(),
+                            rlimit_nofile: 0,
+                            extensions: serde_json::Map::new(),
+                        },
+                    )
+                })
+                .collect(),
+            refused: std::collections::BTreeMap::new(),
+        };
+        check_built(&compiled, Some(&union(&["ansible.posix.sysctl"])))
+            .expect("the union holds it");
+        for refused in [None, Some(union(&["sysctl", "ping"]))] {
+            let err = check_built(&compiled, refused.as_ref()).unwrap_err();
+            let text = format!("{err:#}");
+            assert!(
+                text.contains("task 'Forward': module 'ansible.posix.sysctl' was not resolved"),
+                "{text}"
+            );
+        }
+        // A name the controller set aside says why, in the controller's words. Red if the
+        // reason is dropped for the sentence above, which sends the operator to install a
+        // collection that is installed.
+        let mut set_aside = union(&["ping"]);
+        set_aside
+            .refused
+            .insert("ansible.posix.sysctl".into(), "it is gone.".into());
+        assert_eq!(
+            format!(
+                "{:#}",
+                check_built(&compiled, Some(&set_aside)).unwrap_err()
+            ),
+            "task 'Forward': it is gone."
+        );
+    }
+
     /// A module whose only product is facts reaches a host now, and the pre-flight reads that
     /// from `python::is_python_module` rather than deciding it again.
     ///
@@ -618,9 +897,9 @@ mod tests {
     #[test]
     fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
         let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      fetch: src=a dest=b\n");
+            refusal("- hosts: all\n  tasks:\n    - name: Later\n      assemble: src=a dest=b\n");
         assert!(
-            text.contains("module 'fetch' needs an action plugin"),
+            text.contains("module 'assemble' needs an action plugin"),
             "{text}"
         );
         let text = refusal(
@@ -635,21 +914,22 @@ mod tests {
     }
 
     /// The plugins this release runs are admitted under every builtin spelling, with their
-    /// arguments read; the ones it does not run stay refused; and a retry on a plugin is refused
-    /// by name.
+    /// arguments read, and with `until`, `retries` and `delay` on them; the ones it does not run
+    /// stay refused.
     ///
     /// What would make this red: `package` still refused, or admitted with its arguments left
     /// unread - the loader reads them only for a module it knows it can run, so a plugin it did
-    /// not count would install nothing and report `ok`. Or `until` let through, which the
-    /// driver's retry loop would run around a module the plugin never picked.
+    /// not count would install nothing and report `ok`. Or a retry on a plugin still refused,
+    /// which stops `k3s_server`'s `Copy k3s.yaml to second file` before the first connection.
     #[test]
-    fn the_plugins_this_release_runs_are_admitted_and_their_retries_refused() {
+    fn the_plugins_this_release_runs_are_admitted_with_their_retries() {
         for module in [
             "package",
             "service",
             "copy",
             "template",
             "unarchive",
+            "fetch",
             "ansible.builtin.package",
         ] {
             let pb = parse(
@@ -669,11 +949,36 @@ mod tests {
             text.contains("module 'reboot' needs an action plugin"),
             "{text}"
         );
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Copy k3s.yaml to second file\n      copy:\n        src: /etc/rancher/k3s/k3s.yaml\n        dest: /etc/rancher/k3s/k3s-copy.yaml\n        mode: \"0600\"\n        remote_src: true\n      retries: 3\n      register: k3s_server_copy_yaml\n    - name: Again\n      package: name=bash\n      until: false\n      delay: 1\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert!(check(&pb).is_ok(), "a retry on a plugin runs");
+    }
+
+    /// The loops `site.yml` of k3s-ansible lists statically, which the pre-flight sees on every
+    /// host whatever OS it runs: `airgap`'s `copy` over `with_first_found` and over
+    /// `with_fileglob`, and `raspberrypi`'s `include_tasks` over `with_first_found`. Measured on
+    /// ansible-core 2.19.12 against this release before it ran them: the first refusal was
+    /// `task 'Distribute K3s binary': keyword 'with_first_found' is not supported yet`. A
+    /// `with_<lookup>` this release has no lookup for stays refused by that sentence.
+    ///
+    /// What would make this red: either row still refused, or a `with_*` whose lookup does not
+    /// exist admitted, which the run would then fail on every host instead of refusing it once.
+    #[test]
+    fn the_static_with_lookup_loops_of_site_yml_pass_the_pre_flight() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{ item }}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{ airgap_dir }}/k3s\"\n          skip: true\n    - name: Distribute K3s images\n      copy:\n        src: \"{{ item }}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n    - name: Execute OS related tasks on the Raspberry Pi\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"setup/{{ ansible_distribution }}.yml\"\n        - setup/default.yml\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("the three loops pass");
         let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Again\n      package: name=bash\n      until: false\n",
+            "- hosts: all\n  tasks:\n    - name: Dict\n      debug: msg=hi\n      with_dict: {a: 1}\n",
         );
         assert!(
-            text.contains("keyword 'until' is not supported yet on 'package'"),
+            text.contains("keyword 'with_dict' is not supported yet"),
             "{text}"
         );
     }
@@ -909,7 +1214,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            77,
+            75,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

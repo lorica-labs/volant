@@ -35,7 +35,7 @@ After a run, the code comes from the recap: 2 is added when any host failed, and
 
 ## Before a run
 
-A playbook stopped by the [pre-flight check](/playbooks/preflight/) exits with 4 before any connection, which is what Ansible uses for a playbook it cannot load. Cases whose code was measured on Ansible keep that code: 1 for a missing role, an unknown `meta` action or an unknown `notify` name.
+A playbook stopped by the [pre-flight check](/playbooks/preflight/) exits with 4 before any connection, which is what Ansible uses for a playbook it cannot load. Cases whose code was measured on Ansible keep that code: 1 for a missing role, an unknown `meta` action or an unknown `notify` name. An unknown `notify` name in a file a dynamic include brings in is only found during the run, and it ends the run there with 1 too.
 
 ## Where Ansible crashes
 

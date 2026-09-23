@@ -5,12 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
-use crate::action_plugins::{self, Kind};
+use crate::action_plugins::Kind;
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{
     Compiled, StepKind, after, after_failure, after_pending, first, rescue_target,
@@ -28,10 +28,10 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
-    python_for, record_facts, record_registered, requested_interpreter, retry_plan,
-    reuse_or_connect, run_agent_batch, run_local, run_plugin_item, running_host_vars, step_tasks,
-    take_warnings, unresolved_notify, until_holds,
+    Attempt, PluginStart, Retry, chosen_interpreter, fact_targets, failed_task_value, finish,
+    judge_attempt, notify, python_for, record_facts, record_registered, requested_interpreter,
+    retry_plan, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
+    running_host_vars, step_tasks, take_warnings, unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -717,34 +717,15 @@ pub(super) async fn drive_host(
                                 let Some(ran) = ran else {
                                     break 'run;
                                 };
-                                let mut r = finish(task, item, ran, &templar);
-                                let Some(retry) = &retry else { break r };
-                                r.0.insert("attempts".into(), json!(attempt));
-                                match until_holds(task, item, &r, retry, &templar) {
-                                    // A condition that cannot be evaluated ends the task
-                                    // there, with no further attempt and no `attempts` -
-                                    // measured, and the reference's own prefix for a task
-                                    // that dies rather than fails.
-                                    Err(e) => {
-                                        break TaskResult::failed_with(conditional_error(&e));
-                                    }
-                                    Ok(true) => break r,
-                                    Ok(false) => {}
-                                }
-                                mine.push(retry.attempts - attempt + 1);
-                                let last = attempt >= retry.attempts;
-                                if last {
-                                    // The loop ran out with the condition still false, which
-                                    // is a failed task even when the module itself passed:
-                                    // measured with a `changed_when: false` under
-                                    // `until: r.changed`.
-                                    r.0.insert("failed".into(), json!(true));
+                                let Some(retry) = &retry else {
+                                    break finish(task, item, ran, &templar);
+                                };
+                                match judge_attempt(task, item, ran, attempt, retry, &templar) {
+                                    Attempt::Done(r) => break r,
+                                    Attempt::Again(left) => mine.push(left),
                                 }
                                 if driver.sleep_between(retry.delay).await.is_none() {
                                     break 'run;
-                                }
-                                if last {
-                                    break r;
                                 }
                             }
                         };
@@ -1071,46 +1052,56 @@ pub(super) async fn drive_host(
                     .playbook_dir()
                     .to_path_buf();
                 let mut outcome = Ok(BatchOutcome::Completed);
+                // Under `retries`/`until` the attempts judge each result themselves, since
+                // `until` reads what `changed_when` and `failed_when` decided.
+                let retry = batch_retry.clone();
+                if retry.is_some() {
+                    decided = true;
+                    names = items
+                        .iter()
+                        .map(|item| retry_name(&step.task, &item.vars, &templar))
+                        .collect();
+                }
                 for (ii, item) in items.iter().enumerate() {
                     if item.skipped.is_some() {
                         continue;
                     }
                     let mut warnings = Vec::new();
-                    let ran = {
-                        let mut plugin = action_plugins::start(
-                            kind,
-                            action_plugins::Context {
-                                args: &item.args,
-                                args_untrusted: &item.args_untrusted,
-                                running_vars: running_host_vars(
-                                    delegate.as_ref(),
-                                    std::slice::from_ref(item),
-                                ),
-                                item_vars: &item.vars,
-                                templar: &templar,
-                                origin: &step.origin,
-                                playbook_dir: &playbook_dir,
-                                warnings: &mut warnings,
-                            },
-                        );
-                        run_plugin_item(
-                            link,
-                            &name,
-                            &mut batch_id,
-                            plugin.as_mut(),
-                            &step.task,
-                            item,
-                            plan.python.as_deref(),
-                            &interpreters,
-                            asked.as_deref(),
-                            &mut driver.stop,
-                            &mut driver.stop_broken,
-                            &mut logs,
-                        )
-                        .await
+                    let start = PluginStart {
+                        kind,
+                        running_vars: running_host_vars(
+                            delegate.as_ref(),
+                            std::slice::from_ref(item),
+                        ),
+                        delegated: delegate.is_some(),
+                        escalated: batch_escalation.is_some(),
+                        templar: &templar,
+                        origin: &step.origin,
+                        playbook_dir: &playbook_dir,
                     };
+                    let ran = run_plugin_attempts(
+                        link,
+                        &name,
+                        &mut batch_id,
+                        &start,
+                        &step.task,
+                        item,
+                        retry.as_ref(),
+                        plan.python.as_deref(),
+                        &interpreters,
+                        asked.as_deref(),
+                        &mut driver.stop,
+                        &mut driver.stop_broken,
+                        &mut logs,
+                        &mut warnings,
+                        &mut lefts[ii],
+                    )
+                    .await;
                     match ran {
-                        Ok(result) => received[0][ii] = Some(result),
+                        // Stopped between two attempts: nothing more runs, as for every other
+                        // wait the stop ends.
+                        Ok(None) => break 'run,
+                        Ok(Some(result)) => received[0][ii] = Some(result),
                         // The link lost or the run interrupted: this item has no result and the
                         // ones behind it do not run, exactly as for any batch the agent did not
                         // finish.
@@ -1191,31 +1182,15 @@ pub(super) async fn drive_host(
                         // The agent ended without a result for this item. Left unreported, the
                         // way the loop below leaves a task the agent never reached.
                         let Some(raw) = raw else { continue 'items };
-                        let mut r = finish(task, item, raw, &templar);
-                        r.0.insert("attempts".into(), json!(attempt));
-                        match until_holds(task, item, &r, &retry, &templar) {
-                            Err(e) => {
-                                received[0][ii] =
-                                    Some(TaskResult::failed_with(conditional_error(&e)));
-                                continue 'items;
-                            }
-                            Ok(true) => {
+                        match judge_attempt(task, item, raw, attempt, &retry, &templar) {
+                            Attempt::Done(r) => {
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
-                            Ok(false) => {}
-                        }
-                        lefts[ii].push(retry.attempts - attempt + 1);
-                        let last = attempt >= retry.attempts;
-                        if last {
-                            r.0.insert("failed".into(), json!(true));
-                            received[0][ii] = Some(r);
+                            Attempt::Again(left) => lefts[ii].push(left),
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
                             break 'run;
-                        }
-                        if last {
-                            continue 'items;
                         }
                     }
                 }
@@ -1584,25 +1559,7 @@ impl Driver<'_> {
 
     /// Waits `delay`, or gives up when the run is interrupted.
     async fn sleep_between(&mut self, delay: Duration) -> Option<()> {
-        if delay.is_zero() {
-            return Some(());
-        }
-        let deadline = tokio::time::Instant::now() + delay;
-        loop {
-            if self.stopped() {
-                return None;
-            }
-            tokio::select! {
-                () = tokio::time::sleep_until(deadline) => return Some(()),
-                res = self.stop.changed(), if !self.stop_broken => {
-                    if res.is_err() {
-                        self.stop_broken = true;
-                    } else {
-                        return None;
-                    }
-                }
-            }
-        }
+        wait_or_stop(delay, &mut self.stop, &mut self.stop_broken).await
     }
 
     /// Waits until every other live host of the batch has finished the step in front of `pos`.

@@ -895,16 +895,21 @@ pub(super) fn unresolved_notify(
 
 /// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.
 ///
-/// Measured on ansible-core 2.19.12, and every line of it is a measurement: `until` with no
-/// `retries` gives three attempts; `retries` with no `until` retries while the result is failed;
-/// `retries` under 1 (0 and -1 were both measured) turns the whole machinery off, so the task
-/// runs once, prints no retry line, carries no `attempts` and is not failed by a condition that
-/// never held; the default `delay` is five seconds; and the sleep happens after **every** failed
-/// attempt, the last one included - measured by timing, 2 attempts cost 10 seconds and 3 cost 15.
+/// The rule is ansible-core 2.19.12's `TaskExecutor._execute` (`task_executor.py`, the attempt
+/// loop): `retries: R` is **R + 1 runs**, the first plus R retries, and `until` with no `retries`
+/// is R = 3. A retry line and the `delay` follow each of the first R failed runs, never the last;
+/// the line after run `i` says `(R + 1 - i retries left)`, so the last line says `(1 retries left)`
+/// and is followed by one more run. A run out of attempts reports `attempts: R`, not R + 1.
+/// Measured there on the dev machine: `retries: 2` on a failing `shell` that appends a line to a
+/// file prints both retry lines, reports `"attempts": 2`, and leaves **three** lines in the file.
+/// Also measured: `retries` with no `until` retries while the result is failed; `retries` under 1
+/// (0 and -1) turns the whole machinery off, so the task runs once, prints no retry line, carries
+/// no `attempts` and is not failed by a condition that never held; the default `delay` is five
+/// seconds.
 #[derive(Clone)]
 pub(super) struct Retry {
-    /// Attempts in all, never zero.
-    pub(super) attempts: u32,
+    /// R: the runs after the first, never zero.
+    pub(super) retries: u32,
     pub(super) delay: Duration,
     /// The conditions that end the loop. Empty means "the result did not fail".
     until: Vec<String>,
@@ -933,7 +938,7 @@ pub(super) fn retry_plan(
             ))
         })
     };
-    let attempts = match &task.retries {
+    let retries = match &task.retries {
         Some(raw) => {
             let n = number(raw, "retries")?;
             if n < 1.0 {
@@ -949,7 +954,7 @@ pub(super) fn retry_plan(
         None => Duration::from_secs(5),
     };
     Ok(Some(Retry {
-        attempts,
+        retries,
         delay,
         until: task.until.clone(),
     }))
@@ -979,6 +984,45 @@ pub(super) fn until_holds(
     }
     vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     all_hold(&retry.until, &vars, templar)
+}
+
+/// What one run of a retried task decides.
+pub(super) enum Attempt {
+    /// The loop ends with this result.
+    Done(TaskResult),
+    /// Another run follows, after a retry line showing this count and the `delay`.
+    Again(u32),
+}
+
+/// Run `attempt` (from 1) of a retried task, judged: `changed_when` and `failed_when` first,
+/// `attempts` set so `until` can read it, then `until`. The one place the attempt rule lives, for
+/// the controller-side, remote and action-plugin loops alike.
+///
+/// An `until` that cannot be evaluated ends the task there, with no further run and no
+/// `attempts` - measured, and the reference's own prefix for a task that dies rather than fails.
+/// Running out is a failed task even when the module passed (measured with `changed_when: false`
+/// under `until: r.changed`), and it reports `attempts: R` although R + 1 runs happened.
+pub(super) fn judge_attempt(
+    task: &PlayTask,
+    item: &Item,
+    raw: TaskResult,
+    attempt: u32,
+    retry: &Retry,
+    templar: &Templar,
+) -> Attempt {
+    let mut r = finish(task, item, raw, templar);
+    r.0.insert("attempts".into(), json!(attempt));
+    match until_holds(task, item, &r, retry, templar) {
+        Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
+        Ok(true) => return Attempt::Done(r),
+        Ok(false) => {}
+    }
+    if attempt > retry.retries {
+        r.0.insert("attempts".into(), json!(retry.retries));
+        r.0.insert("failed".into(), json!(true));
+        return Attempt::Done(r);
+    }
+    Attempt::Again(retry.retries + 1 - attempt)
 }
 
 /// What an `until` that cannot be evaluated reports.
@@ -1243,6 +1287,133 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
             )));
         };
         last = Some(result);
+    }
+}
+
+/// What starting an action plugin reads besides the item it runs and the warnings it raises.
+pub(super) struct PluginStart<'a> {
+    pub(super) kind: crate::action_plugins::Kind,
+    /// The variables of the host the module runs on - the delegate's when there is one.
+    pub(super) running_vars: &'a Map<String, Value>,
+    pub(super) delegated: bool,
+    /// Whether the task escalates: the link its sub-tasks go over is the escalated one.
+    pub(super) escalated: bool,
+    pub(super) templar: &'a Templar,
+    pub(super) origin: &'a crate::compile::Origin,
+    pub(super) playbook_dir: &'a std::path::Path,
+}
+
+/// One item of a task an action plugin backs, attempt after attempt under `retries`/`until`.
+///
+/// Each attempt starts the plugin afresh, so the whole sequence of sub-tasks runs again from its
+/// first, and a file the plugin stages is read and sent again: the agent consumed the one the
+/// last attempt staged. `until` reads the result the sequence ended with, once `changed_when`
+/// and `failed_when` have judged it, which is the rule a module's retry follows. Measured on
+/// ansible-core 2.19.12: `retries: 3` with no `until` on a `copy` that succeeds is `attempts=1`,
+/// and `retries: 2` on one that fails prints `FAILED - RETRYING ... (2 retries left)` then
+/// `(1 retries left)` and fails with `"attempts": 2`.
+///
+/// With no `retry`, one attempt, and the result comes back unjudged, the way the plugin path
+/// has always handed it to the reporting loop. `Ok(None)` is a run stopped while it waited
+/// between two attempts: nothing more runs, and the item has no result. `lefts` receives the
+/// count each retry line shows.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run_plugin_item's arguments, plus the retry plan and the lines it prints"
+)]
+pub(super) async fn run_plugin_attempts<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    batch_id: &mut u64,
+    start: &PluginStart<'_>,
+    task: &PlayTask,
+    item: &Item,
+    retry: Option<&Retry>,
+    union: Option<&Union>,
+    interpreters: &[String],
+    asked: Option<&str>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+    lefts: &mut Vec<u32>,
+) -> Result<Option<TaskResult>, Result<BatchOutcome, String>> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        // The warnings of the attempt whose result is shown, not one copy per attempt.
+        warnings.clear();
+        let raw = {
+            let mut plugin = crate::action_plugins::start(
+                start.kind,
+                crate::action_plugins::Context {
+                    args: &item.args,
+                    args_untrusted: &item.args_untrusted,
+                    running_vars: start.running_vars,
+                    delegated: start.delegated,
+                    escalated: start.escalated,
+                    item_vars: &item.vars,
+                    templar: start.templar,
+                    origin: start.origin,
+                    playbook_dir: start.playbook_dir,
+                    warnings: &mut *warnings,
+                },
+            );
+            run_plugin_item(
+                link,
+                host,
+                batch_id,
+                plugin.as_mut(),
+                task,
+                item,
+                union,
+                interpreters,
+                asked,
+                stop,
+                stop_broken,
+                logs,
+            )
+            .await?
+        };
+        let Some(retry) = retry else {
+            return Ok(Some(raw));
+        };
+        match judge_attempt(task, item, raw, attempt, retry, start.templar) {
+            Attempt::Done(r) => return Ok(Some(r)),
+            Attempt::Again(left) => lefts.push(left),
+        }
+        if wait_or_stop(retry.delay, stop, stop_broken).await.is_none() {
+            return Ok(None);
+        }
+    }
+}
+
+/// Waits `delay`, or gives up when the run is interrupted, before it or during it. A zero delay
+/// still looks at the stop first, so a retry loop with no delay stops between two attempts
+/// rather than starting the next one.
+pub(super) async fn wait_or_stop(
+    delay: Duration,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+) -> Option<()> {
+    let deadline = tokio::time::Instant::now() + delay;
+    loop {
+        if *stop.borrow() {
+            return None;
+        }
+        if delay.is_zero() {
+            return Some(());
+        }
+        tokio::select! {
+            () = tokio::time::sleep_until(deadline) => return Some(()),
+            res = stop.changed(), if !*stop_broken => {
+                if res.is_err() {
+                    *stop_broken = true;
+                } else {
+                    return None;
+                }
+            }
+        }
     }
 }
 
@@ -1832,12 +2003,19 @@ pub(super) fn record_registered(
 ///
 /// Returns the restricted names [`VarStore::gather_facts`] took out and has not warned about
 /// yet in this run, for the caller to warn about.
+///
+/// A task that failed writes nothing, as in the reference, which records facts only for a task
+/// that did not fail, `ignore_errors` or not. `results` have been through `failed_when`, and a
+/// loop is judged whole: one failed item fails the task.
 pub(super) fn record_facts(
     vars: &mut VarStore,
     targets: &[String],
     results: &[(Option<Value>, TaskResult)],
 ) -> Vec<String> {
     let mut removed = Vec::new();
+    if results.iter().any(|(_, result)| result.failed()) {
+        return removed;
+    }
     for (_, result) in results {
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
@@ -3148,6 +3326,8 @@ mod tests {
     ) {
         let t = task(match kind {
             crate::action_plugins::Kind::Copy => "copy",
+            crate::action_plugins::Kind::Dnf => "dnf",
+            crate::action_plugins::Kind::Fetch => "fetch",
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
             crate::action_plugins::Kind::Template => "template",
@@ -3172,6 +3352,8 @@ mod tests {
                     args: &item.args,
                     args_untrusted: &item.args_untrusted,
                     running_vars: &running,
+                    delegated: false,
+                    escalated: false,
                     item_vars: &item.vars,
                     templar: &templar,
                     origin: &origin,
@@ -3420,6 +3602,275 @@ mod tests {
             msg(&result),
             "Could not detect a package manager. Try using the \"use\" option."
         );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+    }
+
+    /// Without gathered facts and without `use_backend`, a `dnf` task asks `setup` for
+    /// `ansible_pkg_mgr` alone, then runs `dnf` for `dnf`, `dnf4`, `yum` and `yum4` and `dnf5`
+    /// for `dnf5`, and its result carries the answer as `ansible_facts.pkg_mgr`, which enters the
+    /// host's facts as the host's own words. Measured on ansible-core 2.19.12 on a host that runs
+    /// `apt`: the `setup` goes out filtered and `gather_subset: ["!all"]`; the rest is read off
+    /// its `plugins/action/dnf.py`, since no host measured runs `dnf`.
+    ///
+    /// What would make this red: `dnf` still refused, or sent as a module of its own before the
+    /// question is asked; `yum` or a `4` name sent as a module the union does not hold; the
+    /// answer dropped from the result, where the reference keeps it - unlike `package`, whose
+    /// `setup` leaves nothing; or the fact recorded as trusted, which lets a host's answer be
+    /// rendered as a template.
+    #[tokio::test]
+    async fn a_dnf_task_asks_setup_then_runs_the_backend_it_names() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        for (answer, module) in [
+            ("dnf", "dnf"),
+            ("dnf4", "dnf"),
+            ("yum", "dnf"),
+            ("yum4", "dnf"),
+            ("dnf5", "dnf5"),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_pkg_mgr": answer}, "changed": false}),
+                    )
+                    .to_vec(),
+                    one_result(2, json!({"changed": false, "results": []})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let sent = batches_sent(&agent);
+            let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+            assert_eq!(modules, ["setup", module], "{answer}: {:?}", agent.sent);
+            assert_eq!(
+                Value::Object(sent[0][0].args.clone()),
+                json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
+            );
+            assert_eq!(
+                Value::Object(sent[1][0].args.clone()),
+                json!({"name": "bash"})
+            );
+            assert_eq!(
+                sent[1][0].payload.as_ref().map(|p| p.module_fqn.as_str()),
+                Some(format!("ansible.modules.{module}").as_str())
+            );
+            let result = ran.expect("the item finished");
+            assert_eq!(
+                Value::Object(result.0.clone()),
+                json!({"ansible_facts": {"pkg_mgr": answer}, "changed": false, "results": []}),
+                "{answer}"
+            );
+            let mut store = one_host_store();
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let scope = crate::vars::Scope::default();
+            assert_eq!(
+                store.for_host("h1", &scope)["ansible_facts"]["pkg_mgr"],
+                json!(answer)
+            );
+            assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
+        }
+
+        // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
+        // rather than the facts, and installs with what it answers.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_pkg_mgr": "dnf"}, "changed": false}),
+                )
+                .to_vec(),
+                one_result(2, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use_backend": ""}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let modules: Vec<&str> = batches_sent(&agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect();
+        assert_eq!(modules, ["setup", "dnf"], "{:?}", agent.sent);
+        assert_eq!(
+            Value::Object(batches_sent(&agent)[1][0].args.clone()),
+            json!({"name": "bash"})
+        );
+        assert_eq!(
+            Value::Object(ran.expect("the item finished").0),
+            json!({"ansible_facts": {"pkg_mgr": "dnf"}, "changed": true})
+        );
+
+        // Gathered facts that name a backend ask nothing, and the result carries nothing more
+        // than the module's; `use_backend` wins over the facts and never reaches the module
+        // (measured: `Running ansible.legacy.dnf5 as the backend for the dnf action plugin`).
+        for (args, running, module) in [
+            (
+                json!({"name": "bash"}),
+                json!({"ansible_facts": {"pkg_mgr": "dnf5"}}),
+                "dnf5",
+            ),
+            (
+                json!({"name": "bash", "use_backend": "dnf5"}),
+                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+                "dnf5",
+            ),
+            (json!({"name": "bash", "use": "dnf4"}), json!({}), "dnf"),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"changed": false})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) =
+                plugin_item(Kind::Dnf, args, running, &mut agent, &python3(), &mut stop).await;
+            let sent = batches_sent(&agent);
+            assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+            assert_eq!(sent[0][0].module, module);
+            assert_eq!(
+                Value::Object(sent[0][0].args.clone()),
+                json!({"name": "bash"})
+            );
+            assert_eq!(
+                Value::Object(ran.expect("the item finished").0),
+                json!({"changed": false})
+            );
+        }
+    }
+
+    /// A host whose `setup` names no `dnf` fails the task with the reference's two sentences, and
+    /// the `pkg_mgr` its result carries stays out of the host's facts. Measured on ansible-core
+    /// 2.19.12 on a host that runs `apt`: `AnsiballZ_setup.py` answers `apt`, the task fails with
+    /// a `msg` that is a list of two sentences - the stray `}` is in the reference's source - and
+    /// `ansible_facts.pkg_mgr` is undefined at the next task.
+    ///
+    /// What would make this red: a sentence of this engine's own, or one string where the
+    /// reference has two; `apt` sent after all; the failed result's facts recorded, which the
+    /// reference never does for a failed task; `use` and `use_backend` both taken; a
+    /// `use_backend` naming no backend failed without asking the host; or a failed `setup`
+    /// reported as the two sentences, which drops its cause.
+    #[tokio::test]
+    async fn a_dnf_task_on_a_host_without_dnf_fails_in_the_reference_s_words() {
+        use crate::action_plugins::Kind;
+        let undetected = json!([
+            "Could not detect which major revision of dnf is in use, which is required to determine module backend.",
+            "You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})",
+        ]);
+        let mut stop = watch::channel(false).1;
+        // A `use_backend` naming no backend asks the host too, as the reference does: its test
+        // of `VALID_BACKENDS` that runs the `setup` is not under the `auto`/`yum` one.
+        for args in [
+            json!({"name": "bash"}),
+            json!({"name": "bash", "use_backend": "apt"}),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                    )
+                    .to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                args.clone(),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(result.0["msg"], undetected);
+            let modules: Vec<&str> = batches_sent(&agent)
+                .iter()
+                .map(|b| b[0].module.as_str())
+                .collect();
+            assert_eq!(modules, ["setup"], "{args}: {:?}", agent.sent);
+            // The reference puts the answer in the result before it fails, so it is
+            // registered...
+            assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
+            // ...and not kept as a fact, because the task failed.
+            let mut store = one_host_store();
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let host = store.for_host("h1", &crate::vars::Scope::default());
+            assert!(
+                host.get("ansible_facts")
+                    .and_then(|f| f.get("pkg_mgr"))
+                    .is_none(),
+                "{host:?}"
+            );
+        }
+
+        let mut agent = FakeAgent::answering(Vec::new());
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            result.0["msg"],
+            json!("parameters are mutually exclusive: ('use', 'use_backend')")
+        );
+        assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
+
+        // A `setup` that failed fails the task with its cause under the reference's sentence,
+        // read off `plugins/action/dnf.py`, and without the facts it carried.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"failed": true, "msg": "boom", "ansible_facts": {"ansible_pkg_mgr": "dnf"}}),
+                )
+                .to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            result.0["msg"],
+            json!("Failed to fetch ansible_pkg_mgr to determine the dnf action backend: boom")
+        );
+        assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
         assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
     }
 
@@ -3876,6 +4327,7 @@ mod tests {
             hash: hash.to_string(),
             zip_b64: "UEsDBA==".to_string(),
             modules: BTreeMap::new(),
+            refused: BTreeMap::new(),
         }
     }
 
@@ -4203,6 +4655,296 @@ mod tests {
         }
     }
 
+    /// A scripted agent that raises the run's stop as it hands over the `BatchDone` of batch
+    /// `after`, which is the moment between two attempts of a retried plugin item.
+    struct StopsAfter {
+        agent: FakeAgent,
+        stop: watch::Sender<bool>,
+        after: u64,
+    }
+
+    impl AgentChannel for StopsAfter {
+        fn memory(&mut self) -> &mut BlobMemory {
+            self.agent.memory()
+        }
+
+        async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
+            self.agent.ask(msg).await
+        }
+
+        async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
+            let answer = self.agent.answer().await?;
+            if let Some(FromAgent::BatchDone { batch, .. }) = &answer
+                && *batch == self.after
+            {
+                let _ = self.stop.send(true);
+            }
+            Ok(answer)
+        }
+
+        async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {
+            self.agent.stop_batch(id, grace).await
+        }
+    }
+
+    /// One item of a `copy` task `t` run the way the driver runs it under `t`'s own `retries`,
+    /// `until` and `delay`: the item's result - `None` when the stop ended it between two
+    /// attempts - and the count each retry line would show.
+    async fn copy_attempts<C: AgentChannel>(
+        t: &PlayTask,
+        args: Value,
+        agent: &mut C,
+        stop: &mut watch::Receiver<bool>,
+    ) -> (
+        Result<Option<TaskResult>, Result<BatchOutcome, String>>,
+        Vec<u32>,
+    ) {
+        let kind = crate::action_plugins::Kind::Copy;
+        let item = Item {
+            args: vars(args),
+            ..bare_item()
+        };
+        let templar = Templar::new(PathBuf::from("."));
+        let retry = retry_plan(t, Some(&item), &templar).expect("the retry plan renders");
+        let origin = crate::compile::Origin::default();
+        let running = Map::new();
+        let union = union_of("ab", crate::action_plugins::modules_for(kind));
+        let start = PluginStart {
+            kind,
+            running_vars: &running,
+            delegated: false,
+            escalated: false,
+            templar: &templar,
+            origin: &origin,
+            playbook_dir: Path::new("."),
+        };
+        let mut lefts = Vec::new();
+        let ran = run_plugin_attempts(
+            agent,
+            "h1",
+            &mut 0,
+            &start,
+            t,
+            &item,
+            retry.as_ref(),
+            Some(&union),
+            &python3(),
+            None,
+            stop,
+            &mut false,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut lefts,
+        )
+        .await;
+        (ran, lefts)
+    }
+
+    fn retried_copy(retries: u64) -> PlayTask {
+        let mut t = task("copy");
+        t.retries = Some(json!(retries));
+        t.delay = Some(json!(0));
+        t
+    }
+
+    fn modules_sent(agent: &FakeAgent) -> Vec<&str> {
+        batches_sent(agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect()
+    }
+
+    /// `k3s_server`'s `Copy k3s.yaml to second file`: a `remote_src` copy with `retries: 3` and
+    /// no `until`, which succeeds the first time. Measured on ansible-core 2.19.12, the same
+    /// shape on `localhost`: `attempts=1`, and no retry line.
+    ///
+    /// What would make this red: the retry loop left out of the plugin path, which gives a
+    /// result with no `attempts`; or a passing attempt retried, which sends the copy again.
+    #[tokio::test]
+    async fn a_retried_copy_that_succeeds_runs_once_and_says_so() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, lefts) = copy_attempts(
+            &retried_copy(3),
+            json!({"src": "/etc/rancher/k3s/k3s.yaml", "dest": "/etc/rancher/k3s/k3s-copy.yaml", "mode": "0600", "remote_src": true}),
+            &mut agent,
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert!(!result.failed(), "{result:?}");
+        assert_eq!(result.0["attempts"], json!(1));
+        assert_eq!(lefts, Vec::<u32>::new());
+        assert_eq!(modules_sent(&agent), ["copy"]);
+    }
+
+    /// A `copy` into a directory that does not exist, under `retries: 2`: each attempt replays
+    /// the whole sequence, `stat` then `copy`, and stages the source again, because the agent
+    /// consumed the file the first attempt staged. Measured on ansible-core 2.19.12, the same
+    /// task on `localhost`: `FAILED - RETRYING ... (2 retries left)`, then `(1 retries left)`,
+    /// then `fatal` with `"attempts": 2` - after **three** runs, the first and two retries, as
+    /// `task_executor.py` runs them.
+    ///
+    /// What would make this red: the plugin kept across attempts, which resumes after its last
+    /// sub-task instead of starting again; the staged file reused from the first attempt, which
+    /// sends a `copy` naming a blob the agent no longer holds; one run fewer than the reference;
+    /// or the retry counts wrong.
+    #[tokio::test]
+    async fn a_retried_copy_replays_its_whole_sequence_and_stages_its_file_again() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let missing = json!({"failed": true, "msg": "Destination directory /tmp/volant-nosuch does not exist"});
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(2, missing.clone()).to_vec(),
+                one_result(3, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(4, missing.clone()).to_vec(),
+                one_result(5, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(6, missing).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, lefts) = copy_attempts(
+            &retried_copy(2),
+            copy_args("/tmp/volant-nosuch/hello.txt"),
+            &mut agent,
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(result.0["attempts"], json!(2));
+        assert_eq!(lefts, [2, 1], "`(2 retries left)` then `(1 retries left)`");
+        assert_eq!(
+            modules_sent(&agent),
+            ["stat", "copy", "stat", "copy", "stat", "copy"]
+        );
+        let staged = agent
+            .sent
+            .iter()
+            .filter(
+                |m| matches!(m, ToAgent::PutBlob { hash, staged: true, .. } if *hash == blob.hash),
+            )
+            .count();
+        assert_eq!(staged, 3, "{:?}", agent.sent);
+    }
+
+    /// The attempt rule on its own, for `retries: 2` and a run that keeps failing: a retry after
+    /// runs 1 and 2 showing `(2 retries left)` and `(1 retries left)`, a third run, and then the
+    /// failure reporting `attempts: 2`. Read from ansible-core 2.19.12 `task_executor.py`
+    /// (`retries = 1 + R`, `attempts = retries - 1` on running out) and measured there with a
+    /// `shell` appending a line: three lines, `"attempts": 2`.
+    ///
+    /// What would make this red: the loop ending after R runs, which is one run fewer than the
+    /// reference; `attempts` reporting R + 1; or a retry line after the last run.
+    #[test]
+    fn retries_r_is_r_plus_one_runs_reporting_r_attempts() {
+        let mut t = task("command");
+        t.retries = Some(json!(2));
+        t.delay = Some(json!(0));
+        let item = bare_item();
+        let templar = Templar::new(PathBuf::from("."));
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let failing = || TaskResult(vars(json!({"failed": true, "rc": 1})));
+        let mut lefts = Vec::new();
+        let mut attempt = 0;
+        let last = loop {
+            attempt += 1;
+            match judge_attempt(&t, &item, failing(), attempt, &retry, &templar) {
+                Attempt::Done(r) => break r,
+                Attempt::Again(left) => lefts.push(left),
+            }
+        };
+        assert_eq!(attempt, 3, "three runs");
+        assert_eq!(lefts, [2, 1]);
+        assert_eq!(last.0["attempts"], json!(2));
+        assert!(last.failed());
+
+        let passing = TaskResult(vars(json!({"changed": false, "rc": 0})));
+        let Attempt::Done(r) = judge_attempt(&t, &item, passing, 1, &retry, &templar) else {
+            panic!("a passing run ends the loop");
+        };
+        assert_eq!(r.0["attempts"], json!(1));
+    }
+
+    /// `until` reads the result the whole sequence ended with, judged by the task's conditions,
+    /// and never a sub-task's on the way: here the `stat` of each attempt says `changed` and the
+    /// first `copy` does not.
+    ///
+    /// What would make this red: `until` evaluated against the first sub-task's result, which
+    /// stops after one attempt; or against the raw result before `changed_when`, which would
+    /// have to be tested by the rule a module's retry follows and would drift from it.
+    #[tokio::test]
+    async fn until_reads_the_result_a_plugin_s_sequence_ended_with() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(2, json!({"changed": false})).to_vec(),
+                one_result(3, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(4, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        let mut t = retried_copy(3);
+        t.register = Some("r".into());
+        t.until = vec!["r.changed".into()];
+        let (ran, lefts) =
+            copy_attempts(&t, copy_args("/tmp/v/until"), &mut agent, &mut stop).await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert!(!result.failed(), "{result:?}");
+        assert_eq!(result.0["attempts"], json!(2));
+        assert_eq!(lefts, [3]);
+    }
+
+    /// A stop raised while one attempt ends is honoured before the next begins, even with no
+    /// delay to wait through: the item ends there with no result, and nothing more is sent.
+    ///
+    /// What would make this red: a zero delay skipping the look at the stop, which starts the
+    /// second attempt and sends its batch before the stop is noticed.
+    #[tokio::test]
+    async fn a_stop_between_two_attempts_ends_the_item_at_once() {
+        let (tx, mut stop) = watch::channel(false);
+        let mut agent = StopsAfter {
+            agent: FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"failed": true, "msg": "no"})).to_vec(),
+                ]
+                .concat(),
+            ),
+            stop: tx,
+            after: 1,
+        };
+        let (ran, lefts) = copy_attempts(
+            &retried_copy(2),
+            json!({"src": "/a", "dest": "/b", "remote_src": true}),
+            &mut agent,
+            &mut stop,
+        )
+        .await;
+        assert!(matches!(ran, Ok(None)), "{ran:?}");
+        assert_eq!(lefts, [2]);
+        assert_eq!(modules_sent(&agent.agent), ["copy"]);
+    }
+
     /// A file the agent cannot store fails the item with the agent's own reason, and the host is
     /// not ended: its next task still runs.
     ///
@@ -4494,6 +5236,56 @@ mod tests {
             ),
             "SHADOWED / probe-hostname"
         );
+    }
+
+    /// A failed task keeps none of the facts its host's results carry, whatever module ran there
+    /// (a controller-side `set_fact` writes its own as it runs, and is not judged here): the
+    /// reference records facts only in the branch of its strategy that a task that is neither
+    /// failed, unreachable nor skipped takes, `ignore_errors` or not. Measured on ansible-core
+    /// 2.19.12 with a `dnf` task that failed carrying `ansible_facts: {pkg_mgr: apt}`: the fact is
+    /// undefined at the next task. A loop is judged whole, as the reference judges it: one failed
+    /// item fails the task, so the facts of the items that did not fail go too.
+    ///
+    /// What would make this red: `record_facts` reading a failed result's facts, which lets a
+    /// task that failed change what the next task reads; or reading `failed` before
+    /// `failed_when` decided, which drops the facts of a result the playbook forgave.
+    #[test]
+    fn a_failed_task_keeps_none_of_its_facts() {
+        let scope = crate::vars::Scope::default();
+        let fact = |value: Value| TaskResult(vars(value));
+        let mut store = one_host_store();
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[(
+                None,
+                fact(json!({"failed": true, "msg": "boom", "ansible_facts": {"kept": 1}})),
+            )],
+        );
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[
+                (
+                    Some(json!(1)),
+                    fact(json!({"changed": false, "ansible_facts": {"looped": 1}})),
+                ),
+                (Some(json!(2)), fact(json!({"failed": true, "rc": 1}))),
+            ],
+        );
+        let host = store.for_host("h1", &scope);
+        assert!(!host.contains_key("kept"), "{host:?}");
+        assert!(!host.contains_key("looped"), "{host:?}");
+        // A non-zero `rc` that `failed_when: false` forgave: `failed` is what decides.
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[(
+                None,
+                fact(json!({"rc": 2, "failed": false, "ansible_facts": {"forgiven": 1}})),
+            )],
+        );
+        assert_eq!(store.for_host("h1", &scope)["forgiven"], json!(1));
     }
 
     /// A managed host cannot choose where its own next task connects, as whom, or under which

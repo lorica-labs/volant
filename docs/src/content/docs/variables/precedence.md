@@ -22,6 +22,8 @@ When two sources define the same variable, the one further down this list wins. 
 
 [Roles](/playbooks/roles/#role-variables) explains where the three role layers come from and how they differ.
 
+A vars file that holds only `---` and comments loads as an empty mapping, as in ansible-core. A file holding a scalar such as `42` is still refused.
+
 :::note
 A gathered fact loses to the play's own variables. A playbook that sets a variable with the same name as a fact reads its own value, as in Ansible.
 :::
@@ -45,6 +47,8 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `volant_version` | Volant's own version. Test `volant_version is defined` to tell the two engines apart. |
 
 Inside a `rescue`, `ansible_failed_task` and `ansible_failed_result` are set as facts on the host that failed.
+
+Every task also gets `ansible_search_path`, and a role's task gets `role_path`. Both are in place before the task's own `vars:` resolve, so a task variable built from `lookup('template')` finds the role's `templates/`. [Templating](/variables/templating/#what-is-available) lists what the search path holds.
 
 ## hostvars
 

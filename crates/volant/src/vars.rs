@@ -144,6 +144,9 @@ pub struct VarStore {
     extra: Map<String, Value>,
     /// What `ansible_forks` reports, which the reference sets from the run's own `forks`.
     forks: usize,
+    /// What `ansible_run_tags` and `ansible_skip_tags` report: the run's own tag selection.
+    run_tags: Vec<String>,
+    skip_tags: Vec<String>,
     /// Every inventory host's view, as `hostvars` shows it. Built on demand and dropped
     /// whenever something below it changes, which only a fact or a rebase does.
     hostvars: Option<Arc<Map<String, Value>>>,
@@ -370,6 +373,8 @@ impl VarStore {
             untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
+            run_tags: vec!["all".to_string()],
+            skip_tags: Vec::new(),
             hostvars: None,
             hostvars_with: BTreeMap::new(),
             untrusted_hosts: None,
@@ -380,6 +385,15 @@ impl VarStore {
     /// What `ansible_forks` reports for this run.
     pub fn set_forks(&mut self, forks: usize) {
         self.forks = forks;
+        self.forget_hostvars();
+    }
+
+    /// What `ansible_run_tags` and `ansible_skip_tags` report for this run. Measured on
+    /// ansible-core 2.19.12: `['all']` and `[]` with no tag option, `['kubeconfig']` under
+    /// `--tags kubeconfig`, `['foo']` as the skip list under `--skip-tags foo`.
+    pub fn set_tags(&mut self, run: &[String], skip: &[String]) {
+        self.run_tags = run.to_vec();
+        self.skip_tags = skip.to_vec();
         self.forget_hostvars();
     }
 
@@ -772,6 +786,14 @@ impl VarStore {
         vars.insert("ansible_check_mode".to_string(), Value::Bool(false));
         vars.insert("ansible_diff_mode".to_string(), Value::Bool(false));
         vars.insert("ansible_forks".to_string(), Value::from(self.forks));
+        vars.insert(
+            "ansible_run_tags".to_string(),
+            Value::from(self.run_tags.clone()),
+        );
+        vars.insert(
+            "ansible_skip_tags".to_string(),
+            Value::from(self.skip_tags.clone()),
+        );
         vars.insert("ansible_version".to_string(), ansible_version());
         vars.insert(
             "volant_version".to_string(),
@@ -1315,6 +1337,43 @@ mod tests {
         assert_eq!(v["omit"], json!(omit_token()));
         assert_eq!(v["ansible_check_mode"], json!(false));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `ansible_run_tags` and `ansible_skip_tags`, read by the condition of the `k3s_server`
+    /// role's `Apply K3S kubeconfig to control node` block, with `kubectl` present and the copy
+    /// before it unchanged. Measured on ansible-core 2.19.12: `run=['all'] skip=[]` with no tag
+    /// option, `run=['kubeconfig']` under `--tags kubeconfig`, `skip=['foo']` under
+    /// `--skip-tags foo`. Both are the engine's own words, so a host fact of either name loses.
+    ///
+    /// What would make this red: either name left unset, which fails the condition on an
+    /// undefined name on every host that has `kubectl`; the lists the run asked for not reaching
+    /// it, which leaves the block skipped under `--tags kubeconfig`; or the names taken from the
+    /// facts layer, which lets a host decide what the run was asked to do.
+    #[test]
+    fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
+        let inventory = Inventory::parse_ini("h1\n").unwrap();
+        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let templar = crate::template::Templar::new(PathBuf::from("."));
+        let condition = "kubectl_installed.rc == 0 and (k3s_server_copy_yaml.changed or 'kubeconfig' in ansible_run_tags)";
+        let holds = |store: &mut VarStore| {
+            let mut v = store.for_host("h1", &scope(&["h1"]));
+            v.insert("kubectl_installed".into(), json!({"rc": 0}));
+            v.insert("k3s_server_copy_yaml".into(), json!({"changed": false}));
+            (
+                templar.condition(condition, &v).unwrap(),
+                v["ansible_run_tags"].clone(),
+                v["ansible_skip_tags"].clone(),
+            )
+        };
+        assert_eq!(holds(&mut store), (false, json!(["all"]), json!([])));
+
+        store.set_untrusted_fact("h1", "ansible_run_tags", json!(["kubeconfig"]));
+        assert_eq!(holds(&mut store), (false, json!(["all"]), json!([])));
+
+        store.set_tags(&["kubeconfig".to_string()], &[]);
+        assert_eq!(holds(&mut store), (true, json!(["kubeconfig"]), json!([])));
+        store.set_tags(&["all".to_string()], &["foo".to_string()]);
+        assert_eq!(holds(&mut store), (false, json!(["all"]), json!(["foo"])));
     }
 
     /// The four host lists are three different answers: the play's resolved hosts never move,

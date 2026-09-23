@@ -220,9 +220,17 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     //
     // A run of native tasks alone names no Python module, builds nothing, and needs no
     // ansible-core on the controller.
+    //
+    // A collection's module the plays name is resolved by the same helper first, and refused
+    // here, by name, when its collection is not installed or serves it through an action plugin.
     let python_modules = python::modules_for_run(&compiled.iter().flatten().collect::<Vec<_>>())
         .map_err(|e| Refusal::or(4, e))?;
-    let python = python::union_for(&python_modules).map_err(|e| Refusal::or(4, e))?;
+    let named: Vec<(String, String)> = compiled
+        .iter()
+        .flatten()
+        .flat_map(preflight::collection_modules)
+        .collect();
+    let python = python::union_for(&python_modules, &named).map_err(|e| Refusal::or(4, e))?;
 
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
@@ -319,6 +327,8 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     let extra_for_check = extra.clone();
     let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
     store.set_forks(forks);
+    let (run_tags, skip_tags) = selection.lists();
+    store.set_tags(run_tags, skip_tags);
     let mut state = RunState {
         templar: Arc::new(Templar::new(playbook_dir.clone())),
         vars: Arc::new(Mutex::new(store)),

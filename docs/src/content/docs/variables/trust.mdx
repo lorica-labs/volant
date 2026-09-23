@@ -18,7 +18,7 @@ This is a security boundary. If you find a way for host data to be evaluated as 
 | `register` results and module results | play and task `vars` |
 | gathered facts | `--extra-vars` |
 | `set_fact` values | inventory variables |
-| `lookup('file')`, `lookup('pipe')`, `lookup('env')` | `vars_files` and `include_vars` |
+| `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` and `include_vars` |
 
 ## What changes for an untrusted value
 
@@ -40,6 +40,12 @@ Task failed: Error while resolving `var` expression: Encountered untrusted templ
 ```
 
 Writing the name yourself, as in `debug: var: result.stdout`, works as usual. It is `debug: var: "{{ from_a_host }}"` that stops.
+
+Conditions follow the same rule. A `when: "{{ ... }}"` that renders to a string you wrote, such as `"1 == 1"`, is evaluated once more as a condition. If the render read something a host sent, the string is never compiled, and the task fails with the same `Encountered untrusted template or expression.` An `assert` whose `that` is templated works the same way.
+
+A `lookup('template')` result is data too. A template holding `{{ '{{ 1 + 1 }}' }}` gives the text `{{ 1 + 1 }}`, not `2`, under both engines.
+
+The `src` of `copy`, `template` and `unarchive` is stricter than the reference: a `src` whose render read a managed host is refused before any file is looked up. See [Action plugins](/reference/action-plugins/#a-source-file-a-managed-host-named).
 
 ## How fine-grained it is
 

@@ -165,14 +165,18 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     // One row per lookup plugin `ansible.builtin` ships, because the reference accepts
     // `with_<lookup>` for every one of them and refuses any other `with_*` name outright. They
     // exist there, so they are refused here by the pre-flight rather than mistaken for a
-    // module name; only `with_items` has a loop to run.
+    // module name. `with_items` runs, and so does `with_<lookup>` for the two lookups this
+    // release has whose `with_` form was measured, `fileglob` and `first_found`: the loop walks
+    // what the lookup returns as a list. The loader and `prepare` read any `with_*` row that
+    // runs this way, so a row stays refused until its lookup exists and its `with_` form has
+    // been measured.
     kw("with_config", Preflight),
     kw("with_csvfile", Preflight),
     kw("with_dict", Preflight),
     kw("with_env", Preflight),
     kw("with_file", Preflight),
-    kw("with_fileglob", Preflight),
-    kw("with_first_found", Preflight),
+    kw("with_fileglob", Runs),
+    kw("with_first_found", Runs),
     kw("with_indexed_items", Preflight),
     kw("with_ini", Preflight),
     kw("with_inventory_hostnames", Preflight),

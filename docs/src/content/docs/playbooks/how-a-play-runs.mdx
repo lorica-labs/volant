@@ -60,6 +60,8 @@ Templating happens on the controller. Each host renders its own copy of a task w
 
 Some modules never leave the controller: `debug`, `set_fact`, `assert`, `fail`, `pause`, `include_vars` and `validate_argument_spec`. See [Modules](/reference/modules/).
 
+The result line follows ansible-core 2.19's format. `failed` and `skipped` are left off the result, on `fatal:` lines and loop items too, since the line's prefix already says it. A module's `warnings` are printed as `[WARNING]:` lines and kept out of the registered value. A failed task registers `exception: "(traceback unavailable)"`, which the line never shows. When `when` skips every item of a loop, each item's `skipping:` line is followed by one `skipping: [host]` line for the task, and the recap counts the task once.
+
 <Aside type="tip">
 The [architecture page](/internals/architecture/) follows the same run from the point of view of the source code.
 </Aside>

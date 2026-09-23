@@ -4,8 +4,8 @@
 //!
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 //! 27 names in both. A module whose plugin is not written here cannot be run by sending its
-//! payload to the agent: the action plugin is where its real behaviour lives. `unarchive` reads
-//! its archive on the controller, `fetch` writes there. Sending the module alone would run
+//! payload to the agent: the action plugin is where its real behaviour lives. `script` reads its
+//! file on the controller, `reboot` waits there for the host. Sending the module alone would run
 //! something that is not what the playbook asked for, so those names are refused before the first
 //! connection.
 //!
@@ -17,6 +17,7 @@
 
 pub(crate) mod copy;
 mod dnf;
+mod fetch;
 pub(crate) mod files;
 mod package;
 mod service;
@@ -54,6 +55,7 @@ pub fn is_action_backed(module: &str) -> bool {
 pub(crate) enum Kind {
     Copy,
     Dnf,
+    Fetch,
     Package,
     Service,
     Template,
@@ -72,6 +74,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
     match short {
         "copy" => Some(Kind::Copy),
         "dnf" => Some(Kind::Dnf),
+        "fetch" => Some(Kind::Fetch),
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
         "template" => Some(Kind::Template),
@@ -90,6 +93,7 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
         Kind::Copy | Kind::Template => &["stat", "file", "copy"],
         Kind::Dnf => &["setup", "dnf", "dnf5"],
+        Kind::Fetch => &["stat", "slurp"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
         Kind::Unarchive => &["stat", "unarchive"],
@@ -148,6 +152,8 @@ pub(crate) struct Context<'a> {
     /// Whether that host is a delegate: the facts a result carries are filed under the host the
     /// task was written for, so a plugin that would hand back the delegate's has to know.
     pub delegated: bool,
+    /// Whether the task escalates: the link its sub-tasks go over is the escalated one.
+    pub escalated: bool,
     /// The item's own variables, for `template`.
     pub item_vars: &'a HostVars,
     pub templar: &'a Templar,
@@ -162,6 +168,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     match kind {
         Kind::Copy => copy::start(ctx),
         Kind::Dnf => Box::new(dnf::Dnf::new(ctx)),
+        Kind::Fetch => fetch::start(ctx),
         Kind::Package => Box::new(package::Package::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
         Kind::Template => template::start(ctx),
@@ -246,10 +253,11 @@ mod tests {
             "copy",
             "template",
             "unarchive",
+            "fetch",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }
-        assert!(is_action_backed("fetch"), "fetch is action-backed");
+        assert!(is_action_backed("reboot"), "reboot is action-backed");
     }
 
     /// The two prefixes that name the same modules are read as such, and another collection's
@@ -269,6 +277,8 @@ mod tests {
         assert_eq!(kind("ansible.builtin.unarchive"), Some(Kind::Unarchive));
         assert_eq!(kind("ansible.legacy.unarchive"), Some(Kind::Unarchive));
         assert_eq!(kind("community.general.unarchive"), None);
+        assert_eq!(kind("ansible.builtin.fetch"), Some(Kind::Fetch));
+        assert_eq!(kind("community.general.fetch"), None);
         assert_eq!(kind("reboot"), None);
     }
 
@@ -295,6 +305,7 @@ mod tests {
         for kind in [
             Kind::Copy,
             Kind::Dnf,
+            Kind::Fetch,
             Kind::Package,
             Kind::Service,
             Kind::Template,

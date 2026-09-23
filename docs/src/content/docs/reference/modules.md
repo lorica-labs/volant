@@ -63,7 +63,6 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `dnf5` | Python module |
 | `dpkg_selections` | Python module |
 | `expect` | Python module |
-| `fetch` | not supported yet: needs the `fetch` action plugin |
 | `file` | Python module |
 | `find` | Python module |
 | `gather_facts` | not supported yet: needs the `gather_facts` action plugin |
@@ -108,6 +107,7 @@ The controller runs these as the reference's action plugins do: it picks or rend
 |---|---|
 | `copy` | Copy a file from the controller, or `content:`, to the host. |
 | `dnf` | Install or remove packages with `dnf` or `dnf5`, whichever the host runs. |
+| `fetch` | Copy a file from the host to the controller, under `dest` and nowhere else. |
 | `package` | Install or remove packages with the host's own package manager. |
 | `service` | Manage a service with the host's own init system. |
 | `template` | Render a template on the controller and copy the result to the host. |

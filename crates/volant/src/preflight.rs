@@ -897,9 +897,9 @@ mod tests {
     #[test]
     fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
         let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      fetch: src=a dest=b\n");
+            refusal("- hosts: all\n  tasks:\n    - name: Later\n      assemble: src=a dest=b\n");
         assert!(
-            text.contains("module 'fetch' needs an action plugin"),
+            text.contains("module 'assemble' needs an action plugin"),
             "{text}"
         );
         let text = refusal(
@@ -929,6 +929,7 @@ mod tests {
             "copy",
             "template",
             "unarchive",
+            "fetch",
             "ansible.builtin.package",
         ] {
             let pb = parse(

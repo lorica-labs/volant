@@ -1,0 +1,10 @@
+# The three collections the pinned k3s-ansible commit needs, pinned in turn. Installed by
+# `just proof-k3s` into target/collections, never copied into this repository: Volant never
+# installs a collection itself, so what runs is the published archive.
+collections:
+  - name: ansible.posix
+    version: 2.2.2
+  - name: community.general
+    version: 13.4.0
+  - name: ansible.utils
+    version: 6.1.1

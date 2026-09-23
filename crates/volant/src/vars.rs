@@ -264,7 +264,12 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// file prints: a connecting user who could name it could plant a script there that `sudo` then
 /// runs as the `become_user`. Under the reference the same name only moves the connecting user's
 /// own module files, which that user can already change.
-const ENGINE_RESTRICTED_FACTS: [&str; 1] = ["ansible_remote_tmp"];
+///
+/// `ansible_package_use` is here for the scan's sake rather than for a privilege: `package` reads
+/// it through [`host_setting`] like every other name that picks what runs, so the scan guarding
+/// this list stays total. A host that set it could only pick another backend of a closed list,
+/// which its own `pkg_mgr` fact already does.
+const ENGINE_RESTRICTED_FACTS: [&str; 2] = ["ansible_remote_tmp", "ansible_package_use"];
 
 /// Whether ansible-core's `clean_facts()` removes a fact of this name before it becomes a
 /// variable: a connection or escalation setting, `ansible_<connection plugin>_*` unless it ends

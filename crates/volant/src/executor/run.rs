@@ -1030,9 +1030,7 @@ pub(super) fn python_for<'a>(
         // which the agent would answer with an unknown module and the operator would read as a
         // typo.
         if crate::python::is_python_module(module) {
-            return Err(TaskResult::failed_with(format!(
-                "module '{module}' needs a python payload, and this run built none for it: only the modules the compiled plays named are in the blob"
-            )));
+            return Err(no_payload(module));
         }
         return Ok(None);
     };
@@ -1043,6 +1041,132 @@ pub(super) fn python_for<'a>(
             "the module payload {} was built for this task with no interpreter chosen for the host",
             payload.blob
         ))),
+    }
+}
+
+/// What a task reports for a Python module the run's union does not hold.
+fn no_payload(module: &str) -> TaskResult {
+    TaskResult::failed_with(format!(
+        "module '{module}' needs a python payload, and this run built none for it: only the modules the compiled plays named are in the blob"
+    ))
+}
+
+/// One sub-task of an action plugin, as the agent is asked to run it, or the failure the item
+/// reports instead of sending it.
+///
+/// The module is the plugin's choice and its payload is the union's entry for it, under the
+/// interpreter chosen for the host the link goes to, exactly as for a Python task the playbook
+/// wrote. `ignore_errors`, `timeout` and `environment` are the item's.
+///
+/// A module the union does not hold fails by name, and is never sent as if it were native: every
+/// module a plugin can pick is in the union by construction ([`crate::python::modules_to_build`]),
+/// so reaching that arm is a controller bug, and `service` is a name the agent would take for a
+/// module it runs itself.
+fn sub_task(
+    task: &PlayTask,
+    item: &Item,
+    sub: &crate::action_plugins::Sub,
+    union: Option<&Union>,
+    interpreters: &[String],
+    asked: Option<&str>,
+) -> Result<Task, TaskResult> {
+    // The agent stages nothing yet: the protocol that carries a file to the host is not in this
+    // release. A sub-task naming one fails by name rather than running without it, which would
+    // report a `copy` that copied nothing. `copy` wires them, and nothing asks for one before it.
+    if let Some((arg, _)) = sub.files.first() {
+        return Err(TaskResult::failed_with(format!(
+            "the '{}' sub-task needs the file '{arg}' staged on the host, which this release cannot do yet",
+            sub.module
+        )));
+    }
+    let Some(payload) = union.and_then(|union| {
+        union.modules.get(sub.module).map(|facts| ModulePayload {
+            blob: union.hash.clone(),
+            facts: facts.clone(),
+        })
+    }) else {
+        return Err(no_payload(sub.module));
+    };
+    let interpreter = chosen_interpreter(asked, interpreters)?;
+    Ok(Task {
+        module: sub.module.to_string(),
+        args: sub.args.clone(),
+        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
+        timeout: task.timeout,
+        environment: item.environment.clone(),
+        payload: Some(payload.under(&interpreter)),
+        // Nothing staged: a `Sub` with files is refused above until `copy` wires them.
+        files: Vec::new(),
+    })
+}
+
+/// One item of a task an action plugin backs, run to its end.
+///
+/// Each sub-task the plugin asks for goes out alone, as a batch of one over the link the task
+/// already has, and its result is handed back to the plugin on the next call. `Ok` is the item's
+/// result, the one the plugin ended with; nothing the sub-tasks returned on the way leaves this
+/// function, so the filtered `setup` a plugin asks for can never reach `record_facts`.
+///
+/// `Err` is the outcome that ended the host's batch instead - the link lost, the run interrupted -
+/// with no result for the item, which the driver then handles the way it does for any batch. A
+/// module that failed is not one of those: the plugin is handed its result like any other, so
+/// the items behind it still run and `report_task` decides from all of them.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the item, the plugin driving it, and the link and run state each sub-task goes over"
+)]
+pub(super) async fn run_plugin_item<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    batch_id: &mut u64,
+    plugin: &mut dyn crate::action_plugins::Plugin,
+    task: &PlayTask,
+    item: &Item,
+    union: Option<&Union>,
+    interpreters: &[String],
+    asked: Option<&str>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+) -> Result<TaskResult, Result<BatchOutcome, String>> {
+    let mut last = None;
+    loop {
+        let sub = match plugin.next(last.take()) {
+            crate::action_plugins::Step::Done(result) => return Ok(result),
+            crate::action_plugins::Step::Run(sub) => sub,
+        };
+        let built = match sub_task(task, item, &sub, union, interpreters, asked) {
+            Ok(built) => built,
+            Err(failure) => return Ok(failure),
+        };
+        *batch_id += 1;
+        let (mut flat, ended) = run_agent_batch(
+            link,
+            host,
+            *batch_id,
+            vec![built],
+            union,
+            stop,
+            stop_broken,
+            logs,
+        )
+        .await;
+        if !matches!(
+            ended,
+            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
+        ) {
+            return Err(ended);
+        }
+        // A batch the agent ended cleanly with no result in it has lost a sub-task's result
+        // between two turns. Handed to the plugin as nothing, it would be read as the module's
+        // own answer; the item fails naming it instead.
+        let Some(result) = flat.pop().flatten() else {
+            return Ok(TaskResult::failed_with(format!(
+                "the agent ended the '{}' sub-task without its result",
+                sub.module
+            )));
+        };
+        last = Some(result);
     }
 }
 
@@ -2556,6 +2680,605 @@ mod tests {
             "{:?}",
             agent.sent
         );
+    }
+
+    /// A union holding every module a plugin may run, each keyed by its own short name.
+    fn union_of(hash: &str, modules: &[&str]) -> Union {
+        Union {
+            modules: modules
+                .iter()
+                .map(|m| {
+                    let facts = crate::python::ModuleFacts {
+                        module_fqn: format!("ansible.modules.{m}"),
+                        ..module_payload(hash).facts
+                    };
+                    ((*m).to_string(), facts)
+                })
+                .collect(),
+            ..union_named(hash)
+        }
+    }
+
+    /// What the agent answers for a batch of one task that ran to its end.
+    fn one_result(batch: u64, result: Value) -> [FromAgent; 2] {
+        [
+            FromAgent::TaskResult {
+                batch,
+                index: 0,
+                result: TaskResult(vars(result)),
+            },
+            FromAgent::BatchDone {
+                batch,
+                outcome: BatchOutcome::Completed,
+            },
+        ]
+    }
+
+    /// Every `RunBatch` the fake was sent, as the tasks each one carried.
+    fn batches_sent(agent: &FakeAgent) -> Vec<&[Task]> {
+        agent
+            .sent
+            .iter()
+            .filter_map(|m| match m {
+                ToAgent::RunBatch { tasks, .. } => Some(tasks.as_slice()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// One item of a task backed by the plugin `kind`, run the way the driver runs it, against
+    /// the scripted `agent`: its arguments as `prepare` rendered them, the variables of the host
+    /// the module runs on, the interpreters that host's agent reported. The item's result, or the
+    /// outcome that ended the host's batch, and the warnings the plugin raised.
+    async fn plugin_item(
+        kind: crate::action_plugins::Kind,
+        args: Value,
+        running: Value,
+        agent: &mut FakeAgent,
+        interpreters: &[String],
+        stop: &mut watch::Receiver<bool>,
+    ) -> (
+        Result<TaskResult, Result<BatchOutcome, String>>,
+        Vec<String>,
+    ) {
+        let t = task(match kind {
+            crate::action_plugins::Kind::Package => "package",
+            crate::action_plugins::Kind::Service => "service",
+        });
+        let item = Item {
+            args: vars(args),
+            ..bare_item()
+        };
+        let running = vars(running);
+        let templar = Templar::new(PathBuf::from("."));
+        let origin = crate::compile::Origin::default();
+        let union = union_of("ab", crate::action_plugins::modules_for(kind));
+        let mut warnings = Vec::new();
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut batch_id = 0;
+        let ran = {
+            let mut plugin = crate::action_plugins::start(
+                kind,
+                crate::action_plugins::Context {
+                    args: &item.args,
+                    args_untrusted: &item.args_untrusted,
+                    running_vars: &running,
+                    item_vars: &item.vars,
+                    templar: &templar,
+                    origin: &origin,
+                    playbook_dir: Path::new("."),
+                    warnings: &mut warnings,
+                },
+            );
+            run_plugin_item(
+                agent,
+                "h1",
+                &mut batch_id,
+                plugin.as_mut(),
+                &t,
+                &item,
+                Some(&union),
+                interpreters,
+                None,
+                stop,
+                &mut stop_broken,
+                &mut logs,
+            )
+            .await
+        };
+        (ran, warnings)
+    }
+
+    fn python3() -> Vec<String> {
+        vec!["/usr/bin/python3".to_string()]
+    }
+
+    /// A `package` task reaches the host as the module its package manager names, and nothing
+    /// else: with the facts gathered it asks nothing first; without them it asks `setup` for
+    /// `ansible_pkg_mgr` alone, then runs that module.
+    ///
+    /// What would make this red: `package` still refused, or sent as the `package` module itself -
+    /// which the reference never runs, since its plugin is where the choice lives - or the filtered
+    /// `setup` result written into the host's facts, which the reference does not keep: measured
+    /// on ansible-core 2.19.12, it runs that `setup` again at every such task.
+    #[tokio::test]
+    async fn a_package_task_runs_the_module_its_manager_names() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        // Measured on ansible-core 2.19.12 with facts gathered: `Running ansible.legacy.apt` and no
+        // `AnsiballZ_setup.py`.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"cache_updated": false, "changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash", "use": "auto"}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let sent = batches_sent(&agent);
+        assert_eq!(sent.len(), 1, "one frame and no setup: {:?}", agent.sent);
+        assert_eq!(sent[0].len(), 1, "{:?}", sent[0]);
+        assert_eq!(sent[0][0].module, "apt");
+        assert_eq!(
+            Value::Object(sent[0][0].args.clone()),
+            json!({"name": "bash"}),
+            "`use` is the plugin's and never reaches the module"
+        );
+        assert_eq!(
+            sent[0][0].payload.as_ref().map(|p| p.module_fqn.as_str()),
+            Some("ansible.modules.apt"),
+            "the payload is the union's entry for the module the plugin chose"
+        );
+        assert!(!ran.expect("the item finished").failed());
+
+        // Measured without facts: `AnsiballZ_setup.py`, then `Running ansible.legacy.apt`.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                )
+                .to_vec(),
+                one_result(2, json!({"cache_updated": false, "changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let sent = batches_sent(&agent);
+        let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+        assert_eq!(modules, ["setup", "apt"], "{:?}", agent.sent);
+        assert_eq!(
+            Value::Object(sent[0][0].args.clone()),
+            json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
+        );
+        let result = ran.expect("the item finished");
+
+        // The result goes where every remote result goes, and the `setup` it took to choose the
+        // module leaves nothing there.
+        let mut store = one_host_store();
+        record_facts(&mut store, &["h1".to_string()], &[(None, result.clone())]);
+        let host = store.for_host("h1", &crate::vars::Scope::default());
+        assert!(!host.contains_key("ansible_pkg_mgr"), "{host:?}");
+        assert!(
+            host.get("ansible_facts")
+                .and_then(|f| f.get("pkg_mgr"))
+                .is_none(),
+            "{host:?}"
+        );
+        // Measured: the task registers the module's result as it is.
+        assert_eq!(
+            Value::Object(result.0),
+            json!({"cache_updated": false, "changed": false})
+        );
+    }
+
+    fn msg(result: &TaskResult) -> &str {
+        result.0.get("msg").and_then(Value::as_str).unwrap_or("")
+    }
+
+    /// The order the package manager is picked in, and the reference's sentences when it
+    /// cannot be, measured on ansible-core 2.19.12 (`use: nosuchmgr` fails with the first sentence)
+    /// and read off its `plugins/action/package.py`.
+    ///
+    /// What would make this red: a name no module of the union carries sent anyway - a
+    /// collection's manager, or a value a host put in its facts - or `ansible_package_use`
+    /// passed over for the facts, or a `setup` failure or a missing fact reported in words of
+    /// this engine's own, which a playbook testing the reference's `msg` would not recognise.
+    #[tokio::test]
+    async fn the_package_manager_is_picked_in_the_reference_s_order_and_words() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        for (args, running, name) in [
+            (
+                json!({"name": "bash", "use": "nosuchmgr"}),
+                json!({}),
+                "nosuchmgr",
+            ),
+            (
+                json!({"name": "bash"}),
+                json!({"ansible_facts": {"pkg_mgr": "pacman"}}),
+                "pacman",
+            ),
+        ] {
+            let mut agent = FakeAgent::answering(Vec::new());
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                args,
+                running,
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                msg(&result),
+                format!("Could not find a matching action for the \"{name}\" package manager.")
+            );
+            assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
+        }
+
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({"ansible_package_use": "dnf", "ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        assert!(!ran.expect("the item finished").failed());
+        let sent = batches_sent(&agent);
+        assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+        assert_eq!(sent[0][0].module, "dnf", "the variable beats the facts");
+
+        let setup_failed = json!({
+            "failed": true,
+            "msg": "boom",
+            "ansible_facts": {"ansible_pkg_mgr": "apt"},
+        });
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, setup_failed).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            msg(&result),
+            "Failed to fetch ansible_pkg_mgr to determine the package action backend: boom"
+        );
+        assert!(
+            !result.0.contains_key("ansible_facts"),
+            "a filtered setup is never kept, failed or not: {result:?}"
+        );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"ansible_facts": {}, "changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert_eq!(
+            msg(&result),
+            "Could not detect a package manager. Try using the \"use\" option."
+        );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+    }
+
+    /// `service` runs the init system the host names, drops what `systemd` does not take with the
+    /// reference's warning, and falls back to `service` for a name no module carries: each measured
+    /// on ansible-core 2.19.12.
+    ///
+    /// What would make this red: `sleep` sent to `systemd`, the warning lost or worded otherwise,
+    /// `use:` read without lowering it, or an unknown name failing where the reference runs
+    /// `service`.
+    #[tokio::test]
+    async fn a_service_task_runs_the_init_system_the_host_names() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        // Measured without facts and with `sleep:` given: `AnsiballZ_setup.py`, then `Running
+        // ansible.legacy.systemd` and the warning.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_service_mgr": "systemd"}, "changed": false}),
+                )
+                .to_vec(),
+                one_result(2, json!({"changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, warnings) = plugin_item(
+            Kind::Service,
+            json!({"name": "cron", "state": "started", "sleep": 2, "use": "auto"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        assert!(!ran.expect("the item finished").failed());
+        let sent = batches_sent(&agent);
+        let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+        assert_eq!(modules, ["setup", "systemd"], "{:?}", agent.sent);
+        assert_eq!(
+            Value::Object(sent[0][0].args.clone()),
+            json!({"filter": ["ansible_service_mgr"], "gather_subset": ["!all"]})
+        );
+        assert_eq!(
+            Value::Object(sent[1][0].args.clone()),
+            json!({"name": "cron", "state": "started"})
+        );
+        assert_eq!(
+            warnings,
+            ["Ignoring \"sleep\" as it is not used in \"systemd\""]
+        );
+
+        // An unknown name runs `service`, as measured; a `use:` in capitals is lowered, as the
+        // reference's plugin does. No `setup` either way.
+        for (asked, module) in [("nosuchmgr", "service"), ("SystemD", "systemd")] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"changed": false})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Service,
+                json!({"name": "cron", "use": asked}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            assert!(!ran.expect("the item finished").failed());
+            let sent = batches_sent(&agent);
+            assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+            assert_eq!(sent[0][0].module, module);
+            assert_eq!(
+                Value::Object(sent[0][0].args.clone()),
+                json!({"name": "cron"})
+            );
+        }
+    }
+
+    /// What ends a plugin's item other than its own result: the link lost between the `setup` and
+    /// the module, an interruption during the `setup`, a host with no interpreter, a result the
+    /// agent never sent.
+    ///
+    /// What would make this red: a lost link or an interruption turned into a result, which the
+    /// driver would record and report for a task that never ran its module; the module sent after
+    /// all; or a batch that ended with no result read as a finished item, which reports `ok` for
+    /// a sub-task nobody saw end.
+    #[tokio::test]
+    async fn a_plugin_item_ends_the_way_its_link_does() {
+        use crate::action_plugins::Kind;
+        let setup = || {
+            one_result(
+                1,
+                json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+            )
+            .to_vec()
+        };
+        let mut stop = watch::channel(false).1;
+
+        // The agent goes away once the `setup` is in.
+        let mut agent = FakeAgent::answering([vec![state("ab", true)], setup()].concat());
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        assert!(matches!(ran, Err(Err(_))), "{ran:?}");
+        assert_eq!(batches_sent(&agent).len(), 2, "{:?}", agent.sent);
+
+        // Interrupted while the `setup` runs: the agent is asked to stop it, and nothing follows.
+        let (stop_tx, mut stopping) = watch::channel(false);
+        let mut agent = FakeAgent::answering(vec![state("ab", true)]);
+        agent.hangs_when_empty = true;
+        stop_tx.send(true).expect("the receiver is alive");
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stopping,
+        )
+        .await;
+        assert!(
+            matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
+            "{ran:?}"
+        );
+        let modules: Vec<&str> = batches_sent(&agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect();
+        assert_eq!(modules, ["setup"]);
+        assert!(
+            agent
+                .sent
+                .iter()
+                .any(|m| matches!(m, ToAgent::Cancel { .. })),
+            "{:?}",
+            agent.sent
+        );
+
+        // No interpreter: the item fails, per task and rescuable, and nothing is sent.
+        let mut agent = FakeAgent::answering(Vec::new());
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &[],
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("a task failure, not the host's end");
+        assert!(msg(&result).contains("no python interpreter"), "{result:?}");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+
+        // The batch ended cleanly with no result in it.
+        let mut agent = FakeAgent::answering(vec![
+            state("ab", true),
+            FromAgent::BatchDone {
+                batch: 1,
+                outcome: BatchOutcome::Completed,
+            },
+        ]);
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item reports");
+        assert!(result.failed(), "{result:?}");
+        assert!(msg(&result).contains("'setup'"), "{result:?}");
+    }
+
+    /// A module that failed ends its item with that failure and not the task's batch, so the
+    /// items of a loop behind it still run and `report_task` judges the task from all of them.
+    ///
+    /// What would make this red: `BatchOutcome::Failed` read as the end of the batch, which stops
+    /// a three-item loop at its second item where the reference runs all three.
+    #[tokio::test]
+    async fn a_failed_module_is_its_item_s_result_and_the_loop_goes_on() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(vec![
+            state("ab", true),
+            FromAgent::TaskResult {
+                batch: 1,
+                index: 0,
+                result: TaskResult(vars(json!({"failed": true, "msg": "No package matching"}))),
+            },
+            FromAgent::BatchDone {
+                batch: 1,
+                outcome: BatchOutcome::Failed { at: 0 },
+            },
+        ]);
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "nosuchpackage"}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(msg(&result), "No package matching");
+    }
+
+    /// A sub-task that stages a file is refused by name until the protocol can carry one.
+    ///
+    /// What would make this red: the sub-task sent without its file, which runs `copy` against a
+    /// source that is not there - or, worse, against whatever the argument names on the host.
+    #[test]
+    fn a_sub_task_that_stages_a_file_is_refused_by_name() {
+        let sub = crate::action_plugins::Sub {
+            module: "copy",
+            args: Map::new(),
+            files: vec![(
+                "src".to_string(),
+                crate::action_plugins::FileBlob {
+                    hash: "cd".into(),
+                    b64: "eA==".into(),
+                },
+            )],
+        };
+        let union = union_of("ab", &["copy"]);
+        let failure = sub_task(
+            &task("copy"),
+            &bare_item(),
+            &sub,
+            Some(&union),
+            &python3(),
+            None,
+        )
+        .expect_err("nothing is sent without its file");
+        assert!(msg(&failure).contains("'src'"), "{failure:?}");
+        let sub = crate::action_plugins::Sub {
+            files: Vec::new(),
+            ..sub
+        };
+        let built = sub_task(
+            &task("copy"),
+            &bare_item(),
+            &sub,
+            Some(&union),
+            &python3(),
+            None,
+        )
+        .expect("a sub-task without files travels");
+        assert_eq!(built.module, "copy");
+        let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
+            .expect_err("a module the union lacks is never sent as native");
+        assert!(msg(&failure).contains("python payload"), "{failure:?}");
     }
 
     /// What the playbook asked for is read under the name the reference uses, off the map of

@@ -219,21 +219,20 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     //
     // A run of native tasks alone names no Python module, builds nothing, and needs no
     // ansible-core on the controller.
-    let python_modules: std::collections::BTreeSet<String> = compiled
-        .iter()
-        .flatten()
-        .flat_map(|play| play.steps.iter())
-        .map(|step| step.task.module.as_str())
-        .chain(
-            compiled
-                .iter()
-                .flatten()
-                .flat_map(|play| play.handlers.iter())
-                .map(|handler| handler.task.module.as_str()),
-        )
-        .filter(|module| python::is_python_module(module))
-        .map(|module| volant_protocol::modules::short_name(module).to_string())
-        .collect();
+    let python_modules = python::modules_to_build(
+        compiled
+            .iter()
+            .flatten()
+            .flat_map(|play| play.steps.iter())
+            .map(|step| step.task.module.as_str())
+            .chain(
+                compiled
+                    .iter()
+                    .flatten()
+                    .flat_map(|play| play.handlers.iter())
+                    .map(|handler| handler.task.module.as_str()),
+            ),
+    );
     let python = python::union_for(&python_modules).map_err(|e| Refusal::or(4, e))?;
 
     let agents = agent::AgentSource::discover();

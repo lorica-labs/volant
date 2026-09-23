@@ -258,34 +258,25 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // controller-side module on both sides, and both honour the three. Measured on the
         // reference and on this engine, the same shape each time - two `FAILED - RETRYING` lines
         // and `attempts: 2`.
-        if let Some(kw) = [
-            (!task.until.is_empty()).then_some("until"),
-            task.retries.is_some().then_some("retries"),
-            task.delay.is_some().then_some("delay"),
-        ]
-        .into_iter()
-        .flatten()
-        .next()
-        {
-            bail!(
-                "task '{}': keyword '{kw}' is not supported yet on '{}'",
-                task.name,
-                task.module
-            );
-        }
-        return Ok(());
+        return refuse_retries(task);
     }
     // Before the two sentences below, because a module the reference runs through an action
     // plugin is not a module waiting on this release to write it: the behaviour a playbook asks
     // for lives in the plugin, on the controller, and shipping the module alone would run
-    // something else. `package` picks the host's package manager, `template` renders before the
-    // task is sent, and neither is what the payload holds.
+    // something else. `template` renders before the task is sent, `copy` reads its source on the
+    // controller, and neither is what the payload holds.
     if action_plugins::is_action_backed(&task.module) {
         bail!(
             "task '{}': module '{}' needs an action plugin, which this release does not run yet",
             task.name,
             task.module
         );
+    }
+    // A plugin this release runs. `until`, `retries` and `delay` are refused on it: the driver's
+    // retry loop runs one module per attempt and the plugin's loop runs several per item, and the
+    // two do not compose. No role this release was measured against writes one on a plugin.
+    if action_plugins::kind(&task.module).is_some() {
+        return refuse_retries(task);
     }
     if !is_known(&task.module) {
         // A module ansible-core ships, that this release runs neither natively nor on the
@@ -316,6 +307,27 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         );
     }
     check_arguments(task)
+}
+
+/// Refuses `until`, `retries` and `delay` on a task that has nowhere to retry them, naming the
+/// first one written and the module.
+fn refuse_retries(task: &PlayTask) -> anyhow::Result<()> {
+    if let Some(kw) = [
+        (!task.until.is_empty()).then_some("until"),
+        task.retries.is_some().then_some("retries"),
+        task.delay.is_some().then_some("delay"),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    {
+        bail!(
+            "task '{}': keyword '{kw}' is not supported yet on '{}'",
+            task.name,
+            task.module
+        );
+    }
+    Ok(())
 }
 
 /// One task's arguments against the registry of the module it names.
@@ -460,16 +472,16 @@ mod tests {
     /// A module the reference runs through an action plugin is refused by that name, before the
     /// first connection, and not as a module this release has merely not written yet.
     ///
-    /// What would make this red: the arm placed after `is_builtin`, which sends `package`
-    /// through `is_python_module` - false, because the plugin backs it - and so answers it with
-    /// the "not available in this release" sentence the arm below prints, losing the one word
-    /// that tells the operator where the behaviour lives. The plugin picks the host's package
-    /// manager, and the module alone does not.
+    /// What would make this red: the arm placed after `is_builtin`, which sends `copy` through
+    /// `is_python_module` - false, because the plugin backs it - and so answers it with the "not
+    /// available in this release" sentence the arm below prints, losing the one word that tells
+    /// the operator where the behaviour lives. The plugin reads the source on the controller, and
+    /// the module alone does not.
     #[test]
     fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
-        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      package: name=bash\n");
+        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      copy: src=a dest=b\n");
         assert!(
-            text.contains("module 'package' needs an action plugin"),
+            text.contains("module 'copy' needs an action plugin"),
             "{text}"
         );
         let text = refusal(
@@ -481,6 +493,46 @@ mod tests {
         );
         let pb = parse("- hosts: all\n  tasks:\n    - debug: msg=hi\n", "x.yml").unwrap();
         assert!(check(&pb).is_ok(), "a controller-side module still runs");
+    }
+
+    /// The two plugins this release runs are admitted under every builtin spelling, with their
+    /// arguments read; the ones it does not run stay refused; and a retry on a plugin is refused
+    /// by name.
+    ///
+    /// What would make this red: `package` still refused, or admitted with its arguments left
+    /// unread - the loader reads them only for a module it knows it can run, so a plugin it did
+    /// not count would install nothing and report `ok`. Or `until` let through, which the
+    /// driver's retry loop would run around a module the plugin never picked.
+    #[test]
+    fn the_plugins_this_release_runs_are_admitted_and_their_retries_refused() {
+        for module in ["package", "service", "ansible.builtin.package"] {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Now\n      {module}: name=bash\n"),
+                "x.yml",
+            )
+            .unwrap();
+            assert!(check(&pb).is_ok(), "{module} is admitted");
+            let TaskOrBlock::Task(task) = &pb.plays[0].tasks[0] else {
+                panic!("a task");
+            };
+            assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
+        }
+        for module in ["copy", "template"] {
+            let text = refusal(&format!(
+                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: src=a dest=b\n"
+            ));
+            assert!(
+                text.contains(&format!("module '{module}' needs an action plugin")),
+                "{text}"
+            );
+        }
+        let text = refusal(
+            "- hosts: all\n  tasks:\n    - name: Again\n      package: name=bash\n      until: false\n",
+        );
+        assert!(
+            text.contains("keyword 'until' is not supported yet on 'package'"),
+            "{text}"
+        );
     }
 
     /// `until`, `retries` and `delay` are refused on the two dynamic statements, and still run on

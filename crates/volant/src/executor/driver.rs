@@ -5,11 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
+use crate::action_plugins::{self, Kind};
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{
     Compiled, StepKind, after, after_failure, after_pending, first, rescue_target,
@@ -29,7 +30,8 @@ use super::report::report_task;
 use super::run::{
     Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
     python_for, record_facts, record_registered, requested_interpreter, retry_plan,
-    reuse_or_connect, run_agent_batch, run_local, running_host_vars, step_tasks, until_holds,
+    reuse_or_connect, run_agent_batch, run_local, run_plugin_item, running_host_vars, step_tasks,
+    until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -287,6 +289,9 @@ pub(super) async fn drive_host(
         // says how the whole batch runs: item by item, attempt by attempt, rather than in one
         // trip to the agent.
         let mut batch_retry: Option<Retry> = None;
+        // Set when the batch's one task is backed by an action plugin, which is alone in its
+        // batch the way a retried task is.
+        let mut batch_action: Option<PluginBatch> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         // The last step of the batch, when where the host goes after it is not yet decided.
         // See the `Prepared::Remote` arm: a step a rescue would catch cannot say what it steps
@@ -789,7 +794,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Remote(items, escalation, delegate, payload)) => {
+                Ok(Prepared::Remote(items, escalation, delegate, payload, action)) => {
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -839,9 +844,15 @@ pub(super) async fn drive_host(
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
-                    if retry.is_some() && !batch.is_empty() {
+                    // A task an action plugin backs does the same, one trip per sub-task.
+                    if (retry.is_some() || action.is_some()) && !batch.is_empty() {
                         break;
                     }
+                    batch_action = action.map(|kind| PluginBatch {
+                        kind,
+                        asked: requested_interpreter(target_vars),
+                        delegate: delegate.clone(),
+                    });
                     batch_escalation = escalation;
                     batch_delegate = delegate_name;
                     batch_transport = Some(transport);
@@ -854,7 +865,8 @@ pub(super) async fn drive_host(
                         || task.loop_items.is_some()
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty()
-                        || batch_retry.is_some();
+                        || batch_retry.is_some()
+                        || batch_action.is_some();
                     if let Some(module) = payload {
                         // Off the same variables the connection was resolved from, which is the
                         // point: the module runs where the link goes, so its interpreter has to
@@ -1012,7 +1024,94 @@ pub(super) async fn drive_host(
             // day one of them can quote a task this becomes the batch's own `no_log` - exact
             // under the strict barrier, erring towards hiding under `[volant] batching`.
             let mut logs: Vec<String> = Vec::new();
-            let ended = if let Some(retry) = batch_retry.clone() {
+            // First, so a task a plugin backs can never fall into a path below that would send
+            // the plugin's own name to the agent as a module.
+            let ended = if let Some(PluginBatch {
+                kind,
+                asked,
+                delegate,
+            }) = batch_action.take()
+            {
+                // The batch rule above keeps a plugin task alone. Should that ever break, the host
+                // stops here naming it, rather than running `batch[0]` and dropping the rest.
+                let (index, items) = match plugin_step(&batch) {
+                    Ok(step) => step,
+                    Err(msg) => {
+                        unreachable = Some(msg);
+                        break 'run;
+                    }
+                };
+                let step = &c.steps[*index];
+                let interpreters = link.interpreters().to_vec();
+                let playbook_dir = store
+                    .lock()
+                    .expect("vars lock")
+                    .playbook_dir()
+                    .to_path_buf();
+                let mut outcome = Ok(BatchOutcome::Completed);
+                for (ii, item) in items.iter().enumerate() {
+                    if item.skipped.is_some() {
+                        continue;
+                    }
+                    let mut warnings = Vec::new();
+                    let ran = {
+                        let mut plugin = action_plugins::start(
+                            kind,
+                            action_plugins::Context {
+                                args: &item.args,
+                                args_untrusted: &item.args_untrusted,
+                                running_vars: running_host_vars(
+                                    delegate.as_ref(),
+                                    std::slice::from_ref(item),
+                                ),
+                                item_vars: &item.vars,
+                                templar: &templar,
+                                origin: &step.origin,
+                                playbook_dir: &playbook_dir,
+                                warnings: &mut warnings,
+                            },
+                        );
+                        run_plugin_item(
+                            link,
+                            &name,
+                            &mut batch_id,
+                            plugin.as_mut(),
+                            &step.task,
+                            item,
+                            plan.python.as_deref(),
+                            &interpreters,
+                            asked.as_deref(),
+                            &mut driver.stop,
+                            &mut driver.stop_broken,
+                            &mut logs,
+                        )
+                        .await
+                    };
+                    match ran {
+                        Ok(result) => received[0][ii] = Some(result),
+                        // The link lost or the run interrupted: this item has no result and the
+                        // ones behind it do not run, exactly as for any batch the agent did not
+                        // finish.
+                        Err(ended) => {
+                            outcome = ended;
+                            break;
+                        }
+                    }
+                    // Shown under this task, the way every other warning is. Not censored: the
+                    // plugins raise nothing but the name of an argument they dropped.
+                    for message in warnings {
+                        let _ = tx
+                            .send(Event::Warning {
+                                host: name.clone(),
+                                index: *index,
+                                message,
+                                censored: false,
+                            })
+                            .await;
+                    }
+                }
+                outcome
+            } else if let Some(retry) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
                 let task = &c.steps[*index].task;
@@ -1353,6 +1452,28 @@ pub(super) async fn drive_host(
             links: links.into_iter().collect(),
         })
         .await;
+}
+
+/// The one step of a batch an action plugin backs, or the controller error that ends the host
+/// when the batch holds anything else: the plugin branch runs one step, so a second one would be
+/// reported by nobody and never run.
+fn plugin_step<T>(batch: &[(usize, T)]) -> Result<&(usize, T), String> {
+    match batch {
+        [only] => Ok(only),
+        _ => Err(format!(
+            "a task backed by an action plugin has to be alone in its batch, and this one holds steps {:?}",
+            batch.iter().map(|(index, _)| index).collect::<Vec<_>>()
+        )),
+    }
+}
+
+/// What a batch whose one task an action plugin backs needs to run it.
+struct PluginBatch {
+    kind: Kind,
+    /// The interpreter the host the module runs on asked for, read off its variables.
+    asked: Option<String>,
+    /// That host's name and variables, when it is a delegate.
+    delegate: Option<(String, Map<String, Value>)>,
 }
 
 /// What became of a `run_once` step, from the point of view of a host that did not run it.
@@ -1697,6 +1818,18 @@ impl Driver<'_> {
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// A plugin batch is exactly one step, and anything else ends the host naming the steps.
+    ///
+    /// What would make this red: the branch reading `batch[0]` again, which runs the first step
+    /// and leaves the others unreported - a task that finishes `ok` having never run.
+    #[test]
+    fn a_plugin_batch_holds_its_one_step_and_nothing_else() {
+        assert_eq!(plugin_step(&[(4, ())]), Ok(&(4, ())));
+        let err = plugin_step(&[(4, ()), (5, ())]).expect_err("two steps");
+        assert!(err.contains("[4, 5]"), "{err}");
+        plugin_step::<()>(&[]).expect_err("no step");
+    }
     use serde_json::json;
 
     /// Everything a playbook can hide a cross-host read in has to be searched, or a barrier

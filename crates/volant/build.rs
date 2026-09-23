@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,6 +30,50 @@ fn main() {
 
     println!("cargo:rustc-env=VOLANT_GIT_SHA={sha}");
     println!("cargo:rustc-env=VOLANT_BUILD_DATE={}", civil_date(epoch));
+
+    embed_agents();
+}
+
+/// The agents a release carries inside the controller: the one it runs local tasks with, and
+/// the two it uploads to Linux hosts.
+const EMBEDDED_AGENTS: [&str; 3] = [
+    "volant-agent",
+    "volant-agent-x86_64-unknown-linux-musl",
+    "volant-agent-aarch64-unknown-linux-musl",
+];
+
+/// Writes `embedded_agents.rs` into `OUT_DIR`. With `VOLANT_EMBED_AGENTS_DIR` naming a directory
+/// that holds the three files above, it embeds them; unset or empty, it embeds nothing and the
+/// controller looks for agents on disk only. A variable that is set and a file that is missing
+/// fail the build: a release that quietly shipped without its agents is the thing to avoid.
+fn embed_agents() {
+    println!("cargo:rerun-if-env-changed=VOLANT_EMBED_AGENTS_DIR");
+    let mut entries = String::new();
+    if let Some(dir) = std::env::var_os("VOLANT_EMBED_AGENTS_DIR").filter(|v| !v.is_empty()) {
+        let dir = PathBuf::from(dir);
+        assert!(
+            dir.is_absolute(),
+            "VOLANT_EMBED_AGENTS_DIR must be an absolute path, not {}",
+            dir.display()
+        );
+        for name in EMBEDDED_AGENTS {
+            let path = dir.join(name);
+            assert!(
+                path.is_file(),
+                "VOLANT_EMBED_AGENTS_DIR is set but {} is not a file",
+                path.display()
+            );
+            println!("cargo:rerun-if-changed={}", path.display());
+            let path = path.to_str().expect("the agent path is valid UTF-8");
+            writeln!(entries, "    ({name:?}, include_bytes!({path:?})),").unwrap();
+        }
+    }
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+    fs::write(
+        out.join("embedded_agents.rs"),
+        format!("static AGENTS: &[(&str, &[u8])] = &[\n{entries}];\n"),
+    )
+    .expect("writing embedded_agents.rs");
 }
 
 /// Tells cargo to rerun this script when the checked-out commit changes.

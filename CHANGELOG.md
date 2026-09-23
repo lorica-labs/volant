@@ -15,9 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Run `unarchive` as an action plugin: extract a controller archive or one already on the host, skipping the task when `creates:` already exists.
 - Add the Jinja filters, tests, methods and lookups the template engine was missing: `b64decode`, `b64encode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `from_yaml`, `to_yaml`, `to_nice_yaml`, `to_uuid`, `type_debug`, `quote` and `regex_escape`; the `changed`, `failed`, `succeeded`, `skipped` and `version` tests; a handful of Python methods on strings and mappings, through `minijinja-contrib`; and the `first_found` and `template` lookups.
 - An install script: `curl -fsSL https://volant.sh/install.sh | sh` installs the newest release, controller and agents together, after checking its checksum.
+- The release controller carries its agents. `cargo binstall volant`, the shell installer and the release archives give a `volant` that runs local and SSH tasks with nothing else installed. On first use the agents are extracted to `~/.cache/volant/agents/<version>`, or under `$XDG_CACHE_HOME`.
 
 ### Changed
 
+- Agents are looked up in `VOLANT_AGENT_DIR` first, then among the agents built into the controller, then beside the executable.
+- Release archives no longer contain the agents. They are still published on their own, in the `volant-agent-*` archives.
 - A `copy`, `template` or `unarchive` task whose `src` was named by a managed host is now rejected before the file is looked up, rather than sent the way the reference sends it: a host that controls a command's output or a fact could otherwise have any file the operator can read copied to it.
 - The [documentation site](https://volant.sh/) moves to volant.sh and is rebuilt with sections, search and diagrams. It adds pages on installation, compatibility, the command line, configuration, inventories and exit codes.
 

@@ -678,6 +678,7 @@ dependencies = [
  "blake3",
  "clap",
  "insta",
+ "libc",
  "minijinja",
  "minijinja-contrib",
  "regex",

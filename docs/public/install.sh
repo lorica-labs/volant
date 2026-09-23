@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Install Volant: the controller and the agents it uploads to managed hosts.
+# Install Volant: one binary, which carries the agents it uploads to managed hosts.
 #
 #   curl -fsSL https://volant.sh/install.sh | sh
 #
@@ -67,8 +67,8 @@ else
 fi
 [ "$expected" = "$actual" ] || die "checksum mismatch for $archive: expected $expected, got $actual"
 
-# The controller finds its agents next to its own executable, so the release is unpacked as a
-# whole and only linked from the bin directory.
+# Each release is unpacked in a directory of its own and only linked from the bin directory, so
+# going back to an older one is a matter of setting VOLANT_VERSION.
 dest="$home_dir/$tag"
 mkdir -p "$home_dir" "$bin_dir"
 rm -rf "$dest"

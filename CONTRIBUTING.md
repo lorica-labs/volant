@@ -29,6 +29,7 @@ just setup
 | `just test-one <crate> <pattern>` | One crate's tests matching a pattern, for the edit-and-retry loop. |
 | `just coverage` | Line coverage, gated at the floor CI enforces. |
 | `just ssh-test` | The tests that run a playbook over a real `ssh`, see below. |
+| `just smoke-embedded` | Builds a controller with its agents embedded, as a release does, and runs one task with no agent beside it. |
 | `just mutants [file]` | Mutation testing on one file. |
 | `just bench-compile` | Times Volant against `ansible-playbook` on a large real role, see below. |
 | `just docs-keywords`, `just docs-modules` | Regenerate the keyword and module reference pages from the source tables. |

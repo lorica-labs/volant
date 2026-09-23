@@ -292,13 +292,16 @@ fn a_cross_built_agent_is_found_by_its_target_triple() {
     std::fs::write(dir.join("volant-agent-aarch64-unknown-linux-musl"), b"x").unwrap();
     temp_env(&[("VOLANT_AGENT_DIR", Some(dir.to_str().unwrap()))], || {
         let source = AgentSource::discover();
-        assert_eq!(source.for_target("x86_64-unknown-linux-musl"), Some(built));
         assert_eq!(
-            source.for_target("aarch64-unknown-linux-musl"),
+            source.for_target("x86_64-unknown-linux-musl").ok(),
+            Some(built)
+        );
+        assert_eq!(
+            source.for_target("aarch64-unknown-linux-musl").ok(),
             None,
             "a file with no execute bit is not an agent"
         );
-        assert_eq!(source.for_target("riscv64gc-unknown-linux-musl"), None);
+        assert_eq!(source.for_target("riscv64gc-unknown-linux-musl").ok(), None);
     });
 }
 

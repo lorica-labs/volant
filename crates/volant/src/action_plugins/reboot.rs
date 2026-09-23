@@ -509,10 +509,10 @@ mod tests {
     /// as `int()` reads them, a negative one as zero.
     #[test]
     fn the_arguments_are_read_as_the_reference_reads_them() {
-        let Err(msg) = read_options(&map(json!({"reboot_timout": 5, "delay": 1}))) else {
+        let Err(msg) = read_options(&map(json!({"reboot_wait": 5, "delay": 1}))) else {
             panic!("two unknown arguments");
         };
-        assert_eq!(msg, "Invalid options for reboot: delay,reboot_timout");
+        assert_eq!(msg, "Invalid options for reboot: delay,reboot_wait");
         let options = read_options(&map(json!({
             "pre_reboot_delay": "120", "post_reboot_delay": -4, "reboot_timeout": 30.9,
             "connect_timeout": 5, "search_paths": "/opt/sbin", "msg": "kernel update"

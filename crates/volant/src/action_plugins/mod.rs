@@ -145,10 +145,10 @@ pub(crate) enum Step {
     /// took the connection down with it has done what it was asked.
     RunDropping(Sub),
     /// The host is expected to have gone away: after `wait`, the host's links are dropped - its
-    /// own and any escalated one kept for it - and a fresh one is opened, retrying with a
-    /// growing pause, for at most `timeout`. Each connection attempt is given `attempt` at most.
-    /// `probe` runs on the first link that comes up and its result comes back on the next call;
-    /// when none came up in time, [`gone`] naming the last failure does.
+    /// own and any escalated one kept for it - and one try is made at a fresh link, given
+    /// `attempt` at most and never more than `timeout`. `probe` runs on it and its result comes
+    /// back on the next call, or [`gone`] naming why there was none. A plugin that asks again
+    /// straight after is asked to wait first, longer each time, as the reference's loop does.
     Reconnect {
         probe: Sub,
         wait: Duration,

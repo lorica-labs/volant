@@ -1290,8 +1290,9 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
 ) -> Result<TaskResult, Result<BatchOutcome, String>> {
     use crate::action_plugins::{Step, gone};
     let mut last = None;
-    // Failed tries in the reconnection in hand, which the pause before the next one grows with.
-    // A probe the plugin was not satisfied with counts as one, as in the reference's loop.
+    // Tries in the reconnection in hand, which the pause before the next one grows with: the
+    // plugin asks again after a try that failed and after a probe it was not satisfied with, and
+    // the reference's loop counts both as failures.
     let mut tries: Option<u32> = None;
     loop {
         let (sub, dropping) = match plugin.next(last.take()) {
@@ -1307,73 +1308,62 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 if wait_or_stop(wait, stop, stop_broken).await.is_none() {
                     return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
                 }
-                let mut failed = tries.map_or(0, |t| t + 1);
                 let deadline = tokio::time::Instant::now() + timeout;
-                let mut why = "the host did not come back".to_string();
+                let failed = tries.map_or(0, |t| t + 1);
+                tries = Some(failed);
+                if failed > 0
+                    && wait_or_stop(relink.pause(failed).min(timeout), stop, stop_broken)
+                        .await
+                        .is_none()
+                {
+                    return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
+                }
                 let built = match sub_task(task, item, &probe, union, interpreters, asked) {
                     Ok(built) => built,
                     Err(failure) => return Ok(failure),
                 };
-                last = Some(loop {
-                    if failed > 0 {
-                        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-                        if wait_or_stop(relink.pause(failed).min(left), stop, stop_broken)
-                            .await
-                            .is_none()
-                        {
-                            return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
-                        }
+                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if left.is_zero() {
+                    // Nothing here awaits, so a plugin asking again with no time left would hold
+                    // the runtime's thread for as long as it kept asking.
+                    tokio::task::yield_now().await;
+                    last = Some(gone("the host did not come back in time"));
+                    continue;
+                }
+                let bound = attempt.map_or(left, |a| a.min(left));
+                // Watched on the side as well, since a try can take as long as `bound` and an
+                // interruption is not made to wait for it.
+                let mut watcher = stop.clone();
+                let stopped = async move {
+                    if watcher.wait_for(|stopped| *stopped).await.is_err() {
+                        std::future::pending::<()>().await;
                     }
-                    let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    if left.is_zero() {
-                        break gone(&why);
-                    }
-                    failed += 1;
-                    let bound = attempt.map_or(left, |a| a.min(left));
-                    // Watched on the side as well, since a connection attempt can take as long as
-                    // `bound` and an interruption is not made to wait for it.
-                    let mut watcher = stop.clone();
-                    let stopped = async move {
-                        if watcher.wait_for(|stopped| *stopped).await.is_err() {
-                            std::future::pending::<()>().await;
-                        }
+                };
+                let once = async {
+                    relink.relink(link).await?;
+                    *batch_id += 1;
+                    let (mut flat, ended) =
+                        send_batch(link, host, *batch_id, vec![built], stop, stop_broken, logs)
+                            .await;
+                    let answer: Result<Option<TaskResult>, String> = match ended {
+                        Ok(BatchOutcome::Cancelled { .. }) => Ok(None),
+                        Ok(_) => flat.pop().flatten().map(Some).ok_or_else(|| {
+                            "the agent ended the probe without its result".to_string()
+                        }),
+                        Err(err) => Err(err),
                     };
-                    let once = async {
-                        relink.relink(link).await?;
-                        *batch_id += 1;
-                        let (mut flat, ended) = send_batch(
-                            link,
-                            host,
-                            *batch_id,
-                            vec![built.clone()],
-                            stop,
-                            stop_broken,
-                            logs,
-                        )
-                        .await;
-                        let answer: Result<Option<TaskResult>, String> = match ended {
-                            Ok(BatchOutcome::Cancelled { .. }) => Ok(None),
-                            Ok(_) => flat.pop().flatten().map(Some).ok_or_else(|| {
-                                "the agent ended the probe without its result".to_string()
-                            }),
-                            Err(err) => Err(err),
-                        };
-                        answer
-                    };
-                    let tried = tokio::select! {
-                        tried = tokio::time::timeout(bound, once) => tried,
-                        () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
-                    };
-                    match tried {
-                        Ok(Ok(Some(result))) => break result,
-                        Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
-                        Ok(Err(err)) => why = err,
-                        Err(_) => {
-                            why = format!("no answer after {} seconds", bound.as_secs_f64());
-                        }
-                    }
+                    answer
+                };
+                let tried = tokio::select! {
+                    tried = tokio::time::timeout(bound, once) => tried,
+                    () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                };
+                last = Some(match tried {
+                    Ok(Ok(Some(result))) => result,
+                    Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                    Ok(Err(why)) => gone(&why),
+                    Err(_) => gone(&format!("no answer after {} seconds", bound.as_secs_f64())),
                 });
-                tries = Some(failed.saturating_sub(1));
                 continue;
             }
         };
@@ -5940,7 +5930,8 @@ mod tests {
         after: Option<fn() -> FakeAgent>,
         attempts: usize,
         retired: Vec<FakeAgent>,
-        /// Raised on the first try, for a test of the run being interrupted while it waits.
+        /// Raised a tenth of a second after the first try starts, for a test of the run being
+        /// interrupted while it waits.
         stop: Option<watch::Sender<bool>>,
         /// A millisecond in place of the reference's seconds, so the schedule's shape is tested
         /// without its length (`the_pause_doubles_from_one_second_up_to_twelve`), unless a test
@@ -5965,7 +5956,11 @@ mod tests {
         async fn relink(&mut self, link: &mut FakeAgent) -> Result<(), String> {
             self.attempts += 1;
             if let Some(stop) = self.stop.take() {
-                let _ = stop.send(true);
+                // A moment later, so that it lands inside whatever wait follows this try.
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let _ = stop.send(true);
+                });
             }
             let next = self
                 .tries

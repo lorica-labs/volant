@@ -557,8 +557,8 @@ mod tests {
     /// The relative `src` that climbs out of `dest` is refused, and nothing is written where it
     /// points.
     ///
-    /// Measured on ansible-core 2.19.12: `src: ../../../../../../../../tmp/v16f/esc.txt` without
-    /// `flat` reported `changed` with `dest: /tmp/v16f/esc.txt`, and the file was there on the
+    /// Measured on ansible-core 2.19.12: `src: ../../../../../../../../tmp/x/esc.txt` without
+    /// `flat` reported `changed` with `dest: /tmp/x/esc.txt`, and the file was there on the
     /// controller. The marker is that file's counterpart here, under the scratch directory. What
     /// would make this red: the containment checked on `dest` before the path is built, as the
     /// reference does, which writes the marker.
@@ -733,7 +733,7 @@ mod tests {
     /// `stat` alone and `changed: false`.
     ///
     /// Measured on ansible-core 2.19.12: the first run `changed` with `dest:
-    /// <dest>/<host>/tmp/v16f/d/one.txt` and `checksum` equal to `remote_checksum`; the second
+    /// <dest>/<host>/tmp/x/d/one.txt` and `checksum` equal to `remote_checksum`; the second
     /// `ok`, `changed: false`, `file: <src>`, `remote_checksum: null`. The content is a template
     /// that is written as it is. What would make this red: the local sum not compared, which
     /// slurps and rewrites the file on every run, or the bytes rendered, which writes `2`.

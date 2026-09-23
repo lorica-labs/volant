@@ -59,4 +59,24 @@ fact. `template` and `unarchive` both read a file on the controller before a sub
 
 ## Results
 
-Measured once the proof has run.
+Measured on 2026-09-23 with four roles from Ansible Galaxy, run as published:
+`geerlingguy.security` 3.0.2, `geerlingguy.nginx` 3.3.1, `geerlingguy.git` 3.0.1 and
+`geerlingguy.pip` 3.1.2, in one play with `become: true` and facts gathered (`just proof-roles`).
+The managed hosts are two machines running Ubuntu 24.04. The reference is ansible-core 2.19.12.
+
+`just proof-roles-reset` removed the packages and files the roles install, so both engines
+started from the same state. Their first passes ended on the same recap,
+`ok=30 changed=8 skipped=28`, and their second passes on `ok=28 changed=0 skipped=28`.
+
+Each timing is the median of three passes against hosts the roles had already converged, with a
+release build of Volant. A pass shows 56 tasks per host.
+
+| | one host | two hosts |
+|---|---|---|
+| ansible-core, no pipelining | 33.50 s | 34.52 s |
+| ansible-core, `pipelining = True` | 25.70 s | 26.34 s |
+| Volant | 12.49 s | 12.64 s |
+
+Volant takes 49 percent of the pipelined reference's time on one host and 48 percent on two. The
+controller builds the union once per run. On the first pass against two hosts it landed in each
+host's cache, and the second pass left the cached file untouched.

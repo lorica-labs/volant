@@ -1144,18 +1144,16 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
-        let (mut flat, ended) = run_agent_batch(
-            link,
-            host,
-            *batch_id,
-            vec![built],
-            union,
-            &sub.files,
-            stop,
-            stop_broken,
-            logs,
-        )
-        .await;
+        let tasks = vec![built];
+        // What the sub-task needs on the host and could not be put there fails the item as it
+        // stands, and the plugin never sees it: the module did not run, and a plugin handed the
+        // error as the module's result would dress it as one (`copy` adds `diff` and the local
+        // checksum). The reference's action fails the same way on a transfer that raised.
+        if let Err(err) = blob_preflight(link, host, &tasks, union, &sub.files, logs).await {
+            return Ok(TaskResult::failed_with(err));
+        }
+        let (mut flat, ended) =
+            send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
         if !matches!(
             ended,
             Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
@@ -1492,9 +1490,28 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
-    let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
     if let Err(err) = blob_preflight(link, host, &tasks, blob, files, logs).await {
-        return blob_failure(err, received.len());
+        return blob_failure(err, tasks.len());
+    }
+    send_batch(link, host, id, tasks, stop, stop_broken, logs).await
+}
+
+/// [`run_agent_batch`] from the point where what the batch needs is on the host.
+///
+/// A batch with no task in it is not sent: every step of it may have failed on its interpreter
+/// already, and an agent answers an empty batch `Completed` with nothing else.
+async fn send_batch<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    id: u64,
+    tasks: Vec<Task>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+    let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
+    if tasks.is_empty() {
+        return (received, Ok(BatchOutcome::Completed));
     }
     if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
@@ -3921,6 +3938,84 @@ mod tests {
             err.starts_with("staging the file for 'src': ") && !err.contains("module payload"),
             "{err}"
         );
+    }
+
+    /// A file the agent refuses to store fails the item with the agent's reason, and nothing the
+    /// plugin would add to a module's result: the module never ran, as the reference's action
+    /// fails on a transfer that raised, before any `diff` or `checksum` is put under a result.
+    ///
+    /// What would make this red: the storing error handed to the plugin as the `copy` sub-task's
+    /// result, which `Copy::finish` dresses with `diff: []` and the local checksum.
+    #[tokio::test]
+    async fn a_file_the_agent_cannot_store_fails_the_item_undressed() {
+        use crate::action_plugins::Kind;
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![
+                    FromAgent::Log {
+                        level: volant_protocol::LogLevel::Error,
+                        message: "no space left".into(),
+                    },
+                    state(&blob.hash, false),
+                ],
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Copy,
+            copy_args("/tmp/v/full"),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert!(
+            msg(&result).starts_with("the agent could not store the file for 'src'"),
+            "{result:?}"
+        );
+        assert!(
+            !result.0.contains_key("diff") && !result.0.contains_key("checksum"),
+            "{result:?}"
+        );
+        assert_eq!(
+            batches_sent(&agent).len(),
+            1,
+            "only the stat ran: {:?}",
+            agent.sent
+        );
+    }
+
+    /// A batch with no task in it is not sent: there is nothing for the agent to answer, and the
+    /// batch ends the way an agent ends an empty one.
+    ///
+    /// What would make this red: a `RunBatch` with no tasks put on the wire, which a host whose
+    /// agent reported no Python pays a round trip for, batch after batch.
+    #[tokio::test]
+    async fn an_empty_batch_is_not_sent() {
+        let mut agent = FakeAgent::answering(Vec::new());
+        let mut stop = watch::channel(false).1;
+        let (results, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            1,
+            Vec::new(),
+            None,
+            &[],
+            &mut stop,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(results.is_empty());
+        assert!(matches!(ended, Ok(BatchOutcome::Completed)), "{ended:?}");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
     }
 
     /// The file blob of `hello\n`, as the plugin stages it.

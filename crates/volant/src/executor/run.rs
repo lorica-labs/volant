@@ -895,16 +895,21 @@ pub(super) fn unresolved_notify(
 
 /// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.
 ///
-/// Measured on ansible-core 2.19.12, and every line of it is a measurement: `until` with no
-/// `retries` gives three attempts; `retries` with no `until` retries while the result is failed;
-/// `retries` under 1 (0 and -1 were both measured) turns the whole machinery off, so the task
-/// runs once, prints no retry line, carries no `attempts` and is not failed by a condition that
-/// never held; the default `delay` is five seconds; and the sleep happens after **every** failed
-/// attempt, the last one included - measured by timing, 2 attempts cost 10 seconds and 3 cost 15.
+/// The rule is ansible-core 2.19.12's `TaskExecutor._execute` (`task_executor.py`, the attempt
+/// loop): `retries: R` is **R + 1 runs**, the first plus R retries, and `until` with no `retries`
+/// is R = 3. A retry line and the `delay` follow each of the first R failed runs, never the last;
+/// the line after run `i` says `(R + 1 - i retries left)`, so the last line says `(1 retries left)`
+/// and is followed by one more run. A run out of attempts reports `attempts: R`, not R + 1.
+/// Measured there on the dev machine: `retries: 2` on a failing `shell` that appends a line to a
+/// file prints both retry lines, reports `"attempts": 2`, and leaves **three** lines in the file.
+/// Also measured: `retries` with no `until` retries while the result is failed; `retries` under 1
+/// (0 and -1) turns the whole machinery off, so the task runs once, prints no retry line, carries
+/// no `attempts` and is not failed by a condition that never held; the default `delay` is five
+/// seconds.
 #[derive(Clone)]
 pub(super) struct Retry {
-    /// Attempts in all, never zero.
-    pub(super) attempts: u32,
+    /// R: the runs after the first, never zero.
+    pub(super) retries: u32,
     pub(super) delay: Duration,
     /// The conditions that end the loop. Empty means "the result did not fail".
     until: Vec<String>,
@@ -933,7 +938,7 @@ pub(super) fn retry_plan(
             ))
         })
     };
-    let attempts = match &task.retries {
+    let retries = match &task.retries {
         Some(raw) => {
             let n = number(raw, "retries")?;
             if n < 1.0 {
@@ -949,7 +954,7 @@ pub(super) fn retry_plan(
         None => Duration::from_secs(5),
     };
     Ok(Some(Retry {
-        attempts,
+        retries,
         delay,
         until: task.until.clone(),
     }))
@@ -979,6 +984,45 @@ pub(super) fn until_holds(
     }
     vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     all_hold(&retry.until, &vars, templar)
+}
+
+/// What one run of a retried task decides.
+pub(super) enum Attempt {
+    /// The loop ends with this result.
+    Done(TaskResult),
+    /// Another run follows, after a retry line showing this count and the `delay`.
+    Again(u32),
+}
+
+/// Run `attempt` (from 1) of a retried task, judged: `changed_when` and `failed_when` first,
+/// `attempts` set so `until` can read it, then `until`. The one place the attempt rule lives, for
+/// the controller-side, remote and action-plugin loops alike.
+///
+/// An `until` that cannot be evaluated ends the task there, with no further run and no
+/// `attempts` - measured, and the reference's own prefix for a task that dies rather than fails.
+/// Running out is a failed task even when the module passed (measured with `changed_when: false`
+/// under `until: r.changed`), and it reports `attempts: R` although R + 1 runs happened.
+pub(super) fn judge_attempt(
+    task: &PlayTask,
+    item: &Item,
+    raw: TaskResult,
+    attempt: u32,
+    retry: &Retry,
+    templar: &Templar,
+) -> Attempt {
+    let mut r = finish(task, item, raw, templar);
+    r.0.insert("attempts".into(), json!(attempt));
+    match until_holds(task, item, &r, retry, templar) {
+        Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
+        Ok(true) => return Attempt::Done(r),
+        Ok(false) => {}
+    }
+    if attempt > retry.retries {
+        r.0.insert("attempts".into(), json!(retry.retries));
+        r.0.insert("failed".into(), json!(true));
+        return Attempt::Done(r);
+    }
+    Attempt::Again(retry.retries + 1 - attempt)
 }
 
 /// What an `until` that cannot be evaluated reports.
@@ -1334,23 +1378,12 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel>(
         let Some(retry) = retry else {
             return Ok(Some(raw));
         };
-        let mut r = finish(task, item, raw, start.templar);
-        r.0.insert("attempts".into(), json!(attempt));
-        match until_holds(task, item, &r, retry, start.templar) {
-            Err(e) => return Ok(Some(TaskResult::failed_with(conditional_error(&e)))),
-            Ok(true) => return Ok(Some(r)),
-            Ok(false) => {}
-        }
-        lefts.push(retry.attempts - attempt + 1);
-        let last = attempt >= retry.attempts;
-        if last {
-            r.0.insert("failed".into(), json!(true));
+        match judge_attempt(task, item, raw, attempt, retry, start.templar) {
+            Attempt::Done(r) => return Ok(Some(r)),
+            Attempt::Again(left) => lefts.push(left),
         }
         if wait_or_stop(retry.delay, stop, stop_broken).await.is_none() {
             return Ok(None);
-        }
-        if last {
-            return Ok(Some(r));
         }
     }
 }
@@ -4755,11 +4788,13 @@ mod tests {
     /// the whole sequence, `stat` then `copy`, and stages the source again, because the agent
     /// consumed the file the first attempt staged. Measured on ansible-core 2.19.12, the same
     /// task on `localhost`: `FAILED - RETRYING ... (2 retries left)`, then `(1 retries left)`,
-    /// then `fatal` with `"attempts": 2`.
+    /// then `fatal` with `"attempts": 2` - after **three** runs, the first and two retries, as
+    /// `task_executor.py` runs them.
     ///
     /// What would make this red: the plugin kept across attempts, which resumes after its last
     /// sub-task instead of starting again; the staged file reused from the first attempt, which
-    /// sends a `copy` naming a blob the agent no longer holds; or the retry counts wrong.
+    /// sends a `copy` naming a blob the agent no longer holds; one run fewer than the reference;
+    /// or the retry counts wrong.
     #[tokio::test]
     async fn a_retried_copy_replays_its_whole_sequence_and_stages_its_file_again() {
         let blob = hello_blob();
@@ -4773,7 +4808,10 @@ mod tests {
                 one_result(2, missing.clone()).to_vec(),
                 one_result(3, json!({"stat": {"exists": false}})).to_vec(),
                 vec![state(&blob.hash, true)],
-                one_result(4, missing).to_vec(),
+                one_result(4, missing.clone()).to_vec(),
+                one_result(5, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(6, missing).to_vec(),
             ]
             .concat(),
         );
@@ -4788,7 +4826,10 @@ mod tests {
         assert!(result.failed(), "{result:?}");
         assert_eq!(result.0["attempts"], json!(2));
         assert_eq!(lefts, [2, 1], "`(2 retries left)` then `(1 retries left)`");
-        assert_eq!(modules_sent(&agent), ["stat", "copy", "stat", "copy"]);
+        assert_eq!(
+            modules_sent(&agent),
+            ["stat", "copy", "stat", "copy", "stat", "copy"]
+        );
         let staged = agent
             .sent
             .iter()
@@ -4796,7 +4837,47 @@ mod tests {
                 |m| matches!(m, ToAgent::PutBlob { hash, staged: true, .. } if *hash == blob.hash),
             )
             .count();
-        assert_eq!(staged, 2, "{:?}", agent.sent);
+        assert_eq!(staged, 3, "{:?}", agent.sent);
+    }
+
+    /// The attempt rule on its own, for `retries: 2` and a run that keeps failing: a retry after
+    /// runs 1 and 2 showing `(2 retries left)` and `(1 retries left)`, a third run, and then the
+    /// failure reporting `attempts: 2`. Read from ansible-core 2.19.12 `task_executor.py`
+    /// (`retries = 1 + R`, `attempts = retries - 1` on running out) and measured there with a
+    /// `shell` appending a line: three lines, `"attempts": 2`.
+    ///
+    /// What would make this red: the loop ending after R runs, which is one run fewer than the
+    /// reference; `attempts` reporting R + 1; or a retry line after the last run.
+    #[test]
+    fn retries_r_is_r_plus_one_runs_reporting_r_attempts() {
+        let mut t = task("command");
+        t.retries = Some(json!(2));
+        t.delay = Some(json!(0));
+        let item = bare_item();
+        let templar = Templar::new(PathBuf::from("."));
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let failing = || TaskResult(vars(json!({"failed": true, "rc": 1})));
+        let mut lefts = Vec::new();
+        let mut attempt = 0;
+        let last = loop {
+            attempt += 1;
+            match judge_attempt(&t, &item, failing(), attempt, &retry, &templar) {
+                Attempt::Done(r) => break r,
+                Attempt::Again(left) => lefts.push(left),
+            }
+        };
+        assert_eq!(attempt, 3, "three runs");
+        assert_eq!(lefts, [2, 1]);
+        assert_eq!(last.0["attempts"], json!(2));
+        assert!(last.failed());
+
+        let passing = TaskResult(vars(json!({"changed": false, "rc": 0})));
+        let Attempt::Done(r) = judge_attempt(&t, &item, passing, 1, &retry, &templar) else {
+            panic!("a passing run ends the loop");
+        };
+        assert_eq!(r.0["attempts"], json!(1));
     }
 
     /// `until` reads the result the whole sequence ended with, judged by the task's conditions,

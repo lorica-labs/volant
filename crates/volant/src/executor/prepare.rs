@@ -439,7 +439,7 @@ pub(super) fn prepare(
     let elements: Vec<Option<Value>> = match &task.loop_items {
         None => vec![None],
         Some(raw) if let Some(lookup) = &task.loop_with => {
-            let (list, tainted) = with_lookup_items(templar, lookup, raw, &base)?;
+            let (list, tainted) = with_lookup_items(templar, lookup, &task.module, raw, &base)?;
             items_from_host = tainted;
             list.into_iter().map(Some).collect()
         }
@@ -751,6 +751,7 @@ fn strict_boolean(value: &Value) -> Option<bool> {
 fn with_lookup_items(
     templar: &Templar,
     lookup: &str,
+    module: &str,
     raw: &Value,
     vars: &HostVars,
 ) -> Result<(Vec<Value>, bool), TemplateError> {
@@ -766,6 +767,20 @@ fn with_lookup_items(
     const TERMS: &str = "__volant_with_terms";
     let mut scope = vars.clone();
     scope.insert(TERMS.into(), Value::Array(terms));
+    // What `first_found.py` does when it runs for a `with_` loop: it searches a subdirectory of
+    // each entry first, chosen by the task's action as written - `templates` when the name holds
+    // `template`, `vars` when it holds `var`, `files` otherwise - and a plain `lookup()` never does.
+    // `template/lookups.rs` reads the same name.
+    if lookup == "first_found" {
+        let subdir = ["template", "var", "file"]
+            .into_iter()
+            .find(|word| module.contains(word))
+            .unwrap_or("file");
+        scope.insert(
+            "volant::first_found_subdir".into(),
+            Value::String(format!("{subdir}s")),
+        );
+    }
     let found = templar.evaluate(&format!("lookup({lookup:?}, *{TERMS})"), &scope)?;
     // `wantlist=True` for the two lookups this runs: `lookup()` answers no result with an empty
     // string and one result bare, and neither of them can find an empty name.
@@ -1724,5 +1739,78 @@ mod tests {
             json!("24"),
         );
         assert_eq!(bound(&step, &store).unwrap(), [(json!(ubuntu), true)]);
+    }
+
+    /// `with_first_found` searches the subdirectory the task's action names in each entry before
+    /// the entry itself, as ansible-core 2.19.12's `first_found.py` does when it runs for a
+    /// `with_` loop: `templates/` for a `template`, `vars/` for an `include_vars`, `files/`
+    /// otherwise. A plain `lookup('first_found')` does not, which `template/lookups.rs` measured.
+    ///
+    /// What would make this red: the subdirectory left out, which finds neither file; the wrong
+    /// one chosen for the action; or `skip: true` failing when `vars/` holds nothing.
+    #[test]
+    fn with_first_found_searches_the_directory_its_action_names() {
+        let dir = Scratch::new("first-found-subdir");
+        let role = dir.0.join("roles/probe");
+        let in_role = || Origin {
+            file_dir: role.join("tasks"),
+            role_dir: Some(role.clone()),
+            depth: 0,
+            inherited: None,
+        };
+        let store = store_at(&dir.0);
+        let template = dir.write("roles/probe/templates/t.j2");
+        let step = loaded(
+            "- hosts: all\n  tasks:\n    - template:\n        src: \"{{ item }}\"\n        dest: /tmp/t\n      with_first_found:\n        - t.j2\n",
+            in_role(),
+        );
+        assert_eq!(bound(&step, &store).unwrap(), [(json!(template), false)]);
+
+        let vars = loaded(
+            "- hosts: all\n  tasks:\n    - include_vars: \"{{ item }}\"\n      with_first_found:\n        - files:\n            - a.yml\n          skip: true\n",
+            in_role(),
+        );
+        assert_eq!(bound(&vars, &store).unwrap(), []);
+        let found = dir.write("roles/probe/vars/a.yml");
+        assert_eq!(bound(&vars, &store).unwrap(), [(json!(found), false)]);
+    }
+
+    /// A file whose name is a template, matched by a glob under the playbook's own directory, is
+    /// refused by name before anything renders it. Its path would otherwise be bound as author
+    /// content and rendered again by `src: "{{ item }}"`, running the command in its name on the
+    /// controller. The reference never templates a lookup's result and copies the file as it is.
+    /// Both ways of looping over the lookup go through the same refusal.
+    ///
+    /// What would make this red: the refusal gone, which creates the marker file the name's
+    /// `pipe` touches; or it placed in the `with_` path alone, which leaves `loop:` open.
+    #[test]
+    fn a_found_path_that_looks_like_a_template_is_refused_and_never_rendered() {
+        let dir = Scratch::new("found-template");
+        let marker = PathBuf::from(format!("{}.marker", dir.0.display()));
+        let _ = std::fs::remove_file(&marker);
+        let named = dir.write("{{ lookup('pipe', 'touch ' ~ airgap_dir ~ '.marker') }}.tar.gz");
+        let store = store_at(&dir.0);
+        for looping in [
+            "with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n",
+            "loop: \"{{ [lookup('fileglob', airgap_dir ~ '/*.tar.gz')] }}\"\n",
+        ] {
+            let step = loaded(
+                &format!(
+                    "- hosts: all\n  tasks:\n    - copy:\n        src: \"{{{{ item }}}}\"\n        dest: /tmp/images/\n      {looping}      vars:\n        airgap_dir: {}\n",
+                    dir.0.display()
+                ),
+                Origin::default(),
+            );
+            let Err(err) = prepared(&step, &store) else {
+                panic!("{looping}: the path is refused");
+            };
+            assert!(
+                err.0.contains(&named) && err.0.contains("template marker"),
+                "{looping}: {}",
+                err.0
+            );
+            assert!(!marker.exists(), "{looping}: the name's command ran");
+        }
+        let _ = std::fs::remove_file(&marker);
     }
 }

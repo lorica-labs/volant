@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
@@ -28,10 +28,10 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    PluginStart, Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value,
-    finish, notify, python_for, record_facts, record_registered, requested_interpreter, retry_plan,
-    reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts, running_host_vars,
-    step_tasks, take_warnings, unresolved_notify, until_holds, wait_or_stop,
+    Attempt, PluginStart, Retry, chosen_interpreter, fact_targets, failed_task_value, finish,
+    judge_attempt, notify, python_for, record_facts, record_registered, requested_interpreter,
+    retry_plan, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
+    running_host_vars, step_tasks, take_warnings, unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -717,34 +717,15 @@ pub(super) async fn drive_host(
                                 let Some(ran) = ran else {
                                     break 'run;
                                 };
-                                let mut r = finish(task, item, ran, &templar);
-                                let Some(retry) = &retry else { break r };
-                                r.0.insert("attempts".into(), json!(attempt));
-                                match until_holds(task, item, &r, retry, &templar) {
-                                    // A condition that cannot be evaluated ends the task
-                                    // there, with no further attempt and no `attempts` -
-                                    // measured, and the reference's own prefix for a task
-                                    // that dies rather than fails.
-                                    Err(e) => {
-                                        break TaskResult::failed_with(conditional_error(&e));
-                                    }
-                                    Ok(true) => break r,
-                                    Ok(false) => {}
-                                }
-                                mine.push(retry.attempts - attempt + 1);
-                                let last = attempt >= retry.attempts;
-                                if last {
-                                    // The loop ran out with the condition still false, which
-                                    // is a failed task even when the module itself passed:
-                                    // measured with a `changed_when: false` under
-                                    // `until: r.changed`.
-                                    r.0.insert("failed".into(), json!(true));
+                                let Some(retry) = &retry else {
+                                    break finish(task, item, ran, &templar);
+                                };
+                                match judge_attempt(task, item, ran, attempt, retry, &templar) {
+                                    Attempt::Done(r) => break r,
+                                    Attempt::Again(left) => mine.push(left),
                                 }
                                 if driver.sleep_between(retry.delay).await.is_none() {
                                     break 'run;
-                                }
-                                if last {
-                                    break r;
                                 }
                             }
                         };
@@ -1201,31 +1182,15 @@ pub(super) async fn drive_host(
                         // The agent ended without a result for this item. Left unreported, the
                         // way the loop below leaves a task the agent never reached.
                         let Some(raw) = raw else { continue 'items };
-                        let mut r = finish(task, item, raw, &templar);
-                        r.0.insert("attempts".into(), json!(attempt));
-                        match until_holds(task, item, &r, &retry, &templar) {
-                            Err(e) => {
-                                received[0][ii] =
-                                    Some(TaskResult::failed_with(conditional_error(&e)));
-                                continue 'items;
-                            }
-                            Ok(true) => {
+                        match judge_attempt(task, item, raw, attempt, &retry, &templar) {
+                            Attempt::Done(r) => {
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
-                            Ok(false) => {}
-                        }
-                        lefts[ii].push(retry.attempts - attempt + 1);
-                        let last = attempt >= retry.attempts;
-                        if last {
-                            r.0.insert("failed".into(), json!(true));
-                            received[0][ii] = Some(r);
+                            Attempt::Again(left) => lefts[ii].push(left),
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
                             break 'run;
-                        }
-                        if last {
-                            continue 'items;
                         }
                     }
                 }

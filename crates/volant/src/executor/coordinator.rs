@@ -74,7 +74,8 @@ pub struct Progress {
 
 pub(super) enum Event {
     /// One result line. `counts` says whether it enters the recap (loop items do not, their
-    /// aggregate does); `show` whether a line is printed (a loop aggregate that succeeded is not).
+    /// aggregate does); `show` whether a line is printed (a loop aggregate is, only when every
+    /// item was skipped).
     Result {
         host: String,
         index: usize,

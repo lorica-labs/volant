@@ -110,9 +110,14 @@ pub(super) async fn report_task(
                 }
                 _ => TaskResult::default(),
             };
-            // The reference prints no aggregate line for a loop that had items: the failing
-            // item's own line carries the message, and `...ignoring` follows the items alone.
-            (aggregate, false)
+            // The reference prints no aggregate line for a loop that had items, except when
+            // every one of them was skipped: `v2_runner_on_skipped` fires once for the task
+            // itself, after the item lines, whenever the aggregate it hands over comes back
+            // skipped - measured, `geerlingguy.git : Build git.` with a false `when` prints its
+            // two item lines and then `skipping: [host]`. An ok, changed or failed loop still
+            // shows nothing here: the item lines (and `...ignoring`) carry the message alone.
+            let show = aggregate.skipped();
+            (aggregate, show)
         };
         let outcome = classify(&aggregate, !failure_stands, rescuable);
         // Measured on ansible-core 2.19.12: a rescue reading `ansible_failed_result.results`
@@ -190,6 +195,65 @@ mod tests {
             }
         }
         (failed, outcomes)
+    }
+
+    /// Each item's outcome and whether its line shows, for a loop whose every item is skipped.
+    async fn all_items_skipped() -> Vec<(Outcome, bool)> {
+        let mut t = task("command");
+        t.loop_items = Some(json!([1, 2]));
+        let results: Vec<(Option<Value>, TaskResult)> = [1, 2]
+            .into_iter()
+            .map(|n| {
+                (
+                    Some(json!(n)),
+                    TaskResult(json!({"skipped": true}).as_object().unwrap().clone()),
+                )
+            })
+            .collect();
+        let (tx, mut rx) = mpsc::channel(16);
+        report_task(
+            &tx,
+            "h1",
+            0,
+            &t,
+            &results,
+            &[None, None],
+            &[],
+            &[],
+            &[],
+            Dump::No,
+            false,
+            None,
+        )
+        .await;
+        drop(tx);
+        let mut out = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let Event::Result { outcome, show, .. } = event {
+                out.push((outcome, show));
+            }
+        }
+        out
+    }
+
+    /// A loop whose every item a `when` skips still prints the task's own `skipping: [host]`
+    /// line, after the item lines: measured on ansible-core 2.19.12, `v2_runner_on_skipped`
+    /// fires once for the task itself whenever the aggregate it is handed comes back skipped -
+    /// `geerlingguy.git : Build git.` with a false `when` does exactly this on a host that
+    /// already has git. Counts are unaffected: the aggregate always entered the recap.
+    ///
+    /// What would make this red: the aggregate line kept hidden the way a loop that ran (ok,
+    /// changed or failed) keeps it, which is what this code did before the fix.
+    #[tokio::test]
+    async fn a_loop_whose_every_item_is_skipped_shows_the_task_s_own_line() {
+        assert_eq!(
+            all_items_skipped().await,
+            vec![
+                (Outcome::Skipped, true),
+                (Outcome::Skipped, true),
+                (Outcome::Skipped, true),
+            ]
+        );
     }
 
     /// A failure is ignored item by item: an item whose own `ignore_errors` rendered true shows

@@ -28,7 +28,7 @@ The goal is to run well-known Galaxy roles end to end and produce the same recap
 - `--check` and `--diff`.
 - YAML inventories.
 - A `volant check` command that tells you whether a project will run, and what blocks it.
-- A Homebrew formula, and `cargo binstall` with the agents included.
+- A Homebrew formula.
 - A nightly run over a corpus of public roles, compared with ansible-core.
 - Video walkthroughs of the main workflows.
 

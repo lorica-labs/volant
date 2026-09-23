@@ -37,15 +37,14 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.7 sh
 
 ## What you get
 
-A release holds the controller and the agents it uploads to your hosts. The script keeps them together, because the controller looks for its agents next to its own executable:
+One binary. The release `volant` carries the agents it uploads to your hosts, so there is nothing else to install and nothing to keep next to it:
 
 | File | What it is |
 |---|---|
 | `volant` | The controller, the command you run. |
 | `volant-playbook` | The same controller under a name that reads like `ansible-playbook`. |
-| `volant-agent` | The agent for the machine you run on, used by `ansible_connection=local`. |
-| `volant-agent-x86_64-unknown-linux-musl` | The agent uploaded to x86_64 Linux hosts. |
-| `volant-agent-aarch64-unknown-linux-musl` | The agent uploaded to arm64 Linux hosts. |
+
+On first use, the controller writes its agents to `~/.cache/volant/agents/<version>/`, or under `$XDG_CACHE_HOME` when it is set: the agent for your own machine, used by `ansible_connection=local`, and the ones it uploads to x86_64 and arm64 Linux hosts. Later runs reuse them, and a copy that does not match the agent built into the controller is written again.
 
 ## What the machines need
 
@@ -74,29 +73,28 @@ Run the install command again. It installs the newest release next to the ones y
 ## Other ways to install
 
 <Tabs>
-  <TabItem label="Manual download">
-    Every release on the [releases page](https://github.com/lorica-labs/volant/releases) has one archive per platform, named `volant-<target>.tar.xz`, with a `.sha256` file next to it. Unpack it, keep the directory whole, and link `volant` onto your `PATH`:
-
-    ```sh
-    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz
-    mv volant-x86_64-unknown-linux-musl ~/.local/share/volant/manual
-    ln -sf ~/.local/share/volant/manual/volant ~/.local/bin/volant
-    ```
-  </TabItem>
   <TabItem label="cargo binstall">
     ```sh
     # Only pre-releases exist so far, so name the version.
     cargo binstall volant@0.1.0-alpha.7
     ```
 
-    This installs the controller without its agents. Point `VOLANT_AGENT_DIR` at a directory that holds them, such as an unpacked release archive.
+    This downloads the same release binary as the install script, agents included.
+  </TabItem>
+  <TabItem label="Manual download">
+    Every release on the [releases page](https://github.com/lorica-labs/volant/releases) has one archive per platform, named `volant-<target>.tar.xz`, with a `.sha256` file next to it. Unpack it and put `volant` on your `PATH`:
+
+    ```sh
+    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz
+    install -m 755 volant-x86_64-unknown-linux-musl/volant ~/.local/bin/volant
+    ```
   </TabItem>
   <TabItem label="From source">
     ```sh
     cargo install --git https://github.com/lorica-labs/volant volant
     ```
 
-    This also installs the controller without its agents: set `VOLANT_AGENT_DIR` as above. From a checkout, `cargo build` leaves a local agent next to the controller it just built, and `just agent-musl` builds the x86_64 Linux agent.
+    A build from source does not carry the agents, because they are cross-compiled for the hosts. Point `VOLANT_AGENT_DIR` at a directory that holds them, or build them from a checkout: `cargo build` leaves a local agent next to the controller, and `just agent-musl` builds the x86_64 Linux one. `just smoke-embedded` shows how a release build embeds them.
   </TabItem>
 </Tabs>
 
@@ -106,9 +104,9 @@ A Homebrew formula is planned. The [roadmap](/project/roadmap/) tracks it.
 
 ## Uninstall
 
-Remove the release directory and the links. On each host, the agent cache is one directory per account the run acted as:
+Remove the release directory, the links and the controller's agent cache. On each host, the agent cache is one directory per account the run acted as:
 
 ```sh
-rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook
+rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-*'
 ```

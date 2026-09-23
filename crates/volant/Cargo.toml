@@ -23,6 +23,7 @@ anstyle.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 clap.workspace = true
+libc.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 regex.workspace = true

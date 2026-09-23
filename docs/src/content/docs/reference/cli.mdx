@@ -116,7 +116,7 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 </Option>
 
 <Option name="VOLANT_AGENT_DIR" arg="DIR">
-  A directory that holds the agent binaries, checked before the directory of the `volant` executable.
+  A directory that holds the agent binaries. It is checked first, before the agents built into the release controller and the directory of the `volant` executable. Useful with a controller built from source, or to test an agent of your own.
 </Option>
 
 <Option name="VOLANT_BATCHING" arg="1" config="[volant] batching">

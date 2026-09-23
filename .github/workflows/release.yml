@@ -131,6 +131,39 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: "Install zig"
+        uses: "mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29"
+        with:
+          "use-cache": false
+          "version": "0.15.2"
+      - name: "Install cargo-zigbuild"
+        uses: "taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5"
+        with:
+          "tool": "cargo-zigbuild@0.23.4"
+      - name: "Build the agents the controller embeds"
+        run: |
+          set -euo pipefail
+          agents="$RUNNER_TEMP/embed-agents"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/embed-agents-target"
+          mkdir -p "$agents"
+          for musl in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            cargo zigbuild --locked -p volant-agent --profile dist --target "$musl"
+            cp "$CARGO_TARGET_DIR/$musl/dist/volant-agent" "$agents/volant-agent-$musl"
+          done
+          case "$TARGET" in
+            *-unknown-linux-musl)
+              cp "$agents/volant-agent-$TARGET" "$agents/volant-agent"
+              ;;
+            *)
+              cargo build --locked -p volant-agent --profile dist --target "$TARGET"
+              cp "$CARGO_TARGET_DIR/$TARGET/dist/volant-agent" "$agents/volant-agent"
+              ;;
+          esac
+          file "$agents"/*
+          echo "VOLANT_EMBED_AGENTS_DIR=$agents" >> "$GITHUB_ENV"
+        shell: "bash"
+        env:
+          "TARGET": "${{ join(matrix.targets, '') }}"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
@@ -283,14 +316,13 @@ jobs:
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          # Two hand edits to what dist generates, both forced by immutable releases being on
-          # for this repository. First, no --target: the tag already exists when this runs, and
-          # setting a target commit on an existing tag is refused outright, which is what made
-          # every release from 0.1.0-alpha.6 onward fail here with a 403 that reads like a
-          # permissions problem and is not one. Second, --draft: an immutable release locks its
-          # assets the moment it is published, so the archives have to be complete before that
-          # happens. bundle-agents repacks them and publishes the release at the end of the run.
-          gh release create "${{ needs.plan.outputs.tag }}" --draft $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          # A hand edit to what dist generates, forced by immutable releases being on for this
+          # repository: no --target. The tag already exists when this runs, and setting a target
+          # commit on an existing tag is refused outright, which is what made every release from
+          # 0.1.0-alpha.6 onward fail here with a 403 that reads like a permissions problem and is
+          # not one. Given files, gh creates the release as a draft, uploads them, then publishes
+          # it, so the release is locked only once every asset is there.
+          gh release create "${{ needs.plan.outputs.tag }}" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   announce:
     needs:
@@ -308,16 +340,3 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-
-  custom-bundle-agents:
-    needs:
-      - plan
-      - announce
-    uses: ./.github/workflows/bundle-agents.yml
-    with:
-      plan: ${{ needs.plan.outputs.val }}
-    secrets: inherit
-    permissions:
-      "attestations": "write"
-      "contents": "write"
-      "id-token": "write"

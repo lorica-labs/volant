@@ -10,50 +10,83 @@ use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
-/// Where agent binaries live: `VOLANT_AGENT_DIR`, then next to this executable. The local
-/// agent is `volant-agent`; cross-built ones are `volant-agent-<target triple>`. Embedding them
-/// in the controller comes with the release packaging.
+mod embedded;
+
+/// Where agent binaries live, looked up in this order: `VOLANT_AGENT_DIR`, the agents built into
+/// this controller (extracted to a cache directory on first use), then the directory of this
+/// executable. The local agent is `volant-agent`; cross-built ones are
+/// `volant-agent-<target triple>`.
 #[derive(Debug, Clone)]
 pub struct AgentSource {
-    dirs: Vec<PathBuf>,
+    places: Vec<Place>,
+}
+
+#[derive(Debug, Clone)]
+enum Place {
+    Dir(PathBuf),
+    Embedded(embedded::Embedded),
 }
 
 impl AgentSource {
     pub fn discover() -> Self {
-        let mut dirs = Vec::new();
-        if let Ok(dir) = std::env::var("VOLANT_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
-        }
-        if let Some(dir) = std::env::current_exe().ok().and_then(beside_executable) {
-            dirs.push(dir);
-        }
-        Self { dirs }
+        let exe_dir = std::env::current_exe().ok().and_then(beside_executable);
+        Self::ordered(
+            std::env::var_os("VOLANT_AGENT_DIR").map(PathBuf::from),
+            embedded::Embedded::built_in(),
+            exe_dir,
+        )
+    }
+
+    /// The lookup order, apart from where each place comes from.
+    fn ordered(
+        env_dir: Option<PathBuf>,
+        embedded: Option<embedded::Embedded>,
+        exe_dir: Option<PathBuf>,
+    ) -> Self {
+        let places = env_dir
+            .map(Place::Dir)
+            .into_iter()
+            .chain(embedded.map(Place::Embedded))
+            .chain(exe_dir.map(Place::Dir))
+            .collect();
+        Self { places }
     }
 
     pub fn local(&self) -> anyhow::Result<PathBuf> {
         let file = format!("volant-agent{}", std::env::consts::EXE_SUFFIX);
-        self.find(&file).with_context(|| {
-            format!(
-                "no executable agent binary '{file}' in {}. Set VOLANT_AGENT_DIR to the directory that holds it",
-                self.describe()
+        self.find(&file).map_err(|looked| {
+            anyhow::anyhow!(
+                "no executable agent binary '{file}' in {looked}. Set VOLANT_AGENT_DIR to the directory that holds it"
             )
         })
     }
 
-    pub fn for_target(&self, triple: &str) -> Option<PathBuf> {
+    /// The agent to upload to a host of this target triple, or the places it was looked for in.
+    pub fn for_target(&self, triple: &str) -> Result<PathBuf, String> {
         self.find(&format!("volant-agent-{triple}"))
     }
 
-    pub fn describe(&self) -> String {
-        self.dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    fn find(&self, file: &str) -> Option<PathBuf> {
-        self.dirs.iter().map(|d| d.join(file)).find(|p| runnable(p))
+    /// The first place holding `file`, or every place looked in when none does, each with the
+    /// reason it could not be used when there is one.
+    fn find(&self, file: &str) -> Result<PathBuf, String> {
+        let mut looked = Vec::new();
+        for place in &self.places {
+            match place {
+                Place::Dir(dir) => {
+                    let path = dir.join(file);
+                    if runnable(&path) {
+                        return Ok(path);
+                    }
+                    looked.push(dir.display().to_string());
+                }
+                Place::Embedded(embedded) => match embedded.find(file) {
+                    Ok(Some(path)) => return Ok(path),
+                    Ok(None) => looked.push(embedded.describe()),
+                    Err(err) => looked.push(format!("{}: {err}", embedded.describe())),
+                },
+            }
+        }
+        Err(looked.join(", "))
     }
 }
 
@@ -330,6 +363,82 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<V
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    const EMBEDDED: &[(&str, &[u8])] = &[("volant-agent", b"embedded")];
+
+    fn agent_in(dir: &Path, name: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, b"on disk").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// `VOLANT_AGENT_DIR` comes first, then the agents built into the controller, then the
+    /// directory the controller sits in; an agent the controller does not embed is still found
+    /// there.
+    ///
+    /// What would make this red: the order in `ordered` changed. Embedded before the
+    /// environment, and a developer pointing `VOLANT_AGENT_DIR` at a freshly built agent silently
+    /// runs the release one instead; beside the executable before embedded, and a stale agent
+    /// left next to an upgraded controller wins over the one built with it.
+    #[test]
+    fn agents_are_looked_up_in_the_environment_then_the_controller_then_beside_it() {
+        let root = embedded::tests::tempdir();
+        let (env_dir, exe_dir, cache) =
+            (root.0.join("env"), root.0.join("exe"), root.0.join("cache"));
+        let from_env = agent_in(&env_dir, "volant-agent");
+        agent_in(&exe_dir, "volant-agent");
+        let riscv = agent_in(&exe_dir, "volant-agent-riscv64gc-unknown-linux-musl");
+        let source = |env: Option<&PathBuf>| {
+            AgentSource::ordered(
+                env.cloned(),
+                Some(embedded::Embedded::new(EMBEDDED, Ok(cache.clone()))),
+                Some(exe_dir.clone()),
+            )
+        };
+
+        assert_eq!(source(Some(&env_dir)).local().unwrap(), from_env);
+        let extracted = source(None).local().unwrap();
+        assert_eq!(extracted, cache.join("volant-agent"));
+        assert_eq!(std::fs::read(&extracted).unwrap(), b"embedded");
+        assert_eq!(
+            source(None)
+                .for_target("riscv64gc-unknown-linux-musl")
+                .unwrap(),
+            riscv
+        );
+    }
+
+    /// An embedded agent that cannot be put on disk does not stop a run whose agent sits beside
+    /// the controller, and when nothing has one the error says why the embedded one was not used.
+    ///
+    /// What would make this red: an extraction failure returned from `find` as the answer (the
+    /// agent beside the controller is never reached), or dropped from the list of places looked
+    /// in (the operator reads "no agent" with no hint that the cache is the problem).
+    #[test]
+    fn an_agent_that_cannot_be_extracted_falls_through_and_says_why() {
+        let root = embedded::tests::tempdir();
+        let exe_dir = root.0.join("exe");
+        // A cache anyone can write, which extraction refuses.
+        let cache = root.0.join("cache");
+        std::fs::create_dir(&cache).unwrap();
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let source = || {
+            AgentSource::ordered(
+                None,
+                Some(embedded::Embedded::new(EMBEDDED, Ok(cache.clone()))),
+                Some(exe_dir.clone()),
+            )
+        };
+
+        let err = format!("{:#}", source().local().unwrap_err());
+        assert!(err.contains("mode 777"), "{err}");
+        let beside = agent_in(&exe_dir, "volant-agent");
+        assert_eq!(source().local().unwrap(), beside);
+    }
 
     /// A controller started through a link looks for its agents next to the file the link
     /// points at.

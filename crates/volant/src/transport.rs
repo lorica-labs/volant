@@ -881,10 +881,9 @@ impl SshTarget {
                 "no agent binary for {arch}: unsupported architecture"
             ))
         })?;
-        let local = agents.for_target(triple).ok_or_else(|| {
+        let local = agents.for_target(triple).map_err(|looked| {
             ConnectError::Unreachable(format!(
-                "no agent binary for {arch} (looked for volant-agent-{triple} in {})",
-                agents.describe()
+                "no agent binary for {arch} (looked for volant-agent-{triple} in {looked})"
             ))
         })?;
         let bytes = std::fs::read(&local)

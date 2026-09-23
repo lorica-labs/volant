@@ -53,7 +53,7 @@ Four published Galaxy roles, `geerlingguy.security`, `nginx`, `git` and `pip`, a
 curl -fsSL https://volant.sh/install.sh | sh
 ```
 
-The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs the `volant` controller together with the agents it uploads to your hosts, under `~/.local`, without root. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
+The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
 
 ## A first run
 

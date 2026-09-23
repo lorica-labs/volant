@@ -13,6 +13,7 @@ release-plz and cargo-dist do the work. Cutting a release means merging one pull
 4. Watch the release workflow: `gh run list --workflow release.yml --limit 1` then `gh run watch <id>`.
 5. Verify the release page has one archive per target, `sha256.sum`, the shell installer and provenance attestations: `gh release view vX.Y.Z`.
 6. Verify installation from a clean shell: `cargo binstall volant@X.Y.Z` then `volant --version`.
+   Then `just smoke vX.Y.Z` on a Linux x86_64 machine: it runs one task with the published controller alone, which proves the agents it embeds are there.
 7. Announce in Discussions under Announcements with the changelog section.
 
 If step 4 fails, fix on a branch, open a pull request, and re-run the workflow from the tag after the fix is merged. Never move a tag.

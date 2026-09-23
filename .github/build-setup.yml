@@ -1,0 +1,39 @@
+# Steps dist inserts into every build-local-artifacts job of release.yml, before `dist build`
+# (github-build-setup in dist-workspace.toml). They build the three agents the controller embeds
+# for the job's target and name their directory in VOLANT_EMBED_AGENTS_DIR, which
+# crates/volant/build.rs reads. The musl agents are built with zig, the one toolchain that links
+# them from every runner, macOS included. The local agent of a Linux job is its own musl agent.
+# A separate target directory keeps these builds apart from the one dist makes next.
+- name: Install zig
+  uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+  with:
+    version: 0.15.2
+    use-cache: false
+- name: Install cargo-zigbuild
+  uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2
+  with:
+    tool: cargo-zigbuild@0.23.4
+- name: Build the agents the controller embeds
+  shell: bash
+  env:
+    TARGET: ${{ join(matrix.targets, '') }}
+  run: |
+    set -euo pipefail
+    agents="$RUNNER_TEMP/embed-agents"
+    export CARGO_TARGET_DIR="$RUNNER_TEMP/embed-agents-target"
+    mkdir -p "$agents"
+    for musl in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+      cargo zigbuild --locked -p volant-agent --profile dist --target "$musl"
+      cp "$CARGO_TARGET_DIR/$musl/dist/volant-agent" "$agents/volant-agent-$musl"
+    done
+    case "$TARGET" in
+      *-unknown-linux-musl)
+        cp "$agents/volant-agent-$TARGET" "$agents/volant-agent"
+        ;;
+      *)
+        cargo build --locked -p volant-agent --profile dist --target "$TARGET"
+        cp "$CARGO_TARGET_DIR/$TARGET/dist/volant-agent" "$agents/volant-agent"
+        ;;
+    esac
+    file "$agents"/*
+    echo "VOLANT_EMBED_AGENTS_DIR=$agents" >> "$GITHUB_ENV"

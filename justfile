@@ -127,7 +127,7 @@ agent-musl:
 # Unpack a published archive into an empty directory and run one task from it. `just` runs
 # recipes under `bash -uc`, without pipefail (see line 1), so this one is a script with the
 # options it needs. `env -u VOLANT_AGENT_DIR` and the empty directory are the test: the
-# controller has to find its agent in what was downloaded, beside itself.
+# controller has to use the agent it carries, with no other agent to fall back on.
 smoke tag:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -139,6 +139,31 @@ smoke tag:
     printf 'h1 ansible_connection=local\n' > inv.ini
     printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
     env -u VOLANT_AGENT_DIR ./volant playbook -i inv.ini site.yml
+
+# What `smoke` checks on a release, from agents built here: embed them in a release controller
+# through VOLANT_EMBED_AGENTS_DIR, copy the controller alone into an empty directory and run one
+# task there with `VOLANT_AGENT_DIR` unset. The controller has to extract the agent it carries,
+# and the recipe fails unless that agent then sits in the cache. The aarch64 agent needs zig to
+# build here, so the x86_64 one stands in for it: this proves the mechanism, and the controller
+# it leaves in target/release must not be pointed at an aarch64 host.
+smoke-embedded: agent-musl
+    #!/usr/bin/env bash
+    set -euo pipefail
+    agents="$PWD/target/embed-agents"
+    mkdir -p "$agents"
+    cargo build -p volant-agent --release
+    cp target/release/volant-agent "$agents/volant-agent"
+    cp target/agents/volant-agent-x86_64-unknown-linux-musl "$agents/"
+    cp target/agents/volant-agent-x86_64-unknown-linux-musl "$agents/volant-agent-aarch64-unknown-linux-musl"
+    VOLANT_EMBED_AGENTS_DIR="$agents" cargo build -p volant --release
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    cp target/release/volant "$work/"
+    cd "$work"
+    printf 'h1 ansible_connection=local\n' > inv.ini
+    printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
+    env -u VOLANT_AGENT_DIR XDG_CACHE_HOME="$work/cache" ./volant playbook -i inv.ini site.yml
+    cmp cache/volant/agents/*/volant-agent "$agents/volant-agent"
 
 # Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING)
 ssh-test: agent-musl

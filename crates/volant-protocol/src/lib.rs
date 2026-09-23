@@ -3,6 +3,7 @@
 //!
 //! Every message is one frame (see [`frame`]) whose payload is a JSON document.
 
+pub mod encoding;
 pub mod frame;
 pub mod messages;
 pub mod modules;

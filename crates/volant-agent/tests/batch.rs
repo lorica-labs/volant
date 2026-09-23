@@ -16,6 +16,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         timeout: None,
         environment: BTreeMap::default(),
         payload: None,
+        files: Vec::new(),
     }
 }
 

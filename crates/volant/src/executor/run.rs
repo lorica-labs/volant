@@ -1070,6 +1070,7 @@ pub(super) fn protocol_task(
         // One payload for every item of the task: a loop varies the arguments, never the
         // module, and the arguments travel outside the blob.
         payload: python.map(|(module, interpreter)| module.under(interpreter)),
+        files: Vec::new(),
     }
 }
 
@@ -3299,6 +3300,7 @@ mod tests {
                 timeout: None,
                 environment: BTreeMap::default(),
                 payload: None,
+                files: Vec::new(),
             }],
         })
         .await

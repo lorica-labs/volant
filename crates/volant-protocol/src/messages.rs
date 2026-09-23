@@ -15,7 +15,11 @@ use serde_json::{Map, Value};
 /// 4 added the blob messages and `Task.payload`: a Python module travels as a content-addressed
 /// zip sent once per run, and a task names the payload it needs rather than carrying it. An
 /// agent that did not know the field would treat a Python task as an unknown module.
-pub const PROTOCOL_VERSION: u32 = 4;
+///
+/// 5 added `Task.files`: a file travels as a content-addressed blob and the agent hands the
+/// module a private copy it consumes; an agent that did not know the field would run `copy` with
+/// no source.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Controller to agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -129,6 +133,18 @@ pub struct Task {
     /// Present when this task is a Python module rather than a native one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<PythonPayload>,
+    /// Files the agent stages before running the module. Each is consumed by this task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<StagedFile>,
+}
+
+/// A file the agent takes out of its cache and hands to the module under `args[arg]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StagedFile {
+    /// The module argument that receives the staged path: `src` for `copy` and `unarchive`.
+    pub arg: String,
+    /// Lowercase hex blake3 of the file's bytes, as for the union blob.
+    pub blob: String,
 }
 
 /// A module payload already on the host, named by the blake3 hash of the zip it holds.
@@ -155,10 +171,6 @@ pub struct PythonPayload {
 pub struct TaskResult(pub Map<String, Value>);
 
 impl TaskResult {
-    pub fn flag(&self, key: &str) -> bool {
-        matches!(self.0.get(key), Some(Value::Bool(true)))
-    }
-
     /// ansible-core 2.19.12's rule, measured: `changed` decides by Python truthiness, so
     /// `"yes"`, `"false"` and `1` report `changed:` and `0`, `null`, `""` and `[]` do not. The
     /// value is registered as the module wrote it (`r.changed` reads `yes`), so nothing here
@@ -167,8 +179,11 @@ impl TaskResult {
         self.0.get("changed").is_some_and(truthy)
     }
 
+    /// By Python truthiness, as `changed` and `failed` are: measured on ansible-core 2.19.12, a
+    /// module printing `skipped: "yes"` shows `skipping:`, `r is skipped` is `true` and the recap
+    /// counts `skipped=1`.
     pub fn skipped(&self) -> bool {
-        self.flag("skipped")
+        self.0.get("skipped").is_some_and(truthy)
     }
 
     /// ansible-core 2.19.12's rule, measured: a present `failed` decides by Python truthiness
@@ -397,6 +412,7 @@ mod tests {
                 timeout: None,
                 environment,
                 payload: None,
+                files: Vec::new(),
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
@@ -484,12 +500,46 @@ mod tests {
         assert_eq!(back, state);
     }
 
-    /// The version moves with the shape. An agent that does not know `payload` would run a Python
-    /// task as an unknown module and report it failed, which is the honest failure; an agent that
-    /// does not know `put_blob` would discard the frame and then fail every task of the batch.
+    /// A task that stages a file names the blob and the argument, and a task that stages none
+    /// carries no `files` field at all.
+    ///
+    /// What would make this red: `files` serialised on every task, which puts an empty list on
+    /// the thousands of native tasks a playbook sends; or the bytes travelling inside `Task`,
+    /// which would bypass the hash the agent checks before it lets a blob be used.
     #[test]
-    fn the_protocol_version_is_four() {
-        assert_eq!(PROTOCOL_VERSION, 4);
+    fn a_task_names_the_files_it_stages_and_nothing_else() {
+        let bare: Task = serde_json::from_str(r#"{"module":"command"}"#).unwrap();
+        assert!(bare.files.is_empty());
+        assert!(!serde_json::to_string(&bare).unwrap().contains("files"));
+        let task: Task =
+            serde_json::from_str(r#"{"module":"copy","files":[{"arg":"src","blob":"ab"}]}"#)
+                .unwrap();
+        assert_eq!(
+            task.files,
+            vec![StagedFile {
+                arg: "src".into(),
+                blob: "ab".into()
+            }]
+        );
+    }
+
+    /// `skipped` reads by truthiness, as `changed` and `failed` do since PR 181. Measured on
+    /// ansible-core 2.19.12 when this was filed: `skipped: "yes"` shows `skipping:`.
+    #[test]
+    fn skipped_is_read_by_truthiness() {
+        let yes: TaskResult = serde_json::from_str(r#"{"skipped":"yes"}"#).unwrap();
+        assert!(yes.skipped());
+        let zero: TaskResult = serde_json::from_str(r#"{"skipped":0}"#).unwrap();
+        assert!(!zero.skipped());
+    }
+
+    /// The version moves with the shape. An agent that does not know `files` would run `copy`
+    /// with no source; an agent that does not know `payload` would run a Python task as an
+    /// unknown module; an agent that does not know `put_blob` would discard the frame and then
+    /// fail every task of the batch.
+    #[test]
+    fn the_protocol_version_is_five() {
+        assert_eq!(PROTOCOL_VERSION, 5);
     }
 
     #[test]

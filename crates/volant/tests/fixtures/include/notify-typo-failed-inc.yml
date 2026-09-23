@@ -1,0 +1,4 @@
+- name: fails, changes and notifies a misspelt handler
+  command: /bin/false
+  notify: Reoad app
+  ignore_errors: true

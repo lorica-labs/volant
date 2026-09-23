@@ -877,7 +877,11 @@ pub(super) fn unresolved_notify(
     task: &PlayTask,
     results: &[(Option<Value>, TaskResult)],
 ) -> Option<String> {
-    if !results.iter().any(|(_, r)| r.changed()) {
+    // Only a result that changed and did not fail notifies: the reference looks for the handler
+    // in the ok branch of `_process_pending_results` alone, so a failed task - `ignore_errors`
+    // or not, a loop whose aggregate failed as well - never reaches the lookup. These are the
+    // verdicts `failed_when` has already had its say on.
+    if results.iter().any(|(_, r)| r.failed()) || !results.iter().any(|(_, r)| r.changed()) {
         return None;
     }
     let name = task

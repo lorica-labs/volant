@@ -3227,6 +3227,62 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
     }
 }
 
+/// A task that failed notifies nothing, so its misspelt handler is never looked up: the reference
+/// searches for a handler in the ok branch of `_process_pending_results` alone. A failing
+/// `command` under `ignore_errors: true` in an included file prints `...ignoring` and the play
+/// goes on to exit 0.
+///
+/// What would make this red: the lookup made for a changed result whatever else it says, which
+/// ends a run the reference finishes, at exit 1.
+#[test]
+fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/notify-typo-failed.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+    assert!(!text.contains("reloaded"), "{text}");
+}
+
+/// A templated `notify` in an included file is refused by name, as it is in the play, rather
+/// than looked up as a handler called `restart {{ svc }}`: the statement fails for the host that
+/// reached it, and nothing in the file runs.
+///
+/// What would make this red: the template-shape check missing from what an include is checked
+/// with, which ends the run as a missing handler once the task changes.
+#[test]
+fn a_templated_notify_in_an_include_is_refused_by_name() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/notify-templated.yml"),
+            "-e",
+            "svc=web",
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}{errors}");
+    assert!(
+        text.contains("a templated 'notify' is not supported yet"),
+        "{text}{errors}"
+    );
+    assert!(!text.contains("TASK [notifies a templated name]"), "{text}");
+    assert!(!text.contains("restarted"), "{text}");
+}
+
 /// A local failure that steps over an include, with fewer forks than hosts.
 ///
 /// `-f 1` and two hosts, so there is exactly one permit in the play. `h1` takes it for the remote

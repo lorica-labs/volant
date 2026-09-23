@@ -87,11 +87,15 @@ impl Abort {
     }
 
     /// Stops the run and keeps `reason`, unless another host already gave one.
+    ///
+    /// An interruption that came first stays one: the run then ends as interrupted, with its own
+    /// code, and a reason raised after it is dropped.
     pub fn raise(&self, reason: String) {
-        self.reason
-            .lock()
-            .expect("abort lock")
-            .get_or_insert(reason);
+        let mut kept = self.reason.lock().expect("abort lock");
+        if kept.is_none() && *self.stop.borrow() {
+            return;
+        }
+        kept.get_or_insert(reason);
         self.stop.send_replace(true);
     }
 
@@ -435,5 +439,33 @@ mod testing {
 
     pub(super) fn vars(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interruption that arrives first keeps the run an interrupted one: a reason raised after
+    /// it is dropped, so the run exits 99 and not 1. A reason raised first is kept, and a second
+    /// one does not replace it.
+    ///
+    /// What would make this red: `raise` storing its reason whatever the stop already said,
+    /// which turns a Ctrl-C landing beside a missing handler into exit 1.
+    #[test]
+    fn an_interruption_that_came_first_is_not_turned_into_a_reason() {
+        let (tx, rx) = watch::channel(false);
+        let abort = Abort::new(tx);
+        abort.interrupt();
+        abort.raise("late".into());
+        assert_eq!(abort.reason(), None);
+        assert!(*rx.borrow());
+
+        let (tx, rx) = watch::channel(false);
+        let abort = Abort::new(tx);
+        abort.raise("first".into());
+        abort.raise("second".into());
+        assert_eq!(abort.reason().as_deref(), Some("first"));
+        assert!(*rx.borrow());
     }
 }

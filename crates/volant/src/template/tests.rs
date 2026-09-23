@@ -362,6 +362,26 @@ mod unit {
         assert_eq!(t.render("{{ d.keys() | list }}", &m).unwrap(), json!(["k"]));
     }
 
+    /// The `template` module's render reads the same methods and tests, since real templates
+    /// call `.split()` too.
+    ///
+    /// What would make this red: `render_file` building an environment of its own instead of
+    /// starting from the one the tests and the method callback are registered on.
+    #[test]
+    fn a_template_file_reads_the_methods_and_the_tests() {
+        let mut m = Map::new();
+        m.insert("s".into(), json!("a b"));
+        m.insert("r".into(), json!({"changed": true}));
+        let out = templar()
+            .render_file(
+                "{{ s.split()[1] }} {{ r is changed }} {{ '1.10' is version('1.9', '>') }}\n",
+                &m,
+                &super::super::FileRender::default(),
+            )
+            .unwrap();
+        assert_eq!(out, "b True True\n");
+    }
+
     /// A method neither `pycompat` nor this engine knows still fails by its name.
     #[test]
     fn a_method_nobody_knows_names_itself() {

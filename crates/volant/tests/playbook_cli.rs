@@ -7359,3 +7359,210 @@ fn a_run_builds_one_payload_and_sends_it_to_every_host() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A role's `vars/main.yml` holding nothing but a comment is a convention some published Galaxy
+/// roles use to keep the file present with nothing to override: `geerlingguy.git` 3.0.1 ships one
+/// exactly this way. Measured against the reference running that role: PyYAML resolves the empty
+/// document to `None`, ansible-core's loader turns that into `{}`, and the play carries on.
+///
+/// Volant used to refuse the whole play before any host was contacted. The two engines part ways
+/// earlier than the loader that refusal sat in: saphyr (pinned at 0.1.0) resolves the same
+/// document to one node holding an empty *string* scalar, not null — confirmed with a standalone
+/// probe of `MarkedYaml::load_from_str("---\n# comment only\n")`, which returns a single document
+/// `Value(String(""))`. `crate::yaml::load` now reads a stream where every line is blank, a
+/// comment or a document marker (`holds_nothing`, crates/volant/src/yaml.rs) as `Scalar::Null`
+/// before the PyYAML-habits lowering pass runs, so `load_vars_file` sees the same `Value::Null`
+/// document it already turns into an empty mapping.
+///
+/// What would make this red: `holds_nothing` no longer recognising a comment-only stream, or
+/// `load_vars_file` (crates/volant/src/vars.rs) refusing a `Value::Null` document again.
+#[test]
+fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
+    let dir = std::env::temp_dir().join(format!("volant-emptyvars-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("roles/blank/vars")).unwrap();
+    std::fs::create_dir_all(dir.join("roles/blank/tasks")).unwrap();
+    std::fs::write(
+        dir.join("roles/blank/vars/main.yml"),
+        "---\n# This space intentionally left blank.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("roles/blank/tasks/main.yml"),
+        "- debug:\n    msg: ok\n",
+    )
+    .unwrap();
+    let path = dir.join("site.yml");
+    std::fs::write(
+        &path,
+        "- hosts: localhost\n  gather_facts: false\n  roles:\n    - blank\n",
+    )
+    .unwrap();
+    let out = volant(&["playbook", &path.display().to_string()]);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "stdout={text}\nstderr={err}");
+    assert!(
+        text.contains(r#"ok: [localhost] => {"msg": "ok"}"#),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The two lookups a role reads, end to end, against the search path the controller gives a
+/// role's task. Measured on ansible-core 2.19.12: `lookup('first_found', ['files/x.txt'])`
+/// answers the role's own `files/x.txt`, and `lookup('template', 't.j2')`, with `templates/t.j2`
+/// holding `{{ '{{ 1 + 1 }}' }}`, shows `{{ 1 + 1 }}` under both `debug: var:` reading a task's
+/// own `vars:` and `debug: msg:`, never `2`.
+///
+/// What would make this red: `ansible_search_path` missing from a role task's variables (both
+/// lookups then look beside the playbook and fail), or the `template` arm of `lookup` not
+/// marking what it rendered as data (either debug shows `2`).
+#[test]
+fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
+    let dir = std::env::temp_dir().join(format!("volant-role-lookups-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in [
+        "roles/probe/tasks",
+        "roles/probe/templates",
+        "roles/probe/files",
+    ] {
+        std::fs::create_dir_all(dir.join(sub)).expect("the role's directories");
+    }
+    let dir = dir.canonicalize().expect("the probe directory resolves");
+    let write = |rel: &str, text: &str| std::fs::write(dir.join(rel), text).expect(rel);
+    write("roles/probe/files/x.txt", "x\n");
+    write("roles/probe/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");
+    write(
+        "roles/probe/templates/snip.j2",
+        "from role templates {{ who }}\n",
+    );
+    write(
+        "roles/probe/tasks/main.yml",
+        "- name: Via lookup, read back\n  debug:\n    var: via_lookup\n  vars:\n    via_lookup: \"{{ lookup('template', 't.j2') }}\"\n\
+         - name: First found\n  debug:\n    msg: \"found={{ lookup('first_found', ['files/x.txt']) }}\"\n\
+         - name: Snippet\n  debug:\n    msg: \"{{ lookup('template', 'snip.j2') }}\"\n  vars:\n    who: me\n",
+    );
+    write(
+        "site.yml",
+        "- hosts: all\n  gather_facts: false\n  roles:\n    - probe\n",
+    );
+    write("inv.ini", "h1 ansible_connection=local\n");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("site.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains(r#""via_lookup": "{{ 1 + 1 }}""#),
+        "debug: var: read the lookup's text back as data, not as an expression to evaluate:\n{stdout}"
+    );
+    let found = dir.join("roles/probe/files/x.txt");
+    assert!(
+        stdout.contains(&format!("\"msg\": \"found={}\"", found.display())),
+        "first_found did not answer the role's own file:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(r#""msg": "from role templates me\n""#),
+        "the role's template was not rendered:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a role applied with `tags: [t]` whose
+/// `tasks/main.yml` is one `include_tasks: inc.yml`, run with `--tags t`, shows `included:` and
+/// then runs the included `command` (`changed: [h1]`, `ok=2 changed=1`). The tasks of a file a
+/// role includes carry the role's tags. Volant shows the same `included:` line, then runs nothing
+/// from the file and reports `ok=1 changed=0`, exit 0. The same thing happened to every task of
+/// `geerlingguy.security` and `geerlingguy.nginx` that sits behind an `include_tasks`, under
+/// `--tags security,nginx` against a real host.
+///
+/// What would make this red: the file's tasks filtered out by the tags the run asked for, because
+/// they do not inherit the role's own, so the marker is never written and the run still exits 0.
+#[test]
+fn a_role_s_tags_reach_the_tasks_of_a_file_it_includes() {
+    let dir = probe_dir("include-role-tags");
+    let tasks = dir.join("roles/r/tasks");
+    std::fs::create_dir_all(&tasks).expect("a role");
+    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+    std::fs::write(tasks.join("main.yml"), "- include_tasks: inc.yml\n").expect("main.yml");
+    let marker = dir.join("marker");
+    std::fs::write(
+        tasks.join("inc.yml"),
+        format!("- command: touch {}\n", marker.display()),
+    )
+    .expect("inc.yml");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: h1\n  gather_facts: false\n  roles:\n    - { role: r, tags: [t] }\n",
+    )
+    .expect("the play");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+            "--tags",
+            "t",
+        ],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(
+        marker.exists(),
+        "the included task never ran under --tags t:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a play whose only task is
+/// `include_tasks: inc.yml`, the file holding one `stat: path=/`, shows `included:` then
+/// `ok: [h1]` for the `stat`. Volant builds its one payload union before the first connection,
+/// from the modules the compiled plays name, and a file a dynamic include reads is not among
+/// them: the `stat` fails with "module 'stat' needs a python payload, and this run built none
+/// for it". Against a real host the same thing stopped `geerlingguy.security` at its first
+/// `package` task, which sits in `fail2ban.yml` behind an `include_tasks`.
+///
+/// What would make this red: a Python module in a dynamically included file refused because the
+/// union was built without it.
+#[test]
+fn a_python_module_in_a_dynamically_included_file_runs() {
+    let Ok(python) = std::env::var("VOLANT_PYTHON") else {
+        eprintln!(
+            "skipped: VOLANT_PYTHON not set. Set it to a real ansible-core python to run this test."
+        );
+        return;
+    };
+    let dir = probe_dir("include-python-module");
+    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+    std::fs::write(dir.join("inc.yml"), "- stat: path=/\n").expect("inc.yml");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - include_tasks: inc.yml\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && !stdout.contains("needs a python payload"),
+        "the included stat did not run:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

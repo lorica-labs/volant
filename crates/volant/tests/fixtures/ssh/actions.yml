@@ -5,6 +5,13 @@
 - name: The action plugins over a real ssh link
   hosts: all
   gather_facts: false
+  vars:
+    note: rendered over a real ssh link
+    nested:
+      key: value
+      list:
+        - one
+        - two
   tasks:
     - name: Copy a file from the controller
       copy:
@@ -26,7 +33,15 @@
         src: bundle.tar.gz
         dest: "{{ dest }}/unpacked"
         mode: "0644"
-    # Asked on the link that staged the four files, while its staging directory still exists:
+    - name: Render a comment and a nested mapping
+      template:
+        src: notes.j2
+        dest: "{{ dest }}/notes.txt"
+        mode: "0644"
+    - name: Find the greeting through first_found
+      debug:
+        msg: "found={{ lookup('first_found', ['files/greeting.txt']) }}"
+    # Asked on the link that staged the five files, while its staging directory still exists:
     # the shell's parent is that link's agent, whose pid names the directory. After the play the
     # whole directory is gone, which would hide a file kept past its own task.
     - name: No staged file outlives its task

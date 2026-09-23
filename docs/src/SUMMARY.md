@@ -6,5 +6,6 @@
 - [Connections and privilege escalation](connections.md)
 - [Cross-host batching](batching.md)
 - [Modules](modules.md)
+- [Action plugins](actions.md)
 - [Python path](python.md)
 - [Keywords](keywords.md)

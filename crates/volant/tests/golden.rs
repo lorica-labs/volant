@@ -993,8 +993,8 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
         return;
     };
     let missing: Vec<&str> = [
-        ("sudo -n true", "a passwordless `sudo -n`"),
-        ("test -d /run/systemd/system", "a running systemd"),
+        ("sudo -n true", "passwordless `sudo -n`"),
+        ("test -d /run/systemd/system", "running systemd"),
     ]
     .into_iter()
     .filter(|(probe, _)| {

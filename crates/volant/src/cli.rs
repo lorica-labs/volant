@@ -213,9 +213,10 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         }
     }
     // Every Python module the compiled plays name or a dynamic include may read, built into one
-    // payload before the first connection. Here rather than per play: one helper start, one union, and a controller that
-    // cannot build payloads at all refuses the run now - with the interpreters it tried - instead
-    // of connecting and failing the first Python task of the first play.
+    // payload before the first connection. Here rather than per play: one helper start, one
+    // union, and a controller that cannot build payloads at all refuses the run now - with the
+    // interpreters it tried - instead of connecting and failing the first Python task of the
+    // first play.
     //
     // A run of native tasks alone names no Python module, builds nothing, and needs no
     // ansible-core on the controller.

@@ -232,7 +232,7 @@ fn render_template_at(
         if untrusted.contains(&var) || !map.get(&var).is_some_and(super::holds_template) {
             continue;
         }
-        let (resolved, from_host) = templar.render_value_tainted(
+        let rendered = templar.render_value_tainted(
             &map[&var],
             Vars {
                 map: &map,
@@ -241,7 +241,14 @@ fn render_template_at(
                 untrusted: Some(&untrusted),
                 untrusted_hosts,
             },
-        )?;
+        );
+        // Lenient, like `resolve_vars_tainted`: the name may sit in a branch that never runs, or
+        // behind `default`. Dropped, it reads as undefined, so a read that does happen fails
+        // there, lazily, the way the reference's does.
+        let Ok((resolved, from_host)) = rendered else {
+            map.remove(&var);
+            continue;
+        };
         if from_host {
             untrusted.insert(var.clone());
         }
@@ -661,6 +668,35 @@ mod tests {
                 .unwrap(),
             json!("{{ b }}")
         );
+    }
+
+    /// Resolving the names a template reads must not fail a lookup the reference renders: its
+    /// variables are templated when read, so a name in a branch that never runs, or behind
+    /// `default`, never fails. One that cannot be resolved reads as undefined here, and only a
+    /// read that happens fails, as an undefined read.
+    ///
+    /// What would make this red: the resolution's error propagated, which fails the first two
+    /// lookups with `undefined value` where the reference prints `ok` and `none`.
+    #[test]
+    fn a_name_that_cannot_be_resolved_fails_only_when_it_is_read() {
+        let role = Role::new("lazy");
+        role.write(
+            "role/templates/branch.j2",
+            "{% if use_proxy %}{{ proxy }}{% endif %}ok",
+        )
+        .write("role/templates/default.j2", "{{ proxy | default('none') }}")
+        .write("role/templates/defined.j2", "{{ proxy is defined }}")
+        .write("role/templates/read.j2", "{{ proxy }}");
+        let t = templar(&role.dir);
+        let mut map = role.vars();
+        map.insert("use_proxy".into(), json!(false));
+        map.insert("proxy".into(), json!("{{ proxy_host }}:3128"));
+        let r = |name: &str| t.render(&format!("{{{{ lookup('template', '{name}') }}}}"), &map);
+        assert_eq!(r("branch.j2").unwrap(), json!("ok"));
+        assert_eq!(r("default.j2").unwrap(), json!("none"));
+        assert_eq!(r("defined.j2").unwrap(), json!("False"));
+        let err = r("read.j2").unwrap_err();
+        assert!(err.is_undefined(), "{err}");
     }
 
     /// `plugins/lookup/template.py` gives the template `template_path`, `template_fullpath` and,

@@ -52,8 +52,56 @@ pub struct RunOptions {
     /// between two synchronisation points. Off by default, so the hosts of a batch meet in front
     /// of every task, which is what `linear` means.
     pub batching: bool,
-    /// Flips to `true` once when the user interrupts the run.
+    /// Flips to `true` once when the user interrupts the run, or when a host ends it through
+    /// [`Abort::raise`].
     pub stop: watch::Receiver<bool>,
+    /// The sending half of `stop`, and the reason a host ended the run, if one did.
+    pub abort: Arc<Abort>,
+}
+
+/// Ends the whole run from inside a play, the way a pre-flight refusal ends it before one: exit
+/// 1, the reason on its own, no recap, and nothing `ignore_errors` or a `rescue` can catch.
+/// Raising flips `stop`, so every driver stops as it does on an interruption; `run_play` then
+/// returns the reason as its error.
+///
+/// Measured by reading only: ansible-core 2.19.12's strategy raises `AnsibleError` from
+/// `_process_pending_results` for a handler it cannot find, with `ERROR_ON_MISSING_HANDLER` on
+/// by default, which leaves the play loop and the run.
+#[derive(Debug)]
+pub struct Abort {
+    stop: watch::Sender<bool>,
+    reason: Mutex<Option<String>>,
+}
+
+impl Abort {
+    pub fn new(stop: watch::Sender<bool>) -> Self {
+        Self {
+            stop,
+            reason: Mutex::new(None),
+        }
+    }
+
+    /// Stops the run without a reason: the operator's interruption.
+    pub fn interrupt(&self) {
+        self.stop.send_replace(true);
+    }
+
+    /// Stops the run and keeps `reason`, unless another host already gave one.
+    ///
+    /// An interruption that came first stays one: the run then ends as interrupted, with its own
+    /// code, and a reason raised after it is dropped.
+    pub fn raise(&self, reason: String) {
+        let mut kept = self.reason.lock().expect("abort lock");
+        if kept.is_none() && *self.stop.borrow() {
+            return;
+        }
+        kept.get_or_insert(reason);
+        self.stop.send_replace(true);
+    }
+
+    fn reason(&self) -> Option<String> {
+        self.reason.lock().expect("abort lock").clone()
+    }
 }
 
 /// Which agent a kept connection belongs to. The escalated user is part of the identity
@@ -198,6 +246,9 @@ pub async fn run_play(
             stats,
         )
         .await?;
+        if let Some(reason) = options.abort.reason() {
+            return Err(crate::stats::Refusal::at(1, reason));
+        }
         // The run ends where the reference ends it: a batch that had hosts to run and lost every
         // one of them. A batch that had none to begin with is not that - measured, `serial: 1`
         // over a host that failed in an earlier play prints its banner and the next batch runs.
@@ -388,5 +439,33 @@ mod testing {
 
     pub(super) fn vars(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interruption that arrives first keeps the run an interrupted one: a reason raised after
+    /// it is dropped, so the run exits 99 and not 1. A reason raised first is kept, and a second
+    /// one does not replace it.
+    ///
+    /// What would make this red: `raise` storing its reason whatever the stop already said,
+    /// which turns a Ctrl-C landing beside a missing handler into exit 1.
+    #[test]
+    fn an_interruption_that_came_first_is_not_turned_into_a_reason() {
+        let (tx, rx) = watch::channel(false);
+        let abort = Abort::new(tx);
+        abort.interrupt();
+        abort.raise("late".into());
+        assert_eq!(abort.reason(), None);
+        assert!(*rx.borrow());
+
+        let (tx, rx) = watch::channel(false);
+        let abort = Abort::new(tx);
+        abort.raise("first".into());
+        abort.raise("second".into());
+        assert_eq!(abort.reason().as_deref(), Some("first"));
+        assert!(*rx.borrow());
     }
 }

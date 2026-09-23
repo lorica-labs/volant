@@ -14,6 +14,7 @@ use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 use crate::agent::{AgentLink, AgentSource, BlobMemory};
 use crate::compile::{Compiled, Step};
 use crate::playbook::PlayTask;
+use crate::preflight::PROMPT_REFUSED;
 use crate::python::{ModulePayload, Union};
 use crate::stats::Outcome;
 use crate::template::{Templar, TemplateError};
@@ -123,7 +124,9 @@ fn run_include_vars(
 }
 
 /// The modules in `LOCAL_MODULES` never leave the controller. `stop` is the run's interruption,
-/// which a `pause` waits on beside its timer.
+/// which a `pause` waits on beside its timer: `None` is a pause the run's stop ended, which the
+/// driver answers the way it answers every other wait the stop ends, with no task line and no
+/// count.
 #[expect(
     clippy::too_many_arguments,
     reason = "the task, the host's view of it, and the run's interruption for a pause"
@@ -137,6 +140,27 @@ pub(super) async fn run_local(
     store: &Mutex<VarStore>,
     verbosity: u8,
     stop: &mut watch::Receiver<bool>,
+) -> Option<TaskResult> {
+    let mut result = if short_name(&task.module) == "pause" {
+        pause(item, std::io::stdin().is_terminal(), stop).await?
+    } else {
+        local_result(task, item, step, fact_hosts, templar, store, verbosity)
+    };
+    // The reference's `maybe_raise_on_result` normalises every task's final result, wherever it
+    // ran, the way `run_agent_batch` normalises an agent's.
+    summarise_exception(&mut result);
+    Some(result)
+}
+
+/// Every controller-side module but `pause`, none of which waits.
+fn local_result(
+    task: &PlayTask,
+    item: &Item,
+    step: &Step,
+    fact_hosts: &[String],
+    templar: &Templar,
+    store: &Mutex<VarStore>,
+    verbosity: u8,
 ) -> TaskResult {
     let mut r = Map::new();
     match short_name(&task.module) {
@@ -160,7 +184,6 @@ pub(super) async fn run_local(
             );
         }
         "include_vars" => return run_include_vars(item, step, fact_hosts, store),
-        "pause" => return pause(item, std::io::stdin().is_terminal(), stop).await,
         "set_fact" => {
             let mut facts = Map::new();
             for (k, v) in &item.args {
@@ -346,9 +369,6 @@ fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult 
     TaskResult(r)
 }
 
-/// Why a `pause` that would wait for an answer is refused on a terminal.
-const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant does not read the answer and would carry on without waiting for one. Give the pause seconds or minutes and no prompt, or redirect standard input.";
-
 /// `pause`, measured on ansible-core 2.19.12: a duration under one second waits one, `delta` is
 /// the whole seconds waited, and `stdout` gives the time waited to two decimals, in minutes
 /// unless `seconds` was the argument. A pause that asks for an answer, through `prompt` or by
@@ -356,10 +376,14 @@ const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant d
 ///
 /// On a terminal it is refused: nothing here reads the answer, and showing the prompt and going
 /// on would accept the task and not do it. `interactive` is passed in so that both sides of that
-/// can be tested. The run's interruption ends the wait early and fails the task.
-async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>) -> TaskResult {
+/// can be tested. `None` is the run's interruption, which ends the wait early.
+async fn pause(
+    item: &Item,
+    interactive: bool,
+    stop: &mut watch::Receiver<bool>,
+) -> Option<TaskResult> {
     if let Some(refusal) = unsupported(&PAUSE, &[], &item.args) {
-        return TaskResult::failed_with(refusal);
+        return Some(TaskResult::failed_with(refusal));
     }
     let whole = |v: &Value| match v {
         Value::Number(n) => n.as_f64().map(|f| f.trunc() as i64),
@@ -368,7 +392,9 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
     };
     let asked = match (item.args.get("minutes"), item.args.get("seconds")) {
         (Some(_), Some(_)) => {
-            return TaskResult::failed_with("parameters are mutually exclusive: minutes|seconds");
+            return Some(TaskResult::failed_with(
+                "parameters are mutually exclusive: minutes|seconds",
+            ));
         }
         (Some(v), None) => whole(v).map(|m| (m.saturating_mul(60), "minutes")).ok_or(v),
         (None, Some(v)) => whole(v).map(|s| (s, "seconds")).ok_or(v),
@@ -378,19 +404,21 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
         Ok(asked) => Some(asked),
         Err(Value::Null) => None,
         Err(v) => {
-            return TaskResult::failed_with(format!(
+            return Some(TaskResult::failed_with(format!(
                 "non-integer value given for prompt duration: {v}"
-            ));
+            )));
         }
     };
     // Python's clock counts nanoseconds in a signed 64-bit integer, and the reference fails a
     // pause it cannot hold rather than wait it out. Measured on ansible-core 2.19.12.
     if asked.is_some_and(|(seconds, _)| seconds > i64::MAX / 1_000_000_000) {
-        return TaskResult::failed_with("Task failed: timestamp out of range for C PyTime_t");
+        return Some(TaskResult::failed_with(
+            "Task failed: timestamp out of range for C PyTime_t",
+        ));
     }
     let prompting = asked.is_none() || item.args.contains_key("prompt");
     if prompting && interactive {
-        return TaskResult::failed_with(PROMPT_REFUSED);
+        return Some(TaskResult::failed_with(PROMPT_REFUSED));
     }
     let mut r = Map::new();
     r.insert("start".into(), json!(timestamp()));
@@ -400,7 +428,7 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
             let wait = Duration::from_secs(seconds.max(1).unsigned_abs());
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
-                () = interrupted(stop) => return TaskResult::failed_with("user requested abort!"),
+                () = interrupted(stop) => return None,
             }
         }
         None => {
@@ -436,7 +464,7 @@ async fn pause(item: &Item, interactive: bool, stop: &mut watch::Receiver<bool>)
     r.insert("stdout".into(), json!(format!("Paused for {shown} {unit}")));
     r.insert("stop".into(), json!(timestamp()));
     r.insert("user_input".into(), json!(""));
-    TaskResult(r)
+    Some(TaskResult(r))
 }
 
 /// Resolves when the run is interrupted, and never once nothing is left that could interrupt it.
@@ -820,6 +848,51 @@ pub(super) fn notify(
     }
 }
 
+/// Takes the `warnings` off every result of a task, for the driver to show as `[WARNING]:` lines
+/// under it. Measured on ansible-core 2.19.12 for `pause`: the warning is shown once and the
+/// registered result has no such key. Applied to a module's result the same way, unmeasured.
+pub(super) fn take_warnings(results: &mut [(Option<Value>, TaskResult)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, result) in results.iter_mut() {
+        if let Some(Value::Array(list)) = result.0.remove("warnings") {
+            out.extend(list.into_iter().map(|w| match w {
+                Value::String(s) => s,
+                other => other.to_string(),
+            }));
+        }
+    }
+    out
+}
+
+/// The reason to end the run when a task that changed notifies a handler the play does not
+/// have, in the sentence the pre-flight uses for the same name in the play itself.
+///
+/// Only a task spliced in by a dynamic include can get here: the pre-flight checks every other
+/// `notify` before the first connection, and the handlers an included file may name are the
+/// play's, which are only in hand here. The reference raises it from its strategy
+/// (`ERROR_ON_MISSING_HANDLER`, on by default), so it ends the run rather than failing the task:
+/// no `ignore_errors` and no `rescue` can take it. A task that changed nothing notifies nothing.
+pub(super) fn unresolved_notify(
+    compiled: &Compiled,
+    task: &PlayTask,
+    results: &[(Option<Value>, TaskResult)],
+) -> Option<String> {
+    // Only a result that changed and did not fail notifies: the reference looks for the handler
+    // in the ok branch of `_process_pending_results` alone, so a failed task - `ignore_errors`
+    // or not, a loop whose aggregate failed as well - never reaches the lookup. These are the
+    // verdicts `failed_when` has already had its say on.
+    if results.iter().any(|(_, r)| r.failed()) || !results.iter().any(|(_, r)| r.changed()) {
+        return None;
+    }
+    let name = task
+        .notify
+        .iter()
+        .find(|name| crate::compile::resolve_notify(compiled, name).is_empty())?;
+    Some(format!(
+        "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
+    ))
+}
+
 /// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.
 ///
 /// Measured on ansible-core 2.19.12, and every line of it is a measurement: `until` with no
@@ -1144,18 +1217,16 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
-        let (mut flat, ended) = run_agent_batch(
-            link,
-            host,
-            *batch_id,
-            vec![built],
-            union,
-            &sub.files,
-            stop,
-            stop_broken,
-            logs,
-        )
-        .await;
+        let tasks = vec![built];
+        // What the sub-task needs on the host and could not be put there fails the item as it
+        // stands, and the plugin never sees it: the module did not run, and a plugin handed the
+        // error as the module's result would dress it as one (`copy` adds `diff` and the local
+        // checksum). The reference's action fails the same way on a transfer that raised.
+        if let Err(err) = blob_preflight(link, host, &tasks, union, &sub.files, logs).await {
+            return Ok(TaskResult::failed_with(err));
+        }
+        let (mut flat, ended) =
+            send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
         if !matches!(
             ended,
             Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
@@ -1492,9 +1563,28 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
-    let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
     if let Err(err) = blob_preflight(link, host, &tasks, blob, files, logs).await {
-        return blob_failure(err, received.len());
+        return blob_failure(err, tasks.len());
+    }
+    send_batch(link, host, id, tasks, stop, stop_broken, logs).await
+}
+
+/// [`run_agent_batch`] from the point where what the batch needs is on the host.
+///
+/// A batch with no task in it is not sent: every step of it may have failed on its interpreter
+/// already, and an agent answers an empty batch `Completed` with nothing else.
+async fn send_batch<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    id: u64,
+    tasks: Vec<Task>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+    let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
+    if tasks.is_empty() {
+        return (received, Ok(BatchOutcome::Completed));
     }
     if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
@@ -1853,7 +1943,8 @@ mod tests {
                 0,
                 &mut watch::channel(false).1,
             )
-            .await;
+            .await
+            .expect("nothing stops this run");
             assert_ne!(
                 result.0.get("msg").and_then(Value::as_str),
                 Some(format!("{} is not a controller-side module", spec.name).as_str()),
@@ -1922,6 +2013,7 @@ mod tests {
             &mut watch::channel(false).1,
         )
         .await
+        .expect("nothing stops this run")
     }
 
     /// Measured on ansible-core 2.19.12: every condition true gives `All assertions passed`, and a
@@ -1949,7 +2041,7 @@ mod tests {
         let r = local("assert", json!({"that": "1 == 2"})).await;
         assert_eq!(
             Value::Object(r.0),
-            json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "failed": true, "msg": "Assertion failed"})
+            json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "Assertion failed"})
         );
         let r = local("assert", json!({"that": false})).await;
         assert_eq!(r.0["assertion"], json!(false));
@@ -1969,7 +2061,7 @@ mod tests {
             let r = local("assert", json!({"that": "1 == 2", key: "custom"})).await;
             assert_eq!(
                 Value::Object(r.0),
-                json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "failed": true, "msg": "custom"}),
+                json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "custom"}),
                 "{key}"
             );
         }
@@ -2041,13 +2133,13 @@ mod tests {
     /// `that` is evaluated by the code that evaluates `when`, element by element, from the text
     /// the playbook wrote. Asserted against `when` rather than against the reference because
     /// the two agree in the reference as well: measured on ansible-core 2.19.12, every case
-    /// here gives an assert and a `when` the same outcome. Where this engine's `when` departs
-    /// from the reference, which evaluates again the string a `{{ }}` conditional renders to,
-    /// `that` departs with it, and that is the point of sharing the code.
+    /// here gives an assert and a `when` the same outcome. Both evaluate again the untainted
+    /// string a `{{ }}` conditional renders to, as the reference does, and refuse a tainted one.
     ///
-    /// What would make this red: a rendered value evaluated a second time, which passes
-    /// `that: "{{ healthy }}"` for the string `"true"` where `when` refuses it; or a `that`
-    /// whose render read a host value refused in words of its own rather than `when`'s.
+    /// What would make this red: `that` evaluated by code of its own, so that the two part ways
+    /// on any case here; or a `that` whose render read a host value refused in words of its own
+    /// rather than `when`'s. It cannot catch a regression of the second evaluation itself, which
+    /// moves both together; `Templar::condition`'s own tests hold that.
     #[tokio::test]
     async fn a_that_is_evaluated_the_way_when_is() {
         let host_vars = with_registered(json!({"healthy": "true"}));
@@ -2099,6 +2191,26 @@ mod tests {
         );
     }
 
+    /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an
+    /// agent's does: the reference's `TaskExecutor._execute` normalises every task's final
+    /// result with `maybe_raise_on_result`, wherever it ran. One that succeeds carries none.
+    ///
+    /// What would make this red: the normalisation left to the agent's results alone, which
+    /// registers no `exception` for a failed `fail` or `assert`.
+    #[tokio::test]
+    async fn a_failed_controller_side_task_registers_an_exception() {
+        for (module, args) in [("fail", json!({})), ("assert", json!({"that": "1 == 2"}))] {
+            let r = local(module, args).await;
+            assert_eq!(
+                r.0["exception"],
+                json!("(traceback unavailable)"),
+                "{module}"
+            );
+        }
+        let r = local("debug", json!({"msg": "hi"})).await;
+        assert!(!r.0.contains_key("exception"), "{:?}", r.0);
+    }
+
     /// Measured on ansible-core 2.19.12: the default message, a custom one, and a list that stays
     /// a list. An unknown argument is refused in a sentence of its own, unlike assert and pause.
     ///
@@ -2109,7 +2221,8 @@ mod tests {
         let r = local("fail", json!({})).await;
         assert_eq!(
             Value::Object(r.0),
-            json!({"changed": false, "failed": true, "msg": "Failed as requested from task"})
+            json!({"changed": false, "exception": "(traceback unavailable)", "failed": true,
+                   "msg": "Failed as requested from task"})
         );
         let r = local("fail", json!({"msg": "custom failure"})).await;
         assert_eq!(r.0["msg"], json!("custom failure"));
@@ -2164,7 +2277,7 @@ mod tests {
                 .expect("the pause fails rather than waits");
             assert_eq!(
                 Value::Object(r.0),
-                json!({"failed": true, "msg": "Task failed: timestamp out of range for C PyTime_t"}),
+                json!({"exception": "(traceback unavailable)", "failed": true, "msg": "Task failed: timestamp out of range for C PyTime_t"}),
                 "{args}"
             );
         }
@@ -2200,7 +2313,9 @@ mod tests {
     #[tokio::test]
     async fn a_prompt_without_a_terminal_warns_and_goes_on() {
         let item = local_item(json!({"prompt": "Continue?"}));
-        let r = pause(&item, false, &mut watch::channel(false).1).await;
+        let r = pause(&item, false, &mut watch::channel(false).1)
+            .await
+            .expect("nothing stops this run");
         assert!(!r.failed(), "{:?}", r.0);
         assert_eq!(r.0["delta"], json!(0));
         assert_eq!(r.0["stdout"], json!("Paused for 0.0 minutes"));
@@ -2228,7 +2343,8 @@ mod tests {
                 true,
                 &mut watch::channel(false).1,
             )
-            .await;
+            .await
+            .expect("nothing stops this run");
             assert_eq!(
                 Value::Object(r.0),
                 json!({"failed": true, "msg": PROMPT_REFUSED}),
@@ -2237,11 +2353,14 @@ mod tests {
         }
     }
 
-    /// An interrupted run does not sit out the rest of a pause.
+    /// An interrupted run does not sit out the rest of a pause, and the pause reports no result:
+    /// the driver ends the host's run on it, as it does on every other wait the stop ends, with
+    /// no task line and no count.
     ///
     /// What would make this red: a pause that waits on its timer alone, which holds a cancelled
-    /// run for as long as the playbook asked to wait. The five-second bound is what makes it
-    /// red in five seconds rather than in the ten minutes the pause asks for.
+    /// run for as long as the playbook asked to wait (the five-second bound makes that red in
+    /// five seconds rather than ten minutes); or the interruption reported as a failed task,
+    /// `user requested abort!`, which counts `failed=1` for a run the operator stopped.
     #[tokio::test]
     async fn an_interrupted_pause_ends_at_once() {
         let (stop_tx, mut stop) = watch::channel(false);
@@ -2254,10 +2373,7 @@ mod tests {
             }
         );
         let r = r.expect("the interruption ends the pause");
-        assert_eq!(
-            Value::Object(r.0),
-            json!({"failed": true, "msg": "user requested abort!"})
-        );
+        assert!(r.is_none(), "{r:?}");
     }
 
     /// Each complaint the argument check can make, in the reference's own words and in the order
@@ -3923,6 +4039,84 @@ mod tests {
         );
     }
 
+    /// A file the agent refuses to store fails the item with the agent's reason, and nothing the
+    /// plugin would add to a module's result: the module never ran, as the reference's action
+    /// fails on a transfer that raised, before any `diff` or `checksum` is put under a result.
+    ///
+    /// What would make this red: the storing error handed to the plugin as the `copy` sub-task's
+    /// result, which `Copy::finish` dresses with `diff: []` and the local checksum.
+    #[tokio::test]
+    async fn a_file_the_agent_cannot_store_fails_the_item_undressed() {
+        use crate::action_plugins::Kind;
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![
+                    FromAgent::Log {
+                        level: volant_protocol::LogLevel::Error,
+                        message: "no space left".into(),
+                    },
+                    state(&blob.hash, false),
+                ],
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Copy,
+            copy_args("/tmp/v/full"),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert!(
+            msg(&result).starts_with("the agent could not store the file for 'src'"),
+            "{result:?}"
+        );
+        assert!(
+            !result.0.contains_key("diff") && !result.0.contains_key("checksum"),
+            "{result:?}"
+        );
+        assert_eq!(
+            batches_sent(&agent).len(),
+            1,
+            "only the stat ran: {:?}",
+            agent.sent
+        );
+    }
+
+    /// A batch with no task in it is not sent: there is nothing for the agent to answer, and the
+    /// batch ends the way an agent ends an empty one.
+    ///
+    /// What would make this red: a `RunBatch` with no tasks put on the wire, which a host whose
+    /// agent reported no Python pays a round trip for, batch after batch.
+    #[tokio::test]
+    async fn an_empty_batch_is_not_sent() {
+        let mut agent = FakeAgent::answering(Vec::new());
+        let mut stop = watch::channel(false).1;
+        let (results, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            1,
+            Vec::new(),
+            None,
+            &[],
+            &mut stop,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(results.is_empty());
+        assert!(matches!(ended, Ok(BatchOutcome::Completed)), "{ended:?}");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+    }
+
     /// The file blob of `hello\n`, as the plugin stages it.
     fn hello_blob() -> crate::action_plugins::FileBlob {
         crate::action_plugins::files::blob_of("hello.txt", b"hello\n").expect("it fits")
@@ -4477,11 +4671,13 @@ mod tests {
         unsafe {
             std::env::set_var("VOLANT_AGENT_DIR", &agent_dir);
         }
-        let source = AgentSource::discover();
+        // Caught so the restore below runs even when `discover` panics, then re-raised.
+        let source = std::panic::catch_unwind(AgentSource::discover);
         match saved {
             Some(v) => unsafe { std::env::set_var("VOLANT_AGENT_DIR", v) },
             None => unsafe { std::env::remove_var("VOLANT_AGENT_DIR") },
         }
+        let source = source.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 
         let mut vars = BTreeMap::new();
         vars.insert("ansible_connection".to_string(), json!("local"));

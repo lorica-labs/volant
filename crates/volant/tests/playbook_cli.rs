@@ -255,6 +255,40 @@ fn a_pause_runs_once_for_the_first_host() {
     assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
 }
 
+/// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
+/// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
+/// registered result has no `warnings` key. The driver shows every result's `warnings` that way,
+/// a module's as well as a controller-side action's.
+///
+/// What would make this red: the warnings left in the result, which prints nothing and registers
+/// a key the reference does not.
+#[test]
+fn a_result_s_warnings_are_shown_and_not_registered() {
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/pause-warning.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some(""),
+        &[],
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert_eq!(
+        errors
+            .matches("[WARNING]: Not waiting for response to prompt as stdin is not interactive")
+            .count(),
+        1,
+        "{text}{errors}"
+    );
+    assert!(
+        text.contains(r#""q.warnings": "VARIABLE IS NOT DEFINED!"#),
+        "{text}"
+    );
+}
+
 /// Measured on ansible-core 2.19.12: `timeout` applies to a controller-side action as it does
 /// to a module, and a `pause: {seconds: 5}` under `timeout: 1` fails after one second with the
 /// message `command` gives. `frame` is left out, as the agent leaves it out.
@@ -1760,6 +1794,38 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
     );
 }
 
+/// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
+/// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
+/// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
+/// a host that already has git.
+///
+/// What would make this red: the task's own line left out after its items, the two item lines
+/// alone.
+#[test]
+fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
+    let out = volant_within(
+        &["playbook", &fixture("loop-all-skipped.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    // The first line is what is left of the banner's row of stars.
+    let lines: Vec<&str> = section(&text, "Every item skipped")
+        .lines()
+        .skip(1)
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "skipping: [localhost] => (item=a)",
+            "skipping: [localhost] => (item=b)",
+            "skipping: [localhost]",
+        ],
+        "{text}"
+    );
+}
+
 /// Measured against the reference: every item of a loop runs, the one that failed and the ones
 /// behind it alike, whether or not `ignore_errors` is on the task. The reference prints no
 /// aggregate line for the task, only the items and then `...ignoring` where the failure was
@@ -3080,6 +3146,141 @@ fn a_flush_inside_an_include_runs_the_handlers_of_the_hosts_that_asked_for_it() 
         ),
         "{text}"
     );
+}
+
+/// A templated `ignore_errors` decides, rendered per host, on an ordinary task and on an include
+/// statement alike: `"{{ true }}"`-like values let the play go on with the failure counted as
+/// ignored, `false` ones fail the host there.
+///
+/// What would make this red: the template read as "not ignored" on either, which is what an
+/// include statement did (`report_include` read the keyword as written); or the verdict rendered
+/// and then dropped on the way from `prepare` to the driver.
+#[test]
+fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
+    let run = |cmd: &str, inc: &str| {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &fixture("include/inv.ini"),
+                &fixture("include/ignore-templated.yml"),
+                "-e",
+                &format!("cmd_lenient={cmd} inc_lenient={inc}"),
+            ],
+            PROBE_DEADLINE,
+        );
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    let (code, text) = run("true", "true");
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains("\"msg\": \"after\""), "{text}");
+    assert!(text.contains("ignored=2"), "{text}");
+
+    let (code, text) = run("false", "true");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(!text.contains("a missing file"), "{text}");
+
+    let (code, text) = run("true", "false");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(!text.contains("\"msg\": \"after\""), "{text}");
+    assert!(
+        text.contains("failed=1") && text.contains("ignored=1"),
+        "{text}"
+    );
+}
+
+/// A `notify` in an included file naming a handler the play does not have ends the run, in the
+/// words the pre-flight uses for the same typo in the play itself: exit 1, no recap, and the
+/// task's `ignore_errors: true` or a `rescue:` around the statement changes nothing. The included
+/// file is read once the host reaches the statement, so the pre-flight never saw it. Read off
+/// ansible-core 2.19.12's strategy, which raises the sentence as an `AnsibleError` with
+/// `ERROR_ON_MISSING_HANDLER` on, its default.
+///
+/// What would make this red: the name resolved to nothing and dropped, which runs no handler and
+/// exits 0; or the typo reported as a failure of the task, which `ignore_errors` and a `rescue`
+/// then swallow, and the run exits 0 all the same.
+#[test]
+fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
+    for playbook in ["include/notify-typo.yml", "include/notify-typo-rescue.yml"] {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &fixture("include/inv.ini"),
+                &fixture(playbook),
+            ],
+            PROBE_DEADLINE,
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        let errors = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{playbook}: {text}{errors}");
+        assert!(
+            errors.contains(
+                "The requested handler 'Reoad app' was not found in either the main handlers list nor in the listening handlers list"
+            ),
+            "{playbook}: {errors}"
+        );
+        assert!(!text.contains("PLAY RECAP"), "{playbook}: {text}");
+        for never in ["reloaded", "rescued", "after", "...ignoring"] {
+            assert!(!text.contains(never), "{playbook} printed {never}: {text}");
+        }
+    }
+}
+
+/// A task that failed notifies nothing, so its misspelt handler is never looked up: the reference
+/// searches for a handler in the ok branch of `_process_pending_results` alone. A failing
+/// `command` under `ignore_errors: true` in an included file prints `...ignoring` and the play
+/// goes on to exit 0.
+///
+/// What would make this red: the lookup made for a changed result whatever else it says, which
+/// ends a run the reference finishes, at exit 1.
+#[test]
+fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/notify-typo-failed.yml"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+    assert!(!text.contains("reloaded"), "{text}");
+}
+
+/// A templated `notify` in an included file is refused by name, as it is in the play, rather
+/// than looked up as a handler called `restart {{ svc }}`: the statement fails for the host that
+/// reached it, and nothing in the file runs.
+///
+/// What would make this red: the template-shape check missing from what an include is checked
+/// with, which ends the run as a missing handler once the task changes.
+#[test]
+fn a_templated_notify_in_an_include_is_refused_by_name() {
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &fixture("include/inv.ini"),
+            &fixture("include/notify-templated.yml"),
+            "-e",
+            "svc=web",
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let errors = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}{errors}");
+    assert!(
+        text.contains("a templated 'notify' is not supported yet"),
+        "{text}{errors}"
+    );
+    assert!(!text.contains("TASK [notifies a templated name]"), "{text}");
+    assert!(!text.contains("restarted"), "{text}");
 }
 
 /// A local failure that steps over an include, with fewer forks than hosts.
@@ -6997,9 +7198,13 @@ fn no_log_covers_the_environment_warning() {
 /// second is taken out of slack rather than out of what the assertion discriminates.
 ///
 /// What would make this red: waiting for the reader threads outside the deadline, which is what
-/// the wait did -- the task ended when the descendant did, and the run reported success.
+/// the wait did -- the task ended when the descendant did, and the run reported success. And,
+/// for the survivor check, a timeout that returns without killing the process group: every other
+/// assertion still holds with the descendant alive.
 #[test]
 fn a_timeout_covers_a_descendant_holding_the_pipes() {
+    // A `sleep` duration that doubles as the `pgrep -f` marker, as in `local_transport.rs`.
+    let marker = format!("5.{}", std::process::id());
     let started = std::time::Instant::now();
     let out = volant_within(
         &[
@@ -7007,6 +7212,8 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
             "-i",
             &fixture("inventory.ini"),
             &fixture("timeout/descendant.yml"),
+            "-e",
+            &format!("marker={marker}"),
         ],
         std::time::Duration::from_secs(30),
     );
@@ -7020,6 +7227,22 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
     assert!(
         elapsed < std::time::Duration::from_millis(3000),
         "the run took {elapsed:?}: the deadline did not reach the readers"
+    );
+    assert_no_survivor(&marker);
+}
+
+/// Fails naming any process whose command line still carries `marker` a moment after the run:
+/// the descendant of a timed-out task has to die with its process group.
+fn assert_no_survivor(marker: &str) {
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let survivors = Command::new("pgrep")
+        .args(["-f", marker])
+        .output()
+        .expect("pgrep runs");
+    assert!(
+        survivors.stdout.is_empty(),
+        "the timed-out task's descendant survived: {}",
+        String::from_utf8_lossy(&survivors.stdout)
     );
 }
 
@@ -7039,9 +7262,12 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
 ///
 /// What would make this red: joining the writer thread instead of waiting on it under the
 /// deadline. Measured against ansible-core 2.19.12, which fails this task on its timeout and exits
-/// 2; this release reported success and exit 0 after the descendant's three seconds.
+/// 2; this release reported success and exit 0 after the descendant's three seconds. The survivor
+/// check reddens on a timeout that returns without killing the group.
 #[test]
 fn a_timeout_covers_a_descendant_holding_stdin() {
+    // An argument the descendant ignores, carried on its command line for `pgrep -f`.
+    let marker = format!("volant-stdin-descendant-{}", std::process::id());
     let started = std::time::Instant::now();
     let out = volant_within(
         &[
@@ -7049,6 +7275,8 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
             "-i",
             &fixture("inventory.ini"),
             &fixture("timeout/stdin-descendant.yml"),
+            "-e",
+            &format!("marker={marker}"),
         ],
         std::time::Duration::from_secs(30),
     );
@@ -7063,6 +7291,7 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
         elapsed < std::time::Duration::from_millis(3000),
         "the run took {elapsed:?}: the deadline did not reach the write to stdin"
     );
+    assert_no_survivor(&marker);
 }
 
 /// A module argument the reference has and this release does not act on is refused by its own
@@ -7264,8 +7493,9 @@ fn fake_python(dir: &Path) -> std::path::PathBuf {
 /// Every blob the agent cached under `remote_tmp`, whatever uid the cache directory carries.
 ///
 /// A cache entry is named by its hash alone since protocol 5, so the name is what is matched: 64
-/// lowercase hex characters. A staged copy is `stage-<hash>-...` and must not count, and the scan
-/// also walks the agent's own `volant-agent-<version>/` directory.
+/// lowercase hex characters. A staged copy lives in the connection's own `stage-<host>-<pid>/`
+/// directory, which this one-level scan never enters and which is gone once the connection ends;
+/// the scan also walks the agent's own `volant-agent-<version>/` directory.
 fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(remote_tmp) else {
         return Vec::new();

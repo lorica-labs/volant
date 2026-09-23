@@ -50,10 +50,6 @@ const LAST_WORDS_WAIT: Duration = Duration::from_millis(500);
 /// What an operator is shown of a module's own output when it is not a result.
 const EXCERPT: usize = 2048;
 
-/// What one child may write on one stream and still have it carried. The same figure as the
-/// server's own `STREAM_LIMIT`, which is the side that enforces it.
-const STREAM_LIMIT: usize = 4 * 1024 * 1024;
-
 #[derive(Debug)]
 pub struct Server {
     child: Child,
@@ -76,7 +72,16 @@ impl Server {
     /// An interpreter that cannot start is an error carrying its own words: it is the one party
     /// that knows why, and an operator reading "the module failed" would go looking at the
     /// module.
-    pub fn start(interpreter: &str, blob: &Path) -> io::Result<Server> {
+    ///
+    /// The wait for the ready frame asks `cancelled` every [`CANCEL_POLL`], as the run loop
+    /// does: importing `module_utils` is the slow part of a start, and a cancel that arrives
+    /// during it is answered then rather than at [`START_TIMEOUT`]. A cancelled start is an
+    /// [`io::ErrorKind::Interrupted`] error, and the server is killed with it.
+    pub fn start(
+        interpreter: &str,
+        blob: &Path,
+        cancelled: &dyn Fn() -> bool,
+    ) -> io::Result<Server> {
         let mut child = Command::new(interpreter)
             .arg("-c")
             .arg(SERVER)
@@ -131,9 +136,20 @@ impl Server {
             stderr_ended,
             interpreter: interpreter.to_string(),
         };
-        match server.frame(Instant::now() + START_TIMEOUT) {
-            Ok(bytes) if ready(&bytes) => Ok(server),
-            _ => Err(server.died()),
+        let deadline = Instant::now() + START_TIMEOUT;
+        loop {
+            match server.frame(deadline.min(Instant::now() + CANCEL_POLL)) {
+                Ok(bytes) if ready(&bytes) => return Ok(server),
+                Err(err) if err.kind() == io::ErrorKind::TimedOut && Instant::now() < deadline => {
+                    if cancelled() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "cancelled while the python server was starting",
+                        ));
+                    }
+                }
+                _ => return Err(server.died()),
+            }
         }
     }
 
@@ -297,8 +313,8 @@ impl Drop for Server {
 
 /// Runs one task that carries a payload, starting a server for it if this agent has none yet.
 ///
-/// The payload is verified here rather than once at start: a blob is trusted because its bytes
-/// hash to its name, and the task that uses one is where that has to hold.
+/// A blob is trusted because its bytes hash to its name, and the task that uses one is where that
+/// has to hold. `Servers::verify` decides when the hash has to be read again.
 pub fn run(
     payload: &PythonPayload,
     args: &Map<String, Value>,
@@ -306,18 +322,6 @@ pub fn run(
     cancelled: &dyn Fn() -> bool,
 ) -> Run {
     let remote_tmp = crate::blobs::remote_tmp();
-    match crate::blobs::holds(&remote_tmp, &payload.blob) {
-        Ok(true) => {}
-        Ok(false) => {
-            return Run::Done(fail(
-                format!("payload {} is not on this host", payload.blob),
-                None,
-            ));
-        }
-        Err(err) => {
-            return Run::Done(fail(format!("payload {}: {err}", payload.blob), None));
-        }
-    }
     let blob = match crate::blobs::path(&remote_tmp, &payload.blob) {
         Ok(blob) => blob,
         Err(err) => return Run::Done(fail(format!("payload {}: {err}", payload.blob), None)),
@@ -325,8 +329,34 @@ pub fn run(
     SERVERS.with(|table| {
         table
             .borrow_mut()
-            .run(payload, &blob, args, context, cancelled)
+            .run(payload, &remote_tmp, &blob, args, context, cancelled)
     })
+}
+
+/// What `Servers::verify` compares to decide that a blob is still the file it hashed: device,
+/// inode, length, modification time and change time. `store` renames a new file over an old one,
+/// which changes the inode whatever the length and the time say; a write in place that puts the
+/// old modification time back (`touch -r`, `cp --preserve=timestamps`) still moves the change
+/// time, which no unprivileged call can set.
+type Fingerprint = (u64, u64, u64, std::time::SystemTime, i64, i64);
+
+fn fingerprint(at: &Path) -> Option<Fingerprint> {
+    let meta = std::fs::metadata(at).ok()?;
+    #[cfg(unix)]
+    let (dev, ino, ctime, ctime_nsec) = {
+        use std::os::unix::fs::MetadataExt;
+        (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
+    };
+    #[cfg(not(unix))]
+    let (dev, ino, ctime, ctime_nsec) = (0, 0, 0, 0);
+    Some((
+        dev,
+        ino,
+        meta.len(),
+        meta.modified().ok()?,
+        ctime,
+        ctime_nsec,
+    ))
 }
 
 /// Called at the start of every batch. The allowance for restarting a server that dies is per
@@ -360,27 +390,33 @@ struct Servers {
     /// Keys whose server this batch has given up on, with the sentence every remaining task of
     /// the batch is answered with.
     refused: HashMap<Key, String>,
+    /// Each blob's fingerprint when its hash last matched its name.
+    verified: HashMap<String, Fingerprint>,
 }
 
 impl Servers {
     fn run(
         &mut self,
         payload: &PythonPayload,
+        remote_tmp: &str,
         blob: &Path,
         args: &Map<String, Value>,
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> Run {
         let key = (payload.interpreter.clone(), payload.blob.clone());
-        if let Some(refused) = self.refused.get(&key) {
-            return Run::Done(fail(refused.clone(), None));
-        }
         if self
             .live
             .get_mut(&key)
             .is_some_and(|server| !server.alive())
         {
             self.live.remove(&key);
+        }
+        if let Err(msg) = self.verify(payload, remote_tmp, blob, &key) {
+            return Run::Done(fail(msg, None));
+        }
+        if let Some(refused) = self.refused.get(&key) {
+            return Run::Done(fail(refused.clone(), None));
         }
         if !self.live.contains_key(&key) {
             let spent = self.starts.entry(key.clone()).or_default();
@@ -393,10 +429,11 @@ impl Servers {
                 self.refused.insert(key, msg.clone());
                 return Run::Done(fail(msg, None));
             }
-            match Server::start(&payload.interpreter, blob) {
+            match Server::start(&payload.interpreter, blob, cancelled) {
                 Ok(server) => {
                     self.live.insert(key.clone(), server);
                 }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => return Run::Cancelled,
                 Err(err) => {
                     let msg = format!("{err}");
                     self.refused.insert(key, msg.clone());
@@ -410,6 +447,38 @@ impl Servers {
             self.live.remove(&key);
         }
         run
+    }
+
+    /// Hashes the blob unless a live server already runs on it and the file is still the one
+    /// whose hash matched: once per server start, and again whenever the fingerprint moves.
+    /// Measured on the real union, hashing it costs 1.18 ms, 4 to 9 % of a warm task. The
+    /// fingerprint is read before the hash, so a file that changes during the hash is hashed again
+    /// next time.
+    fn verify(
+        &mut self,
+        payload: &PythonPayload,
+        remote_tmp: &str,
+        blob: &Path,
+        key: &Key,
+    ) -> Result<(), String> {
+        let now = fingerprint(blob);
+        if self.live.contains_key(key)
+            && now.is_some()
+            && self.verified.get(&payload.blob) == now.as_ref()
+        {
+            return Ok(());
+        }
+        self.verified.remove(&payload.blob);
+        match crate::blobs::holds(remote_tmp, &payload.blob) {
+            Ok(true) => {
+                if let Some(now) = now {
+                    self.verified.insert(payload.blob.clone(), now);
+                }
+                Ok(())
+            }
+            Ok(false) => Err(format!("payload {} is not on this host", payload.blob)),
+            Err(err) => Err(format!("payload {}: {err}", payload.blob)),
+        }
     }
 }
 
@@ -457,11 +526,15 @@ fn result(frame: &Value) -> TaskResult {
     // parent read both pipes to the end either way, so the child is not left blocked on a full
     // one; what it did not keep is what would have made a frame the agent refuses, and a refused
     // frame reads as a dead server and poisons the rest of the batch.
+    // The bound is the server's `STREAM_LIMIT`, sent in the frame by the side that enforces it.
     if frame.get("truncated").and_then(Value::as_bool) == Some(true) {
+        let limit = frame.get("limit").and_then(Value::as_u64).map_or_else(
+            || "the server's limit".to_string(),
+            |limit| format!("{limit} bytes"),
+        );
         return fail(
             format!(
-                "the module wrote more than {} bytes, which is more than a result can carry (exit status {code})",
-                STREAM_LIMIT
+                "the module wrote more than {limit}, which is more than a result can carry (exit status {code})"
             ),
             said,
         );
@@ -536,7 +609,12 @@ mod tests {
             "python3",
             "#!/bin/sh\necho 'boom: no python here' >&2\nexit 3\n",
         );
-        let err = Server::start(fake.to_str().unwrap(), Path::new("/nonexistent.zip")).unwrap_err();
+        let err = Server::start(
+            fake.to_str().unwrap(),
+            Path::new("/nonexistent.zip"),
+            &|| false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("boom: no python here"), "{err}");
         assert!(err.to_string().contains(fake.to_str().unwrap()), "{err}");
     }
@@ -545,7 +623,12 @@ mod tests {
     /// is not left guessing which of the two ends is missing.
     #[test]
     fn an_interpreter_that_is_not_there_names_itself() {
-        let err = Server::start("/nonexistent/python3", Path::new("/nonexistent.zip")).unwrap_err();
+        let err = Server::start(
+            "/nonexistent/python3",
+            Path::new("/nonexistent.zip"),
+            &|| false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("/nonexistent/python3"), "{err}");
     }
 
@@ -570,7 +653,7 @@ mod tests {
     print(json.dumps({"probe": "ok", "got": args, "fqn": module_fqn, "profile": profile}))
 "#,
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let run = server.run(
             &payload("ansible.modules.probe"),
             &args(json!({"x": 1})),
@@ -604,7 +687,7 @@ mod tests {
     print(json.dumps({"marker": marker, "cwd": os.getcwd()}))
 "#,
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let first = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -634,7 +717,7 @@ mod tests {
     print(json.dumps({"seen": os.environ.get("VOLANT_TASK_VAR", "unset")}))
 "#,
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let mut context = Context::default();
         context
             .environment
@@ -664,7 +747,7 @@ mod tests {
     #[test]
     fn a_module_that_writes_no_result_fails_the_task() {
         let blob = stub_blob("\n    pass\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -687,7 +770,7 @@ mod tests {
     #[test]
     fn a_module_that_writes_noise_fails_the_task_carrying_it() {
         let blob = stub_blob("\n    print('Traceback: everything is on fire')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -714,7 +797,7 @@ mod tests {
     fn a_result_followed_by_noise_is_not_taken_as_the_result() {
         let blob =
             stub_blob("\n    print(json.dumps({\"changed\": True}))\n    print('and then this')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -734,7 +817,7 @@ mod tests {
     #[test]
     fn a_module_killed_by_a_signal_fails_the_task() {
         let blob = stub_blob("\n    import os, signal\n    os.kill(os.getpid(), signal.SIGKILL)\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -753,6 +836,169 @@ mod tests {
         assert!(server.alive(), "the server survives its child being killed");
     }
 
+    /// The signal wins over a result the module had already printed: the out-of-memory killer
+    /// leaves a perfectly parseable half behind, and a module that did not finish did not succeed.
+    ///
+    /// What would make this red: `result()` reading `stdout` before it looks at `signal`, which
+    /// reports this task `ok` with the module's own words.
+    #[test]
+    fn a_result_printed_before_a_signal_is_not_taken_as_the_result() {
+        let blob = stub_blob(
+            "\n    import os, signal\n    print(json.dumps({\"changed\": False, \"msg\": \"all done\"}))\n    sys.stdout.flush()\n    os.kill(os.getpid(), signal.SIGKILL)\n",
+        );
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(result.failed(), "{:?}", result.0);
+        assert!(
+            result.0["msg"]
+                .as_str()
+                .unwrap()
+                .contains("the module was killed by signal 9"),
+            "{:?}",
+            result.0
+        );
+    }
+
+    /// The oversized-result sentence quotes the bound the server applied, which it sends in the
+    /// frame: the server is the side that enforces it, and a figure kept on this side as well
+    /// would go on naming the old bound the day the server's changes.
+    ///
+    /// What would make this red: the sentence built from a constant of this crate again.
+    #[test]
+    fn the_oversized_result_sentence_quotes_the_server_s_own_limit() {
+        let result = result(&json!({
+            "exit": 0,
+            "signal": null,
+            "stdout": "",
+            "stderr": "",
+            "truncated": true,
+            "limit": 1234,
+        }));
+        assert!(
+            result.0["msg"]
+                .as_str()
+                .unwrap()
+                .starts_with("the module wrote more than 1234 bytes"),
+            "{:?}",
+            result.0
+        );
+    }
+
+    /// A cancel that arrives while the server is still importing `module_utils` is answered as a
+    /// cancel, without waiting for the server to be ready. The payload's own loader sleeps as it
+    /// is imported, which is where a slow `module_utils` import spends its time.
+    ///
+    /// What would make this red: `Server::start` waiting for the ready frame without asking the
+    /// predicate. The task then ends a minute later, at `START_TIMEOUT`, as a refused server
+    /// instead of a cancel.
+    #[test]
+    fn a_cancel_while_the_server_starts_is_a_cancel() {
+        let root = tempdir();
+        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
+        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
+        batch_started();
+        let run = run(&payload, &args(json!({})), &Context::default(), &|| true);
+        assert!(
+            matches!(run, Run::Cancelled),
+            "the start was not cancelled: {:?}",
+            match run {
+                Run::Done(result) => Value::Object(result.0),
+                Run::Cancelled => Value::Null,
+            }
+        );
+    }
+
+    /// A payload is hashed once for as long as its server lives, not once per task: measured on
+    /// the real union, the hash costs 1.18 ms per task, 4 to 9 % of a warm one.
+    ///
+    /// What would make this red: `holds` called for every task again.
+    #[test]
+    fn a_payload_is_hashed_once_while_its_server_lives() {
+        let root = tempdir();
+        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
+        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
+        batch_started();
+        let before = crate::blobs::HASHED.load(Ordering::Relaxed);
+        for _ in 0..3 {
+            let result = done(run(
+                &payload,
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert!(!result.failed(), "{:?}", result.0);
+        }
+        assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
+    }
+
+    /// A payload replaced under a live server is verified again before the next task uses it,
+    /// both ways a file can change under the same name with its old length and modification
+    /// time: a new file renamed over it, the shape `store` writes, where only the inode moves;
+    /// and a write in place with the time put back, as `touch -r` does, where only the change
+    /// time moves.
+    ///
+    /// What would make this red: the fingerprint left out of the decision to skip the hash, or
+    /// the inode or the change time left out of the fingerprint. The second task then runs
+    /// against bytes nobody checked.
+    #[test]
+    fn a_payload_replaced_under_a_live_server_is_verified_again() {
+        for renamed in [true, false] {
+            let root = tempdir();
+            // SAFETY: nextest runs each test in its own process, so this reaches no other test.
+            unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+            let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
+            batch_started();
+            let first = done(run(
+                &payload,
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert!(!first.failed(), "{:?}", first.0);
+
+            let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
+            let old = std::fs::metadata(&at).unwrap();
+            let mut bytes = std::fs::read(&at).unwrap();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 0xff;
+            let target = if renamed {
+                at.with_extension("fresh")
+            } else {
+                at.clone()
+            };
+            std::fs::write(&target, &bytes).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&target)
+                .unwrap()
+                .set_modified(old.modified().unwrap())
+                .unwrap();
+            if renamed {
+                std::fs::rename(&target, &at).unwrap();
+            }
+
+            let second = done(run(
+                &payload,
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(
+                second.0["msg"],
+                format!("payload {} is not on this host", payload.blob),
+                "renamed {renamed}: {:?}",
+                second.0
+            );
+        }
+    }
+
     /// A module that fails the way Ansible modules fail - a result saying `failed` - is reported
     /// as that result, not as an agent error. The module's own words are the truth.
     #[test]
@@ -760,7 +1006,7 @@ mod tests {
         let blob = stub_blob(
             "\n    print(json.dumps({\"failed\": True, \"msg\": \"nothing to do here\"}))\n    raise SystemExit(1)\n",
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -781,7 +1027,7 @@ mod tests {
     #[test]
     fn a_module_silent_about_changed_reports_it_false() {
         let blob = stub_blob("\n    print(json.dumps({\"ping\": \"pong\"}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -800,7 +1046,7 @@ mod tests {
     #[test]
     fn a_module_that_reports_a_change_keeps_it() {
         let blob = stub_blob("\n    print(json.dumps({\"changed\": True}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -819,7 +1065,7 @@ mod tests {
     #[test]
     fn a_cancelled_module_is_killed_and_the_server_survives() {
         let blob = stub_blob(SLEEP_IF_ASKED);
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let run = server.run(
             &payload("ansible.modules.probe"),
             &args(json!({"sleep": 120})),
@@ -847,7 +1093,7 @@ mod tests {
     #[test]
     fn a_module_that_outlives_its_timeout_is_killed() {
         let blob = stub_blob(SLEEP_IF_ASKED);
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let context = Context {
             timeout: Some(Duration::from_secs(1)),
             ..Context::default()
@@ -905,7 +1151,7 @@ mod tests {
     print(json.dumps({"executable": sys.executable}))
 "#,
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -935,7 +1181,7 @@ mod tests {
     #[test]
     fn a_server_that_died_fails_the_task_it_was_needed_for() {
         let blob = stub_blob(SLEEP_IF_ASKED);
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         server.child.kill().unwrap();
         server.child.wait().unwrap();
 
@@ -1086,7 +1332,7 @@ mod tests {
         let blob = stub_blob(
             "\n    import sys\n    sys.stderr.write(\"x\" * (1024 * 1024))\n    sys.stderr.flush()\n    print(json.dumps({\"noisy\": True}))\n",
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1106,7 +1352,7 @@ mod tests {
     #[test]
     fn a_result_too_large_to_carry_fails_the_task_and_not_the_server() {
         let blob = stub_blob("\n    import sys\n    sys.stdout.write(\"y\" * (5 * 1024 * 1024))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1118,8 +1364,8 @@ mod tests {
             result.0["msg"]
                 .as_str()
                 .unwrap()
-                .contains("more than a result can carry"),
-            "{:?}",
+                .contains("more than 4194304 bytes, which is more than a result can carry"),
+            "the sentence does not quote the server's own limit: {:?}",
             result.0
         );
         assert!(
@@ -1138,7 +1384,7 @@ mod tests {
     fn a_module_reads_end_of_file_from_its_standard_input() {
         let blob =
             stub_blob("\n    import sys\n    print(json.dumps({\"stdin\": sys.stdin.read()}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1166,7 +1412,7 @@ mod tests {
         std::env::set_current_dir(root.path()).unwrap();
 
         let blob = stub_blob("\n    print(json.dumps({\"clean\": True}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1195,7 +1441,7 @@ mod tests {
         let blob = stub_blob(
             "\n    import resource\n    print(json.dumps({\"soft\": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}))\n",
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let inherited = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1237,7 +1483,7 @@ mod tests {
     #[test]
     fn a_module_that_exits_with_a_message_keeps_it() {
         let blob = stub_blob("\n    raise SystemExit('nothing to work with here')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1270,7 +1516,7 @@ mod tests {
         let blob = stub_blob(
             "\n    import os, subprocess\n    subprocess.Popen(['sleep', '120'], preexec_fn=os.setsid)\n    import time\n    time.sleep(120)\n",
         );
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let run = server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1292,7 +1538,12 @@ mod tests {
     fn an_interpreter_that_says_nothing_at_all_says_that() {
         let dir = tempdir();
         let fake = program(dir.path(), "python3", "#!/bin/sh\nexit 0\n");
-        let err = Server::start(fake.to_str().unwrap(), Path::new("/nonexistent.zip")).unwrap_err();
+        let err = Server::start(
+            fake.to_str().unwrap(),
+            Path::new("/nonexistent.zip"),
+            &|| false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains(fake.to_str().unwrap()), "{err}");
         assert!(err.to_string().contains("it said nothing"), "{err}");
     }
@@ -1312,7 +1563,8 @@ mod tests {
             "python3",
             "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nprintf '\\0\\0\\0\\012{\"oops\":1}'\nsleep 30\n",
         );
-        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let mut server =
+            Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1343,7 +1595,8 @@ mod tests {
             "python3",
             "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nexit 0\n",
         );
-        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let mut server =
+            Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1374,7 +1627,8 @@ mod tests {
             "python3",
             "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nsleep 120\n",
         );
-        let mut server = Server::start(fake.to_str().unwrap(), Path::new("/blob")).unwrap();
+        let mut server =
+            Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -1408,7 +1662,7 @@ mod tests {
     #[test]
     fn a_module_that_writes_half_a_result_fails_the_task_carrying_it() {
         let blob = stub_blob("\n    import sys\n    sys.stdout.write('{\"changed\": tr')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path()).unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),

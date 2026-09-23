@@ -194,9 +194,23 @@ impl Renderer {
         } else {
             result.0.clone()
         };
-        // The reference shows no `failed` at all; a `true` stays until that is matched.
-        if body.get("failed") == Some(&serde_json::Value::Bool(false)) {
+        // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
+        // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
+        // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
+        // validate and a failed `lineinfile`, which also show no `invocation` and no `diff`: its
+        // `_dump_results` keeps those two from `-vvv` on, read off the source and not measured.
+        if !censored {
             body.remove("failed");
+            body.remove("skipped");
+            if self.verbosity < 3
+                && matches!(
+                    outcome,
+                    Outcome::Failed | Outcome::Rescued | Outcome::Ignored
+                )
+            {
+                body.remove("invocation");
+                body.remove("diff");
+            }
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.
         body.remove("exception");
@@ -494,12 +508,9 @@ mod tests {
         assert_eq!(lines[4], "skipping: [web3]");
         assert_eq!(
             lines[5],
-            r#"fatal: [web4]: FAILED! => {"failed": true, "msg": "non-zero return code", "rc": 1}"#
+            r#"fatal: [web4]: FAILED! => {"msg": "non-zero return code", "rc": 1}"#
         );
-        assert_eq!(
-            lines[6],
-            r#"fatal: [web5]: FAILED! => {"failed": true, "rc": 1}"#
-        );
+        assert_eq!(lines[6], r#"fatal: [web5]: FAILED! => {"rc": 1}"#);
         assert_eq!(lines[7], "...ignoring");
     }
 
@@ -534,7 +545,39 @@ mod tests {
         });
         assert_eq!(
             out.trim_end(),
-            r#"fatal: [h1]: FAILED! => {"changed": false, "failed": true, "msg": "Error executing command.", "rc": 2}"#
+            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "Error executing command.", "rc": 2}"#
+        );
+    }
+
+    /// A `fatal:` line carries neither `failed`, nor `invocation`, nor `diff`, whichever module
+    /// failed. Measured on ansible-core 2.19.12: a timed-out `pause` shows
+    /// `fatal: [h1]: FAILED! => {"changed": false, "msg": "Task failed: Timed out after 1
+    /// second(s).", "timedout": {...}}`, and a failed `copy` validate and a failed `lineinfile`
+    /// show no `failed`, no `invocation` and no `diff: []`, all three of which they register.
+    ///
+    /// What would make this red: any of the three left on the line.
+    #[test]
+    fn a_fatal_line_shows_what_the_reference_shows() {
+        let out = capture(|r| {
+            r.result(
+                "h1",
+                Outcome::Failed,
+                &result(json!({
+                    "changed": false,
+                    "diff": [],
+                    "failed": true,
+                    "invocation": {"module_args": {"path": "/tmp/x"}},
+                    "msg": "boom"
+                })),
+                None,
+                Dump::No,
+                false,
+                None,
+            );
+        });
+        assert_eq!(
+            out.trim_end(),
+            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "boom"}"#
         );
     }
 
@@ -796,10 +839,7 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "changed: [h] => (item=one)");
         assert_eq!(lines[1], "skipping: [h] => (item=two) ");
-        assert_eq!(
-            lines[2],
-            r#"failed: [h] (item=three) => {"failed": true, "rc": 1}"#
-        );
+        assert_eq!(lines[2], r#"failed: [h] (item=three) => {"rc": 1}"#);
         assert_eq!(lines[3], r#"ok: [h] => {"msg": "shown"}"#);
     }
 }

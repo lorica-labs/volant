@@ -459,6 +459,54 @@ pub fn is_known(module: &str) -> bool {
     native(module).is_some() || local(module).is_some()
 }
 
+/// The builtin modules the reference runs through an action plugin this release does not have.
+///
+/// Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
+/// 27 names in both, and each of these waits on the plugin of its own name. The names this release
+/// already implements are **not** here, whether natively (`command`, `shell`, `raw`), on the
+/// controller (`assert`, `debug`, `fail`, `include_vars`, `pause`, `set_fact`,
+/// `validate_argument_spec`) or through a plugin of its own ([`ACTION_PLUGINS`]). `normal` is not
+/// here either: it is the only action plugin with no module of the same name, so no playbook can
+/// name it.
+pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
+    "add_host",
+    "assemble",
+    "async_status",
+    "dnf",
+    "fetch",
+    "gather_facts",
+    "group_by",
+    "reboot",
+    "script",
+    "set_stats",
+    "uri",
+    "wait_for_connection",
+];
+
+/// The action plugins this release runs on the controller, with what each does.
+pub const ACTION_PLUGINS: &[(&str, &str)] = &[
+    (
+        "copy",
+        "Copy a file from the controller, or `content:`, to the host.",
+    ),
+    (
+        "package",
+        "Install or remove packages with the host's own package manager.",
+    ),
+    (
+        "service",
+        "Manage a service with the host's own init system.",
+    ),
+    (
+        "template",
+        "Render a template on the controller and copy the result to the host.",
+    ),
+    (
+        "unarchive",
+        "Extract an archive read on the controller, or one already on the host.",
+    ),
+];
+
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
@@ -522,14 +570,28 @@ pub fn documentation_table() -> String {
         "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form arguments | What it does |\n|---|---|---|\n",
     );
     rows(LOCAL_MODULES, false, &mut out);
-    // A rule rather than a list. The names this section covers are every builtin minus the two
-    // tables above minus the ones an action plugin backs, and that last list lives in the
-    // controller crate: this crate is the one both the controller and the agent depend on, so it
-    // cannot read it. Naming seventy modules here and being wrong about twenty of them would be
-    // worse than saying what decides.
     out.push_str(
-        "\n## On the warm Python path\n\nEverything else ansible-core ships is a Python module, and Volant runs it as one. The modules a run needs travel to the host together, once, in a single archive named by its own content. A Python server the agent keeps warm runs each of them in a fork of itself. The agent keeps the archive, so a host that already has it is sent nothing, and the interpreter comes from the list the agent reported when it started.\n\nWhich modules those are follows a rule rather than a list: every builtin in neither table above, except the ones the reference runs through an action plugin. Volant refuses those by name before the run reaches a host, because what the playbook asks for lives in the plugin and not in the module. `package` picks the host's package manager, and `template` renders the file on the controller before the task is sent. Sending the module on its own would run something else and call it a success.\n",
+        "\n## On the warm Python path\n\nEverything else ansible-core ships is a Python module, and Volant runs it as one. The modules a run needs travel to the host together, once, in a single archive named by its own content. A Python server the agent keeps warm runs each of them in a fork of itself. The agent keeps the archive, so a host that already has it is sent nothing, and the interpreter comes from the list the agent reported when it started.\n\nThe exceptions are the modules the reference runs through an action plugin Volant does not have yet. Volant refuses those by name before the run reaches a host, because what the playbook asks for lives in the plugin and not in the module. Sending the module on its own would run something else and call it a success.\n\n| Module | How it runs |\n|---|---|\n",
     );
+    let statement =
+        |m: &str| import_module(m).is_some() || include_module(m).is_some() || m == "meta";
+    for m in BUILTIN_MODULES {
+        if is_known(m) || statement(m) || ACTION_PLUGINS.iter().any(|(p, _)| p == m) {
+            continue;
+        }
+        let how = if BUILTIN_ACTION_PLUGINS.contains(m) {
+            format!("refused: waits on the `{m}` action plugin")
+        } else {
+            "Python module".to_string()
+        };
+        let _ = writeln!(out, "| `{m}` | {how} |");
+    }
+    out.push_str(
+        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](actions.md) describes each one.\n\n| Module | What it does |\n|---|---|\n",
+    );
+    for (m, summary) in ACTION_PLUGINS {
+        let _ = writeln!(out, "| `{m}` | {summary} |");
+    }
     out
 }
 
@@ -844,6 +906,46 @@ mod tests {
             json!(""),
         ] {
             assert_eq!(arg_bool(&neither), None, "{neither}");
+        }
+    }
+
+    /// The two plugin lists are builtins, sorted, apart from each other and from what this
+    /// release runs natively or on the controller.
+    ///
+    /// What would make this red: a plugin name left in the refused list once it is implemented,
+    /// which refuses it before its dispatch is reached; or `setup` slipping in, which would refuse
+    /// every run that gathers facts.
+    #[test]
+    fn the_plugin_lists_are_disjoint_builtins() {
+        let implemented: Vec<&str> = ACTION_PLUGINS.iter().map(|(m, _)| *m).collect();
+        for list in [BUILTIN_ACTION_PLUGINS, &implemented[..]] {
+            let mut sorted = list.to_vec();
+            sorted.sort_unstable();
+            assert_eq!(sorted, list, "the list is kept sorted");
+            for m in list {
+                assert!(is_builtin(m) && !is_known(m), "{m}");
+            }
+        }
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 12);
+        assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
+        for m in &implemented {
+            assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");
+        }
+    }
+
+    /// Every builtin module is on the page exactly once, except the statements the compiler
+    /// answers: a reader asking whether `git` runs finds a row that says so.
+    ///
+    /// What would make this red: the Python path described by a rule again, or a module on two
+    /// rows that say different things.
+    #[test]
+    fn every_builtin_module_has_one_row() {
+        let page = documentation_table();
+        for m in BUILTIN_MODULES {
+            let rows = page.matches(&format!("\n| `{m}` |")).count();
+            let statement =
+                import_module(m).is_some() || include_module(m).is_some() || *m == "meta";
+            assert_eq!(rows, usize::from(!statement), "{m}");
         }
     }
 

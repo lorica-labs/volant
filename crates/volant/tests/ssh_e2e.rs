@@ -491,20 +491,6 @@ fn ssh_delegate_to_another_inventory_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same order `crates/volant-agent/src/interpreter.rs`'s `CANDIDATES` tries on the managed
-/// host, best first - kept in sync with it by hand, since ssh_e2e.rs links against `volant`, not
-/// `volant-agent`, and the list is private there besides.
-const HOST_PYTHON_CANDIDATES: [&str; 8] = [
-    "python3.13",
-    "python3.12",
-    "python3.11",
-    "python3.10",
-    "python3.9",
-    "python3.8",
-    "/usr/bin/python3",
-    "python3",
-];
-
 /// The controller's python and the managed host's must be two distinct interpreters, or a
 /// python task passing here would prove nothing about the claim the whole milestone rests on:
 /// the module_utils travel in the blob, so the host never needs ansible-core. `just ssh-test`
@@ -524,7 +510,8 @@ fn assert_host_and_controller_pythons_are_distinct() {
         controller, "/usr/bin/python3",
         "VOLANT_PYTHON must not be the bare host interpreter this test relies on being ansible-core-free"
     );
-    for candidate in HOST_PYTHON_CANDIDATES {
+    // Every name the agent tries on the managed host, read from the list the agent itself reads.
+    for candidate in volant_protocol::interpreter::CANDIDATES {
         // Resolved and checked in one remote shell: a name absent from the ssh session's PATH
         // exits 0 without checking anything, and a name present is asked whether it can import
         // ansible, failure meaning "good, it cannot".

@@ -31,7 +31,7 @@ use super::run::{
     Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
     python_for, record_facts, record_registered, requested_interpreter, retry_plan,
     reuse_or_connect, run_agent_batch, run_local, run_plugin_item, running_host_vars, step_tasks,
-    until_holds,
+    take_warnings, unresolved_notify, until_holds,
 };
 use super::{LinkKey, RunOptions};
 
@@ -709,8 +709,13 @@ pub(super) async fn drive_host(
                                 let ran = match task.timeout.filter(|t| *t > 0) {
                                     Some(t) => tokio::time::timeout(Duration::from_secs(t), ran)
                                         .await
-                                        .unwrap_or_else(|_| TaskResult::timed_out(t)),
+                                        .unwrap_or_else(|_| Some(TaskResult::timed_out(t))),
                                     None => ran.await,
+                                };
+                                // A pause the run's stop ended: no line and no count, like
+                                // every other wait the stop ends.
+                                let Some(ran) = ran else {
+                                    break 'run;
                                 };
                                 let mut r = finish(task, item, ran, &templar);
                                 let Some(retry) = &retry else { break r };
@@ -746,6 +751,20 @@ pub(super) async fn drive_host(
                         results.push((item.element.clone(), r));
                         labels.push(item.label.clone());
                         lefts.push(mine);
+                    }
+                    if let Some(reason) = unresolved_notify(&c, task, &results) {
+                        options.abort.raise(reason);
+                        break 'run;
+                    }
+                    for message in take_warnings(&mut results) {
+                        let _ = tx
+                            .send(Event::Warning {
+                                host: name.clone(),
+                                index: pos,
+                                message,
+                                censored: task.censors(),
+                            })
+                            .await;
                     }
                     record_registered(
                         &mut store.lock().expect("vars lock"),
@@ -1288,6 +1307,20 @@ pub(super) async fn drive_host(
                 }
                 if !reached && results.is_empty() {
                     break;
+                }
+                if let Some(reason) = unresolved_notify(&c, task, &results) {
+                    options.abort.raise(reason);
+                    break 'run;
+                }
+                for message in take_warnings(&mut results) {
+                    let _ = tx
+                        .send(Event::Warning {
+                            host: name.clone(),
+                            index: *index,
+                            message,
+                            censored: task.censors(),
+                        })
+                        .await;
                 }
                 let live = driver.progress.borrow().live_hosts.clone();
                 let targets = fact_targets(task, &name, &live);

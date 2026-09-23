@@ -128,6 +128,7 @@ Refused before the host is asked anything:
 - A `src` that names nothing on the controller:
   `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the
   file to exist on the remote, see the remote_src option`
+- `src is a directory, not an archive: <src>`, for a `src` found as a directory on the controller
 - A source larger than one frame is refused by its size, before it is read.
 
 ## A source file a managed host named

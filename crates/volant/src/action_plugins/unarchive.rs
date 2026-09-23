@@ -114,6 +114,12 @@ impl Unarchive {
                 not_found(src, &searched)
             )));
         };
+        // Named, as `copy` names it, rather than left to the read's own `Is a directory`.
+        if found.is_dir() {
+            return Step::Done(TaskResult::failed_with(format!(
+                "src is a directory, not an archive: {src}"
+            )));
+        }
         let basename = found
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -594,6 +600,29 @@ mod tests {
             json!(format!(
                 "big.tar.gz is {len} bytes; one frame carries at most {MAX_FILE_LEN}"
             ))
+        );
+    }
+
+    /// A `src` that is a directory on the controller is refused by name once `dest` is confirmed,
+    /// and nothing is staged.
+    ///
+    /// What would make this red: the directory handed to the read, which fails with the
+    /// platform's `Is a directory` wording and no hint of what was wrong with the task.
+    #[test]
+    fn a_directory_source_is_refused_by_name() {
+        let dir = scratch("dir-src");
+        let mut task_args = args(&dir, json!({}));
+        std::fs::create_dir_all(dir.join("files/tree")).unwrap();
+        task_args.insert("src".into(), json!("tree"));
+        let mut plugin = start_plain(&task_args, &dir);
+        run(plugin.as_mut(), None);
+        let result = done(
+            plugin.as_mut(),
+            json!({"stat": {"exists": true, "isdir": true}}),
+        );
+        assert_eq!(
+            result["msg"],
+            json!("src is a directory, not an archive: tree")
         );
     }
 

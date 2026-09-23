@@ -8,7 +8,7 @@ A keyword carries a status per place it can be written:
 
 - `runs`: this release honours it, or refuses by name the one value it cannot do.
 - `partial`: it is accepted and answered, but not with the whole of what the reference does with it. What is missing is spelled out under the table.
-- `refused`: it loads, and the run stops before anything connects.
+- `refused`: it loads, and the run stops before anything connects. In a file a dynamic include names, the statement fails when a host reaches it instead.
 - `not accepted`: it cannot be written there, and a playbook that writes it there is refused when it is read, as the reference refuses it.
 
 This page is generated from the tables in the source, so it cannot drift from them. Run `just docs-keywords` after changing a table.

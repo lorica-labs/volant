@@ -500,7 +500,18 @@ pub(super) fn prepare(
         let (args, args_untrusted) = if skipped.is_some() {
             (Map::new(), BTreeSet::new())
         } else {
-            let (map, untrusted) = templar.render_map_tainted(&task.args, &vars)?;
+            // `assert` reads `that` off the task as written and evaluates it the way `when` is
+            // evaluated, so it is not rendered here: a render error in it would fail the task in
+            // the render's words before the conditional could report it, which the reference's
+            // `finalize_task_arg` for `assert` does not do.
+            let raw = if volant_protocol::modules::short_name(&task.module) == "assert" {
+                let mut raw = task.args.clone();
+                raw.remove("that");
+                std::borrow::Cow::Owned(raw)
+            } else {
+                std::borrow::Cow::Borrowed(&task.args)
+            };
+            let (map, untrusted) = templar.render_map_tainted(&raw, &vars)?;
             let mut rendered = Value::Object(map);
             remove_omit(&mut rendered);
             let Value::Object(map) = rendered else {
@@ -897,6 +908,24 @@ mod tests {
         t.args.insert("_raw_params".into(), json!("false"));
         t.ignore_errors = Some(Flag::Template(ignore_errors.into()));
         step_of(t, Origin::default())
+    }
+
+    /// `assert`'s `that` is left to the conditional, which reads it as the task wrote it: a
+    /// render error in it is the conditional's to report, as the reference's `finalize_task_arg`
+    /// for `assert` lets it be. The other arguments still render.
+    ///
+    /// What would make this red: `that` rendered with the other arguments, which fails the task
+    /// with the render's message before the assert reads the text.
+    #[test]
+    fn prepare_leaves_an_assert_s_that_to_the_conditional() {
+        let store = store_at(Path::new("."));
+        let mut t = task("assert");
+        t.args.insert("that".into(), json!("{{ foo.bar == 1 }}"));
+        t.args.insert("fail_msg".into(), json!("{{ 1 + 1 }}"));
+        let items = prepared(&step_of(t, Origin::default()), &store)
+            .expect("the render error is left to the conditional");
+        assert!(!items[0].args.contains_key("that"), "{:?}", items[0].args);
+        assert_eq!(items[0].args["fail_msg"], json!(2));
     }
 
     /// Each item's verdict, as `prepare` rendered it.

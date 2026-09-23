@@ -1,0 +1,6 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - pause: {prompt: Continue?}
+      register: q
+    - debug: var=q.warnings

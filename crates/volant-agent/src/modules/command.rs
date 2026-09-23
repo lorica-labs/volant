@@ -30,7 +30,7 @@ pub(crate) fn execute(
     args: &Map<String, Value>,
     uses_shell: bool,
     ctx: &Context,
-    cancelled: &dyn Fn() -> bool,
+    pop_cancel: &dyn Fn() -> bool,
 ) -> Run {
     let timeout = ctx.timeout;
     // Every boolean here is read the way the reference reads one, spellings and all: `"false"`,
@@ -207,15 +207,16 @@ pub(crate) fn execute(
         });
     }
 
-    // `cancelled` has a side effect: it is a `try_recv` on the control channel, so it pops the
+    // `pop_cancel` has a side effect: it is a `try_recv` on the control channel, so it pops the
     // cancellation message and answers `true` exactly **once**. The wait below and each of the two
     // readers ask it, and every one of them has to get the same answer, so the first `true` is
-    // latched here and the rest of this function asks the latch.
+    // latched here and the rest of this function asks the latch, under the name `cancelled`. The
+    // raw predicate has another name so that no call below can reach it by that one: a reader
+    // handed it after an earlier ask popped the `Cancel` would wait for ever.
     let latch = {
         let seen = Cell::new(false);
-        // `cancelled` here is still the argument: the binding below only shadows it afterwards.
         move || {
-            if !seen.get() && cancelled() {
+            if !seen.get() && pop_cancel() {
                 seen.set(true);
             }
             seen.get()

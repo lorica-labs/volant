@@ -149,6 +149,7 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
         trim_blocks: flag(args, "trim_blocks", true),
         lstrip_blocks: flag(args, "lstrip_blocks", false),
         newline_sequence: newline_sequence.into(),
+        name: Some(src.clone()),
     };
     let out = ctx
         .templar
@@ -536,6 +537,12 @@ mod tests {
         let msg = refused(plugin.as_mut());
         assert!(
             msg.starts_with("could not render undefined.j2: ") && msg.contains("undefined"),
+            "{msg}"
+        );
+        // The error names the file and its line, not minijinja's `<string>`: a template that
+        // includes others has more than one place the undefined name could be.
+        assert!(
+            msg.contains("(in undefined.j2:") && !msg.contains("<string>"),
             "{msg}"
         );
         let mut plugin = start_plain(&dir, json!({"src": "include.j2", "dest": "/x"}));

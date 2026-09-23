@@ -1,0 +1,4 @@
+- name: changes and notifies a misspelt handler
+  command: "true"
+  notify: Reoad app
+  ignore_errors: true

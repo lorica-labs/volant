@@ -1,0 +1,8 @@
+- name: A loop whose every item a condition leaves out
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Every item skipped
+      command: echo {{ item }}
+      loop: [a, b]
+      when: false

@@ -5,6 +5,7 @@
 
 pub mod encoding;
 pub mod frame;
+pub mod interpreter;
 pub mod messages;
 pub mod modules;
 

@@ -9,22 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// ansible-core 2.19.12's own `INTERPRETER_PYTHON_FALLBACK`, read off the reference with
-/// `ansible-config dump | grep INTERPRETER` on 2026-09-20.
-///
-/// The order is a preference, not a set: the controller runs a module under the first entry the
-/// agent reports, so rearranging this list changes which Python a playbook runs under on every
-/// host that has more than one.
-const CANDIDATES: [&str; 8] = [
-    "python3.13",
-    "python3.12",
-    "python3.11",
-    "python3.10",
-    "python3.9",
-    "python3.8",
-    "/usr/bin/python3",
-    "python3",
-];
+use volant_protocol::interpreter::CANDIDATES;
 
 /// What tells two names for one interpreter apart from two interpreters: the file itself, by
 /// device and inode. Symlinks and hardlinks both collapse, which canonicalising the path alone

@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_tasks: notify-typo-failed-inc.yml
+    - debug: msg=after
+  handlers:
+    - name: Reload app
+      debug: msg=reloaded

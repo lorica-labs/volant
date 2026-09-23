@@ -891,10 +891,6 @@ const ACTION_KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     // before the task ends. Volant never writes that file and reports a name of the same shape
     // with no directory, `.9063a9f0` in this run.
     ("copy-force-false", "src"),
-    // A module's `fail_json` becomes, on the reference's controller, an error summary rendered as
-    // `(traceback unavailable)` when tracebacks are off (`error_summary` in
-    // `_internal/_templating/_transform.py`). Volant passes the module's result on without it.
-    ("copy-validate-fail", "exception"),
 ];
 
 #[cfg(target_os = "linux")]
@@ -926,8 +922,8 @@ fn redact_staged(value: &mut Value, staged_root: &str) {
 /// `size`, `checksum`, `md5sum`, `state`, `msg` and every other key are compared by value; the
 /// ownership keys against the account running the test; `cache_update_time`, `status` and a
 /// directory's `size` by type; `invocation` is dropped, and `diff` when it is `[]` on both sides.
-/// `unarchive-creates` is read back through `register`, because Volant prints no result on a
-/// `skipping:` line.
+/// `unarchive-creates` and `copy-validate-fail` are read back through `register`: Volant prints no
+/// result on a `skipping:` line, and a `fatal:` line drops `failed`, `diff` and `exception`.
 ///
 /// `package` and `service` escalate with `sudo -n` and ask systemd. A machine without either
 /// skips the test loudly, or fails it under `VOLANT_PYTHON`, which names a job that has to
@@ -1067,6 +1063,9 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     - name: copy-validate-fail
       copy: {{content: "", dest: {dir}/invalid.txt, validate: "test -s %s"}}
       ignore_errors: true
+      register: copy_validate_fail
+    - name: copy-validate-fail-registered
+      debug: {{var: copy_validate_fail}}
     - name: copy-remote-src
       copy: {{src: {dir}/new.txt, dest: {dir}/remote.txt, remote_src: true, mode: "0644"}}
     - name: template-new
@@ -1104,17 +1103,26 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     let out = run_recorded_play(dir, "action-plugins.yml", &python);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut results = results_by_task(&stdout);
-    if let Some(mut shown) = results.remove("unarchive-creates-registered")
-        && let Some(mut registered) = shown.get_mut("unarchive_creates").map(Value::take)
-    {
-        // A registered result carries the `failed: false` the executor sets on every result;
-        // the reference's JSON callback leaves it out, as an `ok:` line does. A `true` stays.
-        if let Some(map) = registered.as_object_mut()
-            && map.get("failed") == Some(&Value::Bool(false))
+    // Read back through `register`, where the recording's JSON callback line shows keys the
+    // default callback's line leaves out: nothing for a skip, and for a failure the `failed`,
+    // `diff` and `exception` a `fatal:` line drops.
+    for (case, var) in [
+        ("unarchive-creates", "unarchive_creates"),
+        ("copy-validate-fail", "copy_validate_fail"),
+    ] {
+        if let Some(mut shown) = results.remove(&format!("{case}-registered"))
+            && let Some(mut registered) = shown.get_mut(var).map(Value::take)
         {
-            map.remove("failed");
+            // A registered result carries the `failed: false` the executor sets on every
+            // result; the reference's JSON callback leaves it out, as an `ok:` line does. A
+            // `true` stays.
+            if let Some(map) = registered.as_object_mut()
+                && map.get("failed") == Some(&Value::Bool(false))
+            {
+                map.remove("failed");
+            }
+            results.insert(case.into(), registered);
         }
-        results.insert("unarchive-creates".into(), registered);
     }
     let staged_root = format!("{ACTION_DIR}/tmp/");
     let id = identity();

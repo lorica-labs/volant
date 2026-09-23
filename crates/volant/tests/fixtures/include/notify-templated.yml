@@ -1,0 +1,7 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_tasks: notify-templated-inc.yml
+  handlers:
+    - name: restart web
+      debug: msg=restarted

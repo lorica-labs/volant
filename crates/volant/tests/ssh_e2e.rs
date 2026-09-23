@@ -874,15 +874,18 @@ fn remove_as_root(dir: &Path) {
         .status();
 }
 
-/// Every action plugin over a real ssh link, twice. The first pass writes four files and finds
+/// Every action plugin over a real ssh link, twice. The first pass writes five files and finds
 /// the package and the unit already as asked; the second finds everything in place. Each file is
 /// read back and compared byte for byte, and its mode, which the play sets so the host's umask
 /// cannot decide it.
 ///
-/// Measured on ansible-core 2.19.12 with the play's six action tasks over `-c local` (the
-/// seventh reads this engine's own cache and changes nothing): `ok=6 changed=4` then
-/// `ok=6 changed=0`, and the template rendered as `secret=<secret>\nline 1\nline 2\n`
-/// (`trim_blocks`, one trailing newline kept).
+/// Measured on ansible-core 2.19.12, `-c local`, on the reference-comparable subset of the play:
+/// eight tasks, seven backed by an action plugin and a `debug` reading the search path through
+/// `first_found`: `ok=8 changed=5` then `ok=8 changed=0`. The play's ninth task, a `shell` reading
+/// this engine's own agent cache, has no reference equivalent and does not run under it; it never
+/// changes anything (`changed_when: false`) so it does not move either count under Volant either.
+/// The `rendered.txt` template renders as `secret=<secret>\nline 1\nline 2\n` (`trim_blocks`, one
+/// trailing newline kept); `notes.txt` renders as quoted below.
 ///
 /// What would make this red: a plugin that reports success without its last sub-task having
 /// written anything (a file missing or holding other bytes), a plugin that rewrites what is
@@ -897,7 +900,7 @@ fn ssh_copy_and_template_converge_on_a_real_host() {
     let (dest, var) = dest_for(&dir, "box");
     let inv = inventory(&dir, &[("box", var.as_str())]);
     let secret = "converge-secret";
-    let expected: [(&str, Vec<u8>, u32); 4] = [
+    let expected: [(&str, Vec<u8>, u32); 5] = [
         (
             "copied.txt",
             std::fs::read(fixture("ssh/files/greeting.txt")).unwrap(),
@@ -914,12 +917,26 @@ fn ssh_copy_and_template_converge_on_a_real_host() {
             b"from the archive\n".to_vec(),
             0o644,
         ),
+        // Produced by running ansible-core 2.19.12's own `ansible-playbook` against `-c local`
+        // with the same `notes.j2` template and `note`/`nested` vars: `comment` gave a blank
+        // `#` line, the note, and a closing blank `#` line, and `to_nice_yaml` followed with no
+        // blank line between them, the whole file ending in exactly one newline.
+        (
+            "notes.txt",
+            b"#\n# rendered over a real ssh link\n#\nkey: value\nlist:\n- one\n- two\n".to_vec(),
+            0o644,
+        ),
     ];
-    for (pass, changed) in [("first", 4), ("second", 0)] {
+    for (pass, changed) in [("first", 5), ("second", 0)] {
         let out = run_actions(&inv, secret);
         let text = both(&out);
         assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");
         assert_recap(&text, "box", changed);
+        let found = fixture("ssh/files/greeting.txt");
+        assert!(
+            text.contains(&format!("\"msg\": \"found={found}\"")),
+            "{pass} pass, first_found did not answer the resolved fixture path:\n{text}"
+        );
         for (name, bytes, mode) in &expected {
             let path = dest.join(name);
             let written = std::fs::read(&path)
@@ -963,7 +980,7 @@ fn ssh_a_rendered_file_leaves_nothing_in_the_agent_cache() {
     let out = run_actions(&inv, &secret);
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_recap(&text, "box", 4);
+    assert_recap(&text, "box", 5);
     assert!(
         std::fs::read_to_string(dest.join("rendered.txt"))
             .unwrap()
@@ -1017,7 +1034,7 @@ fn ssh_two_links_reuse_the_union_the_host_holds() {
     let inv = inventory(&dir, &[("a", a_var.as_str()), ("b", b_var.as_str())]);
     let greeting = std::fs::read(fixture("ssh/files/greeting.txt")).unwrap();
     let mut held = Vec::new();
-    for (pass, changed) in [("first", 4), ("second", 0)] {
+    for (pass, changed) in [("first", 5), ("second", 0)] {
         let out = run_actions(&inv, "two-links-secret");
         let text = both(&out);
         assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");

@@ -1,0 +1,17 @@
+{
+  "_ansible_no_log": false,
+  "action": "template",
+  "changed": true,
+  "checksum": "b5b8f01a812e7fc9b8df837582a7105184dfe73c",
+  "dest": "/tmp/volant16-golden/motd-lstrip",
+  "diff": [],
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "md5sum": "b2dcb8e64cdb8d1f264a9797154e998b",
+  "mode": "0644",
+  "owner": "<golden-generator-account>",
+  "size": 40,
+  "src": "<golden-staged-path>",
+  "state": "file",
+  "uid": 999999999
+}

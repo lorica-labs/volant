@@ -1,0 +1,29 @@
+{
+  "_ansible_no_log": false,
+  "action": "unarchive",
+  "changed": true,
+  "dest": "/tmp/volant16-golden/unpacked",
+  "extract_results": {
+    "cmd": [
+      "/usr/bin/tar",
+      "--extract",
+      "-C",
+      "/tmp/volant16-golden/unpacked",
+      "-z",
+      "-f",
+      "<golden-staged-path>"
+    ],
+    "err": "",
+    "out": "",
+    "rc": 0
+  },
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "handler": "TgzArchive",
+  "mode": "0775",
+  "owner": "<golden-generator-account>",
+  "size": 60,
+  "src": "<golden-staged-path>",
+  "state": "directory",
+  "uid": 999999999
+}

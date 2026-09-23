@@ -1,0 +1,16 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": true,
+  "checksum": "f572d396fae9206628714fb2ce00f72e94f2258f",
+  "dest": "/tmp/volant16-golden/remote.txt",
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "md5sum": "b1946ac92492d2347c6235b4d2611184",
+  "mode": "0644",
+  "owner": "<golden-generator-account>",
+  "size": 6,
+  "src": "/tmp/volant16-golden/new.txt",
+  "state": "file",
+  "uid": 999999999
+}

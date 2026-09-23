@@ -1,0 +1,7 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": false,
+  "dest": "/tmp/volant16-golden/content.txt",
+  "src": "<golden-staged-path>"
+}

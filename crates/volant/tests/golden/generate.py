@@ -3,6 +3,8 @@
 
 The interpreter comes from the ansible-core tool environment, so PyYAML is available.
 """
+import gzip
+import io
 import json
 import os
 import re
@@ -10,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 import yaml
@@ -99,10 +102,10 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(f"{len(results)} cases recorded against ansible-core {REFERENCE}")
-    # python_modules() is the newest and most environment-sensitive of the three: it is the only
-    # one that can fail on a contributor's machine (apt) or on a stale checkout of this file. It
-    # goes last so a failure there cannot also cost the two pre-existing, unrelated goldens.
-    return inventory() or listings() or python_modules()
+    # action_plugins() is now the newest and most environment-sensitive: `package` and `service`
+    # need `become` and a real package manager or systemd. It goes last so a failure there cannot
+    # also cost the three pre-existing, unrelated goldens.
+    return inventory() or listings() or python_modules() or action_plugins()
 
 
 # A fixed, non-temporary path: `stat`, `file` and `lineinfile` all read or write under it, and
@@ -248,6 +251,254 @@ def python_modules():
             f.write("\n")
         recorded += 1
     print(f"python module goldens recorded: {recorded}/{len(modules)} modules")
+    return 0
+
+
+# A fixed, non-temporary path, cleared at the top of every run: idempotence is exactly what a
+# few of these cases measure (`copy-same`, `template-same`), so a directory left over from a
+# previous pass would turn the second run's "changed" into "no change" and record the wrong
+# reference answer.
+ACTION_TMP = "/tmp/volant16-golden"
+ACTION_SRC = os.path.join(HERE, "action-src")
+
+# The path a staged copy lands under on the controller before the reference pushes it to the
+# managed node, and the equivalent for `connection: local`. Both change on every run (a random
+# suffix, and it is rooted under the generating account's home directory), so any string that
+# carries one is replaced by a fixed placeholder, wherever it turns up: `unarchive`'s own
+# `extract_results.cmd` quotes it as one argument of the `tar` command line it ran, not only
+# under the `src` key generate.py's brief keys off.
+STAGED_SRC_MARKERS = ("ansible-tmp-", "/tmp/ansible", ".ansible/tmp")
+
+
+def _redact_staged_paths(value):
+    if isinstance(value, str):
+        if any(marker in value for marker in STAGED_SRC_MARKERS):
+            return "<golden-staged-path>"
+        return value
+    if isinstance(value, list):
+        return [_redact_staged_paths(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _redact_staged_paths(v) for k, v in value.items()}
+    return value
+
+
+def _write_bundle(path):
+    """A tar.gz whose bytes are the same on every machine and every run: a fixed member mtime,
+    owner and name, wrapped in a gzip header that carries none of gzip's own defaults (its
+    mtime, and a filename it would otherwise take from the destination path)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        content = b"inside\n"
+        info = tarfile.TarInfo(name="inside.txt")
+        info.size = len(content)
+        info.mtime = 0
+        info.uid = 0
+        info.gid = 0
+        info.uname = ""
+        info.gname = ""
+        tar.addfile(info, io.BytesIO(content))
+    with open(path, "wb") as raw:
+        with gzip.GzipFile(fileobj=raw, filename="", mtime=0, mode="wb") as gz:
+            gz.write(buf.getvalue())
+
+
+def _ensure_action_fixtures():
+    """The three inputs `action_plugins()` acts on, written once: once committed, a fixed
+    content is the point, so a fixture already on disk is left untouched rather than
+    regenerated."""
+    os.makedirs(ACTION_SRC, exist_ok=True)
+    hello = os.path.join(ACTION_SRC, "hello.txt")
+    if not os.path.exists(hello):
+        with open(hello, "w", encoding="utf-8") as f:
+            f.write("hello\n")
+        os.chmod(hello, 0o644)
+    motd = os.path.join(ACTION_SRC, "motd.j2")
+    if not os.path.exists(motd):
+        with open(motd, "w", encoding="utf-8") as f:
+            f.write(
+                "# {{ ansible_managed }}\nhost={{ who }}\n{% if extra %}\nextra=yes\n{% endif %}\n"
+            )
+        os.chmod(motd, 0o644)
+    bundle = os.path.join(ACTION_SRC, "bundle.tar.gz")
+    if not os.path.exists(bundle):
+        _write_bundle(bundle)
+        os.chmod(bundle, 0o644)
+    return hello, motd, bundle
+
+
+def action_plugins():
+    """Record raw results from the action plugins that do real work on a managed host: copy,
+    template, package, service and unarchive.
+
+    `gather_facts: false` is deliberate: it is the path through which `package` and `service`
+    run their own filtered `setup`, and that path is the one Volant has to reproduce.
+    """
+    hello, motd, bundle = _ensure_action_fixtures()
+    dest_dir = f"{ACTION_TMP}/dir"
+    unpacked_dir = f"{ACTION_TMP}/unpacked"
+
+    tasks = []
+    recorded = []
+
+    def add(name, module, args, extra=None):
+        task = {"name": name, module: args}
+        task.update(extra or {})
+        tasks.append(task)
+        recorded.append(name)
+
+    def setup(module, args):
+        tasks.append({"name": f"setup-{len(tasks)}", module: args})
+
+    add(
+        "copy-new",
+        "copy",
+        {"src": hello, "dest": f"{ACTION_TMP}/new.txt", "mode": "0644"},
+    )
+    add(
+        "copy-same",
+        "copy",
+        {"src": hello, "dest": f"{ACTION_TMP}/new.txt", "mode": "0644"},
+    )
+    add(
+        "copy-content",
+        "copy",
+        {"content": "x\n", "dest": f"{ACTION_TMP}/content.txt", "mode": "0644"},
+    )
+    add(
+        "copy-force-false",
+        "copy",
+        {"content": "y\n", "dest": f"{ACTION_TMP}/content.txt", "force": False},
+    )
+    setup("file", {"path": dest_dir, "state": "directory"})
+    add(
+        "copy-dest-dir",
+        "copy",
+        {"src": hello, "dest": f"{dest_dir}/", "mode": "0644"},
+    )
+    add(
+        "copy-validate-fail",
+        "copy",
+        {"content": "", "dest": f"{ACTION_TMP}/invalid.txt", "validate": "test -s %s"},
+        {"ignore_errors": True},
+    )
+    add(
+        "copy-remote-src",
+        "copy",
+        {
+            "src": f"{ACTION_TMP}/new.txt",
+            "dest": f"{ACTION_TMP}/remote.txt",
+            "remote_src": True,
+            "mode": "0644",
+        },
+    )
+    template_vars = {"vars": {"who": "golden", "extra": True}}
+    add(
+        "template-new",
+        "template",
+        {"src": motd, "dest": f"{ACTION_TMP}/motd", "mode": "0644"},
+        template_vars,
+    )
+    add(
+        "template-same",
+        "template",
+        {"src": motd, "dest": f"{ACTION_TMP}/motd", "mode": "0644"},
+        template_vars,
+    )
+    add(
+        "template-lstrip",
+        "template",
+        {
+            "src": motd,
+            "dest": f"{ACTION_TMP}/motd-lstrip",
+            "mode": "0644",
+            "lstrip_blocks": True,
+        },
+        template_vars,
+    )
+    # Both need `become` to do anything real, and neither is guaranteed on a contributor's
+    # machine (no `sudo -n`, no systemd): `ignore_errors` keeps a failure here from also halting
+    # the unrelated cases that follow, the same role it plays for `apt` in python_modules().
+    add(
+        "package-present",
+        "package",
+        {"name": "bash", "state": "present"},
+        {"become": True, "ignore_errors": True},
+    )
+    add(
+        "service-started",
+        "service",
+        {"name": "systemd-journald", "state": "started"},
+        {"become": True, "ignore_errors": True},
+    )
+    setup("file", {"path": unpacked_dir, "state": "directory"})
+    add("unarchive-local", "unarchive", {"src": bundle, "dest": unpacked_dir})
+    add(
+        "unarchive-creates",
+        "unarchive",
+        {
+            "src": bundle,
+            "dest": unpacked_dir,
+            "creates": f"{unpacked_dir}/inside.txt",
+        },
+    )
+
+    play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": tasks}]
+    env = dict(
+        os.environ,
+        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        ANSIBLE_NOCOLOR="1",
+        # Same reasoning as python_modules(): naming the interpreter outright skips discovery,
+        # so neither its warning nor the fact it would set ever reaches these results.
+        ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
+    )
+    shutil.rmtree(ACTION_TMP, ignore_errors=True)
+    os.makedirs(ACTION_TMP, exist_ok=True)
+    playbook = os.path.join(ACTION_TMP, "action-plugins.yml")
+    with open(playbook, "w", encoding="utf-8") as f:
+        yaml.safe_dump(play, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    run = subprocess.run(
+        ["ansible-playbook", "-i", "localhost,", playbook],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        print(
+            f"ansible-playbook exited {run.returncode} while recording the action plugins",
+            file=sys.stderr,
+        )
+        if run.stderr:
+            print(run.stderr, file=sys.stderr)
+        return 1
+    report = json.loads(run.stdout)
+    outcomes = {t["task"]["name"]: t["hosts"]["localhost"] for t in report["plays"][0]["tasks"]}
+    destination = os.path.join(HERE, "action")
+    os.makedirs(destination, exist_ok=True)
+    count = 0
+    for name in recorded:
+        outcome = outcomes[name]
+        if name in ("package-present", "service-started") and outcome.get("failed"):
+            print(f"{name} is not usable here: {outcome.get('msg', 'unknown error')}", file=sys.stderr)
+            stale = os.path.join(destination, f"{name}.json")
+            if os.path.exists(stale):
+                os.remove(stale)
+                print(
+                    f"removed the stale {name}.json so a later contributor does not read it as "
+                    "verified against this reference",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"no {name}.json to remove; nothing was recorded for {name}", file=sys.stderr)
+            continue
+        result = dict(outcome)
+        result.pop("invocation", None)
+        _redact_account(result, ("owner", "group"), ("uid", "gid"))
+        result = _redact_staged_paths(result)
+        with open(os.path.join(destination, f"{name}.json"), "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False, sort_keys=True)
+            f.write("\n")
+        count += 1
+    print(f"action plugin goldens recorded: {count}/{len(recorded)} cases")
     return 0
 
 

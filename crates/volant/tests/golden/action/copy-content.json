@@ -1,0 +1,17 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": true,
+  "checksum": "6fcf9dfbd479ed82697fee719b9f8c610a11ff2a",
+  "dest": "/tmp/volant16-golden/content.txt",
+  "diff": [],
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "md5sum": "401b30e3b8b5d629635a5c613cdb7919",
+  "mode": "0644",
+  "owner": "<golden-generator-account>",
+  "size": 2,
+  "src": "<golden-staged-path>",
+  "state": "file",
+  "uid": 999999999
+}

@@ -194,9 +194,25 @@ impl Renderer {
         } else {
             result.0.clone()
         };
-        // The reference shows no `failed` at all; a `true` stays until that is matched.
+        // The reference shows no `failed` at all; a `true` stays on the lines not yet measured.
         if body.get("failed") == Some(&serde_json::Value::Bool(false)) {
             body.remove("failed");
+        }
+        // Measured on ansible-core 2.19.12 at the default verbosity: a `fatal:` line shows no
+        // `failed`, no `invocation` and no `diff`, whichever module failed (a timed-out `pause`,
+        // a failed `copy` validate, a failed `lineinfile`). Its `_dump_results` keeps the last two
+        // from `-vvv` on, read off the source and not measured.
+        if matches!(
+            outcome,
+            Outcome::Failed | Outcome::Rescued | Outcome::Ignored
+        ) && label.is_none()
+            && !censored
+        {
+            body.remove("failed");
+            if self.verbosity < 3 {
+                body.remove("invocation");
+                body.remove("diff");
+            }
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.
         body.remove("exception");
@@ -494,12 +510,9 @@ mod tests {
         assert_eq!(lines[4], "skipping: [web3]");
         assert_eq!(
             lines[5],
-            r#"fatal: [web4]: FAILED! => {"failed": true, "msg": "non-zero return code", "rc": 1}"#
+            r#"fatal: [web4]: FAILED! => {"msg": "non-zero return code", "rc": 1}"#
         );
-        assert_eq!(
-            lines[6],
-            r#"fatal: [web5]: FAILED! => {"failed": true, "rc": 1}"#
-        );
+        assert_eq!(lines[6], r#"fatal: [web5]: FAILED! => {"rc": 1}"#);
         assert_eq!(lines[7], "...ignoring");
     }
 
@@ -534,7 +547,39 @@ mod tests {
         });
         assert_eq!(
             out.trim_end(),
-            r#"fatal: [h1]: FAILED! => {"changed": false, "failed": true, "msg": "Error executing command.", "rc": 2}"#
+            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "Error executing command.", "rc": 2}"#
+        );
+    }
+
+    /// A `fatal:` line carries neither `failed`, nor `invocation`, nor `diff`, whichever module
+    /// failed. Measured on ansible-core 2.19.12: a timed-out `pause` shows
+    /// `fatal: [h1]: FAILED! => {"changed": false, "msg": "Task failed: Timed out after 1
+    /// second(s).", "timedout": {...}}`, and a failed `copy` validate and a failed `lineinfile`
+    /// show no `failed`, no `invocation` and no `diff: []`, all three of which they register.
+    ///
+    /// What would make this red: any of the three left on the line.
+    #[test]
+    fn a_fatal_line_shows_what_the_reference_shows() {
+        let out = capture(|r| {
+            r.result(
+                "h1",
+                Outcome::Failed,
+                &result(json!({
+                    "changed": false,
+                    "diff": [],
+                    "failed": true,
+                    "invocation": {"module_args": {"path": "/tmp/x"}},
+                    "msg": "boom"
+                })),
+                None,
+                Dump::No,
+                false,
+                None,
+            );
+        });
+        assert_eq!(
+            out.trim_end(),
+            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "boom"}"#
         );
     }
 

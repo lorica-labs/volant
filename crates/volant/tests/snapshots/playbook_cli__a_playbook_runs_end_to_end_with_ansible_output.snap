@@ -9,7 +9,7 @@ TASK [Say hello] ***************************************************************
 changed: [localhost]
 
 TASK [Fail but keep going] *****************************************************
-fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "[time]", "end": "[time]", "failed": true, "msg": "non-zero return code", "rc": 1, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "[time]", "end": "[time]", "msg": "non-zero return code", "rc": 1, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
 ...ignoring
 
 TASK [Skip because the path exists] ********************************************

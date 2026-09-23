@@ -15,6 +15,9 @@ pub struct FileRender {
     pub lstrip_blocks: bool,
     /// `newline_sequence`, one of "\n", "\r", "\r\n" once the escaped spellings are read.
     pub newline_sequence: String,
+    /// The name a render error gives the template: its `src` as the task wrote it. `None` is
+    /// minijinja's own `<string>`.
+    pub name: Option<String>,
 }
 
 impl Default for FileRender {
@@ -23,6 +26,7 @@ impl Default for FileRender {
             trim_blocks: true,
             lstrip_blocks: false,
             newline_sequence: "\n".to_string(),
+            name: None,
         }
     }
 }
@@ -59,7 +63,10 @@ impl Templar {
         env.set_lstrip_blocks(options.lstrip_blocks);
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let (ctx, _tainted) = context_of(vars.into());
-        let mut rendered = env.render_str(&normalized, ctx).map_err(convert_error)?;
+        let name = options.name.as_deref().unwrap_or("<string>");
+        let mut rendered = env
+            .render_named_str(name, &normalized, ctx)
+            .map_err(convert_error)?;
         let wanted = trailing_newlines(text);
         let got = trailing_newlines(&rendered);
         if wanted > got {

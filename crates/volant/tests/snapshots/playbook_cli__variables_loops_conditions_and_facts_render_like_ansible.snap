@@ -41,13 +41,13 @@ ok: [beta]
 
 TASK [Failing only on beta] ****************************************************
 changed: [alpha]
-fatal: [beta]: FAILED! => {"changed": true, "cmd": ["echo", "2"], "delta": "[time]", "end": "[time]", "failed": true, "failed_when_result": true, "msg": "", "rc": 0, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "2", "stdout_lines": ["2"]}
+fatal: [beta]: FAILED! => {"changed": true, "cmd": ["echo", "2"], "delta": "[time]", "end": "[time]", "failed_when_result": true, "msg": "", "rc": 0, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "2", "stdout_lines": ["2"]}
 ...ignoring
 
 TASK [Undefined variable] ******************************************************
-fatal: [alpha]: FAILED! => {"failed": true, "msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
+fatal: [alpha]: FAILED! => {"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
-fatal: [beta]: FAILED! => {"failed": true, "msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
+fatal: [beta]: FAILED! => {"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
 
 PLAY RECAP *********************************************************************

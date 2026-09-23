@@ -149,7 +149,7 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
         trim_blocks: flag(args, "trim_blocks", true),
         lstrip_blocks: flag(args, "lstrip_blocks", false),
         newline_sequence: newline_sequence.into(),
-        name: Some(src.to_string()),
+        name: Some(src.clone()),
     };
     let out = ctx
         .templar

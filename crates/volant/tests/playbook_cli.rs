@@ -3996,6 +3996,23 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "(item=alpha)",
     ),
+    // The probe's own playbook, `task-<kw>.yml`, is the one file each lookup can find.
+    runs(
+        "task",
+        "with_fileglob",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item | basename }}\"\n      with_fileglob:\n        - \"{{ playbook_dir }}/task-with_fileglob.y*ml\"\n",
+        &[],
+        0,
+        "\"msg\": \"task-with_fileglob.yml\"",
+    ),
+    runs(
+        "task",
+        "with_first_found",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item | basename }}\"\n      with_first_found:\n        - \"{{ playbook_dir }}/nosuch.yml\"\n        - \"{{ playbook_dir }}/task-with_first_found.yml\"\n",
+        &[],
+        0,
+        "\"msg\": \"task-with_first_found.yml\"",
+    ),
     runs(
         "play",
         "become",
@@ -7795,4 +7812,126 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
         String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A controller interpreter with ansible-core, which a task an action plugin backs needs for its
+/// sub-tasks: `VOLANT_PYTHON` when it is set, else the one beside an `ansible-playbook` on `PATH`
+/// (where a `uv tool` or `pipx` install puts it), else `python3`. `None` after saying why, so a
+/// machine without ansible-core skips loudly; with `VOLANT_PYTHON` set there is no skip, and an
+/// interpreter that cannot import ansible-core fails the test.
+fn ansible_core_python() -> Option<String> {
+    let explicit = std::env::var("VOLANT_PYTHON").ok();
+    let mut candidates: Vec<String> = explicit.iter().cloned().collect();
+    if explicit.is_none() {
+        let probe = Command::new("sh")
+            .args(["-c", "command -v ansible-playbook"])
+            .output()
+            .expect("command -v runs");
+        let named = String::from_utf8_lossy(&probe.stdout).trim().to_string();
+        if let Ok(real) = std::fs::canonicalize(&named)
+            && let Some(bin) = real.parent()
+        {
+            candidates.push(bin.join("python3").display().to_string());
+            candidates.push(bin.join("python").display().to_string());
+        }
+        candidates.push("python3".into());
+    }
+    for python in &candidates {
+        let imports = Command::new(python)
+            .args(["-c", "import ansible.release"])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if imports {
+            return Some(python.clone());
+        }
+    }
+    assert!(
+        explicit.is_none(),
+        "VOLANT_PYTHON cannot import ansible-core: {candidates:?}"
+    );
+    eprintln!("skipped: no interpreter with ansible-core among {candidates:?}. Set VOLANT_PYTHON.");
+    None
+}
+
+/// `retries` on a task an action plugin backs, through the real driver on the local connection.
+/// Measured on ansible-core 2.19.12 with the same two tasks on `localhost`: a `copy` that
+/// succeeds under `retries: 3` reports `attempts=1` and no retry line; a `copy` into a directory
+/// that does not exist under `retries: 2` prints `FAILED - RETRYING ... (2 retries left)`, then
+/// `(1 retries left)`, and fails with `"attempts": 2`.
+///
+/// What would make this red: the driver's plugin branch running each item once whatever the
+/// retry plan says, which gives no retry line and no `attempts` at all; or a passing attempt
+/// retried.
+#[test]
+fn a_task_an_action_plugin_backs_retries_through_the_driver() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("plugin-retries");
+    let (code, text) = {
+        let body = format!(
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: copy that succeeds\n      copy:\n        content: \"x\\n\"\n        dest: {dir}/ok.txt\n      retries: 3\n      register: ok\n    - debug: var=ok.attempts\n    - name: copy into a missing directory\n      copy:\n        content: \"x\\n\"\n        dest: {dir}/nosuch/x.txt\n      retries: 2\n      delay: 0\n      ignore_errors: true\n",
+            dir = dir.display()
+        );
+        let file = dir.join("retries.yml");
+        std::fs::write(&file, body).expect("the playbook is written");
+        let out = volant_within_env(
+            &["playbook", file.to_str().expect("a path")],
+            std::time::Duration::from_secs(60),
+            &[("VOLANT_PYTHON", &python)],
+        );
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains(r#""ok.attempts": 1"#), "{text}");
+    assert!(
+        !text.contains("FAILED - RETRYING: [localhost]: copy that succeeds"),
+        "{text}"
+    );
+    let failing = section(&text, "copy into a missing directory");
+    for left in [2, 1] {
+        assert!(
+            failing.contains(&format!(
+                "FAILED - RETRYING: [localhost]: copy into a missing directory ({left} retries left)."
+            )),
+            "{failing}"
+        );
+    }
+    assert!(
+        failing.contains(r#""attempts": 2"#) && failing.contains("...ignoring"),
+        "{failing}"
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// `ansible_run_tags` and `ansible_skip_tags` are the run's own tag options. Measured on
+/// ansible-core 2.19.12: `run=['all'] skip=[]` with no option, `run=['kubeconfig']` under
+/// `--tags kubeconfig`, `skip=['foo']` under `--skip-tags foo`.
+///
+/// What would make this red: the options never reaching the variables, which leaves every run
+/// reading `['all']` and `[]` whatever it was asked for.
+#[test]
+fn the_tag_options_reach_ansible_run_tags_and_ansible_skip_tags() {
+    let dir = probe_dir("run-tags");
+    let body = "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Show\n      debug:\n        msg: \"run={{ ansible_run_tags | join(',') }} skip={{ ansible_skip_tags | join(',') }}\"\n      tags: always\n";
+    for (args, want) in [
+        (&[][..], "run=all skip="),
+        (&["--tags", "x"][..], "run=x skip="),
+        (&["--skip-tags", "y"][..], "run=all skip=y"),
+    ] {
+        let (code, text) = run_probe(&dir, "run-tags", body, args, None);
+        assert_eq!(code, 0, "{args:?}: {text}");
+        assert!(
+            text.contains(&format!("\"msg\": \"{want}\"")),
+            "{args:?}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }

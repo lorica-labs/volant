@@ -93,6 +93,33 @@ pub fn is_python_module(module: &str) -> bool {
         && include_module(module).is_none()
         && short_name(module) != crate::playbook::META
         && !crate::action_plugins::is_action_backed(module)
+        // A plugin this release runs is not a module either: it picks one. Without this line
+        // `package`, gone from the refused list, would be built and sent as itself.
+        && crate::action_plugins::kind(module).is_none()
+}
+
+/// The short names of every module a run needs in its union, from the modules its steps and
+/// handlers name: a Python module for itself, a plugin for every module it may run.
+///
+/// Every backend a plugin may pick goes in before the first connection, because nothing is built
+/// once the facts are known. A plugin's own name never goes in: the reference never runs the
+/// `package` module, its plugin is where the choice lives.
+pub fn modules_to_build<'a>(
+    modules: impl IntoIterator<Item = &'a str>,
+) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for module in modules {
+        if let Some(kind) = crate::action_plugins::kind(module) {
+            out.extend(
+                crate::action_plugins::modules_for(kind)
+                    .iter()
+                    .map(|m| (*m).to_string()),
+            );
+        } else if is_python_module(module) {
+            out.insert(short_name(module).to_string());
+        }
+    }
+    out
 }
 
 /// One union blob for a whole run, or `None` when no task of it needs one.
@@ -619,6 +646,34 @@ mod tests {
             !is_python_module("community.general.lineinfile"),
             "another collection's module is not ours to build"
         );
+    }
+
+    /// A run naming a plugin builds every module the plugin may pick, and never the plugin's own
+    /// name.
+    ///
+    /// What would make this red: `package` in the set, which is `package` built and sent as
+    /// itself - the reference never runs that module, its plugin is where the choice lives - or a
+    /// backend missing, which leaves a host whose manager is `dnf` failing on a module the union
+    /// was never asked for.
+    #[test]
+    fn a_plugin_brings_its_backends_into_the_union_and_not_itself() {
+        let built = modules_to_build(["ansible.builtin.package", "service", "ping", "command"]);
+        let built: Vec<&str> = built.iter().map(String::as_str).collect();
+        assert_eq!(
+            built,
+            [
+                "apt",
+                "dnf",
+                "dnf5",
+                "ping",
+                "service",
+                "setup",
+                "systemd",
+                "systemd_service",
+                "sysvinit"
+            ]
+        );
+        assert!(!built.contains(&"package"), "{built:?}");
     }
 
     /// A run that names no Python module builds nothing, so a controller without ansible-core

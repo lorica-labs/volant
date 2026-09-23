@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::TaskResult;
 
+use crate::action_plugins::Kind;
 use crate::compile::{Compiled, IncludeParams, Step};
 use crate::playbook::{PlayTask, python_repr};
 use crate::python::ModulePayload;
@@ -308,6 +309,9 @@ pub(super) enum Prepared {
         /// not - would otherwise be that size. Clippy's `large_enum_variant` is denied here and
         /// says so; unboxing it is not a simplification.
         Option<Box<ModulePayload>>,
+        /// Present when an action plugin this release runs backs the task. Such a task carries
+        /// no payload of its own: the sub-tasks the plugin asks for each carry theirs.
+        Option<Kind>,
     ),
 }
 
@@ -543,6 +547,15 @@ pub(super) fn prepare(
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
     // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation = become_for(task, plan, &base, defaults, templar)?;
+    if let Some(kind) = crate::action_plugins::kind(&task.module) {
+        return Ok(Prepared::Remote(
+            items,
+            escalation,
+            delegate,
+            None,
+            Some(kind),
+        ));
+    }
     // The module's half of the payload, when this module is one the run built one for. The
     // interpreter is not here: it is the host's, and no link to it exists yet.
     //
@@ -560,7 +573,7 @@ pub(super) fn prepare(
                 })
             })
     });
-    Ok(Prepared::Remote(items, escalation, delegate, payload))
+    Ok(Prepared::Remote(items, escalation, delegate, payload, None))
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what
@@ -718,16 +731,24 @@ mod tests {
             )
             .expect("the task renders");
             match prepared {
-                Prepared::Remote(_, _, _, payload) => payload,
+                Prepared::Remote(_, _, _, payload, kind) => (payload, kind),
                 _ => panic!("{module} is a remote task"),
             }
         };
-        let built = payload_of("lineinfile").expect("the run built one for it");
+        let (built, kind) = payload_of("lineinfile");
+        let built = built.expect("the run built one for it");
         assert_eq!(built.blob, "ab");
         assert_eq!(built.facts.module_fqn, "ansible.modules.lineinfile");
+        assert_eq!(kind, None);
         assert!(
-            payload_of("command").is_none(),
+            payload_of("command").0.is_none(),
             "a module this release runs itself travels without a payload"
+        );
+        // A plugin's sub-tasks carry the payloads, so the task itself carries none: it says
+        // which plugin runs it, and that is all.
+        assert_eq!(
+            payload_of("ansible.builtin.package"),
+            (None, Some(Kind::Package))
         );
     }
 

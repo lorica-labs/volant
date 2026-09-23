@@ -1015,6 +1015,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         args
     } else if is_known(&module)
         || crate::python::is_python_module(&module)
+        || crate::action_plugins::kind(&module).is_some()
         || import_module(&module).is_some()
         || include_module(&module).is_some()
     {

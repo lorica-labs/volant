@@ -64,7 +64,9 @@ pub(super) fn resolve_include(
 ) -> (Vec<IncludeGroup>, Vec<Shown>) {
     let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
         Ok(
-            Prepared::Skipped(items) | Prepared::Local(items, _) | Prepared::Remote(items, _, _, _),
+            Prepared::Skipped(items)
+            | Prepared::Local(items, _)
+            | Prepared::Remote(items, _, _, _, _),
         ) => items,
         // A `when` that cannot be evaluated or a `loop` that is not a list, reported with the
         // reference's own prefix for a task that dies before it runs. Not deferred the way an

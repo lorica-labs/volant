@@ -139,13 +139,8 @@ jobs:
       - name: Install the controller Python
         run: |
           set -euo pipefail
-          if command -v uv >/dev/null 2>&1; then
-            uv venv .venv
-            uv pip install --python .venv/bin/python ansible-core==2.19.12
-          else
-            python3 -m venv .venv
-            .venv/bin/python -m pip install ansible-core==2.19.12
-          fi
+          python3 -m venv .venv
+          .venv/bin/python -m pip install ansible-core==2.19.12
           echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
       - name: Check the host and controller Pythons are distinct
         run: |

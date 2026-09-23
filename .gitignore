@@ -10,3 +10,6 @@
 /.superpowers/
 /.claude/*
 !/.claude/skills/
+
+# the controller Python the ssh job builds at the checkout root
+/.venv/

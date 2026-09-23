@@ -1517,6 +1517,7 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
             })) => {
                 if let Some(slot) = received.get_mut(index) {
                     add_output_lines(&mut result);
+                    summarise_exception(&mut result);
                     *slot = Some(result);
                 }
             }
@@ -1555,12 +1556,31 @@ fn add_output_lines(result: &mut TaskResult) {
     }
 }
 
+/// The `exception` of a module's result, as the reference's controller leaves it. Its
+/// `_parse_returned_data` turns whatever a module sent - an error summary, a traceback string or
+/// nothing - into an error summary whenever the result failed, and drops a falsy one otherwise;
+/// `error_summary` renders that summary as `(traceback unavailable)` while tracebacks are off,
+/// which is the default. Measured on ansible-core 2.19.12: a failed `copy`, `lineinfile` and
+/// `command` each register that string, and a `stat` that succeeds registers no `exception`. So
+/// does a failed `raw`, which never goes through `_parse_returned_data`: `TaskExecutor._execute`
+/// normalises every task's final result the same way (`maybe_raise_on_result`).
+fn summarise_exception(result: &mut TaskResult) {
+    let sent = result.0.remove("exception");
+    let failed = result.0.get("failed").is_some_and(|v| !python_falsy(v));
+    if failed || sent.is_some_and(|e| !python_falsy(&e)) {
+        result
+            .0
+            .insert("exception".into(), Value::from("(traceback unavailable)"));
+    }
+}
+
 /// Whether Python's `bool()` is false for the value a module sent: `None`, `False`, a zero, or
-/// an empty list or dict.
+/// an empty string, list or dict.
 fn python_falsy(value: &Value) -> bool {
     match value {
         Value::Null | Value::Bool(false) => true,
         Value::Number(n) => matches!(n.to_string().as_str(), "0" | "0.0" | "-0.0"),
+        Value::String(s) => s.is_empty(),
         Value::Array(items) => items.is_empty(),
         Value::Object(map) => map.is_empty(),
         _ => false,
@@ -2831,6 +2851,64 @@ mod tests {
             "{:?}",
             agent.sent
         );
+    }
+
+    /// A failed module's `exception` is the sentence the reference registers, whatever the module
+    /// sent, and a result that neither failed nor sent one has none.
+    ///
+    /// Measured on ansible-core 2.19.12, `connection: local`: `copy` with a `validate` naming a
+    /// program that is not there sends an error summary (`fail_json` given the `OSError`), a
+    /// `lineinfile` on a missing file sends no `exception` at all, and a `command: false` fails
+    /// too; each one registers `exception: "(traceback unavailable)"`, a `str`, and a `stat` that
+    /// succeeds registers no `exception`. Volant registered the first as the module's serialized
+    /// `{"__ansible_type": "ErrorSummary", ...}` and the other two without the key.
+    ///
+    /// What would make this red: the normalisation in `run_agent_batch` removed, which leaves the
+    /// serialized summary in the first result and nothing in the second; or an `exception` put on
+    /// a result that succeeded.
+    #[tokio::test]
+    async fn a_failed_module_registers_the_error_summary_the_reference_does() {
+        let summary = json!({
+            "__ansible_type": "ErrorSummary",
+            "event": {"msg": "Error executing command."}
+        });
+        let answers = [
+            json!({"failed": true, "msg": "Error executing command.", "exception": summary}),
+            json!({"failed": true, "msg": "Destination /x does not exist !", "rc": 257}),
+            json!({"changed": false, "stat": {"exists": true}, "exception": ""}),
+        ];
+        for (answer, want) in answers.into_iter().zip([
+            Some("(traceback unavailable)"),
+            Some("(traceback unavailable)"),
+            None,
+        ]) {
+            let mut stop = watch::channel(false).1;
+            let mut stop_broken = false;
+            let mut logs = Vec::new();
+            let mut agent = FakeAgent::answering(one_result(4, answer.clone()).to_vec());
+            let tasks = vec![protocol_task(&task("copy"), &bare_item(), None)];
+            let (received, _) = run_agent_batch(
+                &mut agent,
+                "h1",
+                4,
+                tasks,
+                None,
+                &[],
+                &mut stop,
+                &mut stop_broken,
+                &mut logs,
+            )
+            .await;
+            let result = received[0].clone().expect("a result").0;
+            assert_eq!(
+                result.get("exception").and_then(Value::as_str),
+                want,
+                "{answer} gave {result:?}"
+            );
+            if want.is_none() {
+                assert!(!result.contains_key("exception"), "{result:?}");
+            }
+        }
     }
 
     /// A result carrying `stdout` or `stderr` comes back with the `_lines` of each, split the way

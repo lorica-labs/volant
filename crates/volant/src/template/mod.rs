@@ -12,7 +12,10 @@ use minijinja::value::{Enumerator, Object};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior};
 use serde_json::{Map, Value};
 
+mod file;
 mod filters;
+
+pub use file::FileRender;
 
 /// Prefix of every error raised because a variable had no value, the one template failure
 /// Ansible treats as recoverable in places such as `vars_files`.

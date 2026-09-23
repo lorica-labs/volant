@@ -1020,6 +1020,7 @@ mod tests {
                 file_dir: role.join("tasks"),
                 role_dir: Some(role.clone()),
                 depth: 0,
+                tags: Vec::new(),
             },
         );
         let vars = &prepared(&in_role, &store).unwrap()[0].vars;
@@ -1041,6 +1042,7 @@ mod tests {
                 file_dir: play.clone(),
                 role_dir: None,
                 depth: 0,
+                tags: Vec::new(),
             },
         );
         let vars = &prepared(&in_play, &store).unwrap()[0].vars;

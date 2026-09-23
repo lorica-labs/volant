@@ -111,6 +111,7 @@ mod tests {
             file_dir: PathBuf::from("/pb/roles/r/tasks"),
             role_dir: Some(PathBuf::from("/pb/roles/r")),
             depth: 0,
+            tags: Vec::new(),
         };
         let pb = Path::new("/pb");
         assert_eq!(

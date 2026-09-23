@@ -194,6 +194,10 @@ pub(crate) struct Origin {
     /// rather than followed: the reference recurses until Python's stack is gone and reports its
     /// own crash, with no recap and nothing to read.
     pub depth: u32,
+    /// For an include statement, the tags the layers around it gave it - the play, the blocks
+    /// it sits in, the role entries and imports above it - without the ones it carries itself.
+    /// What it brings in is compiled under these. Empty for every other step.
+    pub tags: Vec<String>,
 }
 
 impl Default for Origin {
@@ -202,6 +206,7 @@ impl Default for Origin {
             file_dir: PathBuf::from("."),
             role_dir: None,
             depth: 0,
+            tags: Vec::new(),
         }
     }
 }
@@ -296,8 +301,8 @@ pub(crate) struct Compiled {
     /// pointing at the handler it was pointing at.
     pub handlers: Vec<Handler>,
     /// The play's own keywords, the outermost layer of every task's merge. An include reads it
-    /// again at run time: measured, a task an `include_tasks` brought in still carries the play's
-    /// tags, while the tags written on the statement itself stop there.
+    /// again at run time, with the tags the statement inherited laid over it (see
+    /// [`Origin::tags`]).
     pub inherited: PlayTask,
     /// Where a role named at run time is looked for. Kept with the compiled play because an
     /// `include_role` resolves its role while the play runs and the search list is the play's.
@@ -647,6 +652,7 @@ impl Builder<'_> {
             file_dir: self.file_dir.clone(),
             role_dir: self.role_dir.clone(),
             depth: self.include_depth,
+            tags: Vec::new(),
         })
     }
 
@@ -756,13 +762,17 @@ impl Builder<'_> {
                 _ => StepKind::Task,
             },
         };
+        let mut origin = self.origin();
+        if matches!(kind, StepKind::Include(_)) {
+            Arc::make_mut(&mut origin).tags.clone_from(&inherited.tags);
+        }
         self.push(Step {
             kind,
             task,
             block,
             section,
             role,
-            origin: self.origin(),
+            origin,
             include_params: None,
             hosts: None,
         });
@@ -1261,11 +1271,13 @@ pub(crate) enum IncludeTarget {
 /// is what rebases them onto the running play, and it is the only caller.
 ///
 /// What comes down from the statement is measured, and it is less than the plan assumed: only its
-/// `vars:`. `tags` stop at the statement (`--tags inc` runs the include and not the tasks it
-/// brought in), `when` is evaluated for the statement alone, and `become` and `environment` are
-/// not even accepted on one - ansible-core 2.19.12 refuses them at load time with `'environment'
-/// is not a valid attribute for a TaskInclude`. The play's own layer still reaches them, measured:
-/// `--tags <a play tag>` runs a task an `include_tasks` brought in.
+/// `vars:`. The tags written on the statement stop there (`--tags inc` runs the include and not
+/// the tasks it brought in), `when` is evaluated for the statement alone, and `become` and
+/// `environment` are not even accepted on one - ansible-core 2.19.12 refuses them at load time
+/// with `'environment' is not a valid attribute for a TaskInclude`. The tags of every layer
+/// **around** the statement still reach them, measured: `--tags <a play tag>`, `--tags <the
+/// role entry's tag>` and `--tags <a tag of the block around the statement>` each run a task an
+/// `include_tasks` brought in.
 ///
 /// **An `Err` from here is one host's task failure**, rescuable and `ignore_errors`-able, because
 /// the single caller turns it into that. The pre-flight over the spliced content at the end relies
@@ -1279,10 +1291,12 @@ pub(crate) fn expand_include(
     request: &IncludeRequest,
 ) -> anyhow::Result<Compiled> {
     let depth = parent.origin.depth + 1;
-    // The play's own layer and nothing else. What the statement hands down does not travel in the
-    // merge: it is a variable layer of its own, laid on by `graft` at the precedence measured for
-    // it, and putting it here as well would put it under the host's facts instead of over them.
-    let inherited = base.inherited.clone();
+    // The play's own layer, plus the tags the layers around the statement gave it. What the
+    // statement hands down does not travel in the merge: it is a variable layer of its own, laid
+    // on by `graft` at the precedence measured for it, and putting it here as well would put it
+    // under the host's facts instead of over them.
+    let mut inherited = base.inherited.clone();
+    inherited.tags.clone_from(&parent.origin.tags);
     let mut builder = Builder {
         steps: Vec::new(),
         blocks: Vec::new(),
@@ -2687,6 +2701,149 @@ mod tests {
         assert_eq!(span.rescue, 1..1);
         assert_eq!(span.always, 1..2);
         assert_eq!(walk(&c, 0), ["kept before", "kept cleanup", "kept after"]);
+    }
+
+    /// What the include statements of a play bring in under a tag selection, followed down
+    /// through every include they bring in themselves: the names of the steps at the bottom, or
+    /// `None` when the selection dropped the first statement.
+    fn brought_in(dir: &Path, play: &str, sel: &TagSelection) -> Option<Vec<String>> {
+        let mut pb = parse(play, dir.join("x.yml").to_str().unwrap()).unwrap();
+        pb.plays[0].gather_facts = false;
+        let search = RoleSearch {
+            paths: vec![dir.join("roles")],
+            collections: Vec::new(),
+        };
+        let mut base = compile(&pb.plays[0], &search, sel).unwrap();
+        let include = |c: &Compiled| {
+            c.steps
+                .iter()
+                .find(|s| matches!(s.kind, StepKind::Include(_)))
+                .cloned()
+        };
+        let mut parent = include(&base)?;
+        loop {
+            let target = match parent.kind {
+                StepKind::Include(IncludeKind::Tasks) => {
+                    let name = parent.task.args["_raw_params"].as_str().unwrap();
+                    IncludeTarget::File(beside_or_in_role(
+                        &parent.origin.file_dir,
+                        parent.origin.role_dir.as_deref(),
+                        name,
+                    ))
+                }
+                _ => IncludeTarget::Role(Box::new(include_role_entry(&parent.task.args).unwrap())),
+            };
+            let request = IncludeRequest {
+                target,
+                what: String::new(),
+                vars: IncludeParams::default(),
+                label: None,
+            };
+            let expanded = expand_include(&base, &parent, &request).unwrap();
+            match include(&expanded) {
+                Some(next) => (parent, base) = (next, expanded),
+                None => return Some(names(&expanded).into_iter().map(String::from).collect()),
+            }
+        }
+    }
+
+    /// The tags the layers around a dynamic include gave the statement reach the tasks it brings
+    /// in, and the tags written on the statement itself stop there.
+    ///
+    /// Measured on ansible-core 2.19.12, `connection: local`, one row per line of the table below:
+    /// a role applied with `tags: [t]` whose `main.yml` is one `include_tasks` runs the included
+    /// task under `--tags t` (`included:`, then the task, `ok=2`); so does a block tagged `b`
+    /// around an `include_tasks` or an `include_role` under `--tags b`, a role tagged `t` whose
+    /// tasks `include_role` another under `--tags t`, a role tagged `always` under `--tags
+    /// other`, and a role tagged `[never, n]` under `--tags n`. An `include_tasks` or an
+    /// `include_role` tagged `i` itself shows `included:` under `--tags i` and runs nothing
+    /// behind it (`ok=1`). `--skip-tags t`, `--tags zz` and an untagged run of a role tagged
+    /// `never` show no line at all. ansible-core's source says the same: a block read by a
+    /// dynamic include skips the statement and asks the statement's own parent for what it
+    /// inherits (`Block._get_parent_attribute`, "defer to the grandparent").
+    ///
+    /// What would make this red: the included file compiled against the play's layer alone,
+    /// which drops everything a role or a block gave the statement, so the rows expecting
+    /// `[in]` get `[]` and the run succeeds having done nothing; or the statement's own tags
+    /// handed down as well, which fills the two `[i]` rows.
+    #[test]
+    fn a_dynamic_include_hands_down_what_the_layers_above_it_gave_it() {
+        // The play, `--tags`, `--skip-tags`, and what the include at the bottom brings in.
+        type Row = (
+            String,
+            &'static [&'static str],
+            &'static [&'static str],
+            Option<&'static [&'static str]>,
+        );
+        let dir = std::env::temp_dir().join(format!("volant-include-tags-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for role in ["r", "r2", "r3", "nest"] {
+            std::fs::create_dir_all(dir.join("roles").join(role).join("tasks")).unwrap();
+        }
+        let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+        write("inc.yml", "- name: in\n  debug: msg=x\n");
+        write("roles/r/tasks/main.yml", "- include_tasks: inc.yml\n");
+        write("roles/r/tasks/inc.yml", "- name: in\n  debug: msg=x\n");
+        write("roles/r2/tasks/main.yml", "- name: in\n  debug: msg=x\n");
+        write("roles/r3/tasks/main.yml", "- include_role: {name: r2}\n");
+        // Two includes deep: what the role gave the first statement has to reach the second.
+        write("roles/nest/tasks/main.yml", "- include_tasks: mid.yml\n");
+        write("roles/nest/tasks/mid.yml", "- include_tasks: inc.yml\n");
+        write("roles/nest/tasks/inc.yml", "- name: in\n  debug: msg=x\n");
+        let inc = dir.join("inc.yml");
+        let inc = inc.display();
+        let roles = |entry: &str| format!("- hosts: all\n  roles:\n    - {entry}\n");
+        let tasks = |task: &str| format!("- hosts: all\n  tasks:\n    - {task}\n");
+        let rows: [Row; 12] = [
+            (roles("{role: r, tags: [t]}"), &["t"], &[], Some(&["in"])),
+            (roles("{role: nest, tags: [t]}"), &["t"], &[], Some(&["in"])),
+            (roles("{role: r, tags: [t]}"), &[], &["t"], None),
+            (roles("{role: r, tags: [t]}"), &["zz"], &[], None),
+            (
+                tasks(&format!("block: [include_tasks: {inc}]\n      tags: [b]")),
+                &["b"],
+                &[],
+                Some(&["in"]),
+            ),
+            (
+                tasks("block: [include_role: {name: r2}]\n      tags: [b]"),
+                &["b"],
+                &[],
+                Some(&["in"]),
+            ),
+            (roles("{role: r3, tags: [t]}"), &["t"], &[], Some(&["in"])),
+            (
+                roles("{role: r, tags: [always]}"),
+                &["other"],
+                &[],
+                Some(&["in"]),
+            ),
+            (
+                roles("{role: r, tags: [never, n]}"),
+                &["n"],
+                &[],
+                Some(&["in"]),
+            ),
+            (roles("{role: r, tags: [never]}"), &[], &[], None),
+            (
+                tasks(&format!("include_tasks: {inc}\n      tags: [i]")),
+                &["i"],
+                &[],
+                Some(&[]),
+            ),
+            (
+                tasks("include_role: {name: r2}\n      tags: [i]"),
+                &["i"],
+                &[],
+                Some(&[]),
+            ),
+        ];
+        for (play, run, skip, want) in &rows {
+            let got = brought_in(&dir, play, &selection(run, skip));
+            let want = want.map(|w| w.iter().map(ToString::to_string).collect::<Vec<_>>());
+            assert_eq!(got, want, "--tags {run:?} --skip-tags {skip:?}\n{play}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Inserting steps one past the last step of a block's body grows that body and shifts the

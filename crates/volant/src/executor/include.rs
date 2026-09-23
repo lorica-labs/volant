@@ -169,7 +169,8 @@ fn include_request(
     // Only the statement's own `vars:` and the loop variable travel down, seeded with what the
     // statement above handed down so a chain of includes carries the whole chain. Measured on
     // ansible-core 2.19.12: an included task reads the statement's `vars:`, and everything else
-    // stops there - `tags` do not descend, `when` is evaluated for the statement alone, `no_log`
+    // stops there - the statement's own `tags` do not descend (the ones it inherited do, and
+    // travel in its origin), `when` is evaluated for the statement alone, `no_log`
     // censors its own line and not the tasks behind it, `become` and `environment` are refused
     // at load time.
     let mut vars = step.include_params.as_deref().cloned().unwrap_or_default();

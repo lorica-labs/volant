@@ -3,8 +3,9 @@
 //!
 //! Read off `plugins/action/dnf.py` of ansible-core 2.19.12 and measured against it on a host
 //! that runs `apt`. The backend is `use`, else `use_backend`, else `auto`. `auto` and `yum` read
-//! `ansible_facts.pkg_mgr` of the host the module runs on, and a value that is not one of
-//! [`VALID_BACKENDS`] then asks a `setup` filtered to `ansible_pkg_mgr`. Unlike `package`, the
+//! `ansible_facts.pkg_mgr` of the host the module runs on. Whatever the name is then, one that is
+//! not in [`VALID_BACKENDS`] (an empty `use_backend` included) asks a `setup` filtered to
+//! `ansible_pkg_mgr`, whose answer is used instead. Unlike `package`, the
 //! reference keeps that answer: when the task is not delegated, its result carries
 //! `ansible_facts: {pkg_mgr: <answer>}`, which enters the host's facts the way any module's
 //! facts do, as the host's own words.
@@ -15,7 +16,7 @@
 use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
 
-use super::{Context, Plugin, Step, Sub, fact, gathered, lost, setup_for};
+use super::{Context, Plugin, Step, Sub, fact, gathered, lost, setup_failed, setup_for};
 
 /// What the reference takes as the name of a `dnf` backend.
 const VALID_BACKENDS: [&str; 5] = ["yum", "yum4", "dnf", "dnf4", "dnf5"];
@@ -109,10 +110,11 @@ impl Plugin for Dnf<'_> {
                     None => Some("auto"),
                     Some(value) => value.as_str(),
                 };
-                if !matches!(asked, Some("auto" | "yum")) {
-                    return self.dispatch(asked);
-                }
-                let name = fact(self.running_vars, "pkg_mgr").or(asked);
+                let name = if matches!(asked, Some("auto" | "yum")) {
+                    fact(self.running_vars, "pkg_mgr").or(asked)
+                } else {
+                    asked
+                };
                 if name.and_then(backend).is_some() {
                     return self.dispatch(name);
                 }
@@ -123,6 +125,9 @@ impl Plugin for Dnf<'_> {
                 let Some(facts) = last else {
                     return Step::Done(lost("setup"));
                 };
+                if facts.failed() {
+                    return Step::Done(setup_failed(facts, "dnf"));
+                }
                 let name = gathered(&facts, "ansible_pkg_mgr").filter(|n| *n != "auto");
                 // A delegate's answer would be filed under the host the task was written for,
                 // which is not the host that gave it.

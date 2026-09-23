@@ -14,7 +14,9 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
-use super::{Context, Kind, Plugin, Step, Sub, fact, gathered, lost, modules_for, setup_for};
+use super::{
+    Context, Kind, Plugin, Step, Sub, fact, gathered, lost, modules_for, setup_failed, setup_for,
+};
 use crate::vars::host_setting;
 
 enum State {
@@ -83,28 +85,11 @@ impl Plugin for Package<'_> {
                 }
             }
             State::Setup => {
-                let Some(mut facts) = last else {
+                let Some(facts) = last else {
                     return Step::Done(lost("setup"));
                 };
                 if facts.failed() {
-                    let msg = facts
-                        .0
-                        .get("msg")
-                        .and_then(Value::as_str)
-                        .unwrap_or("None")
-                        .to_string();
-                    // The reference fails with the `setup` result under its own sentence. Its
-                    // facts go, though: a filtered `setup` is never kept, and a result is where
-                    // `record_facts` would find them.
-                    facts.0.remove("ansible_facts");
-                    facts.0.insert("failed".into(), Value::Bool(true));
-                    facts.0.insert(
-                        "msg".into(),
-                        Value::String(format!(
-                            "Failed to fetch ansible_pkg_mgr to determine the package action backend: {msg}"
-                        )),
-                    );
-                    return Step::Done(facts);
+                    return Step::Done(setup_failed(facts, "package"));
                 }
                 match named(gathered(&facts, "ansible_pkg_mgr")) {
                     Some(name) => self.dispatch(name),

@@ -351,8 +351,12 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
 
 /// The reference's sentence for a name nothing answers to.
 fn unresolved(task: &str, module: &str) -> String {
+    format!("task '{task}': {}", unresolved_tail(module))
+}
+
+fn unresolved_tail(module: &str) -> String {
     format!(
-        "task '{task}': couldn't resolve module/action '{module}'. This often indicates a misspelling, missing collection, or incorrect module path."
+        "couldn't resolve module/action '{module}'. This often indicates a misspelling, missing collection, or incorrect module path."
     )
 }
 
@@ -383,28 +387,29 @@ pub(crate) fn check_resolved(
     module: &str,
     answer: &crate::python::Resolved,
 ) -> anyhow::Result<()> {
+    match refusal_of(module, answer) {
+        None => Ok(()),
+        Some(why) => Err(Refusal::at(CODE, format!("task '{task}': {why}"))),
+    }
+}
+
+/// Why a collection's module the controller resolved cannot run, as the refusal says it after
+/// the task's name, or `None` for a module the union can hold. Kept in [`crate::python::Union`]
+/// for the names a play does not name itself, so an include reaching one says the same.
+pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Option<String> {
     use crate::python::Resolved;
     match answer {
-        Resolved::Module { .. } => Ok(()),
-        Resolved::ActionPlugin { fqcn } => Err(Refusal::at(
-            CODE,
-            format!(
-                "task '{task}': module '{fqcn}' needs an action plugin from its collection, which this release does not run"
-            ),
+        Resolved::Module { .. } => None,
+        Resolved::ActionPlugin { fqcn } => Some(format!(
+            "module '{fqcn}' needs an action plugin from its collection, which this release does not run"
         )),
-        Resolved::Unusable { reason } => Err(Refusal::at(
-            CODE,
-            format!("task '{task}': module '{module}' cannot run: {reason}"),
-        )),
-        Resolved::Missing { collection: None } => Err(Refusal::at(CODE, unresolved(task, module))),
+        Resolved::Unusable { reason } => Some(format!("module '{module}' cannot run: {reason}")),
+        Resolved::Missing { collection: None } => Some(unresolved_tail(module)),
         Resolved::Missing {
             collection: Some(collection),
-        } => Err(Refusal::at(
-            CODE,
-            format!(
-                "{} The collection '{collection}' is not installed on the controller: install it with ansible-galaxy collection install {collection}",
-                unresolved(task, module)
-            ),
+        } => Some(format!(
+            "{} The collection '{collection}' is not installed on the controller: install it with ansible-galaxy collection install {collection}",
+            unresolved_tail(module)
         )),
     }
 }
@@ -434,10 +439,10 @@ pub(crate) fn check_built(
 ) -> anyhow::Result<()> {
     for (task, module) in collection_modules(expanded) {
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(&module))) {
-            // The controller's own reason for a name it set aside, as the pre-flight gives it
-            // for one a play names.
-            if let Some(reason) = union.and_then(|u| u.unusable.get(&module)) {
-                bail!("task '{task}': module '{module}' cannot run: {reason}");
+            // What the controller made of a name it set aside, as the pre-flight says it for one
+            // a play names.
+            if let Some(why) = union.and_then(|u| u.refused.get(&module)) {
+                bail!("task '{task}': {why}");
             }
             bail!(
                 "task '{task}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection"
@@ -820,7 +825,7 @@ mod tests {
                     )
                 })
                 .collect(),
-            unusable: std::collections::BTreeMap::new(),
+            refused: std::collections::BTreeMap::new(),
         };
         check_built(&compiled, Some(&union(&["ansible.posix.sysctl"])))
             .expect("the union holds it");
@@ -837,14 +842,14 @@ mod tests {
         // collection that is installed.
         let mut set_aside = union(&["ping"]);
         set_aside
-            .unusable
+            .refused
             .insert("ansible.posix.sysctl".into(), "it is gone.".into());
         assert_eq!(
             format!(
                 "{:#}",
                 check_built(&compiled, Some(&set_aside)).unwrap_err()
             ),
-            "task 'Forward': module 'ansible.posix.sysctl' cannot run: it is gone."
+            "task 'Forward': it is gone."
         );
     }
 

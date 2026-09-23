@@ -3507,6 +3507,43 @@ mod tests {
             assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
         }
 
+        // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
+        // rather than the facts, and installs with what it answers.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_pkg_mgr": "dnf"}, "changed": false}),
+                )
+                .to_vec(),
+                one_result(2, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use_backend": ""}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let modules: Vec<&str> = batches_sent(&agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect();
+        assert_eq!(modules, ["setup", "dnf"], "{:?}", agent.sent);
+        assert_eq!(
+            Value::Object(batches_sent(&agent)[1][0].args.clone()),
+            json!({"name": "bash"})
+        );
+        assert_eq!(
+            Value::Object(ran.expect("the item finished").0),
+            json!({"ansible_facts": {"pkg_mgr": "dnf"}, "changed": true})
+        );
+
         // Gathered facts that name a backend ask nothing, and the result carries nothing more
         // than the module's; `use_backend` wins over the facts and never reaches the module
         // (measured: `Running ansible.legacy.dnf5 as the backend for the dnf action plugin`).
@@ -3554,8 +3591,9 @@ mod tests {
     ///
     /// What would make this red: a sentence of this engine's own, or one string where the
     /// reference has two; `apt` sent after all; the failed result's facts recorded, which the
-    /// reference never does for a failed task; or `use` and `use_backend` both taken, or a
-    /// `use_backend` naming nothing sent to the host.
+    /// reference never does for a failed task; `use` and `use_backend` both taken; a
+    /// `use_backend` naming no backend failed without asking the host; or a failed `setup`
+    /// reported as the two sentences, which drops its cause.
     #[tokio::test]
     async fn a_dnf_task_on_a_host_without_dnf_fails_in_the_reference_s_words() {
         use crate::action_plugins::Kind;
@@ -3564,12 +3602,81 @@ mod tests {
             "You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})",
         ]);
         let mut stop = watch::channel(false).1;
+        // A `use_backend` naming no backend asks the host too, as the reference does: its test
+        // of `VALID_BACKENDS` that runs the `setup` is not under the `auto`/`yum` one.
+        for args in [
+            json!({"name": "bash"}),
+            json!({"name": "bash", "use_backend": "apt"}),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                    )
+                    .to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                args.clone(),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(result.0["msg"], undetected);
+            let modules: Vec<&str> = batches_sent(&agent)
+                .iter()
+                .map(|b| b[0].module.as_str())
+                .collect();
+            assert_eq!(modules, ["setup"], "{args}: {:?}", agent.sent);
+            // The reference puts the answer in the result before it fails, so it is
+            // registered...
+            assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
+            // ...and not kept as a fact, because the task failed.
+            let mut store = one_host_store();
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let host = store.for_host("h1", &crate::vars::Scope::default());
+            assert!(
+                host.get("ansible_facts")
+                    .and_then(|f| f.get("pkg_mgr"))
+                    .is_none(),
+                "{host:?}"
+            );
+        }
+
+        let mut agent = FakeAgent::answering(Vec::new());
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            result.0["msg"],
+            json!("parameters are mutually exclusive: ('use', 'use_backend')")
+        );
+        assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
+
+        // A `setup` that failed fails the task with its cause under the reference's sentence,
+        // read off `plugins/action/dnf.py`, and without the facts it carried.
         let mut agent = FakeAgent::answering(
             [
                 vec![state("ab", true)],
                 one_result(
                     1,
-                    json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                    json!({"failed": true, "msg": "boom", "ansible_facts": {"ansible_pkg_mgr": "dnf"}}),
                 )
                 .to_vec(),
             ]
@@ -3586,48 +3693,12 @@ mod tests {
         .await;
         let result = ran.expect("the item finished");
         assert!(result.failed(), "{result:?}");
-        assert_eq!(result.0["msg"], undetected);
-        let modules: Vec<&str> = batches_sent(&agent)
-            .iter()
-            .map(|b| b[0].module.as_str())
-            .collect();
-        assert_eq!(modules, ["setup"], "{:?}", agent.sent);
-        // The reference puts the answer in the result before it fails, so it is registered...
-        assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
-        // ...and not kept as a fact, because the task failed.
-        let mut store = one_host_store();
-        record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
-        let host = store.for_host("h1", &crate::vars::Scope::default());
-        assert!(
-            host.get("ansible_facts")
-                .and_then(|f| f.get("pkg_mgr"))
-                .is_none(),
-            "{host:?}"
+        assert_eq!(
+            result.0["msg"],
+            json!("Failed to fetch ansible_pkg_mgr to determine the dnf action backend: boom")
         );
-
-        for (args, expected) in [
-            (
-                json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
-                json!("parameters are mutually exclusive: ('use', 'use_backend')"),
-            ),
-            (json!({"name": "bash", "use_backend": "apt"}), undetected),
-        ] {
-            let mut agent = FakeAgent::answering(Vec::new());
-            let (ran, _) = plugin_item(
-                Kind::Dnf,
-                args,
-                json!({}),
-                &mut agent,
-                &python3(),
-                &mut stop,
-            )
-            .await;
-            let result = ran.expect("the item finished");
-            assert!(result.failed(), "{result:?}");
-            assert_eq!(result.0["msg"], expected);
-            assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
-            assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
-        }
+        assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
     }
 
     /// `service` runs the init system the host names, drops what `systemd` does not take with the
@@ -4083,7 +4154,7 @@ mod tests {
             hash: hash.to_string(),
             zip_b64: "UEsDBA==".to_string(),
             modules: BTreeMap::new(),
-            unusable: BTreeMap::new(),
+            refused: BTreeMap::new(),
         }
     }
 
@@ -4704,7 +4775,8 @@ mod tests {
         );
     }
 
-    /// A failed task keeps none of the facts its results carry, whatever the module: the
+    /// A failed task keeps none of the facts its host's results carry, whatever module ran there
+    /// (a controller-side `set_fact` writes its own as it runs, and is not judged here): the
     /// reference records facts only in the branch of its strategy that a task that is neither
     /// failed, unreachable nor skipped takes, `ignore_errors` or not. Measured on ansible-core
     /// 2.19.12 with a `dnf` task that failed carrying `ansible_facts: {pkg_mgr: apt}`: the fact is

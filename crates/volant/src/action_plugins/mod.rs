@@ -178,6 +178,27 @@ fn setup_for(fact: &str) -> Step {
     Sub::run("setup", args)
 }
 
+/// A filtered `setup` that failed, as `package` and `dnf` fail with it: the `setup` result under
+/// the reference's sentence for the `action` plugin. Its facts go, though: a filtered `setup` is
+/// never kept, and a result is where `record_facts` would find them.
+fn setup_failed(mut facts: TaskResult, action: &str) -> TaskResult {
+    let msg = facts
+        .0
+        .get("msg")
+        .and_then(Value::as_str)
+        .unwrap_or("None")
+        .to_string();
+    facts.0.remove("ansible_facts");
+    facts.0.insert("failed".into(), Value::Bool(true));
+    facts.0.insert(
+        "msg".into(),
+        Value::String(format!(
+            "Failed to fetch ansible_pkg_mgr to determine the {action} action backend: {msg}"
+        )),
+    );
+    facts
+}
+
 /// `ansible_facts.<name>` of the host the module runs on, when it is a string.
 fn fact<'a>(vars: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     vars.get("ansible_facts")?.get(name)?.as_str()

@@ -7359,3 +7359,52 @@ fn a_run_builds_one_payload_and_sends_it_to_every_host() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A role's `vars/main.yml` holding nothing but a comment is a convention some published Galaxy
+/// roles use to keep the file present with nothing to override: `geerlingguy.git` 3.0.1 ships one
+/// exactly this way. Measured against the reference running that role: PyYAML resolves the empty
+/// document to `None`, ansible-core's loader turns that into `{}`, and the play carries on.
+///
+/// Volant used to refuse the whole play before any host was contacted. The two engines part ways
+/// earlier than the loader that refusal sat in: saphyr (pinned at 0.1.0) resolves the same
+/// document to one node holding an empty *string* scalar, not null — confirmed with a standalone
+/// probe of `MarkedYaml::load_from_str("---\n# comment only\n")`, which returns a single document
+/// `Value(String(""))`. `crate::yaml::load` now reads a stream where every line is blank, a
+/// comment or a document marker (`holds_nothing`, crates/volant/src/yaml.rs) as `Scalar::Null`
+/// before the PyYAML-habits lowering pass runs, so `load_vars_file` sees the same `Value::Null`
+/// document it already turns into an empty mapping.
+///
+/// What would make this red: `holds_nothing` no longer recognising a comment-only stream, or
+/// `load_vars_file` (crates/volant/src/vars.rs) refusing a `Value::Null` document again.
+#[test]
+fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
+    let dir = std::env::temp_dir().join(format!("volant-emptyvars-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("roles/blank/vars")).unwrap();
+    std::fs::create_dir_all(dir.join("roles/blank/tasks")).unwrap();
+    std::fs::write(
+        dir.join("roles/blank/vars/main.yml"),
+        "---\n# This space intentionally left blank.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("roles/blank/tasks/main.yml"),
+        "- debug:\n    msg: ok\n",
+    )
+    .unwrap();
+    let path = dir.join("site.yml");
+    std::fs::write(
+        &path,
+        "- hosts: localhost\n  gather_facts: false\n  roles:\n    - blank\n",
+    )
+    .unwrap();
+    let out = volant(&["playbook", &path.display().to_string()]);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "stdout={text}\nstderr={err}");
+    assert!(
+        text.contains(r#"ok: [localhost] => {"msg": "ok"}"#),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

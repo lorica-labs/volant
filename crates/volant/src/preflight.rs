@@ -293,11 +293,11 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.module
         );
     }
-    // A plugin this release runs. `until`, `retries` and `delay` are refused on it: the driver's
-    // retry loop runs one module per attempt and the plugin's loop runs several per item, and the
-    // two do not compose. No role this release was measured against writes one on a plugin.
+    // A plugin this release runs. `until`, `retries` and `delay` run on it: each attempt replays
+    // the plugin's whole sequence of sub-tasks and `until` reads the result it ended with, as a
+    // module's retry does - `k3s_server` retries a `remote_src` copy three times.
     if action_plugins::kind(&task.module).is_some() {
-        return refuse_retries(task);
+        return Ok(());
     }
     if !is_known(&task.module) {
         // A module ansible-core ships, that this release runs neither natively nor on the
@@ -914,15 +914,15 @@ mod tests {
     }
 
     /// The plugins this release runs are admitted under every builtin spelling, with their
-    /// arguments read; the ones it does not run stay refused; and a retry on a plugin is refused
-    /// by name.
+    /// arguments read, and with `until`, `retries` and `delay` on them; the ones it does not run
+    /// stay refused.
     ///
     /// What would make this red: `package` still refused, or admitted with its arguments left
     /// unread - the loader reads them only for a module it knows it can run, so a plugin it did
-    /// not count would install nothing and report `ok`. Or `until` let through, which the
-    /// driver's retry loop would run around a module the plugin never picked.
+    /// not count would install nothing and report `ok`. Or a retry on a plugin still refused,
+    /// which stops `k3s_server`'s `Copy k3s.yaml to second file` before the first connection.
     #[test]
-    fn the_plugins_this_release_runs_are_admitted_and_their_retries_refused() {
+    fn the_plugins_this_release_runs_are_admitted_with_their_retries() {
         for module in [
             "package",
             "service",
@@ -949,11 +949,36 @@ mod tests {
             text.contains("module 'reboot' needs an action plugin"),
             "{text}"
         );
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Copy k3s.yaml to second file\n      copy:\n        src: /etc/rancher/k3s/k3s.yaml\n        dest: /etc/rancher/k3s/k3s-copy.yaml\n        mode: \"0600\"\n        remote_src: true\n      retries: 3\n      register: k3s_server_copy_yaml\n    - name: Again\n      package: name=bash\n      until: false\n      delay: 1\n",
+            "x.yml",
+        )
+        .unwrap();
+        assert!(check(&pb).is_ok(), "a retry on a plugin runs");
+    }
+
+    /// The loops `site.yml` of k3s-ansible lists statically, which the pre-flight sees on every
+    /// host whatever OS it runs: `airgap`'s `copy` over `with_first_found` and over
+    /// `with_fileglob`, and `raspberrypi`'s `include_tasks` over `with_first_found`. Measured on
+    /// ansible-core 2.19.12 against this release before it ran them: the first refusal was
+    /// `task 'Distribute K3s binary': keyword 'with_first_found' is not supported yet`. A
+    /// `with_<lookup>` this release has no lookup for stays refused by that sentence.
+    ///
+    /// What would make this red: either row still refused, or a `with_*` whose lookup does not
+    /// exist admitted, which the run would then fail on every host instead of refusing it once.
+    #[test]
+    fn the_static_with_lookup_loops_of_site_yml_pass_the_pre_flight() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{ item }}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{ airgap_dir }}/k3s\"\n          skip: true\n    - name: Distribute K3s images\n      copy:\n        src: \"{{ item }}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n    - name: Execute OS related tasks on the Raspberry Pi\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"setup/{{ ansible_distribution }}.yml\"\n        - setup/default.yml\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("the three loops pass");
         let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Again\n      package: name=bash\n      until: false\n",
+            "- hosts: all\n  tasks:\n    - name: Dict\n      debug: msg=hi\n      with_dict: {a: 1}\n",
         );
         assert!(
-            text.contains("keyword 'until' is not supported yet on 'package'"),
+            text.contains("keyword 'with_dict' is not supported yet"),
             "{text}"
         );
     }
@@ -1189,7 +1214,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            77,
+            75,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

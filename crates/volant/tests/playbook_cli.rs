@@ -3419,11 +3419,12 @@ fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
 
 /// `until`, `retries` and `delay`, measured on ansible-core 2.19.12 with this very fixture.
 ///
-/// Every figure below is the reference's: `retries: R` is **R attempts in all**, the line after
-/// failed attempt `i` reads `(R - i + 1 retries left)` so the last one says `(1 retries left)`,
-/// `until` with no `retries` gives three attempts, `retries` with no `until` retries while the
-/// result is failed, and a loop retries **each item on its own** - one line per item, and
-/// `"attempts": 1` in each item's own result.
+/// Every figure below is the reference's: `retries: R` is **R + 1 runs**, the first and R
+/// retries, the line after failed run `i` of the first R reads `(R - i + 1 retries left)` so the
+/// last one says `(1 retries left)` and one more run follows it, a task that runs out reports
+/// `"attempts": R`, `until` with no `retries` is R = 3, `retries` with no `until` retries while
+/// the result is failed, and a loop retries **each item on its own** - one line per item, and
+/// `"attempts": 1` in each item's own result after its two runs under `retries: 1`.
 ///
 /// What would make this red: `attempts` counting `retries + 1`, the last retry line missing,
 /// the count starting one lower, or the loop retrying all its items together instead of one at
@@ -3618,22 +3619,16 @@ fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     );
 }
 
-/// `delay` is waited after every failed attempt, the last one included - not only between
-/// attempts - proved from the results rather than from the clock: the task before records the
-/// epoch second it ran at, the retried task's own `stdout` is the epoch second of its **last**
-/// attempt, and the task right after it records its own epoch second in turn. Two attempts with
-/// `delay: 2` put at least two seconds both between the two attempts and between the last
-/// attempt and the next task, and the run is under `volant_within`, so a `delay` that never ends
-/// hangs the test rather than passing it.
+/// `delay` is waited after each failed run but the last, proved from the results rather than
+/// from the clock: the task before records the epoch second it ran at, and the retried task's own
+/// `stdout` is the epoch second of its **last** run. `retries: 2` is three runs, the first and two
+/// retries, with a `delay: 2` after each of the first two (ansible-core 2.19.12
+/// `task_executor.py`: `retries = 1 + R`, and the sleep sits behind the retry line, which the last
+/// run never prints), so at least four seconds separate the two stamps. The run is under
+/// `volant_within`, so a `delay` that never ends hangs the test rather than passing it.
 ///
-/// This is the highest-blast-radius fact `until`/`retries`/`delay` measured: a failing playbook
-/// costs `retries * delay`, not `(retries - 1) * delay`. A test with only the first gap would
-/// stay green if the trailing sleep were dropped - proving only that a sleep happens somewhere,
-/// not that the last attempt costs one too.
-///
-/// What would make this red: either sleep dropped - the two attempts landing in the same second
-/// or at worst one apart and never two, or the task after the last attempt starting in the same
-/// second as that attempt instead of at least two seconds later.
+/// What would make this red: a sleep dropped, or a run fewer - either puts the last run at most
+/// two seconds after the task before it.
 #[test]
 fn the_delay_is_waited_between_two_attempts() {
     let out = volant_within(
@@ -3659,15 +3654,10 @@ fn the_delay_is_waited_between_two_attempts() {
         .collect();
     assert_eq!(stamps.len(), 3, "{shown}");
     assert!(
-        stamps[1] - stamps[0] >= 2,
-        "the second attempt waited {} second(s), not the two `delay` asked for",
+        stamps[1] - stamps[0] >= 4,
+        "the last of three runs came {} second(s) after the task before, not the two delays of \
+         two seconds `retries: 2` waits",
         stamps[1] - stamps[0]
-    );
-    assert!(
-        stamps[2] - stamps[1] >= 2,
-        "the task after the last attempt started {} second(s) later, not the two `delay` asked \
-         for a failing attempt to cost even when it is the last one",
-        stamps[2] - stamps[1]
     );
 }
 
@@ -3995,6 +3985,25 @@ const RUNS_PROBES: &[RunsProbe] = &[
         &[],
         0,
         "(item=alpha)",
+    ),
+    // The probe's own playbook, `task-<kw>.yml`, is the one file each lookup can find.
+    runs(
+        "task",
+        "with_fileglob",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item | basename }}\"\n      with_fileglob:\n        - \"{{ playbook_dir }}/task-with_fileglob.y*ml\"\n",
+        &[],
+        0,
+        "\"msg\": \"task-with_fileglob.yml\"",
+    ),
+    runs(
+        "task",
+        "with_first_found",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item | basename }}\"\n      with_first_found:\n        - \"{{ playbook_dir }}/nosuch.yml\"\n        - \"{{ playbook_dir }}/task-with_first_found.yml\"\n      loop_control:\n        label: one\n",
+        &[],
+        0,
+        // The found file is the loop's first and only item, straight under the banner: a loop
+        // over the terms themselves would show `nosuch.yml` on that line.
+        "*\nok: [localhost] => (item=one) => {\"msg\": \"task-with_first_found.yml\"}\n\n",
     ),
     runs(
         "play",
@@ -7795,4 +7804,131 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
         String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A controller interpreter with ansible-core, which a task an action plugin backs needs for its
+/// sub-tasks: `VOLANT_PYTHON` when it is set, else the one beside an `ansible-playbook` on `PATH`
+/// (where a `uv tool` or `pipx` install puts it), else `python3`. `None` after saying why, so a
+/// machine without ansible-core skips loudly; with `VOLANT_PYTHON` set there is no skip, and an
+/// interpreter that cannot import ansible-core fails the test.
+fn ansible_core_python() -> Option<String> {
+    let explicit = std::env::var("VOLANT_PYTHON").ok();
+    let mut candidates: Vec<String> = explicit.iter().cloned().collect();
+    if explicit.is_none() {
+        let probe = Command::new("sh")
+            .args(["-c", "command -v ansible-playbook"])
+            .output()
+            .expect("command -v runs");
+        let named = String::from_utf8_lossy(&probe.stdout).trim().to_string();
+        if let Ok(real) = std::fs::canonicalize(&named)
+            && let Some(bin) = real.parent()
+        {
+            candidates.push(bin.join("python3").display().to_string());
+            candidates.push(bin.join("python").display().to_string());
+        }
+        candidates.push("python3".into());
+    }
+    for python in &candidates {
+        let imports = Command::new(python)
+            .args(["-c", "import ansible.release"])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if imports {
+            return Some(python.clone());
+        }
+    }
+    assert!(
+        explicit.is_none(),
+        "VOLANT_PYTHON cannot import ansible-core: {candidates:?}"
+    );
+    eprintln!("skipped: no interpreter with ansible-core among {candidates:?}. Set VOLANT_PYTHON.");
+    None
+}
+
+/// `retries` on a task an action plugin backs, through the real driver on the local connection.
+/// Measured on ansible-core 2.19.12 with the same two tasks on `localhost`: a `copy` that
+/// succeeds under `retries: 3` reports `attempts=1` and no retry line; a `copy` into a directory
+/// that does not exist under `retries: 2` prints `FAILED - RETRYING ... (2 retries left)`, then
+/// `(1 retries left)`, and fails with `"attempts": 2`.
+///
+/// What would make this red: the driver's plugin branch running each item once whatever the
+/// retry plan says, which gives no retry line and no `attempts` at all; or a passing attempt
+/// retried.
+#[test]
+fn a_task_an_action_plugin_backs_retries_through_the_driver() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("plugin-retries");
+    let (code, text) = {
+        let body = format!(
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: copy that succeeds\n      copy:\n        content: \"x\\n\"\n        dest: {dir}/ok.txt\n      retries: 3\n      register: ok\n    - debug: var=ok.attempts\n    - name: copy into a missing directory\n      copy:\n        content: \"x\\n\"\n        dest: {dir}/nosuch/x.txt\n      retries: 2\n      delay: 0\n      ignore_errors: true\n    - name: shell that appends\n      shell: \"echo run >> {dir}/runs.txt; exit 1\"\n      retries: 2\n      delay: 0\n      register: s\n      ignore_errors: true\n    - debug: var=s.attempts\n",
+            dir = dir.display()
+        );
+        let file = dir.join("retries.yml");
+        std::fs::write(&file, body).expect("the playbook is written");
+        let out = volant_within_env(
+            &["playbook", file.to_str().expect("a path")],
+            std::time::Duration::from_secs(60),
+            &[("VOLANT_PYTHON", &python)],
+        );
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains(r#""ok.attempts": 1"#), "{text}");
+    assert!(
+        !text.contains("FAILED - RETRYING: [localhost]: copy that succeeds"),
+        "{text}"
+    );
+    let failing = section(&text, "copy into a missing directory");
+    for left in [2, 1] {
+        assert!(
+            failing.contains(&format!(
+                "FAILED - RETRYING: [localhost]: copy into a missing directory ({left} retries left)."
+            )),
+            "{failing}"
+        );
+    }
+    assert!(
+        failing.contains(r#""attempts": 2"#) && failing.contains("...ignoring"),
+        "{failing}"
+    );
+    // A module under the same rule runs once and then twice more: measured on ansible-core
+    // 2.19.12 with this very task, three lines in the file and `"attempts": 2`.
+    let runs = std::fs::read_to_string(dir.join("runs.txt")).expect("the shell ran");
+    assert_eq!(runs.lines().count(), 3, "{runs}\n{text}");
+    assert!(text.contains(r#""s.attempts": 2"#), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// `ansible_run_tags` and `ansible_skip_tags` are the run's own tag options. Measured on
+/// ansible-core 2.19.12: `run=['all'] skip=[]` with no option, `run=['kubeconfig']` under
+/// `--tags kubeconfig`, `skip=['foo']` under `--skip-tags foo`.
+///
+/// What would make this red: the options never reaching the variables, which leaves every run
+/// reading `['all']` and `[]` whatever it was asked for.
+#[test]
+fn the_tag_options_reach_ansible_run_tags_and_ansible_skip_tags() {
+    let dir = probe_dir("run-tags");
+    let body = "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Show\n      debug:\n        msg: \"run={{ ansible_run_tags | join(',') }} skip={{ ansible_skip_tags | join(',') }}\"\n      tags: always\n";
+    for (args, want) in [
+        (&[][..], "run=all skip="),
+        (&["--tags", "x"][..], "run=x skip="),
+        (&["--skip-tags", "y"][..], "run=all skip=y"),
+    ] {
+        let (code, text) = run_probe(&dir, "run-tags", body, args, None);
+        assert_eq!(code, 0, "{args:?}: {text}");
+        assert!(
+            text.contains(&format!("\"msg\": \"{want}\"")),
+            "{args:?}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }

@@ -329,7 +329,10 @@ fn fileglob(
     for term in terms {
         let pattern = text_of(term);
         for dir in fileglob_dirs(&pattern, &search) {
-            let matched = glob_files(&dir, fileglob_file(&pattern));
+            let matched = glob_files(&dir, fileglob_file(&pattern))
+                .into_iter()
+                .map(found_path)
+                .collect::<Result<Vec<_>, _>>()?;
             if !matched.is_empty() {
                 out.extend(matched);
                 break;
@@ -449,15 +452,64 @@ fn first_found(
         candidates_of(term, &mut candidates, &mut options)?;
     }
     let search = search_path(state, base_dir);
+    let subdir = state
+        .lookup(WITH_SUBDIR)
+        .and_then(|v| v.as_str().map(str::to_string));
     for name in &candidates {
-        if let Some(found) = search.iter().map(|dir| dir.join(name)).find(|p| p.exists()) {
-            return Ok(Value::from(found.display().to_string()));
+        if let Some(found) = relative_stack(&search, subdir.as_deref(), name)
+            .into_iter()
+            .find(|p| p.exists())
+        {
+            return Ok(Value::from(found_path(found.display().to_string())?));
         }
     }
     if options.skip {
         return Ok(Value::from(Vec::<Value>::new()));
     }
     Err(invalid("No file was found when using first_found."))
+}
+
+/// The directory `with_first_found` searches in each entry before the entry itself, which the
+/// task executor sets when it runs the lookup for a `with_first_found` loop and nothing else
+/// does: a plain `lookup('first_found')` searches no subdirectory. Two colons cannot appear in a
+/// Jinja identifier, so no template can read or write it. `executor/prepare.rs` writes the same
+/// literal.
+const WITH_SUBDIR: &str = "volant::first_found_subdir";
+
+/// `DataLoader.path_dwim_relative_stack` for one name, as ansible-core 2.19.12's `first_found`
+/// calls it (`first_found.py`, `find_file_in_search_path(variables, subdir, fn)`): each search
+/// entry's `<subdir>/<name>`, unless the name already starts with that directory, before the
+/// entry's own `<name>`. An absolute name is itself whatever it is joined to.
+fn relative_stack(search: &[PathBuf], subdir: Option<&str>, name: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in search {
+        if let Some(sub) = subdir
+            && name.split('/').next() != Some(sub)
+        {
+            out.push(dir.join(sub).join(name));
+        }
+        out.push(dir.join(name));
+    }
+    out
+}
+
+/// A path `fileglob` or `first_found` found on the controller, refused when its name holds a
+/// template marker. The path is bound as the playbook's own content when its terms were, and an
+/// author's string is rendered again while it still looks like a template: a file named
+/// `{{ lookup('pipe', ...) }}.tar.gz` under a globbed directory would run its command here. The
+/// reference never templates a lookup's result again and copies such a file as it is; this
+/// release fails the task naming it instead, because binding the path as data would make the
+/// plugin that reads it refuse it as a path a host chose.
+fn found_path(path: String) -> Result<String, Error> {
+    if ["{{", "{%", "{#"]
+        .iter()
+        .any(|marker| path.contains(marker))
+    {
+        return Err(invalid(format!(
+            "the lookup found '{path}', whose name holds a template marker; rename the file"
+        )));
+    }
+    Ok(path)
 }
 
 /// The plugin's options as `first_found.py` holds them: set from the keywords, and replaced

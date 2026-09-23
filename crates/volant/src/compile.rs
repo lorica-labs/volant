@@ -74,6 +74,12 @@ impl TagSelection {
         }
     }
 
+    /// The tags asked for and the tags skipped, as `ansible_run_tags` and `ansible_skip_tags`
+    /// show them: `['all']` and `[]` when nothing narrowed the run.
+    pub fn lists(&self) -> (&[String], &[String]) {
+        (&self.run, &self.skip)
+    }
+
     pub fn selects(&self, tags: &[String]) -> bool {
         let own: &[String] = tags;
         let untagged = own.is_empty() || (own.len() == 1 && own[0] == UNTAGGED);

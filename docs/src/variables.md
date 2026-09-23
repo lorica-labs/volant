@@ -42,11 +42,45 @@ Jinja2 templates render in strict mode: an undefined variable is an error, not a
 
 On top of MiniJinja's own Jinja2 builtins, Volant adds Ansible's:
 
-- **Filters**: `default`/`d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`.
-- **Tests**: `truthy`, `falsy`, `match`, `search`, `regex`, `contains`.
-- **Lookups**: `env`, `file`, `vars`, `pipe`, under both their short name and their `ansible.builtin.*` form.
+- **Filters**: `default`/`d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `b64decode`, `b64encode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `from_yaml`, `to_yaml`, `to_nice_yaml`, `to_uuid`, `type_debug`, `quote`, `regex_escape`.
+- **Tests**: `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed`, `failed`, `succeeded`, `skipped`, `version` (`version_compare` too).
+- **Lookups**: `env`, `file`, `vars`, `pipe`, `first_found`, `template`, under both their short name and their `ansible.builtin.*` form.
 
 A filter, test or lookup outside this list fails by its own name, not silently. Every one of them is checked against `ansible-core` in the golden corpus (`crates/volant/tests/golden`).
+
+`difference`, `intersect` and `union` build a Python `set` in the reference, whose order is its
+own: small integers happen to come out sorted, and strings come out in an order that changes with
+`PYTHONHASHSEED` from one run to the next. Volant sorts the result when every element is an
+integer, matching what the reference printed on every integer case measured, and otherwise keeps
+the order the elements first appeared in, which is not guaranteed to match a given run of the
+reference on strings.
+
+A value also answers a handful of Python methods now: `.split()`, `.startswith()`, `.find()` on a
+string, `.keys()` on a mapping, and others `minijinja-contrib`'s Python compatibility layer
+answers on the engine's behalf. A method neither that layer nor the engine itself knows still
+fails by its own name rather than silently doing nothing.
+
+### Rendering a template file
+
+`Templar::render_file` is the render the `template` module and `lookup('template')` both use, and
+it differs from a task argument's own render in one respect: it renders the file's text **once**.
+A task argument goes through further passes after the first, which is how a value that still holds
+`{{ ... }}` after rendering can be re-read as a template; a template file does not get that second
+pass, so a managed host's value lands in the written file as plain text and is never executed as a
+template of its own.
+
+It takes the same options the `template` module reads: `trim_blocks` (on by default),
+`lstrip_blocks` (off by default) and `newline_sequence` (`\n`, `\r` or `\r\n`, the escaped
+four-character spelling read the same as the literal one). The file's own trailing newline
+survives the render, matching a block tag's `trim_blocks` eating one next to it.
+
+Not there yet, for a template file specifically:
+
+- `template_host`, `template_uid` and `template_run_date` are not set, unlike `template_path`,
+  `template_fullpath` and `ansible_managed`.
+- `{% include %}` and `{% import %}` fail: nothing loads a second file mid-render.
+- The six delimiter options (`variable_start_string` and its five relatives) are refused by name.
+- `output_encoding` other than UTF-8 is refused by name.
 
 ## Trusted and untrusted values
 
@@ -76,8 +110,8 @@ Gathered facts are a managed host's own words, so they arrive untrusted: a templ
 - `!vault` and `!unsafe` YAML tags: detected and refused by name; no decryption or unsafe marking.
 - Collections. Roles load from the standard search paths; a collection does not.
 - `gather_subset` and `gather_timeout`: refused by name, so a play that gathers facts gets the full set.
-- Filters, tests and lookups Ansible has beyond the list above, including `to_yaml`, `b64encode`, `hash`, `password_hash`, `ipaddr`, `version` and `json_query`: refused by name until a role in the compatibility target needs one.
-- Methods on a mapping. `{{ hostvars.keys() }}` renders in Ansible and fails here, because the templating engine underneath has no `keys` on a map yet. `dict2items` is the way round it.
+- Filters, tests and lookups Ansible has beyond the list above, including `hash`, `password_hash`, `ipaddr`, the `version` filter and `json_query`: refused by name until a role in the compatibility target needs one.
+- Methods beyond the handful `minijinja-contrib`'s Python compatibility layer answers: a method neither it nor the engine itself knows fails by its own name rather than doing nothing.
 - Resolving variables costs more than linearly in the size of the inventory, and two rounds of sharing have taken most of that cost out. Sharing `hostvars` came first: a task reads one host's entry out of a map every host shares, instead of copying every host's variables, which took 56% off the part of the cost that grows with the square of the inventory. Sharing the inventory-wide magic variables came next: `groups` and the play's live host lists are built once per batch and read from there, rather than written into every host's variables for every task. That took another 31% off the same part and 43% off the part that grows with the inventory alone, for a 200-host run about 1.5 times faster. What is left of the bend has not been measured; the next suspect is the bookkeeping each host copies at every step. Nothing in a playbook, an inventory or `ansible.cfg` changes any of this — it is the engine's own cost, not something a run can be written around. Measured on a debug build over twenty local tasks, after 0.1.0-alpha.5: 50 hosts 0.16 s, 100 hosts 0.50 s, 200 hosts 1.45 s. Read those as the shape of the curve rather than as timings you should see.
 
 For the connection settings, the agent cache, `become` and the host-pattern grammar, see [Connections and privilege escalation](connections.md).

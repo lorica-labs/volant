@@ -10,7 +10,7 @@ Volant reads the playbooks, roles and inventories you already have, in Ansible's
 
 **Status: pre-alpha.** A play compiles and runs end to end: `pre_tasks`, roles with their dependencies and argument specs, tasks and `post_tasks`; blocks with `rescue` and `always`; handlers, with `listen`, `meta: flush_handlers` and `--force-handlers`; tags and the four listing commands; `serial` batches; `until` retries; `no_log`; `environment`; `run_once` and `delegate_to`; and `include_tasks`, `include_role` and `include_vars` read while the play runs. Tasks travel over SSH with the agent cached on each host, with `become` through `sudo`, `forks` and the full host-pattern grammar.
 
-The supported [modules](docs/src/modules.md) run in three places: `command`, `shell` and `raw` on the host, `debug`, `set_fact`, `include_vars` and `validate_argument_spec` on the controller, and ansible-core Python modules on the host through a warm Python server. Collections and check mode are not there yet. A playbook that names a module this release refuses is refused by that name before the first connection rather than half-run. A file that only a dynamic `include_tasks` or `include_role` names is read when a host reaches the statement, so a module or keyword this release refuses is caught there rather than before the first connection: the statement fails for the host that asked, and nothing in the file runs. What `import_tasks` and `import_role` name is compiled with the play and checked with it. [Keywords](docs/src/keywords.md) lists what this release executes, what it only partly answers and what it refuses.
+The supported [modules](docs/src/modules.md) run in three places: `command`, `shell` and `raw` on the host, `debug`, `set_fact`, `include_vars` and `validate_argument_spec` on the controller, and ansible-core Python modules on the host through a warm Python server. Five more, `copy`, `package`, `service`, `template` and `unarchive`, run as [action plugins](docs/src/actions.md): a state machine on the controller that picks or renders what actually reaches the host. Collections and check mode are not there yet. A playbook that names a module this release refuses is refused by that name before the first connection rather than half-run. A file that only a dynamic `include_tasks` or `include_role` names is read when a host reaches the statement, so a module or keyword this release refuses is caught there rather than before the first connection: the statement fails for the host that asked, and nothing in the file runs. What `import_tasks` and `import_role` name is compiled with the play and checked with it. [Keywords](docs/src/keywords.md) lists what this release executes, what it only partly answers and what it refuses.
 
 ## Installation
 
@@ -51,6 +51,16 @@ The host needs an sshd and an account you can log into. It needs no Python and n
 printf 'web1 ansible_host=192.0.2.10 ansible_user=deploy ansible_ssh_private_key_file=/home/you/.ssh/id_ed25519\n' > inventory.ini
 printf -- '- hosts: web1\n  gather_facts: false\n  tasks:\n    - command: id -un\n' > site.yml
 ./volant playbook -i inventory.ini site.yml
+```
+
+```text
+PLAY [web1] ********************************************************************
+
+TASK [command] *****************************************************************
+changed: [web1]
+
+PLAY RECAP *********************************************************************
+web1                       : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
 ```
 
 ### From source

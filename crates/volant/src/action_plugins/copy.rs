@@ -746,6 +746,13 @@ mod tests {
             run(plugin.as_mut(), None).args["path"],
             json!("/tmp/v/hello.txt")
         );
+        // And when that name is itself a directory, the reference looks at the same path again:
+        // `copy.py` joins the source's name to `dest`, not to the path it looked at first.
+        let sub = run(
+            plugin.as_mut(),
+            Some(json!({"stat": {"exists": true, "isdir": true}})),
+        );
+        assert_eq!(sub.args["path"], json!("/tmp/v/hello.txt"));
 
         let mut args = Map::new();
         args.insert("content".into(), json!("x"));
@@ -863,6 +870,31 @@ mod tests {
             assert!(result.failed(), "{result:?}");
             assert_eq!(result.0["msg"], json!(msg));
         }
+    }
+
+    /// A source too big for one frame is refused by its size, before it is read and before the
+    /// host is asked anything.
+    ///
+    /// What would make this red: the size checked only on the bytes once read, which loads the
+    /// whole file and runs `stat` for a transfer that can never happen.
+    #[test]
+    fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
+        let (dir, mut args) = hello("big", json!({}));
+        let big = std::fs::File::create(dir.join("files/big.bin")).unwrap();
+        let len = crate::action_plugins::files::MAX_FILE_LEN + 1;
+        big.set_len(u64::try_from(len).unwrap()).unwrap();
+        args.insert("src".into(), json!("big.bin"));
+        let mut plugin = start_in(&args, &BTreeSet::new(), &dir);
+        let Step::Done(result) = plugin.next(None) else {
+            panic!("a sub-task was sent")
+        };
+        assert_eq!(
+            result.0["msg"],
+            json!(format!(
+                "big.bin is {len} bytes; one frame carries at most {}",
+                crate::action_plugins::files::MAX_FILE_LEN
+            ))
+        );
     }
 
     /// A `stat` that fails ends the task in the reference's words, and a `copy` that fails is

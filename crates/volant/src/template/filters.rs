@@ -335,7 +335,9 @@ pub(crate) fn python_json(
         }
         let mut out = String::new();
         for c in quoted.chars() {
-            if c.is_ascii() {
+            // Python escapes everything outside space to `~`, so DEL too; serde_json has
+            // already escaped the control characters below space.
+            if c.is_ascii() && c != '\u{7f}' {
                 out.push(c);
             } else {
                 for unit in c.encode_utf16(&mut [0; 2]) {
@@ -858,6 +860,26 @@ mod tests {
     fn python_back_references_become_regex_crate_references() {
         assert_eq!(python_replacement(r"A\1-\g<name>"), "A${1}-${name}");
         assert_eq!(python_replacement("plain"), "plain");
+    }
+
+    /// What would make this red: DEL left as it is, which `json.dumps` writes as `\u007f`, or a
+    /// character outside the basic plane written as one escape instead of a surrogate pair.
+    #[test]
+    fn python_json_escapes_what_ensure_ascii_escapes() {
+        // `json.dumps` with its default `ensure_ascii`: DEL, a character past ASCII and one
+        // outside the basic plane (a surrogate pair), and the escapes below space as serde writes
+        // them, which are Python's as well.
+        let v = serde_json::json!("a\u{7f}é\u{1F600}\u{1}");
+        assert_eq!(
+            python_json(&v, None, false, true, 0),
+            concat!(
+                "\"a", "\\u007f", "\\u00e9", "\\ud83d", "\\ude00", "\\u0001", "\""
+            ),
+        );
+        assert_eq!(
+            python_json(&v, None, false, false, 0),
+            "\"a\u{7f}é\u{1F600}\\u0001\""
+        );
     }
 
     /// `to_json` keeps the order the mapping was written in and `to_nice_json` sorts, both

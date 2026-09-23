@@ -3,68 +3,76 @@
 //! Ansible's argument names and its edge cases, checked by tests/golden.
 
 use std::fmt::Write;
+use std::net::Ipv6Addr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use minijinja::value::{Kwargs, Rest};
+use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, Value};
 
 use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 
 use super::truthy;
+use super::{add_filter, add_test};
 
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
-    env.add_filter("default", default);
-    env.add_filter("d", default);
-    env.add_filter("bool", to_bool);
-    env.add_filter("int", to_int);
-    env.add_filter("float", to_float);
-    env.add_filter("mandatory", mandatory);
-    env.add_filter("ternary", ternary);
-    env.add_filter("combine", combine);
-    env.add_filter("dict2items", dict2items);
-    env.add_filter("items2dict", items2dict);
-    env.add_filter("to_json", to_json);
-    env.add_filter("to_nice_json", to_nice_json);
-    env.add_filter("from_json", from_json);
-    env.add_filter("basename", basename);
-    env.add_filter("dirname", dirname);
-    env.add_filter("split", split);
-    env.add_filter("regex_replace", regex_replace);
-    env.add_filter("regex_search", regex_search);
-    env.add_filter("regex_findall", regex_findall);
-    env.add_filter("b64decode", b64decode);
-    env.add_filter("b64encode", b64encode);
-    env.add_filter("comment", comment);
-    env.add_filter("difference", |a: Value, b: Value| {
+    add_filter(env, "default", default);
+    add_filter(env, "d", default);
+    add_filter(env, "bool", to_bool);
+    add_filter(env, "int", to_int);
+    add_filter(env, "float", to_float);
+    add_filter(env, "mandatory", mandatory);
+    add_filter(env, "ternary", ternary);
+    add_filter(env, "combine", combine);
+    add_filter(env, "dict2items", dict2items);
+    add_filter(env, "items2dict", items2dict);
+    add_filter(env, "to_json", to_json);
+    add_filter(env, "to_nice_json", to_nice_json);
+    add_filter(env, "from_json", from_json);
+    add_filter(env, "basename", basename);
+    add_filter(env, "dirname", dirname);
+    add_filter(env, "split", split);
+    add_filter(env, "regex_replace", regex_replace);
+    add_filter(env, "regex_search", regex_search);
+    add_filter(env, "regex_findall", regex_findall);
+    add_filter(env, "b64decode", b64decode);
+    add_filter(env, "b64encode", b64encode);
+    add_filter(env, "comment", comment);
+    add_filter(env, "difference", |a: Value, b: Value| {
         set_filter(&a, &b, SetFilter::Difference)
     });
-    env.add_filter("intersect", |a: Value, b: Value| {
+    add_filter(env, "intersect", |a: Value, b: Value| {
         set_filter(&a, &b, SetFilter::Intersect)
     });
-    env.add_filter("union", |a: Value, b: Value| {
+    add_filter(env, "union", |a: Value, b: Value| {
         set_filter(&a, &b, SetFilter::Union)
     });
-    env.add_filter("flatten", flatten);
-    env.add_filter("from_yaml", from_yaml);
-    env.add_filter("to_uuid", to_uuid);
-    env.add_filter("type_debug", |v: Value| super::type_name(&json(&v)));
-    env.add_filter("quote", quote);
-    env.add_filter("regex_escape", regex_escape);
+    add_filter(env, "flatten", flatten);
+    add_filter(env, "from_yaml", from_yaml);
+    add_filter(env, "to_uuid", to_uuid);
+    add_filter(env, "type_debug", |v: Value| super::type_name(&json(&v)));
+    add_filter(env, "quote", quote);
+    add_filter(env, "regex_escape", regex_escape);
+    // Not through `add_filter`: `ansible.utils.ipwrap` is a collection filter, and the reference
+    // never exposes it as `ansible.builtin.ipwrap`.
+    env.add_filter("ansible.utils.ipwrap", ipwrap);
     super::yaml_dump::register(env);
 
     super::tests::register(env);
-    env.add_test("truthy", |v: Value| truthy(&json(&v)));
-    env.add_test("falsy", |v: Value| !truthy(&json(&v)));
-    env.add_test("match", |v: Value, pattern: String, kwargs: Kwargs| {
+    add_test(env, "truthy", |v: Value| truthy(&json(&v)));
+    add_test(env, "falsy", |v: Value| !truthy(&json(&v)));
+    add_test(env, "match", |v: Value, pattern: String, kwargs: Kwargs| {
         regex_test(&v, &pattern, true, kwargs)
     });
-    env.add_test("search", |v: Value, pattern: String, kwargs: Kwargs| {
+    add_test(
+        env,
+        "search",
+        |v: Value, pattern: String, kwargs: Kwargs| regex_test(&v, &pattern, false, kwargs),
+    );
+    add_test(env, "regex", |v: Value, pattern: String, kwargs: Kwargs| {
         regex_test(&v, &pattern, false, kwargs)
     });
-    env.add_test("regex", |v: Value, pattern: String, kwargs: Kwargs| {
-        regex_test(&v, &pattern, false, kwargs)
-    });
-    env.add_test("contains", |seq: Value, item: Value| {
+    add_test(env, "contains", |seq: Value, item: Value| {
         seq.try_iter().is_ok_and(|mut it| it.any(|x| x == item))
     });
 
@@ -852,6 +860,61 @@ fn regex_escape(value: Value, re_type: Option<String>, kwargs: Kwargs) -> Result
     Ok(out)
 }
 
+/// `ansible.utils.ipwrap`, ported from the collection's own filter (`plugins/filter/ipwrap.py`,
+/// read on the dev machine): every IPv6 address, with or without a valid prefix (0 to 128), is
+/// bracketed; a string that is not one - a hostname, an IPv4 address or subnet, an out-of-range
+/// or non-numeric prefix, the empty string - is left as it is, and a list is wrapped element by
+/// element. Measured on ansible-core 2.19.12 (A9):
+/// `['192.0.2.1', '2001:db8::1', 'example.org', '192.0.2.0/24', '2001:db8::/64', '']` becomes
+/// `["192.0.2.1", "[2001:db8::1]", "example.org", "192.0.2.0/24", "[2001:db8::]/64", ""]`, and a
+/// bare integer fails with the reference's own wording, `format`'s second placeholder included:
+/// `The filter plugin 'ansible.utils.ipwrap' failed: Unrecognized type <<class 'int'>> for
+/// ipwrap filter <value>`.
+fn ipwrap(value: Value) -> Result<Value, Error> {
+    match value.kind() {
+        ValueKind::String | ValueKind::Bool => Ok(ipwrap_scalar(&value)),
+        ValueKind::Seq => Ok(Value::from(
+            value
+                .try_iter()?
+                .map(|item| ipwrap_scalar(&item))
+                .collect::<Vec<_>>(),
+        )),
+        _ => Err(invalid(format!(
+            "The filter plugin 'ansible.utils.ipwrap' failed: Unrecognized type <<class '{}'>> for ipwrap filter <value>",
+            super::type_name(&json(&value))
+        ))),
+    }
+}
+
+/// One value through the filter. The address is parsed on the part before `/`, which is what
+/// `std::net::Ipv6Addr::from_str` gets: on a hit, that part is bracketed and the `/prefix` kept
+/// outside the brackets. On a miss the value comes back unchanged - the reference's own `except
+/// Exception: return value` - and that covers more than "not an IPv6 address at all": `netaddr`
+/// builds an `IPNetwork` out of the address and the prefix together, so a prefix past 128 (an
+/// IPv6 address has no more bits) or one that is not a plain integer also raises there and is
+/// left untouched here, checked against the real filter on the dev machine:
+/// `'2001:db8::/129' | ansible.utils.ipwrap` and `'2001:db8::/abc' | ansible.utils.ipwrap` both
+/// answer their own input, not a bracketed one.
+fn ipwrap_scalar(value: &Value) -> Value {
+    let Some(text) = value.as_str() else {
+        return value.clone();
+    };
+    let (address, prefix) = match text.split_once('/') {
+        Some((address, prefix)) => (address, Some(prefix)),
+        None => (text, None),
+    };
+    if Ipv6Addr::from_str(address).is_err() {
+        return value.clone();
+    }
+    let Some(prefix) = prefix else {
+        return Value::from(format!("[{address}]"));
+    };
+    match prefix.parse::<u8>() {
+        Ok(bits) if bits <= 128 => Value::from(format!("[{address}]/{prefix}")),
+        _ => value.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1080,5 +1143,104 @@ mod tests {
             .render("{{ 1 | some_unknown_filter }}", &serde_json::Map::new())
             .unwrap_err();
         assert!(err.0.contains("some_unknown_filter"), "{err}");
+    }
+
+    /// The A9 vectors, copied as measured on ansible-core 2.19.12: an IPv6 address, with or
+    /// without a prefix, is bracketed on the part before `/`; a hostname, an IPv4 address or
+    /// subnet, and the empty string are left as they are; a list is wrapped element by element;
+    /// a bare integer is refused with the reference's own wording, `format`'s second placeholder
+    /// (the literal word `value`) included.
+    ///
+    /// What would make this red: an IPv4 address or a CIDR parsed as if it were IPv6, the
+    /// `/prefix` folded inside the brackets instead of kept outside, or the error message not
+    /// matching the reference's byte for byte.
+    #[test]
+    fn ipwrap_wraps_ipv6_and_nothing_else() {
+        assert_eq!(
+            render(
+                "{{ ['192.0.2.1', '2001:db8::1', 'example.org', '192.0.2.0/24', '2001:db8::/64', ''] | ansible.utils.ipwrap }}",
+                serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!([
+                "192.0.2.1",
+                "[2001:db8::1]",
+                "example.org",
+                "192.0.2.0/24",
+                "[2001:db8::]/64",
+                ""
+            ])
+        );
+        assert_eq!(
+            text("{{ '2001:db8::1' | ansible.utils.ipwrap }}"),
+            "[2001:db8::1]"
+        );
+        assert_eq!(text("{{ 'host1' | ansible.utils.ipwrap }}"), "host1");
+        assert_eq!(
+            text("{{ '192.0.2.1' | ansible.utils.ipwrap }}"),
+            "192.0.2.1"
+        );
+        let err = render("{{ 42 | ansible.utils.ipwrap }}", serde_json::json!({})).unwrap_err();
+        assert!(
+            err.contains(
+                "The filter plugin 'ansible.utils.ipwrap' failed: Unrecognized type <<class 'int'>> for ipwrap filter <value>"
+            ),
+            "{err}"
+        );
+    }
+
+    /// A prefix `netaddr` would refuse building the `IPNetwork` from - past 128 (an IPv6 address
+    /// has no more bits) or not a plain integer - leaves the value untouched rather than
+    /// bracketing the address anyway. Checked against the real filter on the dev machine:
+    /// `'2001:db8::/129'` and `'2001:db8::/abc'` both answer their own input.
+    ///
+    /// What would make this red: a prefix accepted without checking its range or that it parses,
+    /// which would still bracket the address (`[2001:db8::]/129`).
+    #[test]
+    fn ipwrap_leaves_an_address_alone_when_its_prefix_does_not_parse() {
+        assert_eq!(
+            text("{{ '2001:db8::/129' | ansible.utils.ipwrap }}"),
+            "2001:db8::/129"
+        );
+        assert_eq!(
+            text("{{ '2001:db8::/abc' | ansible.utils.ipwrap }}"),
+            "2001:db8::/abc"
+        );
+        // 128 itself, the last valid one, still wraps.
+        assert_eq!(
+            text("{{ '2001:db8::/128' | ansible.utils.ipwrap }}"),
+            "[2001:db8::]/128"
+        );
+    }
+
+    /// `ansible.utils.ipwrap` is not one of the aliases `add_filter` gives every registered
+    /// filter: the reference never exposes it as `ansible.builtin.ipwrap`, so a role that
+    /// misspells it that way must fail here exactly as it does there.
+    #[test]
+    fn ipwrap_is_not_aliased_under_ansible_builtin() {
+        let err = render("{{ 'x' | ansible.builtin.ipwrap }}", serde_json::json!({})).unwrap_err();
+        assert!(err.contains("unknown filter"), "{err}");
+    }
+
+    /// A filter and a registered test still answer under `ansible.builtin.<name>`. Guard: remove
+    /// the aliasing this goes through and both renders fail by `unknown filter`/`unknown test`.
+    #[test]
+    fn a_filter_and_a_test_answer_under_their_ansible_builtin_alias() {
+        assert_eq!(
+            render(
+                "{{ missing | ansible.builtin.default('y') }}",
+                serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!("y")
+        );
+        assert_eq!(
+            render(
+                "{{ 'a b' is ansible.builtin.match('a') }}",
+                serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!(true)
+        );
     }
 }

@@ -8,6 +8,7 @@ use minijinja::value::Kwargs;
 use minijinja::{Environment, Error, ErrorKind, Value};
 use serde_json::Value as Json;
 
+use super::add_test;
 use super::truthy;
 
 /// Each name beside the function `core.py` maps it to, and the name that function's own
@@ -34,10 +35,13 @@ enum Which {
 
 pub fn register(env: &mut Environment<'static>) {
     for (name, which) in RESULT_TESTS {
-        env.add_test(name, move |value: Value| result_test(name, which, &value));
+        add_test(env, name, move |value: Value| {
+            result_test(name, which, &value)
+        });
     }
     for name in ["version", "version_compare"] {
-        env.add_test(
+        add_test(
+            env,
             name,
             move |value: Value, version: Value, operator: Option<String>, kwargs: Kwargs| {
                 version_test(name, &value, &version, operator, &kwargs)

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `service`: the host's init system names the module that runs.
 //!
-//! Read off `plugins/action/service.py` of ansible-core 2.19.12 and measured (measure 4). The
+//! Read off `plugins/action/service.py` of ansible-core 2.19.12 and measured against it. The
 //! init system is `use:` in lower case unless it is `auto`, then `ansible_facts.service_mgr` of
 //! the host the module runs on, then a `setup` filtered to that one fact. A name no module of
-//! the union carries falls back to `service` rather than failing (`s2`), and so does a `setup`
+//! the union carries falls back to `service` rather than failing (measured with `use: nosuchmgr`,
+//! which runs `ansible.legacy.service`), and so does a `setup`
 //! that failed, as in the reference, which does not look at that result either.
 //!
 //! As with `package`, the host's answer is only ever looked up in a closed list.

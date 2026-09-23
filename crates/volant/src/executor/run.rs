@@ -2800,12 +2800,14 @@ mod tests {
     ///
     /// What would make this red: `package` still refused, or sent as the `package` module itself -
     /// which the reference never runs, since its plugin is where the choice lives - or the filtered
-    /// `setup` result written into the host's facts, which the reference does not keep (measure 4).
+    /// `setup` result written into the host's facts, which the reference does not keep: measured
+    /// on ansible-core 2.19.12, it runs that `setup` again at every such task.
     #[tokio::test]
     async fn a_package_task_runs_the_module_its_manager_names() {
         use crate::action_plugins::Kind;
         let mut stop = watch::channel(false).1;
-        // Measure 4, `p3`: with facts, `Running ansible.legacy.apt` and no `AnsiballZ_setup.py`.
+        // Measured on ansible-core 2.19.12 with facts gathered: `Running ansible.legacy.apt` and no
+        // `AnsiballZ_setup.py`.
         let mut agent = FakeAgent::answering(
             [
                 vec![state("ab", true)],
@@ -2838,7 +2840,7 @@ mod tests {
         );
         assert!(!ran.expect("the item finished").failed());
 
-        // Measure 4, `p1`: without facts, `AnsiballZ_setup.py -> Running ansible.legacy.apt`.
+        // Measured without facts: `AnsiballZ_setup.py`, then `Running ansible.legacy.apt`.
         let mut agent = FakeAgent::answering(
             [
                 vec![state("ab", true)],
@@ -2881,7 +2883,7 @@ mod tests {
                 .is_none(),
             "{host:?}"
         );
-        // Measure 4: `p1` registers the module's result as it is.
+        // Measured: the task registers the module's result as it is.
         assert_eq!(
             Value::Object(result.0),
             json!({"cache_updated": false, "changed": false})
@@ -2893,7 +2895,8 @@ mod tests {
     }
 
     /// The order the package manager is picked in, and the reference's sentences when it
-    /// cannot be: measure 4 (`p2`) and `plugins/action/package.py`.
+    /// cannot be, measured on ansible-core 2.19.12 (`use: nosuchmgr` fails with the first sentence)
+    /// and read off its `plugins/action/package.py`.
     ///
     /// What would make this red: a name no module of the union carries sent anyway - a
     /// collection's manager, or a value a host put in its facts - or `ansible_package_use`
@@ -3013,8 +3016,8 @@ mod tests {
     }
 
     /// `service` runs the init system the host names, drops what `systemd` does not take with the
-    /// reference's warning, and falls back to `service` for a name no module carries: measure 4,
-    /// `s1`, `s2`, `s3` and `s4`.
+    /// reference's warning, and falls back to `service` for a name no module carries: each measured
+    /// on ansible-core 2.19.12.
     ///
     /// What would make this red: `sleep` sent to `systemd`, the warning lost or worded otherwise,
     /// `use:` read without lowering it, or an unknown name failing where the reference runs
@@ -3023,7 +3026,8 @@ mod tests {
     async fn a_service_task_runs_the_init_system_the_host_names() {
         use crate::action_plugins::Kind;
         let mut stop = watch::channel(false).1;
-        // `s3`: `AnsiballZ_setup.py -> Running ansible.legacy.systemd` and the warning.
+        // Measured without facts and with `sleep:` given: `AnsiballZ_setup.py`, then `Running
+        // ansible.legacy.systemd` and the warning.
         let mut agent = FakeAgent::answering(
             [
                 vec![state("ab", true)],
@@ -3062,7 +3066,8 @@ mod tests {
             ["Ignoring \"sleep\" as it is not used in \"systemd\""]
         );
 
-        // `s2`, and `s4` with `use:` in capitals: no `setup` either way.
+        // An unknown name runs `service`, as measured; a `use:` in capitals is lowered, as the
+        // reference's plugin does. No `setup` either way.
         for (asked, module) in [("nosuchmgr", "service"), ("SystemD", "systemd")] {
             let mut agent = FakeAgent::answering(
                 [

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `package`: the host's package manager names the module that runs.
 //!
-//! Read off `plugins/action/package.py` of ansible-core 2.19.12 and measured (measure 4). The
+//! Read off `plugins/action/package.py` of ansible-core 2.19.12 and measured against it. The
 //! manager is `use:` unless it is `auto`, then the `ansible_package_use` variable, then
 //! `ansible_facts.pkg_mgr` of the host the module runs on, then a `setup` filtered to that one
 //! fact, run again for every task and never kept.
@@ -113,7 +113,8 @@ impl Plugin for Package<'_> {
                     )),
                 }
             }
-            // The module's result is the task's, as it is: measure 4, `p1`.
+            // The module's result is the task's, as it is: measured, a `package` task registers
+            // exactly what `apt` returned.
             State::Module(module) => Step::Done(last.unwrap_or_else(|| lost(module))),
         }
     }

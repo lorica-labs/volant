@@ -90,8 +90,9 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
 
 /// Every module a plugin may run, which the union has to hold before the first connection.
 ///
-/// Measure 4: a run that names `package` or `service` carries every builtin backend and `setup`,
-/// 170 KB more than `apt` and `systemd_service` alone, once per link. Nothing is built after the
+/// A run that names `package` or `service` carries every builtin backend and `setup`. Measured
+/// with ansible-core 2.19.12's own payload builder, that is 170 KB more than `apt` and
+/// `systemd_service` alone, sent once per link. Nothing is built after the
 /// facts are known, so a plugin can only ever pick among these.
 pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
@@ -175,7 +176,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
 }
 
 /// The filtered `setup` both plugins run when the facts do not say which backend to use, exactly
-/// as measure 4 shows it: one fact, no subset.
+/// as ansible-core 2.19.12 was measured to send it: one fact, and no subset gathered.
 fn setup_for(fact: &str) -> Step {
     let mut args = Map::new();
     args.insert("filter".into(), Value::from(vec![fact]));

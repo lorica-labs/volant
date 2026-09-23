@@ -1,0 +1,60 @@
+---
+title: Inventories and host patterns
+description: The inventory format Volant reads, where group and host variables come from, and the host-pattern grammar.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="INI inventories only">
+This release reads static inventories in Ansible's INI format. YAML inventories, inventory directories, dynamic inventory scripts and inventory plugins are not supported yet. Pass a single INI file with `-i`, or set `inventory` in `ansible.cfg`.
+</Aside>
+
+## An INI inventory
+
+```ini title="inventory.ini"
+bastion ansible_host=198.51.100.7
+
+[web]
+web1 ansible_host=192.0.2.11
+web2 ansible_host=192.0.2.12
+
+[db]
+db1 ansible_host=192.0.2.21 ansible_user=postgres
+
+[prod:children]
+web
+db
+
+[prod:vars]
+ansible_user=deploy
+ansible_ssh_common_args=-o ProxyJump=bastion
+```
+
+Volant reads hosts with inline variables, `[group]` sections, `[group:children]` and `[group:vars]`, and comments starting with `#` or `;`. Host ranges such as `web[01:20]` are not expanded.
+
+`localhost` exists implicitly, with a local connection, when the inventory does not define it. Without `-i` and without an `inventory` setting, that implicit `localhost` is the only host.
+
+## Group and host variables
+
+Volant reads `group_vars/` and `host_vars/` next to the inventory and next to the playbook, as files (`group_vars/web.yml`) or directories (`group_vars/web/*.yml`). [Precedence](/variables/precedence/) shows where each layer sits.
+
+A name that is both a host and a group means the host. Volant warns once per run when an inventory contains such a name, whatever pattern the run uses, because Ansible detects it when it loads the inventory.
+
+## Host patterns
+
+A pattern in a play's `hosts:` or in `--limit` follows Ansible's grammar:
+
+| Pattern | Selects |
+|---|---|
+| `all` or `*` | every host |
+| `web:db` or `web,db` | hosts in either group |
+| `web*`, `db?`, `host[abc]`, `host[a-z]` | shell-style wildcards on host and group names |
+| `web:&prod` | hosts in `web` that are also in `prod` |
+| `web:!web2` | hosts in `web` except `web2` |
+| `web[0]`, `web[0:2]`, `web[1:]` | an index or a slice of the hosts a term produced |
+
+Slices include their end, as in Ansible: `web[0:2]` is three hosts. `name[N-M]` is accepted as an older spelling of `name[N:M]`.
+
+Terms are not applied in the order you write them. Plain terms come first, then `&` terms, then `!` terms, which is what Ansible does. A pattern made only of `!` or `&` terms starts from `all`.
+
+A `--limit` that matches no host warns and narrows the run to what it did match.

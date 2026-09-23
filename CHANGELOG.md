@@ -14,10 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Run `template` as an action plugin: render the file on the controller once, then hand it to the same path `copy` uses.
 - Run `unarchive` as an action plugin: extract a controller archive or one already on the host, skipping the task when `creates:` already exists.
 - Add the Jinja filters, tests, methods and lookups the template engine was missing: `b64decode`, `b64encode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `from_yaml`, `to_yaml`, `to_nice_yaml`, `to_uuid`, `type_debug`, `quote` and `regex_escape`; the `changed`, `failed`, `succeeded`, `skipped` and `version` tests; a handful of Python methods on strings and mappings, through `minijinja-contrib`; and the `first_found` and `template` lookups.
+- An install script: `curl -fsSL https://volant.sh/install.sh | sh` installs the newest release, controller and agents together, after checking its checksum.
 
 ### Changed
 
-- A `copy`, `template` or `unarchive` task whose `src` was named by a managed host is now refused before the file is looked up, rather than sent the way the reference sends it: a host that controls a command's output or a fact could otherwise have any file the operator can read copied to it.
+- A `copy`, `template` or `unarchive` task whose `src` was named by a managed host is now rejected before the file is looked up, rather than sent the way the reference sends it: a host that controls a command's output or a fact could otherwise have any file the operator can read copied to it.
+- The [documentation site](https://volant.sh/) moves to volant.sh and is rebuilt with sections, search and diagrams. It adds pages on installation, compatibility, the command line, configuration, inventories and exit codes.
+
+### Fixed
+
+- A controller started through a symbolic link finds its agents next to the file the link points at. On macOS it used to look in the directory of the link.
 
 ## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) - 2026-09-22
 
@@ -48,82 +54,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- *(modules)* declare which arguments each native module honours ([#145](https://github.com/lorica-labs/volant/pull/145))
-- *(executor)* put a barrier in front of every linear task ([#140](https://github.com/lorica-labs/volant/pull/140))
+- Every release archive now carries the two Linux agents, so one download is enough for a first run over SSH. ([#147](https://github.com/lorica-labs/volant/pull/147))
+- The documentation lists which arguments each native module reads, and the pre-flight refuses the ones it does not. ([#145](https://github.com/lorica-labs/volant/pull/145))
+
+### Changed
+
+- Hosts now meet in front of every task, as Ansible's `linear` strategy promises. The previous behavior, where each host ran ahead through tasks that did not read another host's state, is available behind the `[volant] batching` option. ([#140](https://github.com/lorica-labs/volant/pull/140))
+- Resolving variables on large inventories is faster: inventory-wide values are built once per batch and shared across hosts. ([#134](https://github.com/lorica-labs/volant/pull/134))
 
 ### Fixed
 
-- *(preflight)* check what a dynamic include splices in ([#155](https://github.com/lorica-labs/volant/pull/155))
-- *(command)* hold the deadline over the stdin write ([#154](https://github.com/lorica-labs/volant/pull/154))
-- *(transport)* refuse a remote_tmp whose tilde part is not a user name ([#146](https://github.com/lorica-labs/volant/pull/146))
-- *(command)* keep the deadline over the child and its streams ([#144](https://github.com/lorica-labs/volant/pull/144))
-- *(executor)* show every event a task produces through the renderer ([#143](https://github.com/lorica-labs/volant/pull/143))
-- *(command)* resolve creates and removes where the command runs ([#142](https://github.com/lorica-labs/volant/pull/142))
-- *(transport)* resolve the connection from effective host variables ([#141](https://github.com/lorica-labs/volant/pull/141))
-- *(template)* treat module results as data, never as templates ([#139](https://github.com/lorica-labs/volant/pull/139))
-
-### Other
-
-- follow the branch ref, not just .git/HEAD ([#153](https://github.com/lorica-labs/volant/pull/153))
-- send the ssh quickstart to the host it names ([#152](https://github.com/lorica-labs/volant/pull/152))
-- say what this release expands and when links close ([#150](https://github.com/lorica-labs/volant/pull/150))
-- say what this release runs and what it only partly answers ([#148](https://github.com/lorica-labs/volant/pull/148))
-- ship the Linux agents inside every controller archive ([#147](https://github.com/lorica-labs/volant/pull/147))
-- make the coverage floor fail the recipe again ([#137](https://github.com/lorica-labs/volant/pull/137))
-- *(vars)* share the inventory-wide values across hosts ([#134](https://github.com/lorica-labs/volant/pull/134))
-- *(executor)* say why in one line and move the rest out ([#133](https://github.com/lorica-labs/volant/pull/133))
-- *(executor)* split the runner into modules ([#132](https://github.com/lorica-labs/volant/pull/132))
-- *(executor)* give the host driver its own context ([#131](https://github.com/lorica-labs/volant/pull/131))
-- *(executor)* hold the coordinator state in one place ([#130](https://github.com/lorica-labs/volant/pull/130))
-- *(executor)* drop a guard nothing depends on ([#129](https://github.com/lorica-labs/volant/pull/129))
-- add a mutation recipe and the checks it found missing ([#128](https://github.com/lorica-labs/volant/pull/128))
-- declare workspace lints and name each allowance ([#123](https://github.com/lorica-labs/volant/pull/123))
+- A module result is data and is never rendered again as a template on the controller. ([#139](https://github.com/lorica-labs/volant/pull/139))
+- The connection settings come from a host's effective variables, including `group_vars`, task `vars`, `set_fact` and `--extra-vars`, not only from the inventory. ([#141](https://github.com/lorica-labs/volant/pull/141))
+- `creates` and `removes` are resolved in the directory the command runs in. ([#142](https://github.com/lorica-labs/volant/pull/142))
+- A task's timeout covers the child process, its output streams and the write to its standard input. ([#144](https://github.com/lorica-labs/volant/pull/144)), ([#154](https://github.com/lorica-labs/volant/pull/154))
+- A `remote_tmp` whose `~` part is not a user name is refused. ([#146](https://github.com/lorica-labs/volant/pull/146))
+- Every event a task produces is shown, through the same output renderer as the rest of the run. ([#143](https://github.com/lorica-labs/volant/pull/143))
+- What a dynamic include brings in is checked by the pre-flight before it runs. ([#155](https://github.com/lorica-labs/volant/pull/155))
 
 ## [0.1.0-alpha.5](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) - 2026-09-16
 
 ### Added
 
-- *(controller)* run_once and delegate_to on the delegate's own link ([#115](https://github.com/lorica-labs/volant/pull/115))
-- *(controller)* include tasks, roles and vars at run time ([#109](https://github.com/lorica-labs/volant/pull/109))
-- *(controller)* run plays in serial batches and stop when one fails ([#108](https://github.com/lorica-labs/volant/pull/108))
-- *(controller)* retry with until, censor no_log, pass environment ([#107](https://github.com/lorica-labs/volant/pull/107))
-- *(controller)* run notified handlers at every flush point ([#105](https://github.com/lorica-labs/volant/pull/105))
-- *(controller)* run rescue and always, set ansible_failed_* ([#104](https://github.com/lorica-labs/volant/pull/104))
-- *(controller)* select tasks by tag and list them like the reference ([#103](https://github.com/lorica-labs/volant/pull/103))
-- *(controller)* load roles from the standard paths and import tasks ([#102](https://github.com/lorica-labs/volant/pull/102))
-- *(controller)* compile plays into flat steps with block spans ([#101](https://github.com/lorica-labs/volant/pull/101))
-- *(controller)* load the whole grammar, refuse before connecting ([#98](https://github.com/lorica-labs/volant/pull/98))
+- The whole ansible-core 2.19 grammar loads, and whatever this release cannot run is refused by name before the first connection. ([#98](https://github.com/lorica-labs/volant/pull/98))
+- Plays compile into a flat list of steps, with blocks kept as spans. ([#101](https://github.com/lorica-labs/volant/pull/101))
+- Roles load from the standard paths, with dependencies, argument specs and `import_tasks`. ([#102](https://github.com/lorica-labs/volant/pull/102))
+- `--tags`, `--skip-tags` and the listing commands, with output identical to Ansible's. ([#103](https://github.com/lorica-labs/volant/pull/103))
+- Blocks with `rescue` and `always`, and the `ansible_failed_task` and `ansible_failed_result` facts. ([#104](https://github.com/lorica-labs/volant/pull/104))
+- Handlers, run at every flush point. ([#105](https://github.com/lorica-labs/volant/pull/105))
+- `until`, `retries` and `delay`, `no_log`, and `environment`. ([#107](https://github.com/lorica-labs/volant/pull/107))
+- `serial` batches, with the run stopping when a batch loses every host. ([#108](https://github.com/lorica-labs/volant/pull/108))
+- `include_tasks`, `include_role` and `include_vars`, resolved while the play runs. ([#109](https://github.com/lorica-labs/volant/pull/109))
+- `run_once` and `delegate_to`, with the delegated task running over the delegate's own connection. ([#115](https://github.com/lorica-labs/volant/pull/115))
+
+### Changed
+
+- Every host reads one shared `hostvars` map instead of its own copy. ([#116](https://github.com/lorica-labs/volant/pull/116))
 
 ### Fixed
 
-- *(controller)* elect run_once in the coordinator and free the permit ([#118](https://github.com/lorica-labs/volant/pull/118))
-
-### Other
-
-- describe play compilation, roles, blocks, handlers and tags ([#117](https://github.com/lorica-labs/volant/pull/117))
-- *(controller)* share hostvars and keep the fork permit ([#116](https://github.com/lorica-labs/volant/pull/116))
+- The host that runs a `run_once` task is elected once for the whole batch. ([#118](https://github.com/lorica-labs/volant/pull/118))
 
 ## [0.1.0-alpha.4](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) - 2026-09-09
 
 ### Added
 
-- *(controller)* wait for the other hosts before reading hostvars ([#85](https://github.com/lorica-labs/volant/pull/85))
-- *(controller)* escalate with sudo via become keywords and variables ([#83](https://github.com/lorica-labs/volant/pull/83))
-- *(controller)* keep agent connections across plays and honour forks ([#82](https://github.com/lorica-labs/volant/pull/82))
-- *(controller)* reach hosts over ssh and cache the agent remotely ([#79](https://github.com/lorica-labs/volant/pull/79))
-- *(controller)* add wildcards, negation and intersection to patterns ([#78](https://github.com/lorica-labs/volant/pull/78))
+- The full host-pattern grammar: wildcards, `!` exclusions and `&` intersections. ([#78](https://github.com/lorica-labs/volant/pull/78))
+- The `ssh` connection, with the agent uploaded once and cached on each host. ([#79](https://github.com/lorica-labs/volant/pull/79))
+- Agent connections are kept across plays, and `forks` limits how many hosts run at once. ([#82](https://github.com/lorica-labs/volant/pull/82))
+- `become` through `sudo`, from keywords and host variables. ([#83](https://github.com/lorica-labs/volant/pull/83))
+- A task that reads `hostvars` waits for the other hosts to reach it. ([#85](https://github.com/lorica-labs/volant/pull/85))
 
 ### Fixed
 
-- *(controller)* escalate to any user, bound links, match exit codes ([#90](https://github.com/lorica-labs/volant/pull/90))
-- *(controller)* key order, nested omit and yaml 1.1 integers ([#87](https://github.com/lorica-labs/volant/pull/87))
-- *(controller)* loop failures, empty loops, per-playbook recaps ([#86](https://github.com/lorica-labs/volant/pull/86))
+- Loop failures, empty loops, and one recap per playbook. ([#86](https://github.com/lorica-labs/volant/pull/86))
+- Key order, `omit` in nested structures, and YAML 1.1 integers. ([#87](https://github.com/lorica-labs/volant/pull/87))
+- Escalation to any user, a bound on open connections, and exit codes that match Ansible's. ([#90](https://github.com/lorica-labs/volant/pull/90))
 
-### Other
+## [0.1.0-alpha.3](https://github.com/lorica-labs/volant/releases/tag/v0.1.0-alpha.3) - 2026-09-08
 
-- describe connections, the agent cache and privilege escalation ([#89](https://github.com/lorica-labs/volant/pull/89))
-- run the ssh end-to-end tests against a local sshd ([#81](https://github.com/lorica-labs/volant/pull/81))
-- let release-plz own the repository changelog ([#75](https://github.com/lorica-labs/volant/pull/75))
+This entry covers the first three pre-releases.
 
 ### Added
 

@@ -24,10 +24,8 @@ impl AgentSource {
         if let Ok(dir) = std::env::var("VOLANT_AGENT_DIR") {
             dirs.push(PathBuf::from(dir));
         }
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            dirs.push(dir.to_path_buf());
+        if let Some(dir) = std::env::current_exe().ok().and_then(beside_executable) {
+            dirs.push(dir);
         }
         Self { dirs }
     }
@@ -57,6 +55,17 @@ impl AgentSource {
     fn find(&self, file: &str) -> Option<PathBuf> {
         self.dirs.iter().map(|d| d.join(file)).find(|p| runnable(p))
     }
+}
+
+/// The directory the agents ship in: the one holding the controller's own file, behind any link.
+///
+/// Linux answers `current_exe` with the resolved file, macOS with the path the program was
+/// started through. An install that keeps the release directory whole and links `volant` onto
+/// the `PATH`, which is what the install script does, would otherwise look for the agents in
+/// the directory of the link.
+fn beside_executable(exe: PathBuf) -> Option<PathBuf> {
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    exe.parent().map(std::path::Path::to_path_buf)
 }
 
 /// A file that carries an execute bit. A stray artifact with the right name is not an agent:
@@ -321,6 +330,36 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<V
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A controller started through a link looks for its agents next to the file the link
+    /// points at.
+    ///
+    /// What would make this red: the path used as `current_exe` gave it, which is the link's own
+    /// directory on macOS, where a linked install would then find no agent.
+    #[test]
+    fn the_agents_are_looked_for_beside_the_linked_file() {
+        let root = std::env::temp_dir().join(format!("volant-beside-{}", std::process::id()));
+        let release = root.join("release");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&release).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(release.join("volant"), b"").unwrap();
+        std::os::unix::fs::symlink(release.join("volant"), bin.join("volant")).unwrap();
+
+        let found = beside_executable(bin.join("volant"));
+
+        let expected = std::fs::canonicalize(&release).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, Some(expected));
+    }
+
+    /// A path that cannot be resolved still names a directory, so a missing file behaves as
+    /// before rather than dropping the only place the agents could be.
+    #[test]
+    fn an_unresolvable_path_keeps_its_own_directory() {
+        let found = beside_executable(PathBuf::from("/nonexistent/volant-dir/volant"));
+        assert_eq!(found, Some(PathBuf::from("/nonexistent/volant-dir")));
+    }
 
     /// A link over a process that reads its stdin and says nothing, which is all this needs: the
     /// memory is asserted, not the protocol.

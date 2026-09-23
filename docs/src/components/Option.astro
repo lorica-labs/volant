@@ -1,0 +1,120 @@
+---
+// One entry of a reference list: an option, a setting, a variable or a code. The name and its
+// argument head the entry, the description follows, and the equivalents (default, environment
+// variable, ansible.cfg key, command-line option) sit underneath as small labeled values.
+interface Props {
+  name: string;
+  arg?: string;
+  id?: string;
+  default?: string;
+  env?: string;
+  config?: string;
+  flag?: string;
+}
+
+const { name, arg, id, default: fallback, env, config, flag } = Astro.props;
+const anchor = id ?? name.split(',').pop()!.trim().replace(/^-+/, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+const meta = [
+  ['Default', fallback],
+  ['Option', flag],
+  ['ansible.cfg', config],
+  ['Environment', env],
+].filter(([, value]) => value) as [string, string][];
+---
+
+<div class="opt" id={anchor}>
+  <div class="opt-head not-content">
+    <a class="opt-link" href={`#${anchor}`}>
+      <code class="opt-name">{name}</code>
+      {arg && <code class="opt-arg">{arg}</code>}
+    </a>
+  </div>
+  <div class="opt-body"><slot /></div>
+  {
+    meta.length > 0 && (
+      <dl class="opt-meta not-content">
+        {meta.map(([label, value]) => (
+          <div>
+            <dt>{label}</dt>
+            <dd>
+              <code>{value}</code>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+</div>
+
+<style>
+  .opt {
+    margin-top: 0;
+    padding-block: 1rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    scroll-margin-top: calc(var(--sl-nav-height, 4rem) + 1rem);
+  }
+  .opt-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .opt-link {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    text-decoration: none;
+  }
+  .opt-name {
+    padding: 0.15rem 0.45rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.35rem;
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+  }
+  .opt-arg {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--sl-color-text-accent);
+    font-size: var(--sl-text-sm);
+  }
+  .opt-link:hover .opt-name {
+    border-color: var(--sl-color-accent);
+  }
+  .opt-body {
+    margin-top: 0.5rem;
+    color: var(--sl-color-gray-2);
+  }
+  .opt-body :global(p) {
+    margin: 0;
+  }
+  .opt-body :global(p + p) {
+    margin-top: 0.5rem;
+  }
+  .opt-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.25rem;
+    margin: 0.6rem 0 0;
+    font-size: var(--sl-text-xs);
+  }
+  .opt-meta div {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+  .opt-meta dt {
+    color: var(--sl-color-gray-3);
+  }
+  .opt-meta dd {
+    margin: 0;
+  }
+  .opt-meta code {
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-2);
+  }
+</style>

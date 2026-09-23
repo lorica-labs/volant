@@ -1507,7 +1507,7 @@ mod tests {
         assert_eq!(target.remote_tmp, "/var/tmp/v");
     }
 
-    /// The host-variable table on `docs/src/connections.md` is a hand-written copy of the names
+    /// The host-variable table on the connections page is a hand-written copy of the names
     /// this module reads, and the page has already outlived one rewrite of `for_vars` without
     /// anybody opening it. The prose in the second column is not a function of anything the run
     /// reads, so it stays hand-written; the set of names is, so it is checked here.
@@ -1536,7 +1536,8 @@ mod tests {
         read.dedup();
 
         let page = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/connections.md"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/src/content/docs/hosts/connections.md"),
         )
         .expect("the connections page is in the repository");
         let mut published: Vec<&str> = page
@@ -1549,7 +1550,7 @@ mod tests {
         published.dedup();
         assert_eq!(
             published, read,
-            "docs/src/connections.md and Transport::for_vars disagree about the host variables"
+            "the connections page and Transport::for_vars disagree about the host variables"
         );
     }
 

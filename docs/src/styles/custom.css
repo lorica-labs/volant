@@ -1,0 +1,743 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* ------------------------------------------------------------------------------------------------
+   Tokens. Teal comes from the steering-wheel mark. Dark theme first, as Starlight defines it.
+   ------------------------------------------------------------------------------------------------ */
+:root {
+  --sl-font: 'Geist Variable', system-ui, sans-serif;
+  --sl-font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+
+  --sl-color-accent-low: #0b2e2b;
+  --sl-color-accent: #14b8a6;
+  --sl-color-accent-high: #99f6e4;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e6edf0;
+  --sl-color-gray-2: #c0cbd0;
+  --sl-color-gray-3: #8b9aa1;
+  --sl-color-gray-4: #56666d;
+  --sl-color-gray-5: #36444a;
+  --sl-color-gray-6: #1f2a2f;
+  --sl-color-black: #12191c;
+
+  /* Hairlines are translucent so they sit on any surface without reading as a gray box. */
+  --v-hairline: rgb(255 255 255 / 0.08);
+  --v-hairline-strong: rgb(255 255 255 / 0.14);
+  /* A figure sits in a thin shell, with a slightly raised core inside it. */
+  --v-shell: rgb(255 255 255 / 0.025);
+  --v-core: #151d21;
+  --v-core-highlight: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --v-soft-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 12px 32px -12px rgb(0 0 0 / 0.45);
+  --v-radius: 1rem;
+  --v-radius-inner: calc(var(--v-radius) - 0.375rem);
+  --v-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ccfbf1;
+  --sl-color-accent: #0d9488;
+  --sl-color-accent-high: #134e4a;
+  --sl-color-white: #12191c;
+  --sl-color-gray-1: #1f2a2f;
+  --sl-color-gray-2: #36444a;
+  --sl-color-gray-3: #56666d;
+  --sl-color-gray-4: #8b9aa1;
+  --sl-color-gray-5: #c0cbd0;
+  --sl-color-gray-6: #e6edf0;
+  --sl-color-gray-7: #f4f7f8;
+  --sl-color-black: #ffffff;
+
+  --v-hairline: rgb(18 25 28 / 0.08);
+  --v-hairline-strong: rgb(18 25 28 / 0.14);
+  --v-shell: rgb(18 25 28 / 0.03);
+  --v-core: #ffffff;
+  --v-core-highlight: inset 0 1px 0 rgb(255 255 255 / 0.8);
+  --v-soft-shadow: 0 1px 2px rgb(18 25 28 / 0.06), 0 12px 32px -12px rgb(18 25 28 / 0.18);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--sl-color-accent) 30%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Typography.
+   ------------------------------------------------------------------------------------------------ */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top {
+  letter-spacing: -0.02em;
+}
+h1#_top {
+  letter-spacing: -0.03em;
+}
+.sl-markdown-content a:not(.not-content *) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  transition: text-decoration-color 0.3s var(--v-ease), color 0.3s var(--v-ease);
+}
+.sl-markdown-content a:not(.not-content *):hover {
+  text-decoration-color: currentColor;
+}
+
+/* Inline code: a quiet chip, no border. */
+.sl-markdown-content :not(pre) > code {
+  padding: 0.12em 0.4em;
+  border: 0;
+  border-radius: 0.35rem;
+  background: var(--v-shell);
+  box-shadow: inset 0 0 0 1px var(--v-hairline);
+  font-size: 0.875em;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Chrome: header, search, sidebar, pagination, scroll-to-top.
+   ------------------------------------------------------------------------------------------------ */
+.header {
+  background-color: color-mix(in srgb, var(--sl-color-bg-nav) 82%, transparent);
+  backdrop-filter: saturate(140%) blur(12px);
+  border-bottom-color: var(--v-hairline);
+}
+
+site-search button[data-open-modal] {
+  border-color: var(--v-hairline-strong);
+  border-radius: 999px;
+  background: var(--v-shell);
+  transition: border-color 0.3s var(--v-ease), background-color 0.3s var(--v-ease);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--sl-color-gray-4);
+}
+
+.sidebar-content a {
+  border-radius: 0.5rem;
+  transition: color 0.25s var(--v-ease), background-color 0.25s var(--v-ease);
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  color: var(--sl-color-text-accent);
+  background-color: var(--sl-color-accent-low);
+}
+
+.pagination-links a {
+  border-color: var(--v-hairline-strong);
+  border-radius: var(--v-radius);
+  box-shadow: none;
+  transition: border-color 0.3s var(--v-ease), transform 0.3s var(--v-ease);
+}
+.pagination-links a:hover {
+  border-color: var(--sl-color-accent);
+}
+.pagination-links a:active {
+  transform: scale(0.99);
+}
+
+#scroll-to-top-button {
+  width: 2.5rem !important;
+  height: 2.5rem !important;
+  border: 1px solid var(--v-hairline-strong) !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--sl-color-bg-nav) 88%, transparent) !important;
+  color: var(--sl-color-gray-2) !important;
+  box-shadow: var(--v-soft-shadow) !important;
+  backdrop-filter: blur(8px);
+}
+#scroll-to-top-button:hover {
+  color: var(--sl-color-white) !important;
+  border-color: var(--sl-color-gray-4) !important;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Content blocks: tables and asides.
+   ------------------------------------------------------------------------------------------------ */
+.sl-markdown-content table:not(.kw-grid) {
+  display: table;
+  width: 100%;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 0.75rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: var(--sl-text-sm);
+}
+.sl-markdown-content table:not(.kw-grid) th {
+  background: var(--v-shell);
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+.sl-markdown-content table:not(.kw-grid) th,
+.sl-markdown-content table:not(.kw-grid) td {
+  padding: 0.6rem 0.9rem;
+  border: 0;
+  border-bottom: 1px solid var(--v-hairline);
+  vertical-align: top;
+}
+.sl-markdown-content table:not(.kw-grid) tr:last-child td {
+  border-bottom: 0;
+}
+.sl-markdown-content table code {
+  white-space: nowrap;
+}
+/* On narrow screens a wide table scrolls inside its own frame instead of widening the page. */
+@media (max-width: 50rem) {
+  .sl-markdown-content table:not(.kw-grid) {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* Notes and tips carry the site accent; caution and danger keep their warning colors. */
+.starlight-aside--note,
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--sl-color-text-accent);
+  --sl-color-asides-border: var(--sl-color-accent);
+}
+.starlight-aside {
+  border: 1px solid color-mix(in srgb, var(--sl-color-asides-border) 35%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--sl-color-asides-border) 7%, transparent);
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Figures: diagrams, charts, flows and timelines share one frame. The wrapper added by the page
+   script is the thin outer shell; the figure is the raised core inside it.
+   ------------------------------------------------------------------------------------------------ */
+.sl-markdown-content .expandable {
+  position: relative;
+  margin-block: 2rem;
+  padding: 0.375rem;
+  border: 1px solid var(--v-hairline);
+  border-radius: var(--v-radius);
+  background: var(--v-shell);
+}
+/* The html prefix outranks the background astro-mermaid injects on rendered diagrams at run time. */
+html .sl-markdown-content .expandable > .bench,
+html .sl-markdown-content .expandable > .flow,
+html .sl-markdown-content .expandable > .timeline,
+html .sl-markdown-content .expandable > pre.mermaid {
+  margin: 0;
+  padding: 1.5rem;
+  border: 1px solid var(--v-hairline);
+  border-radius: var(--v-radius-inner);
+  background: var(--v-core);
+  box-shadow: var(--v-core-highlight);
+}
+
+/* Figures arrive with a short fade as they scroll into view, once, when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    opacity: 0;
+    transform: translateY(0.75rem);
+    transition: opacity 0.7s var(--v-ease), transform 0.7s var(--v-ease);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Mermaid diagrams, drawn with the site's tokens instead of Mermaid's own palette. Mermaid inlines
+   its theme under an id selector, so these rules need !important to take over.
+   ------------------------------------------------------------------------------------------------ */
+pre.mermaid {
+  display: flex;
+  justify-content: center;
+  margin-block: 1.75rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  --dg-node: var(--sl-color-gray-6);
+  --dg-border: var(--v-hairline-strong);
+  --dg-edge: var(--sl-color-gray-3);
+  --dg-text: var(--sl-color-gray-1);
+  --dg-muted: var(--sl-color-gray-3);
+}
+pre.mermaid svg {
+  font-family: var(--sl-font) !important;
+  max-width: 100%;
+}
+pre.mermaid svg .node rect,
+pre.mermaid svg .node polygon,
+pre.mermaid svg .node circle,
+pre.mermaid svg .actor,
+pre.mermaid svg .labelBox {
+  fill: var(--dg-node) !important;
+  stroke: var(--dg-border) !important;
+  stroke-width: 1px !important;
+}
+pre.mermaid svg .node rect,
+pre.mermaid svg rect.actor {
+  rx: 8px;
+  ry: 8px;
+}
+pre.mermaid svg .node.key rect,
+pre.mermaid svg .node.key polygon {
+  fill: var(--sl-color-accent-low) !important;
+  stroke: var(--sl-color-accent) !important;
+}
+pre.mermaid svg .node.quiet rect {
+  fill: transparent !important;
+  stroke-dasharray: 4 3;
+}
+pre.mermaid svg .nodeLabel,
+pre.mermaid svg .node .label,
+pre.mermaid svg text.actor > tspan,
+pre.mermaid svg .messageText,
+pre.mermaid svg .noteText,
+pre.mermaid svg .noteText > tspan {
+  color: var(--dg-text) !important;
+  fill: var(--dg-text) !important;
+  font-family: var(--sl-font) !important;
+}
+pre.mermaid svg .cluster rect {
+  fill: transparent !important;
+  stroke: var(--dg-border) !important;
+  stroke-dasharray: 4 4;
+  rx: 12px;
+  ry: 12px;
+}
+pre.mermaid svg .cluster .nodeLabel,
+pre.mermaid svg .cluster-label span,
+pre.mermaid svg .labelText,
+pre.mermaid svg .labelText > tspan,
+pre.mermaid svg .loopText,
+pre.mermaid svg .loopText > tspan,
+pre.mermaid svg .sectionTitle {
+  color: var(--dg-muted) !important;
+  fill: var(--dg-muted) !important;
+  font-size: 12px !important;
+}
+pre.mermaid svg .flowchart-link,
+pre.mermaid svg .messageLine0,
+pre.mermaid svg .messageLine1 {
+  stroke: var(--dg-edge) !important;
+  stroke-width: 1.25px !important;
+}
+pre.mermaid svg .actor-line,
+pre.mermaid svg .loopLine {
+  stroke: var(--dg-border) !important;
+  stroke-dasharray: 3 3;
+}
+pre.mermaid svg marker path,
+pre.mermaid svg .arrowheadPath,
+pre.mermaid svg .arrowMarkerPath {
+  fill: var(--dg-edge) !important;
+  stroke: var(--dg-edge) !important;
+}
+pre.mermaid svg .note {
+  fill: var(--sl-color-accent-low) !important;
+  stroke: transparent !important;
+}
+/* Edge labels get a little room around them, so the edge they sit on never shows through. */
+pre.mermaid svg g.edgeLabel foreignObject {
+  overflow: visible;
+}
+pre.mermaid svg .labelBkg,
+pre.mermaid svg span.edgeLabel {
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+pre.mermaid svg .edgeLabel,
+pre.mermaid svg .edgeLabel p,
+pre.mermaid svg .labelBkg {
+  background-color: var(--v-core) !important;
+  opacity: 1 !important;
+  color: var(--dg-muted) !important;
+  font-size: 12px !important;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Full-screen view, opened by the button the page script adds to every figure.
+   ------------------------------------------------------------------------------------------------ */
+.expand-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--v-core) 85%, transparent);
+  color: var(--sl-color-gray-2);
+  font: inherit;
+  font-size: var(--sl-text-xs);
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity 0.3s var(--v-ease),
+    transform 0.3s var(--v-ease),
+    color 0.2s var(--v-ease),
+    border-color 0.2s var(--v-ease);
+}
+.expandable:hover > .expand-btn,
+.expand-btn:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (hover: none) {
+  .expand-btn {
+    opacity: 1;
+    transform: none;
+  }
+}
+.expand-btn:hover {
+  color: var(--sl-color-white);
+  border-color: var(--sl-color-gray-4);
+}
+.expand-btn:active {
+  transform: scale(0.97);
+}
+
+.expand-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(96vw, 96rem);
+  height: min(92vh, 64rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 1.25rem;
+  background: var(--v-core);
+  color: var(--sl-color-text);
+  box-shadow: 0 24px 80px -24px rgb(0 0 0 / 0.6);
+}
+.expand-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.expand-dialog::backdrop {
+  background: rgb(8 12 14 / 0.7);
+  backdrop-filter: blur(4px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .expand-dialog[open] {
+    animation: expand-in 0.45s var(--v-ease);
+  }
+  .expand-dialog[open]::backdrop {
+    animation: expand-fade 0.45s var(--v-ease);
+  }
+}
+@keyframes expand-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.98);
+  }
+}
+@keyframes expand-fade {
+  from {
+    opacity: 0;
+  }
+}
+.expand-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.9rem 0.9rem 0;
+}
+.expand-bar .expand-btn {
+  position: static;
+  opacity: 1;
+  transform: none;
+}
+.expand-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 1rem 3rem 3rem;
+}
+.expand-dialog .expand-body > * {
+  width: min(100%, 72rem);
+  max-height: 100%;
+  margin: 0;
+}
+/* Diagrams fill the space and keep their proportions; the SVG viewBox does the scaling. */
+html .expand-dialog .expand-body > pre.mermaid {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+.expand-dialog .expand-body pre.mermaid svg {
+  width: 100%;
+  height: 100%;
+  max-width: none !important;
+}
+/* HTML figures read larger and centered. */
+.expand-dialog .expand-body > .flow,
+.expand-dialog .expand-body > .timeline,
+.expand-dialog .expand-body > .bench {
+  font-size: 1.05rem;
+}
+.expand-dialog .expand-body .flow-steps {
+  justify-content: center;
+}
+.expand-dialog .expand-body .flow-head {
+  justify-content: center;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Video player used by the tutorials.
+   ------------------------------------------------------------------------------------------------ */
+.volant-video {
+  margin-block: 1.5rem;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: var(--v-radius);
+  overflow: hidden;
+  background: var(--v-core);
+}
+.volant-video video,
+.volant-video iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+.volant-video figcaption {
+  padding: 0.6rem 1rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+/* ------------------------------------------------------------------------------------------------
+   Keyword statuses. The shape carries the status, the color only reinforces it: a filled dot runs,
+   a half dot is partial, an empty ring is not supported yet, a dash cannot be written there.
+   ------------------------------------------------------------------------------------------------ */
+.kw {
+  --kw-color: var(--sl-color-gray-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.kw::before {
+  content: '';
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  box-sizing: border-box;
+}
+.kw-runs {
+  --kw-color: var(--sl-color-accent);
+  color: var(--sl-color-white);
+}
+.kw-runs::before {
+  background: var(--kw-color);
+}
+.kw-partial {
+  --kw-color: #d97706;
+  color: var(--sl-color-white);
+}
+:root:not([data-theme='light']) .kw-partial {
+  --kw-color: #f59e0b;
+}
+.kw-partial::before {
+  border: 1.5px solid var(--kw-color);
+  background: linear-gradient(90deg, var(--kw-color) 50%, transparent 50%);
+}
+.kw-notyet::before {
+  border: 1.5px solid var(--sl-color-gray-3);
+}
+.kw-no {
+  color: var(--sl-color-gray-4);
+  font-weight: 400;
+}
+.kw-no::before {
+  width: 0.65rem;
+  height: 1.5px;
+  border-radius: 0;
+  background: var(--sl-color-gray-4);
+}
+
+/* The legend: four entries, each a status and what it means. */
+.kw-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1px;
+  margin: 1.5rem 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: var(--v-radius);
+  background: var(--v-hairline);
+  overflow: hidden;
+}
+.kw-legend li {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  background: var(--v-core);
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+}
+.kw-legend .kw {
+  font-size: var(--sl-text-sm);
+  font-weight: 600;
+}
+
+/* Filter bar, added by the page script above the grid. */
+.kw-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0.75rem;
+}
+.kw-search {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 999px;
+  background: var(--v-shell);
+  color: var(--sl-color-white);
+  font: inherit;
+  font-size: var(--sl-text-sm);
+  transition: border-color 0.25s var(--v-ease);
+}
+.kw-search::placeholder {
+  color: var(--sl-color-gray-3);
+}
+.kw-search:focus {
+  border-color: var(--sl-color-accent);
+  outline: none;
+}
+.kw-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 999px;
+  background: var(--v-shell);
+}
+.kw-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sl-color-gray-2);
+  font: inherit;
+  font-size: var(--sl-text-xs);
+  cursor: pointer;
+  transition: background-color 0.25s var(--v-ease), color 0.25s var(--v-ease);
+}
+.kw-filter:hover {
+  color: var(--sl-color-white);
+}
+.kw-filter[aria-pressed='true'] {
+  background: var(--v-core);
+  color: var(--sl-color-white);
+  box-shadow: inset 0 0 0 1px var(--v-hairline-strong);
+}
+.kw-filter .kw {
+  font-size: inherit;
+}
+.kw-count {
+  color: var(--sl-color-gray-3);
+  font-variant-numeric: tabular-nums;
+}
+.kw-empty {
+  margin: 1rem 0;
+  color: var(--sl-color-gray-3);
+}
+
+/* The grid itself. */
+.kw-grid-wrap {
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: var(--v-radius);
+  background: var(--v-core);
+}
+/* A scrolling wrapper would pin the header to itself, not to the page, so it only scrolls where the
+   grid is too wide to fit. */
+@media (max-width: 40rem) {
+  .kw-grid-wrap {
+    overflow-x: auto;
+  }
+}
+.kw-grid {
+  width: 100%;
+  margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--sl-text-sm);
+}
+.kw-grid th {
+  position: sticky;
+  top: var(--sl-nav-height, 3.5rem);
+  z-index: 1;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--v-hairline-strong);
+  background: var(--v-core);
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-xs);
+  font-weight: 500;
+  text-align: start;
+}
+.kw-grid th:first-child {
+  border-top-left-radius: var(--v-radius);
+}
+.kw-grid th:last-child {
+  border-top-right-radius: var(--v-radius);
+}
+.kw-grid td {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--v-hairline);
+  vertical-align: middle;
+}
+.kw-grid tbody tr:last-child td {
+  border-bottom: 0;
+}
+.kw-grid tbody tr {
+  transition: background-color 0.2s var(--v-ease);
+}
+.kw-grid tbody tr:hover {
+  background: var(--v-shell);
+}
+/* Where the wrapper scrolls sideways, a sticky header would stick to it and leave a gap. */
+@media (max-width: 40rem) {
+  .kw-grid-wrap .kw-grid th {
+    position: static;
+  }
+}
+.kw-grid td:first-child code {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--sl-color-white);
+  font-size: var(--sl-text-sm);
+}
+
+/* Printing shows every figure, whether or not it has scrolled into view. */
+@media print {
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .expand-btn {
+    display: none;
+  }
+}

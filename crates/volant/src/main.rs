@@ -2,7 +2,7 @@
 use clap::{Parser, Subcommand};
 use volant::cli::PlaybookArgs;
 
-/// Fast, drop-in engine for Ansible playbooks.
+/// Fast engine for Ansible playbooks.
 #[derive(Parser)]
 #[command(name = "volant", version = volant::VERSION)]
 struct Cli {

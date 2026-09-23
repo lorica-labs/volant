@@ -13,10 +13,14 @@ version_group = "volant"
 # The repository changelog is this package's changelog. cargo-dist reads it for the release notes,
 # so a hand-maintained file left everything under Unreleased and every release republished it.
 changelog_path = "CHANGELOG.md"
+# One changelog for the project: the agent and the protocol ship inside the same release, so
+# their commits belong in the same file.
+changelog_include = ["volant-agent", "volant-protocol"]
 
 [[package]]
 name = "volant-agent"
 git_tag_enable = false
+changelog_update = false
 version_group = "volant"
 
 [[package]]
@@ -24,3 +28,15 @@ name = "volant-protocol"
 git_tag_enable = false
 changelog_update = false
 version_group = "volant"
+
+# The changelog is written for users. Commits that change nothing a user can see stay out of it,
+# and the rest is grouped under the Keep a Changelog headings.
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Changed" },
+  { message = "^revert", group = "Changed" },
+  { message = "^(build|chore|ci|docs|refactor|style|test)", skip = true },
+  { message = "^.*", group = "Other" },
+]

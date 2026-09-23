@@ -1,0 +1,133 @@
+---
+title: Quickstart
+description: Run a first playbook on your own machine, then on a remote host over SSH.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+{/* A walkthrough video goes here once it is recorded:
+import Video from '../../../components/Video.astro';
+<Video title="Your first run with Volant" src="/videos/quickstart.mp4" poster="/videos/quickstart.jpg" />
+*/}
+
+This page assumes `volant` is on your `PATH`. If it is not, start with [Installation](/start/installation/).
+
+## Run a playbook on this machine
+
+<Steps>
+
+1. Create an inventory with one host, reached without SSH:
+
+   ```ini title="inventory.ini"
+   localhost ansible_connection=local
+   ```
+
+2. Write a playbook:
+
+   ```yaml title="site.yml"
+   - hosts: localhost
+     gather_facts: false
+     tasks:
+       - name: Who am I?
+         command: id -un
+         register: me
+
+       - name: Say hello
+         debug:
+           msg: "Hello from {{ me.stdout }}"
+   ```
+
+3. Run it. `volant playbook` takes the same arguments as `ansible-playbook`:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml
+   ```
+
+</Steps>
+
+The output is the one you know from Ansible:
+
+```text
+PLAY [localhost] ***************************************************************
+
+TASK [Who am I?] ***************************************************************
+changed: [localhost]
+
+TASK [Say hello] ***************************************************************
+ok: [localhost] => {
+    "msg": "Hello from alice"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+## Run it on a remote host
+
+The host needs an SSH server and an account you can log into with a key. It does not need Volant: the controller uploads its agent with the first task and keeps it there for the next run.
+
+```ini title="inventory.ini"
+[web]
+web1 ansible_host=192.0.2.10 ansible_user=deploy
+```
+
+```yaml title="site.yml"
+- hosts: web
+  tasks:
+    - name: Show the distribution
+      debug:
+        msg: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Make sure the release directory exists
+      become: true
+      file:
+        path: /srv/app
+        state: directory
+        mode: "0755"
+```
+
+```sh
+volant playbook -i inventory.ini site.yml
+```
+
+<Aside type="tip">
+This playbook gathers facts and runs the `file` module, so it needs `ansible-core` on the controller and a Python 3 on the host. [Installation](/start/installation/#what-the-machines-need) lists what each side needs.
+</Aside>
+
+Your `~/.ssh/config` applies, because Volant runs the `ssh` you already have. Volant never prompts for an SSH password: use a key file or an ssh-agent.
+
+## Look before you run
+
+The listing commands read the playbook and print what a run would do, without connecting to anything:
+
+```sh
+volant playbook -i inventory.ini site.yml --list-hosts
+volant playbook -i inventory.ini site.yml --list-tasks
+volant playbook -i inventory.ini site.yml --syntax-check
+```
+
+## A project layout that works
+
+Volant finds roles, `group_vars` and `host_vars` where Ansible finds them:
+
+<FileTree>
+- ansible.cfg
+- inventory.ini
+- site.yml
+- group_vars/
+  - all.yml
+  - web.yml
+- host_vars/
+  - web1.yml
+- roles/
+  - nginx/
+    - defaults/main.yml
+    - handlers/main.yml
+    - tasks/main.yml
+</FileTree>
+
+## Next steps
+
+- [Will my playbook run?](/start/compatibility/) checks an existing project.
+- [How a play runs](/playbooks/how-a-play-runs/) explains what happens between the first line and the recap.
+- [Command line](/reference/cli/) lists every option.

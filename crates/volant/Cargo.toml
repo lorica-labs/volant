@@ -1,6 +1,6 @@
 [package]
 name = "volant"
-description = "Fast, drop-in engine for Ansible playbooks"
+description = "Fast engine for Ansible playbooks, written in Rust"
 readme = "../../README.md"
 keywords = ["ansible", "automation", "ssh", "config-management"]
 categories = ["command-line-utilities"]

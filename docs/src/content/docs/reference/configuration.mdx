@@ -1,0 +1,96 @@
+---
+title: Configuration
+description: The ansible.cfg settings and environment variables Volant reads, section by section, with their defaults.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import Option from '../../../components/Option.astro';
+
+Volant reads the same `ansible.cfg` as `ansible-playbook`, and stops at the first file it finds:
+
+<Steps>
+
+1. the file named by `ANSIBLE_CONFIG`
+2. `./ansible.cfg`
+3. `~/.ansible.cfg`
+4. `/etc/ansible/ansible.cfg`
+
+</Steps>
+
+For each setting, the environment variable beats the file, and the command-line option beats both. Keys Volant does not use are ignored, as Ansible ignores the ones it does not use.
+
+A file that exists but cannot be read is skipped, and the run continues with the defaults. Volant prints a warning first, which Ansible does not: a file you wrote that the process cannot open deserves a line, and a warning does not change the exit code.
+
+## [defaults]
+
+<Option name="inventory" id="defaults-inventory" flag="-i" env="ANSIBLE_INVENTORY">
+  The inventory file. Only INI inventories are read.
+</Option>
+
+<Option name="timeout" id="defaults-timeout" default="10" flag="-T" env="ANSIBLE_TIMEOUT">
+  Seconds to wait for a connection. It becomes `ConnectTimeout` on the `ssh` command line.
+</Option>
+
+<Option name="remote_user" id="defaults-remote-user" flag="-u" env="ANSIBLE_REMOTE_USER">
+  The user to log in as. Without it, `ssh` picks one.
+</Option>
+
+<Option name="private_key_file" id="defaults-private-key-file" flag="--private-key" env="ANSIBLE_PRIVATE_KEY_FILE">
+  The private key `ssh` authenticates with.
+</Option>
+
+<Option name="host_key_checking" id="defaults-host-key-checking" default="true" env="ANSIBLE_HOST_KEY_CHECKING">
+  With it on, an unknown host key makes the host unreachable. With it off, Volant adds `StrictHostKeyChecking=no` and `UserKnownHostsFile=/dev/null`, so an unknown key is accepted and not recorded.
+</Option>
+
+<Option name="remote_tmp" id="defaults-remote-tmp" default="~/.ansible/tmp" env="ANSIBLE_REMOTE_TMP">
+  The directory on each host that holds the [agent cache](/hosts/connections/#the-agent-cache).
+</Option>
+
+<Option name="forks" id="defaults-forks" default="5" flag="-f" env="ANSIBLE_FORKS">
+  How many hosts a play works on at once. Zero or a value that is not a number is rejected before the run starts. Playbooks read the current value as `ansible_forks`.
+</Option>
+
+<Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
+  Run notified handlers even on hosts that failed.
+</Option>
+
+<Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">
+  Where roles are looked for, after `<playbook_dir>/roles` and before `<playbook_dir>` itself. See [Roles](/playbooks/roles/#finding-a-role).
+</Option>
+
+<Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
+  Where a three-part role name such as `acme.demo.hello` is looked for. Collections themselves are not loaded yet.
+</Option>
+
+## [privilege_escalation]
+
+<Option name="become" id="privilege-escalation-become" default="false" flag="-b" env="ANSIBLE_BECOME">
+  Escalate by default. Playbook keywords and host variables take priority, see [Privilege escalation](/hosts/become/#which-setting-wins).
+</Option>
+
+<Option name="become_user" id="privilege-escalation-become-user" default="root" flag="--become-user" env="ANSIBLE_BECOME_USER">
+  The user to escalate to.
+</Option>
+
+<Option name="become_method" id="privilege-escalation-become-method" default="sudo" flag="--become-method" env="ANSIBLE_BECOME_METHOD">
+  The escalation method. Only `sudo` is implemented.
+</Option>
+
+## [tags]
+
+<Option name="run" id="tags-run" flag="--tags" env="ANSIBLE_RUN_TAGS">
+  Tags selected by default. `--tags` adds to this list rather than replacing it.
+</Option>
+
+<Option name="skip" id="tags-skip" flag="--skip-tags" env="ANSIBLE_SKIP_TAGS">
+  Tags skipped by default. `--skip-tags` adds to this list.
+</Option>
+
+## [volant]
+
+Ansible ignores this section, so one `ansible.cfg` can carry it and still drive both engines. `ansible-config validate` is the exception, see [Cross-host batching](/hosts/batching/#turning-it-on).
+
+<Option name="batching" id="volant-batching" default="false" env="VOLANT_BATCHING">
+  Let each host run ahead through tasks that do not depend on the others. See [Cross-host batching](/hosts/batching/).
+</Option>

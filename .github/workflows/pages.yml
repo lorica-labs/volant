@@ -4,13 +4,16 @@ on:
   push:
     branches: [main]
     paths: ["docs/**", ".github/workflows/pages.yml"]
+  # A pull request builds the site and checks its links, and deploys nothing.
+  pull_request:
+    paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,15 +23,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          tool: mdbook
-      - run: mdbook build docs
+          node-version: 22
+      - run: npm ci
+        working-directory: docs
+      - run: npx astro build
+        working-directory: docs
+        env:
+          ASTRO_TELEMETRY_DISABLED: "1"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
-          path: docs/book
+          path: docs/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -1,0 +1,34 @@
+---
+// A tutorial video. Pass `src` for a file under `public/videos/`, or `youtube` for a video id,
+// which plays from youtube-nocookie.com so nothing is set before the reader presses play.
+interface Props {
+  title: string;
+  src?: string;
+  poster?: string;
+  youtube?: string;
+  caption?: string;
+}
+
+const { title, src, poster, youtube, caption } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const local = (path?: string) => (path && path.startsWith('/') ? `${base}${path}` : path);
+---
+
+<figure class="volant-video not-content">
+  {
+    youtube ? (
+      <iframe
+        src={`https://www.youtube-nocookie.com/embed/${youtube}`}
+        title={title}
+        loading="lazy"
+        allow="encrypted-media; picture-in-picture"
+        allowfullscreen
+      />
+    ) : (
+      <video controls preload="metadata" poster={local(poster)} aria-label={title}>
+        <source src={local(src)} type="video/mp4" />
+      </video>
+    )
+  }
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

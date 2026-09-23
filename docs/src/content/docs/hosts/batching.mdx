@@ -1,0 +1,72 @@
+---
+title: Cross-host batching
+description: An opt-in setting that lets each host run ahead through tasks that do not depend on the others.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import HostTimeline from '../../../components/HostTimeline.astro';
+import BarChart from '../../../components/BarChart.astro';
+
+By default Volant runs a play the way Ansible's `linear` strategy does: the hosts of a batch meet in front of every task. That guarantee lets a playbook depend on things its tasks never mention. One host can write a file another host reads later, or restart a service another host connects to. None of that shows in the text of a task, so the only safe assumption is that any task may depend on the one before it, on every host.
+
+## What batching changes
+
+With `batching` on, a host carries on through its tasks instead of waiting at each one, and only stops at a synchronization point:
+
+- a `run_once` task
+- a task whose text names another host's state through `hostvars`, `ansible_play_hosts` or `ansible_play_batch`
+- a point where an include or a handler flush adds steps to the play
+- the end of the play
+
+<HostTimeline />
+
+It changes the order tasks run in, not what they do. The recap is the same either way. What can differ is a dependency the text does not show: with batching on, one host may reach task five before another host has run task one.
+
+## Turning it on
+
+It is off unless you ask for it.
+
+<Tabs>
+  <TabItem label="ansible.cfg">
+    ```ini
+    [volant]
+    batching = true
+    ```
+  </TabItem>
+  <TabItem label="Environment">
+    ```sh
+    VOLANT_BATCHING=1 volant playbook -i inventory.ini site.yml
+    ```
+  </TabItem>
+</Tabs>
+
+Ansible ignores sections it does not know. Measured on ansible-core 2.19.12 with the block above: `ansible-playbook` runs the play and exits 0 without a warning, and `ansible-config dump` does not list the section. One `ansible.cfg` can carry `[volant]` and still drive both engines.
+
+<Aside type="caution">
+`ansible-config validate` does notice: it rejects the file with `Found unknown section 'volant'` and exits 1. If you validate a shared `ansible.cfg`, set the option through the environment instead.
+</Aside>
+
+## What it saves
+
+Measured with Volant 0.1.0-alpha.5 on one Linux machine:
+
+<BarChart
+  title="Wall clock, 200 hosts, 20 tasks"
+  subtitle="Local connections, <code>-f 50</code>, release build, median of three runs. Shorter is faster."
+  unit="s"
+  series={[{ name: 'Default' }, { name: 'batching = true', accent: true }]}
+  rows={[
+    { label: 'No task reads another host', values: [1.28, 0.53] },
+    { label: 'Every task reads hostvars', values: [1.28, 1.25] },
+  ]}
+/>
+
+In the second row every task is a synchronization point under either setting, so the numbers match. The first row is what the default costs: a playbook with nothing to synchronize takes 2.4 times as long when every task is a meeting point.
+
+Both runs use local connections, so the gap is pure coordination. Over SSH each task also pays a network round trip, and the ratio then depends on your own latency.
+
+## Why it is not a playbook keyword
+
+Ansible has no such keyword, and a playbook you run with Volant must stay a playbook you can run with `ansible-playbook`. A keyword would either break the file for Ansible or be ignored by it, and then the same playbook would mean two different things depending on who ran it.
+
+Batching describes the machine you run from, not the automation you wrote, so that is where the setting lives. [Decision record 0005](/decisions/0005-fork-permits-span-host-local-batches/) records the rule behind it.

@@ -1,0 +1,136 @@
+---
+title: Command line
+description: Every command and option Volant accepts, grouped by what they change, and the ansible-playbook options it does not have yet.
+---
+
+import Option from '../../../components/Option.astro';
+
+```sh
+volant playbook [OPTIONS] <PLAYBOOK>...
+volant-playbook [OPTIONS] <PLAYBOOK>...
+volant --version
+```
+
+`volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
+
+Where an option has an `ansible.cfg` key or an environment variable, the entry names it. The option wins over both; [Configuration](/reference/configuration/) explains the order.
+
+## Hosts and connections
+
+<Option name="-i, --inventory" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
+  The inventory file. Only INI inventories are read, see [Inventories](/hosts/inventories/). Without one, only the implicit `localhost` exists.
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  Run only on hosts matching this [pattern](/hosts/inventories/#host-patterns). A limit that matches no host warns and narrows the run to what it did match.
+</Option>
+
+<Option name="-u, --user" arg="REMOTE_USER" config="[defaults] remote_user" env="ANSIBLE_REMOTE_USER">
+  Log in to hosts as this user. Without it, `ssh` picks the user, from your `~/.ssh/config` or your local account.
+</Option>
+
+<Option name="--private-key" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
+  The private key `ssh` authenticates with, passed as `ssh -i`.
+</Option>
+
+<Option name="-T, --timeout" arg="SECONDS" default="10" config="[defaults] timeout" env="ANSIBLE_TIMEOUT">
+  How long to wait for a connection, passed to `ssh` as `ConnectTimeout`.
+</Option>
+
+<Option name="-f, --forks" arg="N" default="5" config="[defaults] forks" env="ANSIBLE_FORKS">
+  How many hosts a play works on at once. Zero or a value that is not a number is rejected before the run starts.
+</Option>
+
+## Variables and tags
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Extra variables, at the top of the [precedence order](/variables/precedence/): `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
+</Option>
+
+<Option name="-t, --tags" arg="TAGS" config="[tags] run" env="ANSIBLE_RUN_TAGS">
+  Run only tasks with these tags. Comma-separated and repeatable, and added to the configured default rather than replacing it. See [Tags and listings](/playbooks/tags/).
+</Option>
+
+<Option name="--skip-tags" arg="TAGS" config="[tags] skip" env="ANSIBLE_SKIP_TAGS">
+  Skip tasks with these tags. Comma-separated and repeatable, and added to the configured default.
+</Option>
+
+## Look without running
+
+These options read the playbooks and stop. They never connect to a host and never stop on an unsupported module, so they work on playbooks this release cannot run yet.
+
+<Option name="--list-tasks">
+  List the tasks the run would execute, in Ansible's format.
+</Option>
+
+<Option name="--list-tags">
+  List the tags the run would select.
+</Option>
+
+<Option name="--list-hosts">
+  List the hosts each play would run on, in inventory order.
+</Option>
+
+<Option name="--syntax-check">
+  Load and compile the playbooks without running anything.
+</Option>
+
+## Privilege escalation
+
+<Option name="-b, --become" default="false" config="[privilege_escalation] become" env="ANSIBLE_BECOME">
+  Run tasks with privilege escalation. A `become` keyword in the playbook still decides for its own play, block or task. See [Privilege escalation](/hosts/become/).
+</Option>
+
+<Option name="--become-user" arg="USER" default="root" config="[privilege_escalation] become_user" env="ANSIBLE_BECOME_USER">
+  The user to escalate to.
+</Option>
+
+<Option name="--become-method" arg="METHOD" default="sudo" config="[privilege_escalation] become_method" env="ANSIBLE_BECOME_METHOD">
+  The escalation method. Only `sudo` is supported for now; other methods stop the run before it starts.
+</Option>
+
+<Option name="-K, --ask-become-pass">
+  Ask for the escalation password on the terminal, with echo turned off. The password is written once to `sudo` and appears in no command line, log or result.
+</Option>
+
+## Run and output
+
+<Option name="--force-handlers" default="false" config="[defaults] force_handlers" env="ANSIBLE_FORCE_HANDLERS">
+  Run notified handlers even on hosts that failed. A `force_handlers` keyword on the play takes priority. See [Handlers](/playbooks/handlers/).
+</Option>
+
+<Option name="-v" id="verbose">
+  Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`.
+</Option>
+
+<Option name="--no-color">
+  Print without colors.
+</Option>
+
+## Environment variables
+
+Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
+
+<Option name="VOLANT_PYTHON" arg="PATH">
+  The Python interpreter the controller uses to build module payloads. It needs `ansible-core`. When unset, Volant tries the active virtual environment, then `python3` on your `PATH`.
+</Option>
+
+<Option name="VOLANT_AGENT_DIR" arg="DIR">
+  A directory that holds the agent binaries, checked before the directory of the `volant` executable.
+</Option>
+
+<Option name="VOLANT_BATCHING" arg="1" config="[volant] batching">
+  Turns on [cross-host batching](/hosts/batching/).
+</Option>
+
+## Not there yet
+
+These `ansible-playbook` options are not accepted yet:
+
+| Option | What to do meanwhile |
+|---|---|
+| `-C, --check`, `--diff` | Run against a test host. |
+| `-k, --ask-pass` | Use a key file or an ssh-agent. |
+| `--ask-vault-pass`, `--vault-password-file`, `--vault-id` | Keep vaulted playbooks under Ansible for now. |
+| `--start-at-task`, `--step` | Use tags to select part of a play. |
+| `-c, --connection` | Set `ansible_connection` in the inventory. |

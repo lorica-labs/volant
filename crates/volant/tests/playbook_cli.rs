@@ -7375,7 +7375,7 @@ fn asking_for_the_expansion_this_release_does_not_do_runs() {
 /// The default of that same argument is where the two engines part, and no playbook writes it.
 /// Ansible expands `$VAR` in a `command`'s arguments unless it is told not to; this release
 /// expands nothing, so `command: mkdir -p $HOME/releases` makes a directory called `$HOME` and
-/// reports the same success. That divergence is published in `docs/src/modules.md` rather than
+/// reports the same success. That divergence is published on the modules reference page rather than
 /// refused, because the pre-flight reads the text of a playbook and the text cannot say whether
 /// a `$` names something the host has set: `awk '{print $1}'` and a regular expression ending in
 /// `$` run identically under both engines, and refusing on the character would stop them before

@@ -2,16 +2,22 @@ name: Ansible compatibility gap
 description: A playbook behaves differently under Volant and ansible-playbook
 labels: ["type/compat", "area/compat", "status/needs-triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Volant reproduces ansible-core 2.19. A difference that is not listed under *Differences from Ansible* in the [documentation](https://volant.sh/) is a bug, and this is the place to report it. A playbook that Volant refuses by name before the first connection is not a gap: see [Will my playbook run?](https://volant.sh/start/compatibility/).
   - type: input
     id: volant
     attributes:
       label: Volant version
+      description: Output of `volant --version`
     validations:
       required: true
   - type: input
     id: ansible
     attributes:
       label: ansible-core version used for comparison
+      description: Output of `ansible-playbook --version`, first line
     validations:
       required: true
   - type: textarea
@@ -22,9 +28,15 @@ body:
     validations:
       required: true
   - type: textarea
+    id: inventory
+    attributes:
+      label: Inventory and variables
+      description: The inventory, and any `group_vars`, `host_vars` or `-e` the playbook depends on
+      render: ini
+  - type: textarea
     id: diff
     attributes:
       label: What differs
-      description: Output of both tools, or a description of the difference
+      description: The output of both tools, or a description of the difference
     validations:
       required: true

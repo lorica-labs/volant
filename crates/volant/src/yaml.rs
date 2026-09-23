@@ -75,6 +75,11 @@ pub const PYYAML_FALSE: &[&str] = &[
 /// covers `08` (no valid octal digit), `0o10` (the `0o` prefix is YAML 1.2 only) and `1e3` or
 /// `1e+3` (PyYAML's float needs a `.` in the mantissa).
 fn pyyaml_scalar<'a>(scalar: Scalar<'a>, raw: &'a str) -> Scalar<'a> {
+    // A node with no text at all is null in PyYAML. saphyr resolves the one a document of
+    // nothing but a comment holds to an empty string; a quoted `''` has its quotes in `raw`.
+    if raw.is_empty() {
+        return Scalar::Null;
+    }
     if PYYAML_TRUE.contains(&raw) {
         return Scalar::Boolean(true);
     }
@@ -253,6 +258,24 @@ mod tests {
         assert_eq!(
             v,
             json!({"a": 1, "b": ["x", 2.5, true, null], "c": {"d": "text"}})
+        );
+    }
+
+    /// A node with no text is null, the way PyYAML reads it, whether it is a whole document
+    /// holding only a comment or a key with nothing after it. A quoted empty string stays one.
+    ///
+    /// What would make this red: the empty-text arm of `pyyaml_scalar` removed - saphyr then
+    /// hands the comment-only document back as `""`.
+    #[test]
+    fn a_node_with_no_text_is_null_and_a_quoted_empty_string_is_not() {
+        for text in ["---\n# only a comment\n", "---\n"] {
+            let docs = load(text, "t.yml").unwrap();
+            assert_eq!(to_json(&docs[0]).unwrap(), Value::Null, "{text:?}");
+        }
+        let docs = load("a:\nb: ''\nc: \"\"\n", "t.yml").unwrap();
+        assert_eq!(
+            to_json(&docs[0]).unwrap(),
+            json!({"a": null, "b": "", "c": ""})
         );
     }
 

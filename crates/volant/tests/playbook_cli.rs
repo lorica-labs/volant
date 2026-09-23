@@ -1794,6 +1794,33 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
     );
 }
 
+/// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
+/// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
+/// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
+/// a host that already has git. Red while volant prints the two item lines and not the third.
+#[test]
+#[ignore = "red: a loop whose every item is skipped does not print the task's own skipping line"]
+fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
+    let out = volant(&["playbook", &fixture("loop-all-skipped.yml")]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    // The first line is what is left of the banner's row of stars.
+    let lines: Vec<&str> = section(&text, "Every item skipped")
+        .lines()
+        .skip(1)
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "skipping: [localhost] => (item=a)",
+            "skipping: [localhost] => (item=b)",
+            "skipping: [localhost]",
+        ],
+        "{text}"
+    );
+}
+
 /// Measured against the reference: every item of a loop runs, the one that failed and the ones
 /// behind it alike, whether or not `ignore_errors` is on the task. The reference prints no
 /// aggregate line for the task, only the items and then `...ignoring` where the failure was

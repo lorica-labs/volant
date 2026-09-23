@@ -65,7 +65,7 @@ pub struct Union {
 /// A module ansible-core ships that this release runs neither on the agent nor on the controller,
 /// and that the reference does not run through an action plugin. The first two say there is no
 /// native path for it; the third says sending the module alone would run something that is not
-/// what the playbook asked for, which is why those twenty names stay refused rather than joining
+/// what the playbook asked for, which is why those names stay refused rather than joining
 /// this set.
 ///
 /// **One definition, read by the pre-flight as well as by the driver.** The pre-flight arm that
@@ -964,6 +964,44 @@ mod tests {
             .expect("python3 is on PATH wherever these tests run");
         assert!(
             out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A `print()` anywhere in the helper lands on stderr, and stdout carries the frame alone.
+    /// The helper's `union` is swapped for one that prints first, which is what
+    /// `init_plugin_loader()` or a collection imported under it would do.
+    ///
+    /// What would make this red: `sys.stdout` left pointing at the frame pipe, so the controller
+    /// reads `nois` as a four-byte length and the rest as a frame that is not one.
+    #[test]
+    fn a_print_in_the_helper_never_reaches_the_frames() {
+        use std::io::Write as _;
+        const DRIVER: &str = "import sys\nns = {'__name__': 'helper'}\nexec(sys.argv[1], ns)\nns['union'] = lambda modules: (print('noise from a plugin loader'), {'zip_b64': ''})[1]\nns['main']()\n";
+        let mut child = Command::new("python3")
+            .args(["-c", DRIVER, HELPER])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("python3 is on PATH wherever these tests run");
+        let mut request = Vec::new();
+        write_frame(&mut request, br#"{"modules": ["ping"]}"#).unwrap();
+        child.stdin.take().unwrap().write_all(&request).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let mut stdout = Cursor::new(out.stdout);
+        let frame = read_frame(&mut stdout)
+            .expect("stdout starts with a frame")
+            .expect("one frame");
+        assert_eq!(frame, br#"{"zip_b64": ""}"#);
+        assert_eq!(
+            stdout.position() as usize,
+            stdout.get_ref().len(),
+            "nothing but the frame on stdout"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("noise from a plugin loader"),
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );

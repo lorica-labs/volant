@@ -165,6 +165,10 @@ def write_frame(stream, message):
 
 
 def main():
+    # The frames keep the real stdout. Anything else that prints - the plugin loader, a
+    # collection imported under it - goes to stderr, which the controller passes through.
+    frames = sys.stdout.buffer
+    sys.stdout = sys.stderr
     while True:
         request = read_frame(sys.stdin.buffer)
         if request is None:
@@ -173,7 +177,7 @@ def main():
             answer = union(request["modules"])
         except Exception as failure:
             answer = {"error": "%s: %s" % (type(failure).__name__, failure)}
-        write_frame(sys.stdout.buffer, answer)
+        write_frame(frames, answer)
 
 
 def self_check():

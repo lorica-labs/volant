@@ -30,6 +30,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     env.add_filter("regex_search", regex_search);
     env.add_filter("regex_findall", regex_findall);
 
+    super::tests::register(env);
     env.add_test("truthy", |v: Value| truthy(&json(&v)));
     env.add_test("falsy", |v: Value| !truthy(&json(&v)));
     env.add_test("match", |v: Value, pattern: String, kwargs: Kwargs| {
@@ -52,12 +53,23 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
         },
     );
 
-    // Anything Ansible has that is not implemented yet must fail by name, not silently.
-    env.set_unknown_method_callback(|_state, _value, method, _args| {
-        Err(Error::new(
-            ErrorKind::UnknownMethod,
-            format!("method {method} is not available yet"),
-        ))
+    // Python's `str` and `dict` methods (`.split()`, `.startswith()`, `.keys()`...), which real
+    // roles call on values. Anything neither `pycompat` nor this engine has must still fail by
+    // name, not silently: `pycompat` answers a method it does not know with a bare
+    // `UnknownMethod`, and an error of its own (a bad argument) keeps its detail.
+    env.set_unknown_method_callback(|state, value, method, args| {
+        minijinja_contrib::pycompat::unknown_method_callback(state, value, method, args).map_err(
+            |e| {
+                if e.kind() == ErrorKind::UnknownMethod && e.detail().is_none() {
+                    Error::new(
+                        ErrorKind::UnknownMethod,
+                        format!("method {method} is not available yet"),
+                    )
+                } else {
+                    e
+                }
+            },
+        )
     });
 }
 

@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 
 mod file;
 mod filters;
+mod tests;
 
 pub use file::FileRender;
 
@@ -596,7 +597,7 @@ fn convert_error(err: minijinja::Error) -> TemplateError {
 }
 
 #[cfg(test)]
-mod tests {
+mod unit {
     use super::*;
     use serde_json::json;
 

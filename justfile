@@ -245,7 +245,9 @@ proof-reset:
 # nothing to pipeline. The roles come from Ansible Galaxy, installed once into `target/proof-
 # roles/` and never copied into this repository, so what runs is the published archive; a role
 # already installed at the pinned version (read from its own `.galaxy_install_info`) is left
-# alone rather than reinstalled on every call.
+# alone rather than reinstalled on every call, and `--force` makes a stale or partial one actually
+# get replaced rather than silently skipped, which `ansible-galaxy role install` does to any
+# directory that already exists.
 proof-roles engine="volant" *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -266,7 +268,7 @@ proof-roles engine="volant" *args:
       info="$roles_dir/$role/meta/.galaxy_install_info"
       [ -f "$info" ] && grep -q "^version: $version\$" "$info" || { installed=false; break; }
     done < <(grep 'name:' "$requirements" | sed 's/.*name: *//')
-    [ "$installed" = true ] || "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install -r "$requirements" -p "$roles_dir"
+    [ "$installed" = true ] || "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install --force -r "$requirements" -p "$roles_dir"
     export ANSIBLE_ROLES_PATH="$roles_dir"
     case "{{engine}}" in
       volant)
@@ -296,8 +298,8 @@ proof-roles-reset:
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     ssh "$VOLANT_TARGET_HOST" '
       set -euo pipefail
-      sudo apt-get -qq -y purge nginx nginx-common fail2ban python3-pip
-      sudo apt-get -qq -y autoremove
+      sudo apt-get -qq -y purge nginx nginx-common fail2ban python3-pip > /dev/null
+      sudo apt-get -qq -y autoremove > /dev/null
       sudo rm -rf /etc/nginx /etc/fail2ban/jail.local /etc/apt/apt.conf.d/10periodic /etc/apt/apt.conf.d/50unattended-upgrades
       echo reset
     '

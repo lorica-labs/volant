@@ -402,7 +402,7 @@ fn union_from(
             return Ok(None);
         }
         // A name a task gives outside `ansible.builtin` is refused with the reference's own
-        // sentence first: `ansible.bultin.debug` is a typo before it is a reason to install
+        // sentence first: `ansible.builtins.debug` is a typo before it is a reason to install
         // anything, and only ansible-core could have said which of the two it is.
         Err(err) => {
             if let Some((task, module)) = named.iter().find(|(_, m)| modules.contains(m)) {
@@ -916,14 +916,14 @@ mod tests {
         // A dotted typo a task gives is the reference's misspelling first, then why nothing could
         // tell a typo from a missing collection. Red if it reads as the interpreter refusal
         // alone, which sends the operator to install ansible-core to fix a typo.
-        let modules = std::collections::BTreeSet::from(["ansible.bultin.debug".to_string()]);
-        let named = [("D".to_string(), "ansible.bultin.debug".to_string())];
+        let modules = std::collections::BTreeSet::from(["ansible.builtins.debug".to_string()]);
+        let named = [("D".to_string(), "ansible.builtins.debug".to_string())];
         let err = union_from(none, &modules, &named).unwrap_err();
         assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
         let err = format!("{err:#}");
         assert!(
             err.starts_with(
-                "task 'D': couldn't resolve module/action 'ansible.bultin.debug'. This often indicates a misspelling"
+                "task 'D': couldn't resolve module/action 'ansible.builtins.debug'. This often indicates a misspelling"
             ),
             "{err}"
         );

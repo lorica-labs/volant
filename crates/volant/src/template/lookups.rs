@@ -127,11 +127,20 @@ fn lookup(
         };
         results.push(found);
     }
-    Ok(match results.len() {
+    Ok(scalar_or_list(results))
+}
+
+/// The shape every lookup plugin's result takes once it has gone through `lookup()`, not
+/// `query()`: no result is the empty string, one result is that value with its own type, several
+/// are a list. Every plugin answers through this same rule, `fileglob` included - measured on
+/// ansible-core 2.19.12: `lookup('fileglob', 'files/a.txt')` with one match answers a bare string
+/// (`type_debug` -> `str`), not a one-element list.
+fn scalar_or_list(mut results: Vec<Value>) -> Value {
+    match results.len() {
         0 => Value::from(""),
         1 => results.remove(0),
         _ => Value::from(results),
-    })
+    }
 }
 
 /// `ansible_search_path`, the controller's list of the directories a role's or a playbook's
@@ -300,8 +309,10 @@ fn lookup_error(name: &str, e: &TemplateError) -> Error {
 /// match winning; a pattern that already names a directory - an absolute one, measured on the
 /// two static `with_fileglob` patterns of the `airgap` role, or a relative one under a search
 /// entry - is globbed at that directory directly. Only files match, several terms concatenate
-/// into one list, and the whole result is sorted; no match anywhere is an empty list, never an
-/// error, the same as the reference's own `ret = []`.
+/// into one list before it is sorted whole. The result then goes through the same shaping every
+/// other plugin's does (`scalar_or_list`): no match anywhere is the empty string, one match is a
+/// bare string - measured on ansible-core 2.19.12, `lookup('fileglob', 'files/a.txt')` with a
+/// single match answers `type_debug` -> `str`, not a one-element list - and several are a list.
 ///
 /// The result is controller content, not tainted: a matched name is a path the pattern's author
 /// named and the controller's filesystem confirmed, the same standing `lookup('first_found')`
@@ -326,9 +337,7 @@ fn fileglob(
         }
     }
     out.sort();
-    Ok(Value::from(
-        out.into_iter().map(Value::from).collect::<Vec<_>>(),
-    ))
+    Ok(scalar_or_list(out.into_iter().map(Value::from).collect()))
 }
 
 /// The glob part of a pattern: everything after its last `/`, or the whole pattern when it names
@@ -683,12 +692,19 @@ mod tests {
             let path =
                 std::env::temp_dir().join(format!("volant-fileglob-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(path.join("sub")).unwrap();
+            std::fs::create_dir_all(&path).unwrap();
             Self { path }
         }
 
         fn write(&self, name: &str) -> &Self {
             std::fs::write(self.path.join(name), "x").unwrap();
+            self
+        }
+
+        /// A directory (not a file) under the fixture, so a pattern that matches its name still
+        /// must not match it as a result.
+        fn mkdir(&self, name: &str) -> &Self {
+            std::fs::create_dir_all(self.path.join(name)).unwrap();
             self
         }
 
@@ -710,8 +726,9 @@ mod tests {
     /// The two static `with_fileglob` patterns of the `airgap` role, against a fixture
     /// directory: `k3s-selinux*.rpm` and `*.tar.gz`, both rendered to an absolute pattern the
     /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
-    /// matched and not just the extension, `sub/` proves a directory never matches, and the
-    /// result is sorted.
+    /// matched and not just the extension, a directory whose own name matches the pattern
+    /// (`k3s-selinux-dir.rpm`, `images-dir.tar.gz`) proves a directory never matches, and the
+    /// result is sorted. Two matches each, so both stay a list under `scalar_or_list`.
     ///
     /// What would make this red: the absolute pattern read as a search-path entry instead of
     /// globbed directly, a directory counted as a match, or the result left in read-dir order.
@@ -721,7 +738,8 @@ mod tests {
         dir.write("container-selinux-1.rpm")
             .write("k3s-selinux-1.rpm")
             .write("k3s-selinux-1.el8.rpm")
-            .write("other.txt");
+            .write("other.txt")
+            .mkdir("k3s-selinux-dir.rpm");
         let t = Templar::new(dir.path.clone());
         let rpm = dir.pattern("k3s-selinux*.rpm");
         assert_eq!(
@@ -736,7 +754,9 @@ mod tests {
             ])
         );
 
-        dir.write("images-2.tar.gz").write("images-1.tar.gz");
+        dir.write("images-2.tar.gz")
+            .write("images-1.tar.gz")
+            .mkdir("images-dir.tar.gz");
         let images = dir.pattern("*.tar.gz");
         assert_eq!(
             t.render(
@@ -750,7 +770,8 @@ mod tests {
 
     /// A pattern with no directory of its own: `files/` of the search path wins over the entry
     /// itself when both would match, and the entry itself only when `files/` has nothing at
-    /// all - measured behaviour of `plugins/lookup/fileglob.py`, read on the dev machine.
+    /// all - measured behaviour of `plugins/lookup/fileglob.py`, read on the dev machine. Each
+    /// case has exactly one match, so `scalar_or_list` answers a bare string, not a list.
     ///
     /// What would make this red: reading the entry itself before `files/`, or merging matches
     /// from both instead of stopping at the first that has any.
@@ -766,38 +787,42 @@ mod tests {
         assert_eq!(
             t.render("{{ lookup('fileglob', 'only-in-files.conf') }}", &vars)
                 .unwrap(),
-            json!([role
-                .role()
-                .join("files/only-in-files.conf")
-                .display()
-                .to_string()])
+            json!(
+                role.role()
+                    .join("files/only-in-files.conf")
+                    .display()
+                    .to_string()
+            )
         );
         assert_eq!(
             t.render("{{ lookup('fileglob', 'only-in-role.conf') }}", &vars)
                 .unwrap(),
-            json!([role.role().join("only-in-role.conf").display().to_string()])
+            json!(role.role().join("only-in-role.conf").display().to_string())
         );
         assert_eq!(
             t.render("{{ lookup('fileglob', 'both.conf') }}", &vars)
                 .unwrap(),
-            json!([role.role().join("files/both.conf").display().to_string()])
+            json!(role.role().join("files/both.conf").display().to_string())
         );
     }
 
-    /// No match anywhere is an empty list, never an error - the reference's own `ret = []`.
+    /// No match anywhere is the empty string, never an error - the same `scalar_or_list` gives
+    /// `lookup('env')` and every other plugin with nothing to answer, and what the reference's
+    /// own `ret = []` becomes once `lookup()` (not `query()`) joins it.
     #[test]
-    fn fileglob_with_no_match_is_an_empty_list_not_an_error() {
+    fn fileglob_with_no_match_is_the_empty_string_not_an_error() {
         let role = Role::new("fileglob-empty");
         let t = templar(&role.dir);
         assert_eq!(
             t.render("{{ lookup('fileglob', 'nope*.txt') }}", &role.vars())
                 .unwrap(),
-            json!([])
+            json!("")
         );
     }
 
     /// `ansible.builtin.fileglob` answers exactly as the bare name does (A9: minijinja accepts
-    /// a qualified lookup name the same as a qualified filter or test name).
+    /// a qualified lookup name the same as a qualified filter or test name), a bare string here
+    /// too since there is exactly one match.
     #[test]
     fn fileglob_answers_under_its_ansible_builtin_alias_too() {
         let role = Role::new("fileglob-alias");
@@ -809,7 +834,7 @@ mod tests {
                 &role.vars()
             )
             .unwrap(),
-            json!([role.role().join("files/x.conf").display().to_string()])
+            json!(role.role().join("files/x.conf").display().to_string())
         );
     }
 

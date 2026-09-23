@@ -861,9 +861,10 @@ fn regex_escape(value: Value, re_type: Option<String>, kwargs: Kwargs) -> Result
 }
 
 /// `ansible.utils.ipwrap`, ported from the collection's own filter (`plugins/filter/ipwrap.py`,
-/// read on the dev machine): every IPv6 address, with or without a prefix, is bracketed; a
-/// string that is not one - a hostname, an IPv4 address or subnet, the empty string - is left
-/// as it is, and a list is wrapped element by element. Measured on ansible-core 2.19.12 (A9):
+/// read on the dev machine): every IPv6 address, with or without a valid prefix (0 to 128), is
+/// bracketed; a string that is not one - a hostname, an IPv4 address or subnet, an out-of-range
+/// or non-numeric prefix, the empty string - is left as it is, and a list is wrapped element by
+/// element. Measured on ansible-core 2.19.12 (A9):
 /// `['192.0.2.1', '2001:db8::1', 'example.org', '192.0.2.0/24', '2001:db8::/64', '']` becomes
 /// `["192.0.2.1", "[2001:db8::1]", "example.org", "192.0.2.0/24", "[2001:db8::]/64", ""]`, and a
 /// bare integer fails with the reference's own wording, `format`'s second placeholder included:
@@ -887,8 +888,13 @@ fn ipwrap(value: Value) -> Result<Value, Error> {
 
 /// One value through the filter. The address is parsed on the part before `/`, which is what
 /// `std::net::Ipv6Addr::from_str` gets: on a hit, that part is bracketed and the `/prefix` kept
-/// outside the brackets; on a miss - not an IPv6 address at all, or not a string to begin with -
-/// the value comes back unchanged, the reference's own `except Exception: return value`.
+/// outside the brackets. On a miss the value comes back unchanged - the reference's own `except
+/// Exception: return value` - and that covers more than "not an IPv6 address at all": `netaddr`
+/// builds an `IPNetwork` out of the address and the prefix together, so a prefix past 128 (an
+/// IPv6 address has no more bits) or one that is not a plain integer also raises there and is
+/// left untouched here, checked against the real filter on the dev machine:
+/// `'2001:db8::/129' | ansible.utils.ipwrap` and `'2001:db8::/abc' | ansible.utils.ipwrap` both
+/// answer their own input, not a bracketed one.
 fn ipwrap_scalar(value: &Value) -> Value {
     let Some(text) = value.as_str() else {
         return value.clone();
@@ -900,10 +906,13 @@ fn ipwrap_scalar(value: &Value) -> Value {
     if Ipv6Addr::from_str(address).is_err() {
         return value.clone();
     }
-    Value::from(match prefix {
-        Some(prefix) => format!("[{address}]/{prefix}"),
-        None => format!("[{address}]"),
-    })
+    let Some(prefix) = prefix else {
+        return Value::from(format!("[{address}]"));
+    };
+    match prefix.parse::<u8>() {
+        Ok(bits) if bits <= 128 => Value::from(format!("[{address}]/{prefix}")),
+        _ => value.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -1178,6 +1187,39 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    /// A prefix `netaddr` would refuse building the `IPNetwork` from - past 128 (an IPv6 address
+    /// has no more bits) or not a plain integer - leaves the value untouched rather than
+    /// bracketing the address anyway. Checked against the real filter on the dev machine:
+    /// `'2001:db8::/129'` and `'2001:db8::/abc'` both answer their own input.
+    ///
+    /// What would make this red: a prefix accepted without checking its range or that it parses,
+    /// which would still bracket the address (`[2001:db8::]/129`).
+    #[test]
+    fn ipwrap_leaves_an_address_alone_when_its_prefix_does_not_parse() {
+        assert_eq!(
+            text("{{ '2001:db8::/129' | ansible.utils.ipwrap }}"),
+            "2001:db8::/129"
+        );
+        assert_eq!(
+            text("{{ '2001:db8::/abc' | ansible.utils.ipwrap }}"),
+            "2001:db8::/abc"
+        );
+        // 128 itself, the last valid one, still wraps.
+        assert_eq!(
+            text("{{ '2001:db8::/128' | ansible.utils.ipwrap }}"),
+            "[2001:db8::]/128"
+        );
+    }
+
+    /// `ansible.utils.ipwrap` is not one of the aliases `add_filter` gives every registered
+    /// filter: the reference never exposes it as `ansible.builtin.ipwrap`, so a role that
+    /// misspells it that way must fail here exactly as it does there.
+    #[test]
+    fn ipwrap_is_not_aliased_under_ansible_builtin() {
+        let err = render("{{ 'x' | ansible.builtin.ipwrap }}", serde_json::json!({})).unwrap_err();
+        assert!(err.contains("unknown filter"), "{err}");
     }
 
     /// A filter and a registered test still answer under `ansible.builtin.<name>`. Guard: remove

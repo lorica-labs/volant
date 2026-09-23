@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Running one task and judging its result, on the controller as well as on the agent.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::IsTerminal as _;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -1070,15 +1070,6 @@ fn sub_task(
     interpreters: &[String],
     asked: Option<&str>,
 ) -> Result<Task, TaskResult> {
-    // The agent stages nothing yet: the protocol that carries a file to the host is not in this
-    // release. A sub-task naming one fails by name rather than running without it, which would
-    // report a `copy` that copied nothing. `copy` wires them, and nothing asks for one before it.
-    if let Some((arg, _)) = sub.files.first() {
-        return Err(TaskResult::failed_with(format!(
-            "the '{}' sub-task needs the file '{arg}' staged on the host, which this release cannot do yet",
-            sub.module
-        )));
-    }
     let Some(payload) = union.and_then(|union| {
         union.modules.get(sub.module).map(|facts| ModulePayload {
             blob: union.hash.clone(),
@@ -1095,8 +1086,16 @@ fn sub_task(
         timeout: task.timeout,
         environment: item.environment.clone(),
         payload: Some(payload.under(&interpreter)),
-        // Nothing staged: a `Sub` with files is refused above until `copy` wires them.
-        files: Vec::new(),
+        // Named only: the bytes go up just before the batch, and [`payloads_confirmed`] refuses
+        // the task unless they went up for it.
+        files: sub
+            .files
+            .iter()
+            .map(|(arg, blob)| volant_protocol::StagedFile {
+                arg: arg.clone(),
+                blob: blob.hash.clone(),
+            })
+            .collect(),
     })
 }
 
@@ -1146,6 +1145,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
             *batch_id,
             vec![built],
             union,
+            &sub.files,
             stop,
             stop_broken,
             logs,
@@ -1249,34 +1249,71 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
     if let Some(seen) = link.memory().seen(hash) {
         return seen;
     }
-    let mut present = blob_state(
-        link,
-        host,
-        hash,
-        &ToAgent::HasBlob { hash: hash.into() },
-        logs,
-    )
-    .await
-    .inspect_err(|err| link.memory().remember(hash, Err(err.clone())))?;
-    if !present {
-        let put = ToAgent::PutBlob {
-            hash: hash.into(),
-            zip_b64: zip_b64.into(),
-        };
-        present = blob_state(link, host, hash, &put, logs)
-            .await
-            .inspect_err(|err| link.memory().remember(hash, Err(err.clone())))?;
-    }
-    let state = if present {
-        Ok(())
-    } else {
+    let state = match place_blob(link, host, hash, zip_b64, logs).await {
+        Ok(true) => Ok(()),
         // The agent logs why on its way to saying no, and that line is already in `logs`.
-        Err(format!(
+        Ok(false) => Err(format!(
             "the agent refused the module payload {hash}; it holds no payload to run this task from"
-        ))
+        )),
+        Err(err) => Err(err),
     };
     link.memory().remember(hash, state.clone());
     state
+}
+
+/// Asks whether the agent holds `hash`, and sends it when it does not: whether it holds it now.
+///
+/// Remembers nothing. That is [`ensure_blob`]'s to do for a payload, and is never done for a
+/// file a sub-task stages: the agent takes that one out of its cache to hand it to the module,
+/// so a link that remembered it would send the next task after a file that is no longer there.
+async fn place_blob<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    hash: &str,
+    b64: &str,
+    logs: &mut Vec<String>,
+) -> Result<bool, String> {
+    let has = ToAgent::HasBlob { hash: hash.into() };
+    if blob_state(link, host, hash, &has, logs).await? {
+        return Ok(true);
+    }
+    let put = ToAgent::PutBlob {
+        hash: hash.into(),
+        zip_b64: b64.into(),
+    };
+    blob_state(link, host, hash, &put, logs).await
+}
+
+/// Puts on the host every file a sub-task stages, whatever the link put there before: the
+/// hashes the agent now holds, or why one is not there, in the agent's own words.
+async fn stage_files<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    files: &[(String, crate::action_plugins::FileBlob)],
+    logs: &mut Vec<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut placed = BTreeSet::new();
+    for (arg, blob) in files {
+        let before = logs.len();
+        if !place_blob(link, host, &blob.hash, &blob.b64, logs).await? {
+            let prefix = format!("[{host}] ");
+            let why: Vec<&str> = logs[before..]
+                .iter()
+                .map(|line| line.strip_prefix(&prefix).unwrap_or(line))
+                .collect();
+            let why = if why.is_empty() {
+                "it gave no reason".to_string()
+            } else {
+                why.join("; ")
+            };
+            return Err(format!(
+                "the agent could not store the file for '{arg}' ({}): {why}",
+                blob.hash
+            ));
+        }
+        placed.insert(blob.hash.clone());
+    }
+    Ok(placed)
 }
 
 /// Asks one question about a blob and reads the one answer to it.
@@ -1338,12 +1375,19 @@ async fn blob_state<C: AgentChannel>(
     }
 }
 
-/// Every payload in a batch names a blob this link confirmed.
+/// Every payload in a batch names a blob this link confirmed, and every file a task stages was
+/// put on the host for this batch.
 ///
 /// A task naming anything else is a controller that built a payload and never made sure the
 /// host had it - a bug here, not a fault of the host - so it fails naming the hash instead of
-/// being sent for the agent to fail on, where it would read as the module's own failure.
-pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<(), String> {
+/// being sent for the agent to fail on, where it would read as the module's own failure. A file
+/// is checked against `staged`, never against the link's memory: the agent consumes a staged
+/// file, so one it held for an earlier task is not there for this one.
+pub(super) fn payloads_confirmed(
+    tasks: &[Task],
+    memory: &BlobMemory,
+    staged: &BTreeSet<String>,
+) -> Result<(), String> {
     for task in tasks {
         if let Some(payload) = &task.payload
             && !memory.holds(&payload.blob)
@@ -1351,6 +1395,12 @@ pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<
             return Err(format!(
                 "task '{}' carries the module payload {} which this link never confirmed",
                 task.module, payload.blob
+            ));
+        }
+        if let Some(file) = task.files.iter().find(|f| !staged.contains(&f.blob)) {
+            return Err(format!(
+                "task '{}' stages the file {} under '{}', which was not put on the host for it",
+                task.module, file.blob, file.arg
             ));
         }
     }
@@ -1373,6 +1423,7 @@ async fn blob_preflight<C: AgentChannel>(
     host: &str,
     tasks: &[Task],
     blob: Option<&Union>,
+    files: &[(String, crate::action_plugins::FileBlob)],
     logs: &mut Vec<String>,
 ) -> Result<(), String> {
     if let Some(union) = blob
@@ -1380,7 +1431,8 @@ async fn blob_preflight<C: AgentChannel>(
     {
         ensure_blob(link, host, &union.hash, &union.zip_b64, logs).await?;
     }
-    payloads_confirmed(tasks, link.memory())
+    let staged = stage_files(link, host, files, logs).await?;
+    payloads_confirmed(tasks, link.memory(), &staged)
 }
 
 /// What a batch reports when the payload it needs could not be put on the host.
@@ -1414,12 +1466,13 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
     id: u64,
     tasks: Vec<Task>,
     blob: Option<&Union>,
+    files: &[(String, crate::action_plugins::FileBlob)],
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
     let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
-    if let Err(err) = blob_preflight(link, host, &tasks, blob, logs).await {
+    if let Err(err) = blob_preflight(link, host, &tasks, blob, files, logs).await {
         return blob_failure(err, received.len());
     }
     if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
@@ -1670,7 +1723,7 @@ mod tests {
                 element: None,
                 label: None,
                 args: Map::new(),
-                args_untrusted: std::collections::BTreeSet::new(),
+                args_untrusted: BTreeSet::new(),
                 vars: HostVars::default(),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -1703,7 +1756,7 @@ mod tests {
             element: None,
             label: None,
             args: vars(args),
-            args_untrusted: std::collections::BTreeSet::new(),
+            args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,
@@ -2125,7 +2178,7 @@ mod tests {
                     "provided_arguments": provided,
                     "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
                 })),
-                args_untrusted: std::collections::BTreeSet::new(),
+                args_untrusted: BTreeSet::new(),
                 vars: hvars(host),
                 environment: BTreeMap::new(),
                 skipped: None,
@@ -2285,7 +2338,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
-            args_untrusted: std::collections::BTreeSet::new(),
+            args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,
@@ -2334,7 +2387,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
-            args_untrusted: std::collections::BTreeSet::new(),
+            args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,
@@ -2385,7 +2438,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
-            args_untrusted: std::collections::BTreeSet::new(),
+            args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,
@@ -2663,6 +2716,7 @@ mod tests {
             3,
             tasks,
             None,
+            &[],
             &mut stop,
             &mut stop_broken,
             &mut logs,
@@ -2742,6 +2796,7 @@ mod tests {
         Vec<String>,
     ) {
         let t = task(match kind {
+            crate::action_plugins::Kind::Copy => "copy",
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
         });
@@ -3234,12 +3289,13 @@ mod tests {
         assert_eq!(msg(&result), "No package matching");
     }
 
-    /// A sub-task that stages a file is refused by name until the protocol can carry one.
+    /// A sub-task that stages a file names it on the wire, under its argument and by its hash
+    /// alone, and a module the union lacks is never sent as native.
     ///
     /// What would make this red: the sub-task sent without its file, which runs `copy` against a
     /// source that is not there - or, worse, against whatever the argument names on the host.
     #[test]
-    fn a_sub_task_that_stages_a_file_is_refused_by_name() {
+    fn a_sub_task_names_the_files_it_stages() {
         let sub = crate::action_plugins::Sub {
             module: "copy",
             args: Map::new(),
@@ -3252,20 +3308,6 @@ mod tests {
             )],
         };
         let union = union_of("ab", &["copy"]);
-        let failure = sub_task(
-            &task("copy"),
-            &bare_item(),
-            &sub,
-            Some(&union),
-            &python3(),
-            None,
-        )
-        .expect_err("nothing is sent without its file");
-        assert!(msg(&failure).contains("'src'"), "{failure:?}");
-        let sub = crate::action_plugins::Sub {
-            files: Vec::new(),
-            ..sub
-        };
         let built = sub_task(
             &task("copy"),
             &bare_item(),
@@ -3274,8 +3316,15 @@ mod tests {
             &python3(),
             None,
         )
-        .expect("a sub-task without files travels");
+        .expect("a sub-task with files travels");
         assert_eq!(built.module, "copy");
+        assert_eq!(
+            built.files,
+            [volant_protocol::StagedFile {
+                arg: "src".into(),
+                blob: "cd".into(),
+            }]
+        );
         let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
             .expect_err("a module the union lacks is never sent as native");
         assert!(msg(&failure).contains("python payload"), "{failure:?}");
@@ -3420,6 +3469,7 @@ mod tests {
             1,
             tasks,
             Some(&union_named("ab")),
+            &[],
             &mut stop,
             &mut stop_broken,
             &mut logs,
@@ -3500,6 +3550,7 @@ mod tests {
             "h1",
             &tasks,
             Some(&union_named("ab")),
+            &[],
             &mut logs,
         )
         .await
@@ -3521,7 +3572,7 @@ mod tests {
             &bare_item(),
             Some((&module_payload("ab"), "/usr/bin/python3")),
         )];
-        let err = blob_preflight(&mut agent, "h1", &tasks, None, &mut logs)
+        let err = blob_preflight(&mut agent, "h1", &tasks, None, &[], &mut logs)
             .await
             .expect_err("no link confirmed this payload");
         assert!(err.contains("ab"), "{err}");
@@ -3539,6 +3590,7 @@ mod tests {
             "h1",
             &tasks,
             Some(&union_named("ab")),
+            &[],
             &mut logs,
         )
         .await
@@ -3559,10 +3611,149 @@ mod tests {
             &bare_item(),
             Some((&module_payload("ab"), "/usr/bin/python3")),
         )];
-        let err = payloads_confirmed(&tasks, &memory).expect_err("nothing was confirmed");
+        let err = payloads_confirmed(&tasks, &memory, &BTreeSet::new())
+            .expect_err("nothing was confirmed");
         assert!(err.contains("ab"), "{err}");
         memory.remember("ab", Ok(()));
-        payloads_confirmed(&tasks, &memory).expect("the link confirmed it");
+        payloads_confirmed(&tasks, &memory, &BTreeSet::new()).expect("the link confirmed it");
+
+        // A staged file counts only when it went up for this batch. The link's memory holding
+        // its hash says nothing: the agent consumed the one it had for the task before.
+        let mut staging = tasks;
+        staging[0].files = vec![volant_protocol::StagedFile {
+            arg: "src".into(),
+            blob: "cd".into(),
+        }];
+        memory.remember("cd", Ok(()));
+        let err = payloads_confirmed(&staging, &memory, &BTreeSet::new())
+            .expect_err("the file was not put on the host for this batch");
+        assert!(err.contains("cd") && err.contains("'src'"), "{err}");
+        payloads_confirmed(&staging, &memory, &["cd".to_string()].into())
+            .expect("the file went up for it");
+    }
+
+    /// The file blob of `hello\n`, as the plugin stages it.
+    fn hello_blob() -> crate::action_plugins::FileBlob {
+        crate::action_plugins::files::blob_of("hello.txt", b"hello\n").expect("it fits")
+    }
+
+    /// A `hello\n` on the controller, copied to `dest`: the arguments `prepare` hands the plugin.
+    fn copy_args(dest: &str) -> Value {
+        let dir = std::env::temp_dir().join(format!("volant-run-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let src = dir.join("hello.txt");
+        std::fs::write(&src, "hello\n").expect("the source");
+        json!({"src": src.display().to_string(), "dest": dest})
+    }
+
+    /// Two items copying the same bytes each put them on the host: the first `copy` consumed the
+    /// blob it staged, and nothing the link remembers stands in for the second.
+    ///
+    /// What would make this red: the file blob kept in the link's memory, so the second item
+    /// asks nothing, sends nothing, and its `copy` runs against a `src` the agent no longer
+    /// holds - the answers scripted for its staging then land in the wrong exchange.
+    #[tokio::test]
+    async fn the_same_content_is_staged_for_every_item() {
+        use crate::action_plugins::Kind;
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, false), state(&blob.hash, true)],
+                one_result(2, json!({"changed": true})).to_vec(),
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, false), state(&blob.hash, true)],
+                one_result(2, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        for dest in ["/tmp/v/one", "/tmp/v/two"] {
+            let (ran, _) = plugin_item(
+                Kind::Copy,
+                copy_args(dest),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(!result.failed(), "{dest}: {result:?}");
+        }
+        let staged: Vec<&ToAgent> = agent
+            .sent
+            .iter()
+            .filter(|m| matches!(m, ToAgent::PutBlob { hash, .. } if *hash == blob.hash))
+            .collect();
+        assert_eq!(staged.len(), 2, "{:?}", agent.sent);
+        let copies: Vec<&Task> = batches_sent(&agent)
+            .into_iter()
+            .flatten()
+            .filter(|t| t.module == "copy")
+            .collect();
+        assert_eq!(copies.len(), 2, "{:?}", agent.sent);
+        for copy in copies {
+            assert_eq!(
+                copy.files,
+                [volant_protocol::StagedFile {
+                    arg: "src".into(),
+                    blob: blob.hash.clone(),
+                }]
+            );
+        }
+    }
+
+    /// A file the agent cannot store fails the item with the agent's own reason, and the host is
+    /// not ended: its next task still runs.
+    ///
+    /// What would make this red: the refusal read as the link lost, which calls a host
+    /// unreachable whose disk is full, or the `copy` sent anyway without its `src`.
+    #[tokio::test]
+    async fn a_file_the_agent_cannot_store_fails_the_item_not_the_host() {
+        use crate::action_plugins::Kind;
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![
+                    state(&blob.hash, false),
+                    FromAgent::Log {
+                        level: volant_protocol::LogLevel::Error,
+                        message: format!(
+                            "storing payload {}: No space left on device (os error 28)",
+                            blob.hash
+                        ),
+                    },
+                    state(&blob.hash, false),
+                ],
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Copy,
+            copy_args("/tmp/v/full"),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("a task failure, not the host's end");
+        assert!(result.failed(), "{result:?}");
+        assert!(
+            msg(&result).contains("'src'")
+                && msg(&result).contains("No space left on device (os error 28)"),
+            "{result:?}"
+        );
+        let modules: Vec<&str> = batches_sent(&agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect();
+        assert_eq!(modules, ["stat"], "no copy without its file");
     }
 
     /// The payload travels with every item of the task that carries it, and with nothing else.
@@ -3607,7 +3798,7 @@ mod tests {
             element: None,
             label: None,
             args: Map::new(),
-            args_untrusted: std::collections::BTreeSet::new(),
+            args_untrusted: BTreeSet::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             skipped: None,

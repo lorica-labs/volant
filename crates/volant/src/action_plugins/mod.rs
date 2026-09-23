@@ -20,6 +20,7 @@ pub(crate) mod files;
 mod package;
 mod service;
 mod template;
+mod unarchive;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -36,8 +37,8 @@ use crate::vars::HostVars;
 /// The names this release already implements are **not** here, whether natively (`command`,
 /// `shell`, `raw`), on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
 /// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`copy`, `package`,
-/// `service`, `template`). `normal` is not here either: it is the only action plugin with no
-/// module of the same name, so no playbook can name it.
+/// `service`, `template`, `unarchive`). `normal` is not here either: it is the only action plugin
+/// with no module of the same name, so no playbook can name it.
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
@@ -49,7 +50,6 @@ pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "reboot",
     "script",
     "set_stats",
-    "unarchive",
     "uri",
     "wait_for_connection",
 ];
@@ -77,6 +77,7 @@ pub(crate) enum Kind {
     Package,
     Service,
     Template,
+    Unarchive,
 }
 
 /// The plugin this release runs for a module name, read as the builtin registry reads one.
@@ -89,6 +90,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
         "template" => Some(Kind::Template),
+        "unarchive" => Some(Kind::Unarchive),
         _ => None,
     }
 }
@@ -104,6 +106,7 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
         Kind::Copy | Kind::Template => &["stat", "file", "copy"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
+        Kind::Unarchive => &["stat", "unarchive"],
     }
 }
 
@@ -172,6 +175,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
         Kind::Package => Box::new(package::Package::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
         Kind::Template => template::start(ctx),
+        Kind::Unarchive => unarchive::start(ctx),
     }
 }
 
@@ -217,7 +221,7 @@ mod tests {
         let mut sorted = BUILTIN_ACTION_PLUGINS.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, BUILTIN_ACTION_PLUGINS, "the list is kept sorted");
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 13);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 12);
         for absent in [
             "setup",
             "command",
@@ -233,27 +237,29 @@ mod tests {
             "service",
             "copy",
             "template",
+            "unarchive",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }
-        for present in ["unarchive", "fetch"] {
-            assert!(is_action_backed(present), "{present} is action-backed");
-        }
+        assert!(is_action_backed("fetch"), "fetch is action-backed");
     }
 
     /// The two prefixes that name the same modules are read as such, and another collection's
     /// module of the same name is not this one.
     #[test]
     fn the_builtin_prefixes_name_the_same_modules() {
-        assert!(is_action_backed("ansible.builtin.unarchive"));
-        assert!(is_action_backed("ansible.legacy.unarchive"));
-        assert!(!is_action_backed("community.general.unarchive"));
+        assert!(is_action_backed("ansible.builtin.reboot"));
+        assert!(is_action_backed("ansible.legacy.reboot"));
+        assert!(!is_action_backed("community.general.reboot"));
         assert_eq!(kind("ansible.builtin.package"), Some(Kind::Package));
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
         assert_eq!(kind("ansible.builtin.copy"), Some(Kind::Copy));
         assert_eq!(kind("ansible.builtin.template"), Some(Kind::Template));
-        assert_eq!(kind("unarchive"), None);
+        assert_eq!(kind("ansible.builtin.unarchive"), Some(Kind::Unarchive));
+        assert_eq!(kind("ansible.legacy.unarchive"), Some(Kind::Unarchive));
+        assert_eq!(kind("community.general.unarchive"), None);
+        assert_eq!(kind("reboot"), None);
     }
 
     /// Every module a plugin can run is a builtin module ansible-core builds a payload for, and
@@ -265,7 +271,13 @@ mod tests {
     /// here all the same: a plugin runs the module directly, as the reference's does.
     #[test]
     fn a_plugin_runs_only_what_the_union_can_hold() {
-        for kind in [Kind::Copy, Kind::Package, Kind::Service, Kind::Template] {
+        for kind in [
+            Kind::Copy,
+            Kind::Package,
+            Kind::Service,
+            Kind::Template,
+            Kind::Unarchive,
+        ] {
             for module in modules_for(kind) {
                 assert!(volant_protocol::modules::is_builtin(module), "{module}");
                 assert!(!volant_protocol::modules::is_known(module), "{module}");

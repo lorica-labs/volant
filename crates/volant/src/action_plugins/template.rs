@@ -128,7 +128,7 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
             "output_encoding '{encoding}' is not supported yet on 'template': only utf-8 is"
         ));
     }
-    refuse_host_named(ctx, "src")?;
+    refuse_host_named(ctx.args_untrusted, "src")?;
     let searched = search_paths(ctx.origin, ctx.playbook_dir, "templates", &src);
     let Some(found) = searched.iter().find(|p| p.exists()) else {
         return Err(not_found(&src, &searched));

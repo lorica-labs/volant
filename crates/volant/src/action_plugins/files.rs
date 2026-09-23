@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use volant_protocol::encoding::b64_encode;
 use volant_protocol::frame::MAX_FRAME_LEN;
 
-use super::{Context, FileBlob};
+use std::collections::BTreeSet;
+
+use super::FileBlob;
 use crate::compile::Origin;
 
 /// The largest file one blob carries: what fits in a frame once in base64, with room left for
@@ -63,8 +65,8 @@ pub(crate) fn not_found(name: &str, searched: &[PathBuf]) -> String {
 /// Stricter than the reference, on purpose. Measured on ansible-core 2.19.12, the reference
 /// sends whatever controller file a registered value names, `~/.ssh` included, so a host that
 /// controls a command's output can have any file the operator can read sent to it.
-pub(crate) fn refuse_host_named(ctx: &Context<'_>, arg: &str) -> Result<(), String> {
-    if ctx.args_untrusted.contains(arg) {
+pub(crate) fn refuse_host_named(untrusted: &BTreeSet<String>, arg: &str) -> Result<(), String> {
+    if untrusted.contains(arg) {
         return Err(format!(
             "the '{arg}' of this task was named by a managed host, and a controller file a host chose is never sent"
         ));

@@ -109,7 +109,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     if flag(args, "remote_src", false) {
         return Ok(None);
     }
-    refuse_host_named(ctx, "src")?;
+    refuse_host_named(ctx.args_untrusted, "src")?;
     let searched = search_paths(ctx.origin, ctx.playbook_dir, "files", src);
     let Some(found) = searched.iter().find(|p| p.exists()) else {
         return Err(format!(
@@ -268,20 +268,26 @@ fn inside(dir: &str, name: &str) -> String {
     }
 }
 
-/// The `stat` the reference runs, measured: no size, and a SHA-1 unless `force` is off, in
-/// which case a destination that exists is left alone whatever it holds.
-fn stat(path: &str, follow: bool, checksum: bool) -> Step {
+/// The `stat` the reference runs, measured: a SHA-1 unless `force` is off, in which case a
+/// destination that exists is left alone whatever it holds.
+///
+/// Sends only what the `stat` module's own `argument_spec` declares (read off
+/// `ansible/modules/stat.py` of ansible-core 2.19.12: `path`, `follow`, `get_checksum`,
+/// `get_mime`, `get_attributes`, `checksum_algorithm`). The reference's own controller-side stat
+/// call also sends `get_size: false`, a key `ansible.windows.win_stat` added and the posix module
+/// never declared; that call tolerates an argument the module does not know, and a sub-task run
+/// through this dispatch does not, so `get_size` stays out.
+pub(super) fn stat(path: &str, follow: bool, checksum: bool) -> Step {
     let mut args = Map::new();
     args.insert("path".into(), Value::String(path.to_string()));
     args.insert("follow".into(), Value::Bool(follow));
     args.insert("get_checksum".into(), Value::Bool(checksum));
     args.insert("checksum_algorithm".into(), Value::String("sha1".into()));
-    args.insert("get_size".into(), Value::Bool(false));
     Sub::run("stat", args)
 }
 
 /// The `stat` block of a `stat` result, or the reference's failure when there is none.
-fn stat_of(path: &str, result: TaskResult) -> Result<Map<String, Value>, TaskResult> {
+pub(super) fn stat_of(path: &str, result: TaskResult) -> Result<Map<String, Value>, TaskResult> {
     if !result.failed()
         && let Some(Value::Object(stat)) = result.0.get("stat")
     {
@@ -578,20 +584,41 @@ mod tests {
         start_in(&args, &BTreeSet::new(), &dir)
     }
 
-    /// The first sub-task is the reference's `stat`, measured: the SHA-1 and nothing else.
+    /// The `stat` module's own parameters, read off `ansible/modules/stat.py` of ansible-core
+    /// 2.19.12's `argument_spec`: an argument outside this list is one the module never declared
+    /// and refuses outright.
+    const STAT_ARGUMENT_SPEC: &[&str] = &[
+        "path",
+        "follow",
+        "get_checksum",
+        "get_mime",
+        "get_attributes",
+        "checksum_algorithm",
+    ];
+
+    /// The first sub-task is the reference's `stat`, measured: the SHA-1 and nothing else, and
+    /// every argument sent is one the module's own `argument_spec` declares.
     ///
     /// What would make this red: another algorithm asked for, which never equals the local sum
-    /// and sends every file on every run, or the size asked for, which the reference does not.
+    /// and sends every file on every run, or an argument outside the module's `argument_spec` -
+    /// `get_size`, which only `ansible.windows.win_stat` declares, refused a real `stat` on a
+    /// real host with "Unsupported parameters" until it was dropped.
     #[test]
     fn the_stat_is_the_reference_s() {
         let mut plugin = copy_task("stat", json!({}));
         let sub = run(plugin.as_mut(), None);
         assert_eq!(sub.module, "stat");
         assert_eq!(
-            Value::Object(sub.args),
+            Value::Object(sub.args.clone()),
             json!({"path": "/tmp/v/hello.txt", "follow": false, "get_checksum": true,
-                   "checksum_algorithm": "sha1", "get_size": false})
+                   "checksum_algorithm": "sha1"})
         );
+        for key in sub.args.keys() {
+            assert!(
+                STAT_ARGUMENT_SPEC.contains(&key.as_str()),
+                "'{key}' is not one of stat's own arguments"
+            );
+        }
         assert!(sub.files.is_empty());
     }
 

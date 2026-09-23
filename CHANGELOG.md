@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Run `copy` as an action plugin: `stat` the destination, then `file` or a staged `copy`, sending nothing when the file already matches.
+- Run `package` as an action plugin: pick the module from the host's package manager, gathered with a filtered `setup` when it is not already a fact.
+- Run `service` as an action plugin: pick the module from the host's init system, the same way `package` picks its own.
+- Run `template` as an action plugin: render the file on the controller once, then hand it to the same path `copy` uses.
+- Run `unarchive` as an action plugin: extract a controller archive or one already on the host, skipping the task when `creates:` already exists.
+- Add the Jinja filters, tests, methods and lookups the template engine was missing: `b64decode`, `b64encode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `from_yaml`, `to_yaml`, `to_nice_yaml`, `to_uuid`, `type_debug`, `quote` and `regex_escape`; the `changed`, `failed`, `succeeded`, `skipped` and `version` tests; a handful of Python methods on strings and mappings, through `minijinja-contrib`; and the `first_found` and `template` lookups.
+
+### Changed
+
+- A `copy`, `template` or `unarchive` task whose `src` was named by a managed host is now refused before the file is looked up, rather than sent the way the reference sends it: a host that controls a command's output or a fact could otherwise have any file the operator can read copied to it.
+
 ## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) - 2026-09-22
 
 ### Security

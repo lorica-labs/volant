@@ -334,8 +334,10 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             if task.args.contains_key("_raw_params")
                 && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
             {
+                // ansible-core 2.19.12's sentence (`task.py`), which `import_playbook` written as
+                // a task gets too.
                 bail!(
-                    "task '{}': this task '{}' has extra params, which is only allowed in the free-form modules: command, shell, raw, script, win_command, win_shell and their ansible.builtin, ansible.legacy and ansible.windows names",
+                    "task '{}': Action '{}' does not support raw params.",
                     task.name,
                     task.module
                 );
@@ -432,6 +434,11 @@ pub(crate) fn check_built(
 ) -> anyhow::Result<()> {
     for (task, module) in collection_modules(expanded) {
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(&module))) {
+            // The controller's own reason for a name it set aside, as the pre-flight gives it
+            // for one a play names.
+            if let Some(reason) = union.and_then(|u| u.unusable.get(&module)) {
+                bail!("task '{task}': module '{module}' cannot run: {reason}");
+            }
             bail!(
                 "task '{task}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection"
             );
@@ -715,7 +722,7 @@ mod tests {
         let text =
             refusal("- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n");
         assert!(
-            text.contains("task 'Stray': this task 'ns.coll.mod' has extra params"),
+            text.contains("task 'Stray': Action 'ns.coll.mod' does not support raw params."),
             "{text}"
         );
         let pb = parse(
@@ -813,6 +820,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            unusable: std::collections::BTreeMap::new(),
         };
         check_built(&compiled, Some(&union(&["ansible.posix.sysctl"])))
             .expect("the union holds it");
@@ -824,6 +832,20 @@ mod tests {
                 "{text}"
             );
         }
+        // A name the controller set aside says why, in the controller's words. Red if the
+        // reason is dropped for the sentence above, which sends the operator to install a
+        // collection that is installed.
+        let mut set_aside = union(&["ping"]);
+        set_aside
+            .unusable
+            .insert("ansible.posix.sysctl".into(), "it is gone.".into());
+        assert_eq!(
+            format!(
+                "{:#}",
+                check_built(&compiled, Some(&set_aside)).unwrap_err()
+            ),
+            "task 'Forward': module 'ansible.posix.sysctl' cannot run: it is gone."
+        );
     }
 
     /// A module whose only product is facts reaches a host now, and the pre-flight reads that

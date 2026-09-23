@@ -58,6 +58,9 @@ pub struct Union {
     /// Keyed by [`payload_key`]: `ping` and `ansible.builtin.ping` are one entry, and
     /// `ansible.posix.sysctl` is its own, whatever else in the run is called `sysctl`.
     pub modules: BTreeMap<String, ModuleFacts>,
+    /// A collection's module a role file named and the controller's ansible-core cannot run,
+    /// with ansible-core's reason: kept out of the union, and named if an include reaches it.
+    pub unusable: BTreeMap<String, String>,
 }
 
 /// The key a module's facts are filed under in [`Union::modules`], and looked up by.
@@ -416,11 +419,17 @@ fn union_from(
         .filter(|m| is_collection_name(m))
         .cloned()
         .collect();
+    let mut unusable = BTreeMap::new();
     if !asked.is_empty() {
         let resolved = builder.resolve(&asked)?;
         for (task, module) in named {
             if let Some(answer) = resolved.get(module) {
                 crate::preflight::check_resolved(task, module, answer)?;
+            }
+        }
+        for (module, answer) in &resolved {
+            if let Resolved::Unusable { reason } = answer {
+                unusable.insert(module.clone(), reason.clone());
             }
         }
         names.retain(|m| {
@@ -432,7 +441,9 @@ fn union_from(
     if names.is_empty() {
         return Ok(None);
     }
-    builder.union(&names).map(Some)
+    let mut union = builder.union(&names)?;
+    union.unusable = unusable;
+    Ok(Some(union))
 }
 
 /// The sentence a run that gathers facts and nothing else gets on top of [`refusal_for`].
@@ -655,6 +666,7 @@ fn exchange<W: Write, R: Read>(to: W, from: R, modules: &[String]) -> anyhow::Re
         hash,
         zip_b64,
         modules: facts,
+        unusable: BTreeMap::new(),
     })
 }
 
@@ -1151,6 +1163,35 @@ mod tests {
                     if reason.contains("'community.general.atomic_host' module has been removed")),
                 "{:?}",
                 resolved["community.general.atomic_host"]
+            );
+            // Named only in a file an include reads, the removed module stays out of the union,
+            // and the include that reaches it fails with the reason the controller gave.
+            let modules = std::collections::BTreeSet::from(
+                ["community.general.atomic_host", "ping"].map(str::to_string),
+            );
+            let built = union_from(PythonBuilder::start, &modules, &[])
+                .unwrap()
+                .expect("ping is built");
+            let included = crate::playbook::parse(
+                "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Atomic\n      community.general.atomic_host: revision=latest\n",
+                "included.yml",
+            )
+            .unwrap();
+            let compiled = crate::compile::compile(
+                &included.plays[0],
+                &crate::roles::RoleSearch::default(),
+                &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+            )
+            .unwrap();
+            let text = format!(
+                "{:#}",
+                crate::preflight::check_built(&compiled, Some(&built)).unwrap_err()
+            );
+            assert!(
+                text.starts_with(
+                    "task 'Atomic': module 'community.general.atomic_host' cannot run: "
+                ) && text.contains("'community.general.atomic_host' module has been removed"),
+                "{text}"
             );
         } else {
             skip_or_fail(&format!(

@@ -58,7 +58,6 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `cron` | Python module |
 | `deb822_repository` | Python module |
 | `debconf` | Python module |
-| `dnf` | not supported yet: needs the `dnf` action plugin |
 | `dnf5` | Python module |
 | `dpkg_selections` | Python module |
 | `expect` | Python module |
@@ -106,6 +105,7 @@ The controller runs these as the reference's action plugins do: it picks or rend
 | Module | What it does |
 |---|---|
 | `copy` | Copy a file from the controller, or `content:`, to the host. |
+| `dnf` | Install or remove packages with `dnf` or `dnf5`, whichever the host runs. |
 | `package` | Install or remove packages with the host's own package manager. |
 | `service` | Manage a service with the host's own init system. |
 | `template` | Render a template on the controller and copy the result to the host. |

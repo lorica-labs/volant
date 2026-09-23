@@ -1086,6 +1086,7 @@ pub(super) async fn drive_host(
                                     delegate.as_ref(),
                                     std::slice::from_ref(item),
                                 ),
+                                delegated: delegate.is_some(),
                                 item_vars: &item.vars,
                                 templar: &templar,
                                 origin: &step.origin,

@@ -879,7 +879,8 @@ fn remove_as_root(dir: &Path) {
 /// read back and compared byte for byte, and its mode, which the play sets so the host's umask
 /// cannot decide it.
 ///
-/// Measured on ansible-core 2.19.12 with the same play over `-c local`: `ok=6 changed=4` then
+/// Measured on ansible-core 2.19.12 with the play's six action tasks over `-c local` (the
+/// seventh reads this engine's own cache and changes nothing): `ok=6 changed=4` then
 /// `ok=6 changed=0`, and the template rendered as `secret=<secret>\nline 1\nline 2\n`
 /// (`trim_blocks`, one trailing newline kept).
 ///
@@ -923,11 +924,12 @@ fn ssh_copy_and_template_converge_on_a_real_host() {
             let path = dest.join(name);
             let written = std::fs::read(&path)
                 .unwrap_or_else(|e| panic!("{pass} pass, {}: {e}\n{text}", path.display()));
-            assert_eq!(
-                &written,
-                bytes,
-                "{pass} pass, {} holds other bytes",
-                path.display()
+            assert!(
+                written == *bytes,
+                "{pass} pass, {} holds {:?} where {:?} was expected",
+                path.display(),
+                String::from_utf8_lossy(&written),
+                String::from_utf8_lossy(bytes)
             );
             let actual = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(actual, *mode, "{pass} pass, mode of {}", path.display());
@@ -942,10 +944,13 @@ fn ssh_copy_and_template_converge_on_a_real_host() {
 /// remove; the rendered value is also looked for anywhere under `remote_tmp`.
 ///
 /// The escalated tasks run an agent as root with a cache of its own, so there are two caches,
-/// and both are read.
+/// and both are read. A file kept past its own task but removed with its connection's directory
+/// would not show here; the play's own `No staged file outlives its task` looks for that while
+/// the link is still open, and fails the run.
 ///
-/// What would make this red: the agent keeping a staged file after its module ran, or keeping a
-/// connection's staging directory after the controller left.
+/// What would make this red: the agent keeping a staged file after its module ran (that task
+/// fails), or keeping a connection's staging directory after the controller left (a `stage-*`
+/// entry beside the union).
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_a_rendered_file_leaves_nothing_in_the_agent_cache() {

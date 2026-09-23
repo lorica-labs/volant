@@ -26,6 +26,14 @@
         src: bundle.tar.gz
         dest: "{{ dest }}/unpacked"
         mode: "0644"
+    # Asked on the link that staged the four files, while its staging directory still exists:
+    # the shell's parent is that link's agent, whose pid names the directory. After the play the
+    # whole directory is gone, which would hide a file kept past its own task.
+    - name: No staged file outlives its task
+      shell: cd "{{ ansible_remote_tmp }}"/volant-blobs-*-"$(id -u)"/stage-*-"$PPID" && find . -type f
+      register: staged
+      changed_when: false
+      failed_when: staged.rc != 0 or staged.stdout != ''
     - name: A package that is already installed
       package:
         name: bash

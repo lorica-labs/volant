@@ -2,10 +2,13 @@
 //! Ansible's filters, tests and lookups on top of MiniJinja's Jinja2 builtins. Each one keeps
 //! Ansible's argument names and its edge cases, checked by tests/golden.
 
-use std::path::{Path, PathBuf};
+use std::fmt::Write;
+use std::path::PathBuf;
 
 use minijinja::value::{Kwargs, Rest};
-use minijinja::{Environment, Error, ErrorKind, State, Value};
+use minijinja::{Environment, Error, ErrorKind, Value};
+
+use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 
 use super::truthy;
 
@@ -29,6 +32,25 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     env.add_filter("regex_replace", regex_replace);
     env.add_filter("regex_search", regex_search);
     env.add_filter("regex_findall", regex_findall);
+    env.add_filter("b64decode", b64decode);
+    env.add_filter("b64encode", b64encode);
+    env.add_filter("comment", comment);
+    env.add_filter("difference", |a: Value, b: Value| {
+        set_filter(&a, &b, SetFilter::Difference)
+    });
+    env.add_filter("intersect", |a: Value, b: Value| {
+        set_filter(&a, &b, SetFilter::Intersect)
+    });
+    env.add_filter("union", |a: Value, b: Value| {
+        set_filter(&a, &b, SetFilter::Union)
+    });
+    env.add_filter("flatten", flatten);
+    env.add_filter("from_yaml", from_yaml);
+    env.add_filter("to_uuid", to_uuid);
+    env.add_filter("type_debug", |v: Value| super::type_name(&json(&v)));
+    env.add_filter("quote", quote);
+    env.add_filter("regex_escape", regex_escape);
+    super::yaml_dump::register(env);
 
     super::tests::register(env);
     env.add_test("truthy", |v: Value| truthy(&json(&v)));
@@ -46,12 +68,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
         seq.try_iter().is_ok_and(|mut it| it.any(|x| x == item))
     });
 
-    env.add_function(
-        "lookup",
-        move |state: &State, name: String, terms: Rest<Value>, kwargs: Kwargs| {
-            lookup(state, &name, &terms, kwargs, &base_dir)
-        },
-    );
+    super::lookups::register(env, base_dir);
 
     // Python's `str` and `dict` methods (`.split()`, `.startswith()`, `.keys()`...), which real
     // roles call on values. Anything neither `pycompat` nor this engine has must still fail by
@@ -504,97 +521,302 @@ fn regex_test(value: &Value, pattern: &str, anchored: bool, kwargs: Kwargs) -> b
     }
 }
 
-/// `lookup('env'|'file'|'vars'|'pipe', term...)`. One term gives a scalar, several give a list.
-fn lookup(
-    state: &State,
-    name: &str,
-    terms: &[Value],
-    kwargs: Kwargs,
-    base_dir: &Path,
-) -> Result<Value, Error> {
-    let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
+/// A value as Python's `to_text` would hand it to a filter: a string as it is, anything else
+/// printed.
+fn text_of(value: &Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_string)
+}
+
+/// `encoding` and `urlsafe`, the two options `b64decode` and `b64encode` share. Only UTF-8 is
+/// an encoding here: any other is refused by name rather than read as UTF-8.
+fn b64_options(filter: &str, encoding: Option<String>, kwargs: &Kwargs) -> Result<bool, Error> {
+    let encoding = kwargs
+        .get::<Option<String>>("encoding")?
+        .or(encoding)
+        .unwrap_or_else(|| "utf-8".to_string());
+    let urlsafe = kwargs.get::<Option<bool>>("urlsafe")?.unwrap_or(false);
     kwargs.assert_all_used()?;
-    // Whatever a lookup read at run time is data: a file's text, a command's output, an
-    // environment variable. Measured on ansible-core 2.19.12, all three come back carrying the
-    // tag that stops the engine templating them again, and the three display the same
-    // `{{ 1 + 1 }}` the file that held it did. `vars` is not one of them: it hands back a value
-    // the context already holds, and reading an untrusted name through it taints on the same
-    // path a bare read does.
-    let taint = || {
-        if let Some(sink) = state.lookup(super::TAINT_KEY)
-            && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
-        {
-            sink.taint();
-        }
-    };
-    let mut results = Vec::new();
-    for term in terms {
-        let term_text = term
-            .as_str()
-            .map_or_else(|| term.to_string(), str::to_string);
-        let found = match name {
-            "env" | "ansible.builtin.env" => {
-                taint();
-                Value::from(std::env::var(&term_text).unwrap_or_default())
-            }
-            "file" | "ansible.builtin.file" => {
-                let path = if term_text.starts_with('/') {
-                    PathBuf::from(&term_text)
-                } else {
-                    base_dir.join(&term_text)
-                };
-                let text = std::fs::read_to_string(&path).map_err(|e| {
-                    invalid(format!(
-                        "could not locate file in lookup: {}: {e}",
-                        path.display()
-                    ))
-                })?;
-                taint();
-                Value::from(text.trim_end_matches(['\r', '\n']))
-            }
-            "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {
-                Some(v) if !v.is_undefined() => v,
-                _ => match &default_value {
-                    Some(d) => d.clone(),
-                    None => {
-                        return Err(invalid(format!(
-                            "No variable found with this name: {term_text}"
-                        )));
-                    }
-                },
-            },
-            "pipe" | "ansible.builtin.pipe" => {
-                taint();
-                let out = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&term_text)
-                    .output()
-                    .map_err(|e| invalid(format!("lookup pipe: {e}")))?;
-                if !out.status.success() {
-                    return Err(invalid(format!(
-                        "lookup_plugin.pipe({term_text}) returned {}",
-                        out.status.code().unwrap_or(-1)
-                    )));
-                }
-                Value::from(
-                    String::from_utf8_lossy(&out.stdout)
-                        .trim_end_matches(['\r', '\n'])
-                        .to_string(),
-                )
-            }
-            other => {
-                return Err(invalid(format!(
-                    "lookup plugin ({other}) is not available yet"
-                )));
-            }
-        };
-        results.push(found);
+    if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+        return Err(invalid(format!(
+            "{filter}: the encoding '{encoding}' is not supported, only utf-8 is"
+        )));
     }
-    Ok(match results.len() {
-        0 => Value::from(""),
-        1 => results.remove(0),
-        _ => Value::from(results),
+    Ok(urlsafe)
+}
+
+/// `base64.b64decode`, then the bytes read as UTF-8 text; `urlsafe` reads `-` and `_` for `+`
+/// and `/`.
+fn b64decode(value: Value, encoding: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
+    let urlsafe = b64_options("b64decode", encoding, &kwargs)?;
+    let mut text = text_of(&value);
+    if urlsafe {
+        text = text.replace('-', "+").replace('_', "/");
+    }
+    let bytes = b64_decode(&text).map_err(|e| invalid(format!("b64decode: {e}")))?;
+    String::from_utf8(bytes)
+        .map_err(|e| invalid(format!("b64decode: the decoded bytes are not UTF-8: {e}")))
+}
+
+fn b64encode(value: Value, encoding: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
+    let urlsafe = b64_options("b64encode", encoding, &kwargs)?;
+    let out = b64_encode(text_of(&value).as_bytes());
+    Ok(if urlsafe {
+        out.replace('+', "-").replace('/', "_")
+    } else {
+        out
     })
+}
+
+/// The port of `comment` in ansible-core's `plugins/filter/core.py`, parameter for parameter:
+/// each style gives a decoration and, for the block styles, a beginning and an end; any of
+/// them, and the prefix and postfix lines built from the decoration, can be set by keyword.
+fn comment(text: String, style: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
+    let style = kwargs
+        .get::<Option<String>>("style")?
+        .or(style)
+        .unwrap_or_else(|| "plain".to_string());
+    let (beginning, decoration, end) = match style.as_str() {
+        "plain" => ("", "# ", ""),
+        "erlang" => ("", "% ", ""),
+        "c" => ("", "// ", ""),
+        "cblock" => ("/*", " * ", " */"),
+        "xml" => ("<!--", " - ", "-->"),
+        _ => return Err(invalid(format!("Invalid style '{style}'."))),
+    };
+    let get = |key: &str, default: &str| -> Result<String, Error> {
+        Ok(kwargs
+            .get::<Option<String>>(key)?
+            .unwrap_or_else(|| default.to_string()))
+    };
+    let decoration = get("decoration", decoration)?;
+    let prepostfix = decoration.trim_end().to_string();
+    let newline = get("newline", "\n")?;
+    let beginning = get("beginning", beginning)?;
+    let end = get("end", end)?;
+    let prefix = get("prefix", &prepostfix)?;
+    let postfix = get("postfix", &prepostfix)?;
+    let count = |key: &str| -> Result<usize, Error> {
+        Ok(kwargs.get::<Option<i64>>(key)?.unwrap_or(1).max(0) as usize)
+    };
+    let prefix_count = count("prefix_count")?;
+    let postfix_count = count("postfix_count")?;
+    kwargs.assert_all_used()?;
+
+    let mut out = String::new();
+    if !beginning.is_empty() {
+        out.push_str(&beginning);
+        out.push_str(&newline);
+    }
+    if !prefix.is_empty() {
+        let line = if prefix == newline {
+            newline.clone()
+        } else {
+            format!("{prefix}{newline}")
+        };
+        out.push_str(&line.repeat(prefix_count));
+    }
+    // Each line gets the decoration, and a line that is nothing but the decoration loses the
+    // decoration's trailing space.
+    let body = format!(
+        "{decoration}{}",
+        text.replace(&newline, &format!("{newline}{decoration}"))
+    );
+    out.push_str(&body.replace(
+        &format!("{decoration}{newline}"),
+        &format!("{}{newline}", decoration.trim_end()),
+    ));
+    for _ in 0..postfix_count {
+        out.push_str(&newline);
+        out.push_str(&postfix);
+    }
+    if !end.is_empty() {
+        out.push_str(&newline);
+        out.push_str(&end);
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Copy)]
+enum SetFilter {
+    Difference,
+    Intersect,
+    Union,
+}
+
+/// `difference`, `intersect` and `union` from `mathstuff.py`, each element once. The reference
+/// builds a Python `set`, whose order is its own: small integers happen to come out sorted,
+/// strings in an order that changes with `PYTHONHASHSEED`. This sorts when every element is an
+/// integer, which is what the reference printed on every integer case measured, and keeps the
+/// order of first appearance otherwise, which is the reference's own fallback for elements it
+/// cannot hash.
+fn set_filter(a: &Value, b: &Value, which: SetFilter) -> Result<Value, Error> {
+    let a: Vec<Value> = a.try_iter()?.collect();
+    let b: Vec<Value> = b.try_iter()?.collect();
+    let candidates: Vec<Value> = match which {
+        SetFilter::Difference => a.into_iter().filter(|x| !b.contains(x)).collect(),
+        SetFilter::Intersect => a.into_iter().filter(|x| b.contains(x)).collect(),
+        SetFilter::Union => a.into_iter().chain(b).collect(),
+    };
+    let mut out: Vec<Value> = Vec::new();
+    for x in candidates {
+        if !out.contains(&x) {
+            out.push(x);
+        }
+    }
+    if out.iter().all(Value::is_integer) {
+        out.sort();
+    }
+    Ok(Value::from(out))
+}
+
+/// `flatten(levels=None, skip_nulls=True)`: nested lists spliced in, `levels` deep at most,
+/// and `None`, `'None'` and `'null'` dropped while `skip_nulls` holds.
+fn flatten(value: Value, levels: Option<i64>, kwargs: Kwargs) -> Result<Value, Error> {
+    let levels = kwargs.get::<Option<i64>>("levels")?.or(levels);
+    let skip_nulls = kwargs.get::<Option<bool>>("skip_nulls")?.unwrap_or(true);
+    kwargs.assert_all_used()?;
+    let serde_json::Value::Array(items) = json(&value) else {
+        return Err(invalid("flatten expects a list"));
+    };
+    Ok(from_json_value(serde_json::Value::Array(flatten_items(
+        items, levels, skip_nulls,
+    ))))
+}
+
+fn flatten_items(
+    items: Vec<serde_json::Value>,
+    levels: Option<i64>,
+    skip_nulls: bool,
+) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for element in items {
+        if skip_nulls && (element.is_null() || element == "None" || element == "null") {
+            continue;
+        }
+        match (element, levels) {
+            (serde_json::Value::Array(inner), None) => {
+                out.extend(flatten_items(inner, None, skip_nulls));
+            }
+            (serde_json::Value::Array(inner), Some(n)) if n >= 1 => {
+                out.extend(flatten_items(inner, Some(n - 1), skip_nulls));
+            }
+            (other, _) => out.push(other),
+        }
+    }
+    out
+}
+
+/// One YAML document read by the engine's own reader; anything that is not a string, `None`
+/// included, comes back as it is.
+fn from_yaml(value: Value) -> Result<Value, Error> {
+    let Some(text) = value.as_str() else {
+        return Ok(value);
+    };
+    let docs = crate::yaml::load(text, "from_yaml").map_err(|e| invalid(format!("{e:#}")))?;
+    match docs.as_slice() {
+        [] => Ok(Value::from(())),
+        [doc] => crate::yaml::to_json(doc)
+            .map(from_json_value)
+            .map_err(|e| invalid(format!("from_yaml: {e:#}"))),
+        _ => Err(invalid(
+            "from_yaml: expected a single document in the stream",
+        )),
+    }
+}
+
+/// `to_uuid`'s default namespace, ansible-core's own.
+const UUID_NAMESPACE_ANSIBLE: &str = "361E6D51-FAEC-444A-9079-341386DA8E2E";
+
+fn hex_bytes(hex: &str) -> Vec<u8> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex digits"))
+        .collect()
+}
+
+/// `uuid.uuid5(namespace, text)`: the SHA-1 of the namespace's sixteen bytes and the text, its
+/// first sixteen bytes, version 5 and the RFC 4122 variant. The namespace is read the way
+/// `uuid.UUID` reads one: braces, `urn:` and `uuid:` and hyphens dropped, 32 hex digits left.
+fn to_uuid(value: Value, namespace: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
+    let namespace = kwargs
+        .get::<Option<String>>("namespace")?
+        .or(namespace)
+        .unwrap_or_else(|| UUID_NAMESPACE_ANSIBLE.to_string());
+    kwargs.assert_all_used()?;
+    let hex = namespace.replace("urn:", "").replace("uuid:", "");
+    let hex = hex.trim_matches(['{', '}']).replace('-', "");
+    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(invalid(format!(
+            "Invalid value '{namespace}' for 'namespace': badly formed hexadecimal UUID string"
+        )));
+    }
+    let mut data = hex_bytes(&hex);
+    data.extend_from_slice(text_of(&value).as_bytes());
+    let mut id = hex_bytes(&sha1_hex(&data));
+    id.truncate(16);
+    id[6] = (id[6] & 0x0f) | 0x50;
+    id[8] = (id[8] & 0x3f) | 0x80;
+    let h = id.iter().fold(String::new(), |mut h, b| {
+        let _ = write!(h, "{b:02x}");
+        h
+    });
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    ))
+}
+
+/// `shlex.quote`, with `None` read as the empty string: a word made only of `[A-Za-z0-9_]` and
+/// `@%+=:,./-` is left alone, anything else is single-quoted with each `'` written `'"'"'`.
+fn quote(value: Value) -> String {
+    let s = if value.is_none() {
+        String::new()
+    } else {
+        text_of(&value)
+    };
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
+    {
+        return s;
+    }
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
+/// `regex_escape(re_type='python')`: Python 3's `re.escape`, which escapes only its special
+/// characters, or the POSIX basic set `].[^$*\`.
+fn regex_escape(value: Value, re_type: Option<String>, kwargs: Kwargs) -> Result<String, Error> {
+    let re_type = kwargs
+        .get::<Option<String>>("re_type")?
+        .or(re_type)
+        .unwrap_or_else(|| "python".to_string());
+    kwargs.assert_all_used()?;
+    let special = match re_type.as_str() {
+        "python" => "()[]{}?*+-|^$\\.&~# \t\n\r\x0b\x0c",
+        "posix_basic" => "].[^$*\\",
+        "posix_extended" => {
+            return Err(invalid(format!(
+                "Regex type ({re_type}) not yet implemented"
+            )));
+        }
+        _ => return Err(invalid(format!("Invalid regex type ({re_type})"))),
+    };
+    let mut out = String::new();
+    for c in text_of(&value).chars() {
+        if special.contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -617,6 +839,178 @@ mod tests {
         assert_eq!(
             python_json(&v, Some(4), true, 0),
             "{\n    \"a\": [\n        1,\n        2\n    ],\n    \"b\": 1\n}"
+        );
+    }
+
+    fn render(text: &str, vars: serde_json::Value) -> Result<serde_json::Value, String> {
+        super::super::Templar::new(std::env::temp_dir())
+            .render(text, vars.as_object().unwrap())
+            .map_err(|e| e.0)
+    }
+
+    fn text(text: &str) -> String {
+        match render(text, serde_json::json!({})).unwrap() {
+            serde_json::Value::String(s) => s,
+            other => other.to_string(),
+        }
+    }
+
+    /// Each vector below is a line the reference printed, measured on ansible-core 2.19.12 and
+    /// copied as it stands. What would make any of them red: the rule beside the filter it names
+    /// (`core.py`, `mathstuff.py`) ported differently, or the filter missing (`unknown filter`).
+    #[test]
+    fn the_remaining_filters_print_what_the_reference_printed() {
+        assert_eq!(
+            text("{{ 'YWJj' | b64decode }} {{ 'abc' | b64encode }}"),
+            "abc YWJj"
+        );
+        assert_eq!(
+            text(
+                "{{ [3,1,2,1] | difference([2]) }} {{ [3,1,2,1] | intersect([1,3]) }} {{ [3,1] | union([1,4]) }}"
+            ),
+            "[1, 3] [1, 3] [1, 3, 4]"
+        );
+        assert_eq!(
+            text("{{ [1,[2,[3,[4]]]] | flatten }} {{ [1,[2,[3,[4]]]] | flatten(levels=1) }}"),
+            "[1, 2, 3, 4] [1, 2, [3, [4]]]"
+        );
+        assert_eq!(
+            text("{{ \"it's a b\" | quote }} {{ '' | quote }} {{ 'plain' | quote }}"),
+            r#"'it'"'"'s a b' '' plain"#
+        );
+        assert_eq!(text("{{ 'a.b*c[d]' | regex_escape }}"), r"a\.b\*c\[d\]");
+        assert_eq!(
+            text("{{ 'volant' | to_uuid }}"),
+            "69744a58-016b-51b4-91fb-2b5aaa59c628"
+        );
+        assert_eq!(
+            text(
+                "{{ 'x' | type_debug }} {{ 1 | type_debug }} {{ [1] | type_debug }} {{ {} | type_debug }} {{ none | type_debug }} {{ true | type_debug }} {{ 1.5 | type_debug }}"
+            ),
+            "str int list dict NoneType bool float"
+        );
+    }
+
+    /// The three `comment` lines measured on the reference, with the text's newline a real one.
+    #[test]
+    fn comment_is_the_reference_s_port() {
+        let vars = serde_json::json!({"managed": "Ansible managed", "two": "two\nlines", "x": "x"});
+        let r = |t: &str| render(t, vars.clone()).unwrap();
+        assert_eq!(r("{{ managed | comment }}"), "#\n# Ansible managed\n#");
+        assert_eq!(r("{{ two | comment('c') }}"), "//\n// two\n// lines\n//");
+        assert_eq!(r("{{ x | comment(decoration='; ') }}"), ";\n; x\n;");
+        // The block styles, and the parameters the port reads, from `core.py` itself.
+        assert_eq!(r("{{ x | comment('cblock') }}"), "/*\n *\n * x\n *\n */");
+        assert_eq!(r("{{ x | comment('xml') }}"), "<!--\n -\n - x\n -\n-->");
+        assert_eq!(r("{{ x | comment('erlang') }}"), "%\n% x\n%");
+        assert_eq!(
+            r("{{ x | comment(prefix='', postfix_count=2, beginning='>>', end='<<') }}"),
+            ">>\n# x\n#\n#\n<<"
+        );
+        let err = render("{{ x | comment('pascal') }}", vars).unwrap_err();
+        assert!(err.contains("Invalid style 'pascal'."), "{err}");
+    }
+
+    /// Volant's order for the three set filters, where the reference's is a Python `set`'s:
+    /// sorted when every element is an integer, which is what the reference happened to print,
+    /// and first appearance otherwise, where the reference's own order changes with
+    /// `PYTHONHASHSEED`. So the string case compares as a set.
+    #[test]
+    fn the_set_filters_keep_each_element_once() {
+        let r = |t: &str| render(t, serde_json::json!({})).unwrap();
+        assert_eq!(
+            r("{{ ['b','a','b'] | union(['c','a']) | sort }}"),
+            serde_json::json!(["a", "b", "c"])
+        );
+        assert_eq!(
+            r("{{ ['b','a'] | difference(['a']) }}"),
+            serde_json::json!(["b"])
+        );
+        // A list of lists is not hashable, and the reference falls back to the input's order.
+        assert_eq!(
+            r("{{ [[1], [2]] | intersect([[2]]) }}"),
+            serde_json::json!([[2]])
+        );
+    }
+
+    #[test]
+    fn flatten_skips_nulls_unless_told_not_to() {
+        let r = |t: &str| render(t, serde_json::json!({})).unwrap();
+        assert_eq!(
+            r("{{ [1, none, 'None', 'null', [2, none]] | flatten }}"),
+            serde_json::json!([1, 2])
+        );
+        assert_eq!(
+            r("{{ [1, none, [2]] | flatten(skip_nulls=false) }}"),
+            serde_json::json!([1, null, 2])
+        );
+        assert_eq!(
+            r("{{ [1, [2]] | flatten(levels=0) }}"),
+            serde_json::json!([1, [2]])
+        );
+    }
+
+    #[test]
+    fn from_yaml_reads_one_document_with_the_engine_s_reader() {
+        let vars = serde_json::json!({"doc": "a: 1\nb: [x, y]", "bad": "a: [1"});
+        assert_eq!(
+            render("{{ doc | from_yaml }}", vars.clone()).unwrap(),
+            serde_json::json!({"a": 1, "b": ["x", "y"]})
+        );
+        assert!(
+            render("{{ bad | from_yaml }}", vars)
+                .unwrap_err()
+                .contains("from_yaml: invalid YAML"),
+        );
+        assert_eq!(
+            render("{{ none | from_yaml }}", serde_json::json!({})).unwrap(),
+            serde_json::Value::Null
+        );
+    }
+
+    /// `shlex.quote` and `re.escape` beyond the measured vectors: what each leaves alone.
+    #[test]
+    fn quote_and_regex_escape_follow_python() {
+        assert_eq!(
+            text("{{ 'a@b%c+d=e:f,g.h/i-j_k' | quote }}"),
+            "a@b%c+d=e:f,g.h/i-j_k"
+        );
+        assert_eq!(text("{{ none | quote }}"), "''");
+        assert_eq!(text("{{ 'é' | quote }}"), "'é'");
+        assert_eq!(text("{{ 'a b-c_d' | regex_escape }}"), r"a\ b\-c_d");
+        assert_eq!(
+            text("{{ 'a.b[c]^$*+' | regex_escape('posix_basic') }}"),
+            r"a\.b\[c\]\^\$\*+"
+        );
+        assert!(
+            render(
+                "{{ 'x' | regex_escape('posix_extended') }}",
+                serde_json::json!({})
+            )
+            .unwrap_err()
+            .contains("Regex type (posix_extended) not yet implemented")
+        );
+    }
+
+    #[test]
+    fn b64_and_to_uuid_fail_naming_what_was_wrong() {
+        let err = render("{{ 'not base64!' | b64decode }}", serde_json::json!({})).unwrap_err();
+        assert!(err.contains("b64decode"), "{err}");
+        assert_eq!(text("{{ 'YWI_Pg==' | b64decode(urlsafe=true) }}"), "ab?>");
+        assert_eq!(text("{{ 'ab?>' | b64encode(urlsafe=true) }}"), "YWI_Pg==");
+        let err = render(
+            "{{ 'x' | to_uuid(namespace='bogus') }}",
+            serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("Invalid value 'bogus' for 'namespace'"),
+            "{err}"
+        );
+        // The namespace in any spelling `uuid.UUID` reads: braces, `urn:uuid:`, no hyphens.
+        assert_eq!(
+            text("{{ 'volant' | to_uuid(namespace='{361e6d51faec444a9079341386da8e2e}') }}"),
+            "69744a58-016b-51b4-91fb-2b5aaa59c628"
         );
     }
 

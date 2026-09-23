@@ -14,7 +14,9 @@ use serde_json::{Map, Value};
 
 mod file;
 mod filters;
+mod lookups;
 mod tests;
+mod yaml_dump;
 
 pub use file::FileRender;
 
@@ -50,6 +52,12 @@ pub(crate) type Tainted = Arc<AtomicBool>;
 /// identifier, so no playbook can write it as a variable or shadow it; `lookup('vars', ...)`
 /// reaches it, and hands back an object whose only method marks the render as data.
 pub(crate) const TAINT_KEY: &str = "volant::tainted";
+
+/// The name `Context` answers with itself, for `lookup('template')`, which renders a file
+/// against the same variables and the same trust as the render that called it. Unreachable from
+/// a playbook for the same reason as `TAINT_KEY`; through `lookup('vars', ...)` it hands back
+/// the root context, whose every read goes through `get_value` and taints as a bare read does.
+pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
 #[derive(Debug)]
 pub(crate) struct TaintSink(pub(crate) Tainted);
@@ -143,6 +151,9 @@ impl Object for Context {
             return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
                 &self.tainted,
             ))));
+        }
+        if key == CONTEXT_KEY {
+            return Some(minijinja::Value::from_dyn_object(Arc::clone(self)));
         }
         // Before the memo, never after: a second read of the same name is answered from the
         // cache and would otherwise leave the render looking clean.

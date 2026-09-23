@@ -972,6 +972,7 @@ mod tests {
             root.path().to_str().unwrap(),
             &hash,
             "bm90IGEgcGF5bG9hZCBhdCBhbGw=",
+            false,
         )
         .unwrap();
 
@@ -1526,7 +1527,7 @@ sys.stdout.write(base64.b64encode(buf.getvalue()).decode())
         let zip_b64 = String::from_utf8(built.stdout).unwrap();
         let zip = volant_protocol::encoding::b64_decode(&zip_b64).unwrap();
         let hash = blake3::hash(&zip).to_hex().to_string();
-        crate::blobs::store(remote_tmp.to_str().unwrap(), &hash, &zip_b64).unwrap();
+        crate::blobs::store(remote_tmp.to_str().unwrap(), &hash, &zip_b64, false).unwrap();
         PythonPayload {
             blob: hash,
             module_fqn: "ansible.modules.probe".into(),

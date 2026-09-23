@@ -57,6 +57,7 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
             zip_b64: "UEsDBA==".into(),
+            staged: false,
         });
         assert_eq!(
             recv(),
@@ -98,6 +99,7 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
             zip_b64: "UEsDBA==".into(),
+            staged: false,
         });
         assert_eq!(
             recv(),
@@ -116,6 +118,7 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         send(&ToAgent::PutBlob {
             hash: wrong.clone(),
             zip_b64: "UEsDBA==".into(),
+            staged: false,
         });
         match recv() {
             FromAgent::Log { level, message } => {
@@ -193,6 +196,7 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
             zip_b64: "UEsDBA==".into(),
+            staged: false,
         });
 
         let mut answered = false;
@@ -238,8 +242,8 @@ fn a_staged_file_reaches_the_module_and_leaves_nothing_behind() {
     let union = link.put(&build_payload(
         "\n    import os\n    src = args[\"src\"]\n    content = open(src).read()\n    if args.get(\"move_to\"):\n        os.rename(src, args[\"move_to\"])\n    print(json.dumps({\"changed\": False, \"src\": src, \"content\": content}))\n",
     ));
-    let read = link.put(b"the file the module reads\n");
-    let moved = link.put(b"the file the module moves\n");
+    let read = link.stage(b"the file the module reads\n");
+    let moved = link.stage(b"the file the module moves\n");
     let dest = scratch.0.join("dest");
     let mut moving = python_task(&union, &moved);
     moving.args.insert("move_to".into(), json!(dest));
@@ -250,18 +254,25 @@ fn a_staged_file_reaches_the_module_and_leaves_nothing_behind() {
     ]);
 
     let cache = cache_dir(&scratch.0);
+    let stage = link.stage_dir(&scratch.0);
+    let stage_name = stage.file_name().unwrap().to_string_lossy().into_owned();
     assert_eq!(
         entries(&cache),
-        vec![union.clone()],
-        "nothing behind: the cache keeps the union and nothing a task staged"
+        vec![union.clone(), stage_name],
+        "the cache keeps the union and the connection's own directory"
+    );
+    assert_eq!(
+        entries(&stage),
+        Vec::<String>::new(),
+        "nothing behind: every staged file went with its task"
     );
     let first = &results[0].0;
     assert_eq!(first["content"], "the file the module reads\n", "{first:?}");
     let src = first["src"].as_str().unwrap();
     assert!(
-        Path::new(src).starts_with(&cache),
+        Path::new(src).starts_with(&stage),
         "{src} is not under {}",
-        cache.display()
+        stage.display()
     );
     assert!(
         results[1].failed(),
@@ -288,14 +299,18 @@ fn a_file_that_cannot_be_staged_fails_the_task_before_the_module_runs() {
     let scratch = Scratch::new("unstaged");
     let mut link = Link::open(&scratch.0);
     let absent_union = "0".repeat(64);
-    let corrupt = link.put(b"the bytes the controller sent");
-    let planted = cache_dir(&scratch.0).join(&corrupt);
+    let corrupt = link.stage(b"the bytes the controller sent");
+    let planted = link.stage_dir(&scratch.0).join(&corrupt);
     fs::write(&planted, b"bytes somebody else wrote").unwrap();
     let missing = blake3::hash(b"never sent").to_hex().to_string();
+    // In the shared cache, where a payload goes: a file is only ever taken from the
+    // connection's own directory, so this one is as good as never sent.
+    let shared = link.put(b"sent as a payload");
     let results = link.run(vec![
         python_task(&absent_union, "../volant-agent-0.1.0/volant-agent"),
         python_task(&absent_union, &missing),
         python_task(&absent_union, &corrupt),
+        python_task(&absent_union, &shared),
     ]);
 
     let msg = |i: usize| results[i].0["msg"].as_str().unwrap().to_string();
@@ -323,6 +338,14 @@ fn a_file_that_cannot_be_staged_fails_the_task_before_the_module_runs() {
         b"bytes somebody else wrote",
         "the corrupted blob stays for the next put_blob to replace"
     );
+    assert_eq!(
+        msg(3),
+        format!("staging file {shared} for 'src': No such file or directory (os error 2)")
+    );
+    assert!(
+        cache_dir(&scratch.0).join(&shared).exists(),
+        "the payload stays in the shared cache"
+    );
     assert!(results.iter().all(TaskResult::failed));
 }
 
@@ -336,19 +359,15 @@ fn a_file_that_cannot_be_staged_fails_the_task_before_the_module_runs() {
 fn a_staged_file_is_removed_when_the_module_fails() {
     let scratch = Scratch::new("failed");
     let mut link = Link::open(&scratch.0);
-    let file = link.put(b"a rendered secret");
+    let file = link.stage(b"a rendered secret");
     let results = link.run(vec![python_task(&"0".repeat(64), &file)]);
     assert_eq!(
         results[0].0["msg"],
         format!("payload {} is not on this host", "0".repeat(64)),
         "the file was staged and the module path reached"
     );
-    let left: Vec<String> = entries(&cache_dir(&scratch.0))
-        .into_iter()
-        .filter(|name| name.starts_with("stage-"))
-        .collect();
     assert_eq!(
-        left,
+        entries(&link.stage_dir(&scratch.0)),
         Vec::<String>::new(),
         "a staged copy outlived its task"
     );
@@ -367,7 +386,7 @@ fn a_staged_file_that_cannot_be_removed_fails_the_task() {
     let union = link.put(&build_payload(
         "\n    import os\n    src = args[\"src\"]\n    os.remove(src)\n    os.mkdir(src)\n    open(src + \"/x\", \"w\").close()\n    print(json.dumps({\"changed\": False}))\n",
     ));
-    let file = link.put(b"a rendered secret");
+    let file = link.stage(b"a rendered secret");
     let results = link.run(vec![python_task(&union, &file)]);
     let msg = results[0]
         .0
@@ -379,7 +398,8 @@ fn a_staged_file_that_cannot_be_removed_fails_the_task() {
         "{:?}",
         results[0].0
     );
-    assert!(msg.contains(&format!("stage-{file}-")), "{msg}");
+    let staged = link.stage_dir(&scratch.0).join(format!("{file}-"));
+    assert!(msg.contains(&*staged.to_string_lossy()), "{msg}");
 }
 
 /// A native module has nowhere to put a staged file, so a task asking for one fails by name and
@@ -391,7 +411,7 @@ fn a_staged_file_that_cannot_be_removed_fails_the_task() {
 fn a_native_module_cannot_take_staged_files() {
     let scratch = Scratch::new("native");
     let mut link = Link::open(&scratch.0);
-    let file = link.put(b"a file");
+    let file = link.stage(b"a file");
     let results = link.run(vec![Task {
         module: "command".into(),
         args: json!({"_raw_params": "true"}).as_object().unwrap().clone(),
@@ -408,7 +428,211 @@ fn a_native_module_cannot_take_staged_files() {
         results[0].0["msg"],
         "the module command cannot take staged files"
     );
-    assert_eq!(entries(&cache_dir(&scratch.0)), vec![file]);
+    assert_eq!(entries(&link.stage_dir(&scratch.0)), vec![file]);
+}
+
+/// Two agents of one user on one cache - two inventory names for one machine, or two hosts
+/// delegating to one - are each sent the same file, and each module reads it, in the order that
+/// broke: both puts land before either task runs.
+///
+/// What would make this red: a staged file written to the shared cache. The second put finds
+/// the first one's file there and answers for it, the first task consumes it, and the second
+/// task fails `staging file <hash> for 'src': No such file or directory`.
+#[test]
+fn two_agents_of_one_user_each_stage_their_own_copy_of_one_file() {
+    let scratch = Scratch::new("two-links");
+    let mut first = Link::open(&scratch.0);
+    let union = first.put(&build_payload(
+        "\n    print(json.dumps({\"changed\": False, \"content\": open(args[\"src\"]).read()}))\n",
+    ));
+    let file = first.stage(b"one file, two links\n");
+    // Started after the first one staged, so its sweep meets a live agent's directory.
+    let mut second = Link::open(&scratch.0);
+    assert_eq!(second.stage(b"one file, two links\n"), file);
+    for link in [&mut first, &mut second] {
+        let results = link.run(vec![python_task(&union, &file)]);
+        assert_eq!(
+            results[0].0.get("content").and_then(Value::as_str),
+            Some("one file, two links\n"),
+            "{:?}",
+            results[0].0
+        );
+    }
+}
+
+/// A file put and never taken - a batch cancelled before its task, a link dropped between the
+/// put and the batch - goes with the connection, and so does the connection's directory.
+///
+/// What would make this red: nothing removing the directory when the controller goes away,
+/// which leaves a rendered template, and the secret in it, on the host with nothing that will
+/// ever look for it.
+#[test]
+fn a_file_put_and_never_taken_is_gone_when_the_connection_ends() {
+    let scratch = Scratch::new("untaken");
+    let mut link = Link::open(&scratch.0);
+    let file = link.stage(b"a rendered secret nobody took");
+    let stage = link.stage_dir(&scratch.0);
+    assert_eq!(entries(&stage), vec![file.clone()], "the file was put");
+    assert!(
+        !cache_dir(&scratch.0).join(&file).exists(),
+        "a staged file never enters the shared cache"
+    );
+    link.close();
+    assert!(
+        !stage.exists(),
+        "{} outlived its connection",
+        stage.display()
+    );
+    assert_eq!(entries(&cache_dir(&scratch.0)), Vec::<String>::new());
+}
+
+/// `has_blob` answers for the shared cache only, never for a file this or any connection staged.
+///
+/// What would make this red: `holds` looking in the connection's directory too. The controller
+/// would then skip the put for a file one task already consumed, or that another link staged.
+#[test]
+fn has_blob_never_answers_for_a_staged_file() {
+    let scratch = Scratch::new("has-staged");
+    let mut link = Link::open(&scratch.0);
+    let file = link.stage(b"a file");
+    link.send(&ToAgent::HasBlob { hash: file.clone() });
+    assert_eq!(
+        link.recv(),
+        FromAgent::BlobState {
+            hash: file,
+            present: false
+        }
+    );
+}
+
+/// An agent starting up removes what a dead agent of this user left on this host, and leaves
+/// alone a live one's directory, another host's, and the earlier layout that names no host.
+///
+/// What would make this red: the sweep removing a directory without asking whether its pid is
+/// alive - two runs reaching one host run two agents of one user at once, and the second to
+/// start would pull the file out from under the first one's module; or the sweep ignoring the
+/// host in the name. A home directory mounted over NFS shares the cache between hosts, and a pid
+/// that is dead here says nothing about the host that wrote it. The live pid is the test's own.
+#[test]
+fn the_next_agent_sweeps_what_a_dead_agent_staged_and_keeps_a_live_ones() {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let scratch = Scratch::new("sweep");
+    let cache = cache_dir(&scratch.0);
+    fs::DirBuilder::new().mode(0o700).create(&cache).unwrap();
+    let dead = dead_pid();
+    let live = std::process::id();
+    let host = this_host();
+    let mine_dead = format!("stage-{host}-{dead}");
+    let mine_live = format!("stage-{host}-{live}");
+    let elsewhere = format!("stage-{}-{dead}", other_host(&host));
+    for name in [&mine_dead, &mine_live, &elsewhere] {
+        let dir = cache.join(name);
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("0".repeat(64)), b"a staged secret").unwrap();
+    }
+    let old = format!("stage-{}-{dead}-0", "0".repeat(64));
+    fs::write(cache.join(&old), b"a staged secret").unwrap();
+
+    started(&scratch.0);
+
+    let mut kept = vec![mine_live.clone(), elsewhere, old];
+    kept.sort();
+    assert_eq!(
+        entries(&cache),
+        kept,
+        "only this host's dead agent's directory goes"
+    );
+    assert_eq!(entries(&cache.join(&mine_live)), vec!["0".repeat(64)]);
+}
+
+/// A cache this agent does not own outright is not swept at all, even of an entry that would be
+/// swept in a private one.
+///
+/// What would make this red: the sweep acting before it checks the cache's owner and mode, which
+/// lets anyone who can write the directory name what this agent deletes.
+#[test]
+fn a_cache_others_can_write_is_not_swept() {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let scratch = Scratch::new("sweep-open");
+    let cache = cache_dir(&scratch.0);
+    fs::DirBuilder::new().mode(0o755).create(&cache).unwrap();
+    let stale = format!("stage-{}-{}", this_host(), dead_pid());
+    fs::create_dir(cache.join(&stale)).unwrap();
+
+    started(&scratch.0);
+
+    assert_eq!(entries(&cache), vec![stale]);
+}
+
+/// A staged file the agent refuses is named a file in the log, not a payload.
+#[test]
+fn a_refused_staged_file_is_logged_as_a_file() {
+    let scratch = Scratch::new("refused-file");
+    let mut link = Link::open(&scratch.0);
+    let wrong = "0".repeat(64);
+    link.send(&ToAgent::PutBlob {
+        hash: wrong.clone(),
+        zip_b64: b64_encode(b"a file"),
+        staged: true,
+    });
+    match link.recv() {
+        FromAgent::Log { message, .. } => {
+            assert!(
+                message.starts_with(&format!("storing file {wrong}: ")),
+                "{message}"
+            );
+        }
+        other => panic!("expected the refusal's log, got {other:?}"),
+    }
+}
+
+/// Starts an agent on `remote_tmp` and waits until it has answered: the sweep runs before the
+/// agent reads its first frame, so an answer means it is over.
+fn started(remote_tmp: &Path) {
+    let mut link = Link::open(remote_tmp);
+    link.send(&ToAgent::Hello {
+        protocol: volant_protocol::PROTOCOL_VERSION,
+    });
+    assert!(matches!(link.recv(), FromAgent::Ready { .. }));
+}
+
+/// The pid of a process that has exited and been reaped.
+fn dead_pid() -> u32 {
+    let mut gone = Command::new("true").spawn().expect("true starts");
+    let pid = gone.id();
+    gone.wait().unwrap();
+    pid
+}
+
+/// This host's name as the agent puts it in a directory name: `[A-Za-z0-9._]` kept, anything else
+/// `_`, at most 64 bytes. Written out again rather than shared, so a change on the agent's side
+/// has to be made here too.
+fn this_host() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` is writable for its whole length, which is the length passed.
+    assert_eq!(
+        unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) },
+        0
+    );
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    buf[..len]
+        .iter()
+        .take(64)
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || b == b'.' || b == b'_' {
+                char::from(b)
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// A host name that is not `host`.
+fn other_host(host: &str) -> String {
+    format!("{host}.elsewhere")
 }
 
 /// The interpreter the staged-file tests run their module under.
@@ -516,7 +740,8 @@ impl Drop for Scratch {
 /// An agent whose cache lives under `remote_tmp`, and both ends of the link to it.
 struct Link {
     child: Child,
-    stdin: ChildStdin,
+    /// `None` once [`Link::close`] has ended the conversation.
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
 }
 
@@ -529,7 +754,7 @@ impl Link {
             .stderr(Stdio::inherit())
             .spawn()
             .expect("agent starts");
-        let stdin = child.stdin.take().unwrap();
+        let stdin = child.stdin.take();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Link {
             child,
@@ -539,8 +764,9 @@ impl Link {
     }
 
     fn send(&mut self, msg: &ToAgent) {
-        write_frame(&mut self.stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("the link is open");
+        write_frame(&mut *stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
+        stdin.flush().unwrap();
     }
 
     fn recv(&mut self) -> FromAgent {
@@ -550,12 +776,23 @@ impl Link {
         serde_json::from_slice(&bytes).unwrap()
     }
 
-    /// Sends `bytes` as a blob, waits for it to land, and returns its name.
+    /// Sends `bytes` as a payload for the shared cache, waits for it to land, and returns its
+    /// name.
     fn put(&mut self, bytes: &[u8]) -> String {
+        self.put_as(bytes, false)
+    }
+
+    /// Sends `bytes` as a file one task stages, as the controller sends every file.
+    fn stage(&mut self, bytes: &[u8]) -> String {
+        self.put_as(bytes, true)
+    }
+
+    fn put_as(&mut self, bytes: &[u8], staged: bool) -> String {
         let hash = blake3::hash(bytes).to_hex().to_string();
         self.send(&ToAgent::PutBlob {
             hash: hash.clone(),
             zip_b64: b64_encode(bytes),
+            staged,
         });
         assert_eq!(
             self.recv(),
@@ -582,6 +819,20 @@ impl Link {
         }
         assert_eq!(results.len(), count, "{results:?}");
         results
+    }
+
+    /// Where this link's agent keeps the files it was sent to stage.
+    fn stage_dir(&self, remote_tmp: &Path) -> PathBuf {
+        cache_dir(remote_tmp).join(format!("stage-{}-{}", this_host(), self.child.id()))
+    }
+
+    /// Ends the conversation as a controller that went away does, and waits for the agent.
+    fn close(&mut self) {
+        self.stdin = None;
+        assert!(
+            self.child.wait().unwrap().success(),
+            "the agent ends at end of stream"
+        );
     }
 }
 

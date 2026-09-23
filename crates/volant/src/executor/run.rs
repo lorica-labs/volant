@@ -1249,7 +1249,7 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
     if let Some(seen) = link.memory().seen(hash) {
         return seen;
     }
-    let state = match place_blob(link, host, hash, zip_b64, logs).await {
+    let state = match place_blob(link, host, hash, zip_b64, false, logs).await {
         Ok(true) => Ok(()),
         // The agent logs why on its way to saying no, and that line is already in `logs`.
         Ok(false) => Err(format!(
@@ -1262,24 +1262,29 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
 }
 
 /// Asks whether the agent holds `hash`, and sends it when it does not: whether it holds it now.
+/// A `staged` file is sent without asking.
 ///
 /// Remembers nothing. That is [`ensure_blob`]'s to do for a payload, and is never done for a
 /// file a sub-task stages: the agent takes that one out of its cache to hand it to the module,
 /// so a link that remembered it would send the next task after a file that is no longer there.
+/// Nor is a file asked for: two links to one host account share the agent's cache, and a yes
+/// about a file the other link is about to consume is the same stale answer.
 async fn place_blob<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
     b64: &str,
+    staged: bool,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
     let has = ToAgent::HasBlob { hash: hash.into() };
-    if blob_state(link, host, hash, &has, logs).await? {
+    if !staged && blob_state(link, host, hash, &has, logs).await? {
         return Ok(true);
     }
     let put = ToAgent::PutBlob {
         hash: hash.into(),
         zip_b64: b64.into(),
+        staged,
     };
     blob_state(link, host, hash, &put, logs).await
 }
@@ -1295,7 +1300,7 @@ async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        if !place_blob(link, host, &blob.hash, &blob.b64, logs).await? {
+        if !place_blob(link, host, &blob.hash, &blob.b64, true, logs).await? {
             let prefix = format!("[{host}] ");
             let why: Vec<&str> = logs[before..]
                 .iter()
@@ -3646,12 +3651,15 @@ mod tests {
         json!({"src": src.display().to_string(), "dest": dest})
     }
 
-    /// Two items copying the same bytes each put them on the host: the first `copy` consumed the
-    /// blob it staged, and nothing the link remembers stands in for the second.
+    /// Two items copying the same bytes each put them on the host, as a staged file and without
+    /// asking first: the first `copy` consumed the blob it staged, and nothing the link or the
+    /// agent's shared cache holds stands in for the second.
     ///
     /// What would make this red: the file blob kept in the link's memory, so the second item
-    /// asks nothing, sends nothing, and its `copy` runs against a `src` the agent no longer
-    /// holds - the answers scripted for its staging then land in the wrong exchange.
+    /// sends nothing and its `copy` runs against a `src` the agent no longer holds; or a
+    /// `has_blob` asked first, which another link to the same host account can answer yes to
+    /// for a file it is about to consume - either way the answers scripted for the staging land
+    /// in the wrong exchange.
     #[tokio::test]
     async fn the_same_content_is_staged_for_every_item() {
         use crate::action_plugins::Kind;
@@ -3661,10 +3669,10 @@ mod tests {
             [
                 vec![state("ab", true)],
                 one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, false), state(&blob.hash, true)],
+                vec![state(&blob.hash, true)],
                 one_result(2, json!({"changed": true})).to_vec(),
                 one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, false), state(&blob.hash, true)],
+                vec![state(&blob.hash, true)],
                 one_result(2, json!({"changed": true})).to_vec(),
             ]
             .concat(),
@@ -3682,12 +3690,22 @@ mod tests {
             let result = ran.expect("the item finished");
             assert!(!result.failed(), "{dest}: {result:?}");
         }
-        let staged: Vec<&ToAgent> = agent
+        let staged = agent
             .sent
             .iter()
-            .filter(|m| matches!(m, ToAgent::PutBlob { hash, .. } if *hash == blob.hash))
-            .collect();
-        assert_eq!(staged.len(), 2, "{:?}", agent.sent);
+            .filter(
+                |m| matches!(m, ToAgent::PutBlob { hash, staged: true, .. } if *hash == blob.hash),
+            )
+            .count();
+        assert_eq!(staged, 2, "{:?}", agent.sent);
+        assert!(
+            !agent
+                .sent
+                .iter()
+                .any(|m| matches!(m, ToAgent::HasBlob { hash } if *hash == blob.hash)),
+            "a file is never asked for: {:?}",
+            agent.sent
+        );
         let copies: Vec<&Task> = batches_sent(&agent)
             .into_iter()
             .flatten()
@@ -3720,7 +3738,6 @@ mod tests {
                 vec![state("ab", true)],
                 one_result(1, json!({"stat": {"exists": false}})).to_vec(),
                 vec![
-                    state(&blob.hash, false),
                     FromAgent::Log {
                         level: volant_protocol::LogLevel::Error,
                         message: format!(

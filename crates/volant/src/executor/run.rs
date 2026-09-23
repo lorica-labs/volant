@@ -2815,6 +2815,7 @@ mod tests {
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
             crate::action_plugins::Kind::Template => "template",
+            crate::action_plugins::Kind::Unarchive => "unarchive",
         });
         let item = Item {
             args: vars(args),

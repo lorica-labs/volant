@@ -109,7 +109,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     if flag(args, "remote_src", false) {
         return Ok(None);
     }
-    refuse_host_named(ctx, "src")?;
+    refuse_host_named(ctx.args_untrusted, "src")?;
     let searched = search_paths(ctx.origin, ctx.playbook_dir, "files", src);
     let Some(found) = searched.iter().find(|p| p.exists()) else {
         return Err(format!(
@@ -277,7 +277,7 @@ fn inside(dir: &str, name: &str) -> String {
 /// call also sends `get_size: false`, a key `ansible.windows.win_stat` added and the posix module
 /// never declared; that call tolerates an argument the module does not know, and a sub-task run
 /// through this dispatch does not, so `get_size` stays out.
-fn stat(path: &str, follow: bool, checksum: bool) -> Step {
+pub(super) fn stat(path: &str, follow: bool, checksum: bool) -> Step {
     let mut args = Map::new();
     args.insert("path".into(), Value::String(path.to_string()));
     args.insert("follow".into(), Value::Bool(follow));
@@ -287,7 +287,7 @@ fn stat(path: &str, follow: bool, checksum: bool) -> Step {
 }
 
 /// The `stat` block of a `stat` result, or the reference's failure when there is none.
-fn stat_of(path: &str, result: TaskResult) -> Result<Map<String, Value>, TaskResult> {
+pub(super) fn stat_of(path: &str, result: TaskResult) -> Result<Map<String, Value>, TaskResult> {
     if !result.failed()
         && let Some(Value::Object(stat)) = result.0.get("stat")
     {

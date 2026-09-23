@@ -86,6 +86,10 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
 /// staged are removed all the same. Removal runs whatever the module did - succeeded, failed or
 /// was cancelled - and a file that is already gone is the ordinary case, since `copy` moves its
 /// source.
+///
+/// Written for a list, used with one: every action plugin sub-task stages a single `src`. With
+/// several, a refusal stops at the first file it cannot take, and the files after it stay in the
+/// cache untaken.
 fn staged(task: &Task, module: impl FnOnce(&Map<String, Value>) -> Run) -> Run {
     let remote_tmp = crate::blobs::remote_tmp();
     let mut args = task.args.clone();
@@ -117,12 +121,13 @@ fn staged(task: &Task, module: impl FnOnce(&Map<String, Value>) -> Run) -> Run {
         match std::fs::remove_file(&path) {
             Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
                 // A staged file that outlives its task may hold a rendered secret, so failing to
-                // remove it is the task's failure rather than a note nobody reads.
-                if let Run::Done(result) = &mut run {
-                    *result = TaskResult::failed_with(format!(
-                        "removing staged file {}: {err}",
-                        path.display()
-                    ));
+                // remove it is the task's failure rather than a note nobody reads. A cancelled
+                // task has no result left to carry it, so it goes to stderr, which the agent
+                // inherits from the controller's terminal.
+                let msg = format!("removing staged file {}: {err}", path.display());
+                match &mut run {
+                    Run::Done(result) => *result = TaskResult::failed_with(msg),
+                    Run::Cancelled => eprintln!("volant-agent: {msg}"),
                 }
             }
             _ => {}

@@ -6,7 +6,7 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
 use volant_protocol::encoding::{b64_decode, b64_encode};
 use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{FromAgent, LogLevel, PythonPayload, StagedFile, Task, TaskResult, ToAgent};
@@ -352,6 +352,34 @@ fn a_staged_file_is_removed_when_the_module_fails() {
         Vec::<String>::new(),
         "a staged copy outlived its task"
     );
+}
+
+/// A staged copy the agent cannot remove fails its task, naming the path, even though the
+/// module itself succeeded. The module replaces its file with a directory, which `remove_file`
+/// refuses with something other than `NotFound`.
+///
+/// What would make this red: the removal error dropped, which reports green for a task whose
+/// rendered secret is still on the host.
+#[test]
+fn a_staged_file_that_cannot_be_removed_fails_the_task() {
+    let scratch = Scratch::new("unremovable");
+    let mut link = Link::open(&scratch.0);
+    let union = link.put(&build_payload(
+        "\n    import os\n    src = args[\"src\"]\n    os.remove(src)\n    os.mkdir(src)\n    open(src + \"/x\", \"w\").close()\n    print(json.dumps({\"changed\": False}))\n",
+    ));
+    let file = link.put(b"a rendered secret");
+    let results = link.run(vec![python_task(&union, &file)]);
+    let msg = results[0]
+        .0
+        .get("msg")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        results[0].failed() && msg.starts_with("removing staged file "),
+        "{:?}",
+        results[0].0
+    );
+    assert!(msg.contains(&format!("stage-{file}-")), "{msg}");
 }
 
 /// A native module has nowhere to put a staged file, so a task asking for one fails by name and

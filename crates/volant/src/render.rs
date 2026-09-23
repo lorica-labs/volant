@@ -194,22 +194,20 @@ impl Renderer {
         } else {
             result.0.clone()
         };
-        // The reference shows no `failed` at all; a `true` stays on the lines not yet measured.
-        if body.get("failed") == Some(&serde_json::Value::Bool(false)) {
+        // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
+        // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
+        // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
+        // validate and a failed `lineinfile`, which also show no `invocation` and no `diff`: its
+        // `_dump_results` keeps those two from `-vvv` on, read off the source and not measured.
+        if !censored {
             body.remove("failed");
-        }
-        // Measured on ansible-core 2.19.12 at the default verbosity: a `fatal:` line shows no
-        // `failed`, no `invocation` and no `diff`, whichever module failed (a timed-out `pause`,
-        // a failed `copy` validate, a failed `lineinfile`). Its `_dump_results` keeps the last two
-        // from `-vvv` on, read off the source and not measured.
-        if matches!(
-            outcome,
-            Outcome::Failed | Outcome::Rescued | Outcome::Ignored
-        ) && label.is_none()
-            && !censored
-        {
-            body.remove("failed");
-            if self.verbosity < 3 {
+            body.remove("skipped");
+            if self.verbosity < 3
+                && matches!(
+                    outcome,
+                    Outcome::Failed | Outcome::Rescued | Outcome::Ignored
+                )
+            {
                 body.remove("invocation");
                 body.remove("diff");
             }
@@ -841,10 +839,7 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "changed: [h] => (item=one)");
         assert_eq!(lines[1], "skipping: [h] => (item=two) ");
-        assert_eq!(
-            lines[2],
-            r#"failed: [h] (item=three) => {"failed": true, "rc": 1}"#
-        );
+        assert_eq!(lines[2], r#"failed: [h] (item=three) => {"rc": 1}"#);
         assert_eq!(lines[3], r#"ok: [h] => {"msg": "shown"}"#);
     }
 }

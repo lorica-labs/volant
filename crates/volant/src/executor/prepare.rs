@@ -202,6 +202,8 @@ pub(super) fn host_vars(
     live: &Progress,
     templar: &Templar,
     store: &Mutex<VarStore>,
+    origin: &Origin,
+    playbook_dir: &Path,
 ) -> HostVars {
     let compiled = plan.steps();
     let role = role
@@ -239,13 +241,13 @@ pub(super) fn host_vars(
                 .flat_map(|p| p.untrusted.iter().cloned()),
         );
         let untrusted_hosts = store.untrusted_hosts();
-        (
-            store.for_host(host, &scope),
-            hostvars,
-            shared,
-            untrusted,
-            untrusted_hosts,
-        )
+        let mut raw = store.for_host(host, &scope);
+        // Before anything of the task's own `vars:` resolves, never after: a lookup one of them
+        // calls (`first_found`, `template`) reads these two names to find its file, and a pass
+        // that resolves the task's variables without them first is a pass that lookup cannot
+        // complete on.
+        insert_search_path(&mut raw, &mut untrusted, origin, playbook_dir);
+        (raw, hostvars, shared, untrusted, untrusted_hosts)
     };
     // The merged map carries this host's facts, so the names that came from a managed host
     // travel into the resolution below and are left there exactly as they arrived. The set comes
@@ -413,7 +415,12 @@ pub(super) fn prepare(
     warnings: &mut Vec<String>,
 ) -> Result<Prepared, TemplateError> {
     let task = &step.task;
-    let mut base = host_vars(
+    let playbook_dir = store
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    let base = host_vars(
         host,
         plan,
         &task.vars,
@@ -422,13 +429,9 @@ pub(super) fn prepare(
         live,
         templar,
         store,
+        &step.origin,
+        &playbook_dir,
     );
-    let playbook_dir = store
-        .lock()
-        .expect("vars lock")
-        .playbook_dir()
-        .to_path_buf();
-    insert_search_path(&mut base, &step.origin, &playbook_dir);
     // Whether the list this loop walks came from a managed host. A loop over a literal list the
     // playbook wrote binds author content; one over `{{ r.stdout_lines }}` binds data, and the
     // items of such a loop are never rendered again.
@@ -555,6 +558,8 @@ pub(super) fn prepare(
             live,
             templar,
             store,
+            &step.origin,
+            &playbook_dir,
         )
         .map;
         (name, vars)
@@ -640,9 +645,17 @@ fn delegate_for(
 ///
 /// The middle entry is the directory of the file the task was written in, and a directory already
 /// listed is not listed again, which is how a playbook's own task ends up with one entry.
-/// Inserted as author content: the controller chose every one of these paths, and a host fact of
-/// the same name does not outlive them.
-fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path) {
+/// Inserted as author content, and into the raw map a task's own `vars:` resolve against rather
+/// than into the resolved `HostVars` afterwards: a `vars:` built from a lookup that needs one of
+/// these two names (`first_found`, `template`) has to find it on the same pass that resolves the
+/// task's variables, or it is left as the unrendered call, with no later pass to pick it back up.
+/// A host fact of the same name does not outlive them, so `untrusted` drops both names too.
+fn insert_search_path(
+    vars: &mut Map<String, Value>,
+    untrusted: &mut BTreeSet<String>,
+    origin: &Origin,
+    playbook_dir: &Path,
+) {
     let mut search: Vec<&Path> = Vec::new();
     for dir in origin
         .role_dir
@@ -659,11 +672,13 @@ fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path)
         .map(|dir| Value::String(dir.display().to_string()))
         .collect();
     vars.insert("ansible_search_path".into(), Value::Array(search));
+    untrusted.remove("ansible_search_path");
     if let Some(role) = &origin.role_dir {
         vars.insert(
             "role_path".into(),
             Value::String(role.display().to_string()),
         );
+        untrusted.remove("role_path");
     }
 }
 
@@ -1050,6 +1065,69 @@ mod tests {
         assert!(!vars.map.contains_key("role_path"));
     }
 
+    /// A task's own `vars:` built from a lookup that needs the role's search path to find its
+    /// file. Measured against ansible-core 2.19.12 (via `template/lookups.rs`): once
+    /// `ansible_search_path` names the role's `templates/`, `vars: {via_lookup: "{{
+    /// lookup('template', 't.j2') }}"}` resolves to the lookup's result, and the name stays
+    /// data - a later, one-pass read of it (what `debug: var:` compiles to, `Templar::evaluate`)
+    /// must show that result, never the raw call.
+    ///
+    /// What would make this red: the search path inserted after this task's own `vars:` are
+    /// resolved, which leaves the role's `templates/t.j2` unreachable on that pass (the lookup
+    /// falls back to the playbook directory alone, where the file is not) and the raw,
+    /// unevaluated call stored where a later, one-pass read can no longer template it.
+    #[test]
+    fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
+        let play =
+            std::env::temp_dir().join(format!("volant-prepare-searchpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&play);
+        let role = play.join("roles/probe");
+        std::fs::create_dir_all(role.join("templates")).expect("role dir");
+        std::fs::write(role.join("templates/t.j2"), "{{ '{{ 1 + 1 }}' }}").expect("template file");
+
+        let store = store_at(&play);
+        let mut t = task("command");
+        t.vars.insert(
+            "via_lookup".into(),
+            json!("{{ lookup('template', 't.j2') }}"),
+        );
+        let step = step_of(
+            t,
+            Origin {
+                file_dir: role.join("tasks"),
+                role_dir: Some(role.clone()),
+                depth: 0,
+                inherited: None,
+            },
+        );
+        let templar = Templar::new(play.clone());
+        let prepared = prepare(
+            &step,
+            "h1",
+            &plan(),
+            &Progress::default(),
+            &templar,
+            &store,
+            &defaults(),
+            &mut Vec::new(),
+        )
+        .expect("the task renders");
+        let items = match prepared {
+            Prepared::Skipped(items)
+            | Prepared::Local(items, _)
+            | Prepared::Remote(items, _, _, _, _) => items,
+        };
+        let vars = &items[0].vars;
+        assert_eq!(vars.map["via_lookup"], json!("{{ 1 + 1 }}"));
+        assert!(
+            vars.untrusted.contains("via_lookup"),
+            "{:?}",
+            vars.untrusted
+        );
+
+        let _ = std::fs::remove_dir_all(&play);
+    }
+
     fn plan() -> PlayPlan {
         PlayPlan {
             plan: watch::channel(Arc::new(Compiled::default())).1,
@@ -1308,6 +1386,8 @@ mod tests {
                 &live,
                 &templar,
                 &store,
+                &Origin::default(),
+                Path::new("."),
             )
             .map
         };

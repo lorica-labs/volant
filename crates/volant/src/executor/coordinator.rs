@@ -893,6 +893,12 @@ fn task_name(
 ) -> String {
     let task = &step.task;
     let name = if Templar::is_template(&task.name) {
+        let playbook_dir = state
+            .vars
+            .lock()
+            .expect("vars lock")
+            .playbook_dir()
+            .to_path_buf();
         let vars = host_vars(
             host,
             plan,
@@ -902,6 +908,8 @@ fn task_name(
             live,
             state.templar.as_ref(),
             &state.vars,
+            &step.origin,
+            &playbook_dir,
         );
         state
             .templar

@@ -182,7 +182,7 @@ pub(crate) enum Section {
 /// Shared behind an [`Arc`] because every step of one file has the same one: a role of a few
 /// hundred tasks pays one of these rather than one per step, and the per-batch clone of the whole
 /// step list copies a pointer instead of two paths.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct Origin {
     /// The directory a relative path written in this step is read against: the playbook's, a
     /// role's `tasks/`, or the directory of the file an include brought in.
@@ -194,10 +194,12 @@ pub(crate) struct Origin {
     /// rather than followed: the reference recurses until Python's stack is gone and reports its
     /// own crash, with no recap and nothing to read.
     pub depth: u32,
-    /// For an include statement, the tags the layers around it gave it - the play, the blocks
-    /// it sits in, the role entries and imports above it - without the ones it carries itself.
-    /// What it brings in is compiled under these. Empty for every other step.
-    pub tags: Vec<String>,
+    /// For an include statement, the keywords the layers around it gave it - the play, the
+    /// blocks it sits in, the role entries and imports above it - without the ones it carries
+    /// itself. What it brings in is compiled under these: the reference's included blocks skip
+    /// the statement and inherit from its parent (`Block._get_parent_attribute`, "defer to the
+    /// grandparent"). `None` for every other step.
+    pub inherited: Option<Arc<PlayTask>>,
 }
 
 impl Default for Origin {
@@ -206,7 +208,7 @@ impl Default for Origin {
             file_dir: PathBuf::from("."),
             role_dir: None,
             depth: 0,
-            tags: Vec::new(),
+            inherited: None,
         }
     }
 }
@@ -300,9 +302,8 @@ pub(crate) struct Compiled {
     /// give. Appending is also what keeps every index already in a host's notification list
     /// pointing at the handler it was pointing at.
     pub handlers: Vec<Handler>,
-    /// The play's own keywords, the outermost layer of every task's merge. An include reads it
-    /// again at run time, with the tags the statement inherited laid over it (see
-    /// [`Origin::tags`]).
+    /// The play's own keywords, the outermost layer of every task's merge. An include whose step
+    /// carries no [`Origin::inherited`] of its own is compiled under it.
     pub inherited: PlayTask,
     /// Where a role named at run time is looked for. Kept with the compiled play because an
     /// `include_role` resolves its role while the play runs and the search list is the play's.
@@ -652,7 +653,7 @@ impl Builder<'_> {
             file_dir: self.file_dir.clone(),
             role_dir: self.role_dir.clone(),
             depth: self.include_depth,
-            tags: Vec::new(),
+            inherited: None,
         })
     }
 
@@ -764,7 +765,7 @@ impl Builder<'_> {
         };
         let mut origin = self.origin();
         if matches!(kind, StepKind::Include(_)) {
-            Arc::make_mut(&mut origin).tags.clone_from(&inherited.tags);
+            Arc::make_mut(&mut origin).inherited = Some(Arc::new(inherited.clone()));
         }
         self.push(Step {
             kind,
@@ -1274,10 +1275,10 @@ pub(crate) enum IncludeTarget {
 /// `vars:`. The tags written on the statement stop there (`--tags inc` runs the include and not
 /// the tasks it brought in), `when` is evaluated for the statement alone, and `become` and
 /// `environment` are not even accepted on one - ansible-core 2.19.12 refuses them at load time
-/// with `'environment' is not a valid attribute for a TaskInclude`. The tags of every layer
-/// **around** the statement still reach them, measured: `--tags <a play tag>`, `--tags <the
-/// role entry's tag>` and `--tags <a tag of the block around the statement>` each run a task an
-/// `include_tasks` brought in.
+/// with `'environment' is not a valid attribute for a TaskInclude`. What every layer **around**
+/// the statement says still reaches them ([`Origin::inherited`]), measured for tags: `--tags <a
+/// play tag>`, `--tags <the role entry's tag>` and `--tags <a tag of the block around the
+/// statement>` each run a task an `include_tasks` brought in.
 ///
 /// **An `Err` from here is one host's task failure**, rescuable and `ignore_errors`-able, because
 /// the single caller turns it into that. The pre-flight over the spliced content at the end relies
@@ -1291,12 +1292,16 @@ pub(crate) fn expand_include(
     request: &IncludeRequest,
 ) -> anyhow::Result<Compiled> {
     let depth = parent.origin.depth + 1;
-    // The play's own layer, plus the tags the layers around the statement gave it. What the
-    // statement hands down does not travel in the merge: it is a variable layer of its own, laid
-    // on by `graft` at the precedence measured for it, and putting it here as well would put it
-    // under the host's facts instead of over them.
-    let mut inherited = base.inherited.clone();
-    inherited.tags.clone_from(&parent.origin.tags);
+    // The layers around the statement, the play's among them, without the statement's own
+    // keywords. What the statement hands down does not travel in the merge: it is a variable
+    // layer of its own, laid on by `graft` at the precedence measured for it, and putting it here
+    // as well would put it under the host's facts instead of over them.
+    let inherited = parent
+        .origin
+        .inherited
+        .as_deref()
+        .unwrap_or(&base.inherited)
+        .clone();
     let mut builder = Builder {
         steps: Vec::new(),
         blocks: Vec::new(),
@@ -2703,10 +2708,16 @@ mod tests {
         assert_eq!(walk(&c, 0), ["kept before", "kept cleanup", "kept after"]);
     }
 
-    /// What the include statements of a play bring in under a tag selection, followed down
-    /// through every include they bring in themselves: the names of the steps at the bottom, or
-    /// `None` when the selection dropped the first statement.
+    /// The names of the steps [`expansion`] finds at the bottom.
     fn brought_in(dir: &Path, play: &str, sel: &TagSelection) -> Option<Vec<String>> {
+        let expanded = expansion(dir, play, sel)?.unwrap();
+        Some(names(&expanded).into_iter().map(String::from).collect())
+    }
+
+    /// What the include statements of a play bring in under a tag selection, followed down
+    /// through every include they bring in themselves: the expansion at the bottom, or `None`
+    /// when the selection dropped the first statement.
+    fn expansion(dir: &Path, play: &str, sel: &TagSelection) -> Option<anyhow::Result<Compiled>> {
         let mut pb = parse(play, dir.join("x.yml").to_str().unwrap()).unwrap();
         pb.plays[0].gather_facts = false;
         let search = RoleSearch {
@@ -2739,10 +2750,13 @@ mod tests {
                 vars: IncludeParams::default(),
                 label: None,
             };
-            let expanded = expand_include(&base, &parent, &request).unwrap();
+            let expanded = match expand_include(&base, &parent, &request) {
+                Ok(expanded) => expanded,
+                Err(err) => return Some(Err(err)),
+            };
             match include(&expanded) {
                 Some(next) => (parent, base) = (next, expanded),
-                None => return Some(names(&expanded).into_iter().map(String::from).collect()),
+                None => return Some(Ok(expanded)),
             }
         }
     }
@@ -2762,9 +2776,14 @@ mod tests {
     /// dynamic include skips the statement and asks the statement's own parent for what it
     /// inherits (`Block._get_parent_attribute`, "defer to the grandparent").
     ///
+    /// The same source rule covers every keyword that source extends or inherits, which is what
+    /// the last four assertions check (unmeasured): a role entry's `become`, a block's `no_log`,
+    /// `when` and `check_mode`.
+    ///
     /// What would make this red: the included file compiled against the play's layer alone,
     /// which drops everything a role or a block gave the statement, so the rows expecting
-    /// `[in]` get `[]` and the run succeeds having done nothing; or the statement's own tags
+    /// `[in]` get `[]` and the run succeeds having done nothing, an included `apt` runs
+    /// unescalated and an included task's arguments are printed; or the statement's own tags
     /// handed down as well, which fills the two `[i]` rows.
     #[test]
     fn a_dynamic_include_hands_down_what_the_layers_above_it_gave_it() {
@@ -2843,6 +2862,34 @@ mod tests {
             let want = want.map(|w| w.iter().map(ToString::to_string).collect::<Vec<_>>());
             assert_eq!(got, want, "--tags {run:?} --skip-tags {skip:?}\n{play}");
         }
+
+        // Every other keyword the layers around the statement give it comes down the same way.
+        let all = selection(&[], &[]);
+        let first = |play: &str| {
+            let expanded = expansion(&dir, play, &all).unwrap();
+            expanded.unwrap_or_else(|e| panic!("{e:#}")).steps[0]
+                .task
+                .clone()
+        };
+        let under_role = first(&roles("{role: r, become: true}"));
+        assert_eq!(under_role.r#become, Some(true), "the role entry's become");
+        let under_block = first(&tasks(&format!(
+            "block: [include_tasks: {inc}]\n      no_log: true\n      when: gate"
+        )));
+        assert_eq!(under_block.no_log, Some(true), "the block's no_log");
+        assert_eq!(under_block.when, ["gate"], "the block's when");
+        // `check_mode: true` is one this release refuses: inherited, it is refused in the file it
+        // reaches too, rather than dropped and every change in there made for real.
+        let refused = expansion(
+            &dir,
+            &tasks(&format!(
+                "block: [include_tasks: {inc}]\n      check_mode: true"
+            )),
+            &all,
+        )
+        .unwrap()
+        .expect_err("an inherited check_mode: true");
+        assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

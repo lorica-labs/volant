@@ -6997,9 +6997,13 @@ fn no_log_covers_the_environment_warning() {
 /// second is taken out of slack rather than out of what the assertion discriminates.
 ///
 /// What would make this red: waiting for the reader threads outside the deadline, which is what
-/// the wait did -- the task ended when the descendant did, and the run reported success.
+/// the wait did -- the task ended when the descendant did, and the run reported success. And,
+/// for the survivor check, a timeout that returns without killing the process group: every other
+/// assertion still holds with the descendant alive.
 #[test]
 fn a_timeout_covers_a_descendant_holding_the_pipes() {
+    // A `sleep` duration that doubles as the `pgrep -f` marker, as in `local_transport.rs`.
+    let marker = format!("5.{}", std::process::id());
     let started = std::time::Instant::now();
     let out = volant_within(
         &[
@@ -7007,6 +7011,8 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
             "-i",
             &fixture("inventory.ini"),
             &fixture("timeout/descendant.yml"),
+            "-e",
+            &format!("marker={marker}"),
         ],
         std::time::Duration::from_secs(30),
     );
@@ -7020,6 +7026,22 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
     assert!(
         elapsed < std::time::Duration::from_millis(3000),
         "the run took {elapsed:?}: the deadline did not reach the readers"
+    );
+    assert_no_survivor(&marker);
+}
+
+/// Fails naming any process whose command line still carries `marker` a moment after the run:
+/// the descendant of a timed-out task has to die with its process group.
+fn assert_no_survivor(marker: &str) {
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let survivors = Command::new("pgrep")
+        .args(["-f", marker])
+        .output()
+        .expect("pgrep runs");
+    assert!(
+        survivors.stdout.is_empty(),
+        "the timed-out task's descendant survived: {}",
+        String::from_utf8_lossy(&survivors.stdout)
     );
 }
 
@@ -7039,9 +7061,12 @@ fn a_timeout_covers_a_descendant_holding_the_pipes() {
 ///
 /// What would make this red: joining the writer thread instead of waiting on it under the
 /// deadline. Measured against ansible-core 2.19.12, which fails this task on its timeout and exits
-/// 2; this release reported success and exit 0 after the descendant's three seconds.
+/// 2; this release reported success and exit 0 after the descendant's three seconds. The survivor
+/// check reddens on a timeout that returns without killing the group.
 #[test]
 fn a_timeout_covers_a_descendant_holding_stdin() {
+    // An argument the descendant ignores, carried on its command line for `pgrep -f`.
+    let marker = format!("volant-stdin-descendant-{}", std::process::id());
     let started = std::time::Instant::now();
     let out = volant_within(
         &[
@@ -7049,6 +7074,8 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
             "-i",
             &fixture("inventory.ini"),
             &fixture("timeout/stdin-descendant.yml"),
+            "-e",
+            &format!("marker={marker}"),
         ],
         std::time::Duration::from_secs(30),
     );
@@ -7063,6 +7090,7 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
         elapsed < std::time::Duration::from_millis(3000),
         "the run took {elapsed:?}: the deadline did not reach the write to stdin"
     );
+    assert_no_survivor(&marker);
 }
 
 /// A module argument the reference has and this release does not act on is refused by its own

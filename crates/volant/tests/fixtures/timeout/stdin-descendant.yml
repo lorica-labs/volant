@@ -4,7 +4,7 @@
     - name: A descendant keeps stdin open without reading it
       shell: >-
         python3 -c 'import os,time; os._exit(0) if os.fork() else None;
-        os.close(1); os.close(2); time.sleep(3); os._exit(0)'
+        os.close(1); os.close(2); time.sleep(3); os._exit(0)' {{ marker }}
       args:
         stdin: "{{ 'x' * 1048576 }}"
       timeout: 1

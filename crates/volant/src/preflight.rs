@@ -479,9 +479,10 @@ mod tests {
     /// the module alone does not.
     #[test]
     fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
-        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      copy: src=a dest=b\n");
+        let text =
+            refusal("- hosts: all\n  tasks:\n    - name: Later\n      fetch: src=a dest=b\n");
         assert!(
-            text.contains("module 'copy' needs an action plugin"),
+            text.contains("module 'fetch' needs an action plugin"),
             "{text}"
         );
         let text = refusal(
@@ -495,7 +496,7 @@ mod tests {
         assert!(check(&pb).is_ok(), "a controller-side module still runs");
     }
 
-    /// The two plugins this release runs are admitted under every builtin spelling, with their
+    /// The plugins this release runs are admitted under every builtin spelling, with their
     /// arguments read; the ones it does not run stay refused; and a retry on a plugin is refused
     /// by name.
     ///
@@ -505,7 +506,7 @@ mod tests {
     /// driver's retry loop would run around a module the plugin never picked.
     #[test]
     fn the_plugins_this_release_runs_are_admitted_and_their_retries_refused() {
-        for module in ["package", "service", "ansible.builtin.package"] {
+        for module in ["package", "service", "copy", "ansible.builtin.package"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - name: Now\n      {module}: name=bash\n"),
                 "x.yml",
@@ -517,7 +518,7 @@ mod tests {
             };
             assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
         }
-        for module in ["copy", "template"] {
+        for module in ["template", "unarchive"] {
             let text = refusal(&format!(
                 "- hosts: all\n  tasks:\n    - name: Later\n      {module}: src=a dest=b\n"
             ));

@@ -5,7 +5,7 @@
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 //! 27 names in both. A module whose plugin is not written here cannot be run by sending its
 //! payload to the agent: the action plugin is where its real behaviour lives. `template` renders
-//! on the controller, `copy` reads its source there. Sending the module alone would run something
+//! on the controller, `unarchive` reads its archive there. Sending the module alone would run something
 //! that is not what the playbook asked for, so those names are refused before the first
 //! connection.
 //!
@@ -15,6 +15,8 @@
 //! already has. The result the plugin ends with goes down the one road every remote result takes,
 //! so no host value reaches the variables by a way of its own.
 
+pub(crate) mod copy;
+pub(crate) mod files;
 mod package;
 mod service;
 
@@ -32,14 +34,13 @@ use crate::vars::HostVars;
 ///
 /// The names this release already implements are **not** here, whether natively (`command`,
 /// `shell`, `raw`), on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
-/// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`package`, `service`).
-/// `normal` is not here either: it is the only action plugin with no module of the same name, so
-/// no playbook can name it.
+/// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`copy`, `package`,
+/// `service`). `normal` is not here either: it is the only action plugin with no module of the
+/// same name, so no playbook can name it.
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
     "async_status",
-    "copy",
     "dnf",
     "fetch",
     "gather_facts",
@@ -72,6 +73,7 @@ pub fn is_action_backed(module: &str) -> bool {
 /// An action plugin this release runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
+    Copy,
     Package,
     Service,
 }
@@ -82,6 +84,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
         return None;
     }
     match short_name(module) {
+        "copy" => Some(Kind::Copy),
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
         _ => None,
@@ -96,6 +99,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
 /// facts are known, so a plugin can only ever pick among these.
 pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
+        Kind::Copy => &["stat", "file", "copy"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
     }
@@ -147,10 +151,6 @@ pub(crate) trait Plugin: Send {
 pub(crate) struct Context<'a> {
     /// The item's rendered arguments and the names among them whose render read a host.
     pub args: &'a Map<String, Value>,
-    #[expect(
-        dead_code,
-        reason = "read by `copy`, which refuses a `src` a host chose"
-    )]
     pub args_untrusted: &'a BTreeSet<String>,
     /// The variables of the host the module runs on - the delegate's when there is one.
     pub running_vars: &'a Map<String, Value>,
@@ -160,9 +160,7 @@ pub(crate) struct Context<'a> {
     #[expect(dead_code, reason = "read by `template`")]
     pub templar: &'a Templar,
     /// Where the task was written, for `src` search paths.
-    #[expect(dead_code, reason = "read by `copy` and `template`")]
     pub origin: &'a crate::compile::Origin,
-    #[expect(dead_code, reason = "read by `copy` and `template`")]
     pub playbook_dir: &'a Path,
     /// Lines to show as `[WARNING]:` under this task.
     pub warnings: &'a mut Vec<String>,
@@ -170,6 +168,7 @@ pub(crate) struct Context<'a> {
 
 pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     match kind {
+        Kind::Copy => copy::start(ctx),
         Kind::Package => Box::new(package::Package::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
     }
@@ -217,7 +216,7 @@ mod tests {
         let mut sorted = BUILTIN_ACTION_PLUGINS.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, BUILTIN_ACTION_PLUGINS, "the list is kept sorted");
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 15);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 14);
         for absent in [
             "setup",
             "command",
@@ -231,10 +230,11 @@ mod tests {
             "pause",
             "package",
             "service",
+            "copy",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }
-        for present in ["copy", "template"] {
+        for present in ["template", "unarchive"] {
             assert!(is_action_backed(present), "{present} is action-backed");
         }
     }
@@ -249,6 +249,7 @@ mod tests {
         assert_eq!(kind("ansible.builtin.package"), Some(Kind::Package));
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
+        assert_eq!(kind("ansible.builtin.copy"), Some(Kind::Copy));
         assert_eq!(kind("template"), None);
     }
 
@@ -261,7 +262,7 @@ mod tests {
     /// here all the same: a plugin runs the module directly, as the reference's does.
     #[test]
     fn a_plugin_runs_only_what_the_union_can_hold() {
-        for kind in [Kind::Package, Kind::Service] {
+        for kind in [Kind::Copy, Kind::Package, Kind::Service] {
             for module in modules_for(kind) {
                 assert!(volant_protocol::modules::is_builtin(module), "{module}");
                 assert!(!volant_protocol::modules::is_known(module), "{module}");

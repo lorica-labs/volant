@@ -1086,8 +1086,8 @@ fn sub_task(
         timeout: task.timeout,
         environment: item.environment.clone(),
         payload: Some(payload.under(&interpreter)),
-        // Named only: the bytes go up just before the batch, and [`payloads_confirmed`] refuses
-        // the task unless they went up for it.
+        // Named only: the bytes go up just before the batch, and [`files_staged`] refuses the
+        // task unless they went up for it.
         files: sub
             .files
             .iter()
@@ -1300,7 +1300,10 @@ async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        if !place_blob(link, host, &blob.hash, &blob.b64, true, logs).await? {
+        let placed_now = place_blob(link, host, &blob.hash, &blob.b64, true, logs)
+            .await
+            .map_err(|err| format!("staging the file for '{arg}': {err}"))?;
+        if !placed_now {
             let prefix = format!("[{host}] ");
             let why: Vec<&str> = logs[before..]
                 .iter()
@@ -1324,8 +1327,9 @@ async fn stage_files<C: AgentChannel>(
 /// Asks one question about a blob and reads the one answer to it.
 ///
 /// Anything else the agent says on the way is either a line to show or a message that does not
-/// belong to this exchange; an answer about another payload is the streams having desynchronised,
-/// which is a hard error rather than something to read as a yes.
+/// belong to this exchange; an answer about another blob is the streams having desynchronised,
+/// which is a hard error rather than something to read as a yes. The words say "blob" because
+/// the blob may be a module payload or a file a sub-task stages; each caller says which.
 async fn blob_state<C: AgentChannel>(
     link: &mut C,
     host: &str,
@@ -1335,7 +1339,7 @@ async fn blob_state<C: AgentChannel>(
 ) -> Result<bool, String> {
     link.ask(msg)
         .await
-        .map_err(|err| format!("asking the agent about the module payload {hash}: {err}"))?;
+        .map_err(|err| format!("asking the agent about the blob {hash}: {err}"))?;
     loop {
         match link.answer().await {
             Ok(Some(FromAgent::BlobState {
@@ -1346,7 +1350,7 @@ async fn blob_state<C: AgentChannel>(
             }
             Ok(Some(FromAgent::BlobState { hash: named, .. })) => {
                 return Err(format!(
-                    "the agent answered about the module payload {named} while asked about {hash}"
+                    "the agent answered about the blob {named} while asked about {hash}"
                 ));
             }
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
@@ -1357,42 +1361,35 @@ async fn blob_state<C: AgentChannel>(
             // finish - which is what this pull request adds paths for.
             Ok(Some(FromAgent::TaskResult { batch, index, .. })) => {
                 return Err(format!(
-                    "the agent sent the result of task {index} of batch {batch} while asked about the module payload {hash}"
+                    "the agent sent the result of task {index} of batch {batch} while asked about the blob {hash}"
                 ));
             }
             Ok(Some(FromAgent::BatchDone { batch, .. })) => {
                 return Err(format!(
-                    "the agent ended batch {batch} while asked about the module payload {hash}"
+                    "the agent ended batch {batch} while asked about the blob {hash}"
                 ));
             }
             Ok(Some(FromAgent::Ready { .. })) => {}
             Ok(None) => {
                 return Err(format!(
-                    "the agent stopped while being asked about the module payload {hash}"
+                    "the agent stopped while being asked about the blob {hash}"
                 ));
             }
             Err(err) => {
                 return Err(format!(
-                    "reading the agent's answer about the module payload {hash}: {err}"
+                    "reading the agent's answer about the blob {hash}: {err}"
                 ));
             }
         }
     }
 }
 
-/// Every payload in a batch names a blob this link confirmed, and every file a task stages was
-/// put on the host for this batch.
+/// Every payload in a batch names a blob this link confirmed.
 ///
 /// A task naming anything else is a controller that built a payload and never made sure the
 /// host had it - a bug here, not a fault of the host - so it fails naming the hash instead of
-/// being sent for the agent to fail on, where it would read as the module's own failure. A file
-/// is checked against `staged`, never against the link's memory: the agent consumes a staged
-/// file, so one it held for an earlier task is not there for this one.
-pub(super) fn payloads_confirmed(
-    tasks: &[Task],
-    memory: &BlobMemory,
-    staged: &BTreeSet<String>,
-) -> Result<(), String> {
+/// being sent for the agent to fail on, where it would read as the module's own failure.
+pub(super) fn payloads_confirmed(tasks: &[Task], memory: &BlobMemory) -> Result<(), String> {
     for task in tasks {
         if let Some(payload) = &task.payload
             && !memory.holds(&payload.blob)
@@ -1402,6 +1399,16 @@ pub(super) fn payloads_confirmed(
                 task.module, payload.blob
             ));
         }
+    }
+    Ok(())
+}
+
+/// Every file a task stages was put on the host for this batch.
+///
+/// Checked against `staged`, never against the link's memory: the agent consumes a staged file,
+/// so one it held for an earlier task is not there for this one.
+pub(super) fn files_staged(tasks: &[Task], staged: &BTreeSet<String>) -> Result<(), String> {
+    for task in tasks {
         if let Some(file) = task.files.iter().find(|f| !staged.contains(&f.blob)) {
             return Err(format!(
                 "task '{}' stages the file {} under '{}', which was not put on the host for it",
@@ -1436,8 +1443,11 @@ async fn blob_preflight<C: AgentChannel>(
     {
         ensure_blob(link, host, &union.hash, &union.zip_b64, logs).await?;
     }
+    // The payloads before the files: a batch refused for its payload leaves nothing on the host,
+    // and a staged file can hold a rendered secret.
+    payloads_confirmed(tasks, link.memory())?;
     let staged = stage_files(link, host, files, logs).await?;
-    payloads_confirmed(tasks, link.memory(), &staged)
+    files_staged(tasks, &staged)
 }
 
 /// What a batch reports when the payload it needs could not be put on the host.
@@ -3617,25 +3627,79 @@ mod tests {
             &bare_item(),
             Some((&module_payload("ab"), "/usr/bin/python3")),
         )];
-        let err = payloads_confirmed(&tasks, &memory, &BTreeSet::new())
-            .expect_err("nothing was confirmed");
+        let err = payloads_confirmed(&tasks, &memory).expect_err("nothing was confirmed");
         assert!(err.contains("ab"), "{err}");
         memory.remember("ab", Ok(()));
-        payloads_confirmed(&tasks, &memory, &BTreeSet::new()).expect("the link confirmed it");
+        payloads_confirmed(&tasks, &memory).expect("the link confirmed it");
 
-        // A staged file counts only when it went up for this batch. The link's memory holding
-        // its hash says nothing: the agent consumed the one it had for the task before.
+        // A staged file counts only when it went up for this batch, and the check has no memory
+        // to consult: the agent consumed the one it had for the task before.
         let mut staging = tasks;
         staging[0].files = vec![volant_protocol::StagedFile {
             arg: "src".into(),
             blob: "cd".into(),
         }];
-        memory.remember("cd", Ok(()));
-        let err = payloads_confirmed(&staging, &memory, &BTreeSet::new())
+        let err = files_staged(&staging, &BTreeSet::new())
             .expect_err("the file was not put on the host for this batch");
         assert!(err.contains("cd") && err.contains("'src'"), "{err}");
-        payloads_confirmed(&staging, &memory, &["cd".to_string()].into())
-            .expect("the file went up for it");
+        files_staged(&staging, &["cd".to_string()].into()).expect("the file went up for it");
+    }
+
+    /// A batch refused for its payload puts none of its files on the host.
+    ///
+    /// What would make this red: the files staged before the payload is checked, which leaves a
+    /// staged file, a rendered template's secret among them, on a host that never runs the
+    /// module that would have consumed it.
+    #[tokio::test]
+    async fn a_batch_refused_for_its_payload_stages_nothing() {
+        let blob = hello_blob();
+        let mut staging = protocol_task(
+            &task("copy"),
+            &bare_item(),
+            Some((&module_payload("zz"), "/usr/bin/python3")),
+        );
+        staging.files = vec![volant_protocol::StagedFile {
+            arg: "src".into(),
+            blob: blob.hash.clone(),
+        }];
+        let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
+        let mut stop = watch::channel(false).1;
+        let (results, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            1,
+            vec![staging],
+            None,
+            &[("src".into(), blob)],
+            &mut stop,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(
+            matches!(ended, Ok(BatchOutcome::Failed { .. })),
+            "{ended:?}"
+        );
+        let failed = results[0].as_ref().expect("the task's failure");
+        assert!(msg(failed).contains("never confirmed"), "{failed:?}");
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+    }
+
+    /// A link lost while a file is staged says it was the file, not a module payload.
+    ///
+    /// What would make this red: the staging error left in the words of the payload exchange,
+    /// which sends an operator looking for a module payload that was never involved.
+    #[tokio::test]
+    async fn a_link_lost_while_staging_names_the_file() {
+        let blob = hello_blob();
+        let mut agent = FakeAgent::answering(Vec::new());
+        let err = stage_files(&mut agent, "h1", &[("src".into(), blob)], &mut Vec::new())
+            .await
+            .expect_err("the agent stopped");
+        assert!(
+            err.starts_with("staging the file for 'src': ") && !err.contains("module payload"),
+            "{err}"
+        );
     }
 
     /// The file blob of `hello\n`, as the plugin stages it.

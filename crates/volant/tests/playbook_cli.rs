@@ -7429,6 +7429,7 @@ fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
     ] {
         std::fs::create_dir_all(dir.join(sub)).expect("the role's directories");
     }
+    let dir = dir.canonicalize().expect("the probe directory resolves");
     let write = |rel: &str, text: &str| std::fs::write(dir.join(rel), text).expect(rel);
     write("roles/probe/files/x.txt", "x\n");
     write("roles/probe/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");

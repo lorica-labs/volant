@@ -45,8 +45,9 @@ impl Templar {
         env.set_lstrip_blocks(options.lstrip_blocks);
         let (ctx, _tainted) = context_of(vars.into());
         let mut rendered = env.render_str(text, ctx).map_err(convert_error)?;
-        // Measure 3d: `sshd_config_snippet.j2` reduces to a false `{% if %}` followed by the
-        // file's own final newline, and the reference writes that one byte, `\n`. `trim_blocks`
+        // Measured against the reference: a role's `sshd_config_snippet.j2` reduces to a false
+        // `{% if %}` followed by the file's own final newline, and the reference writes that one
+        // byte, `\n`. `trim_blocks`
         // strips the newline right after the block tag it closes, even when that newline is also
         // the template's very last character, so `set_keep_trailing_newline(true)` (which only
         // restores a newline the *source* stripping would have dropped, not one `trim_blocks`

@@ -1,0 +1,38 @@
+# Every task is backed by an action plugin. `dest` is a directory of the test's own, holding an
+# `unpacked` directory already; `secret` is what the template renders, so the test can look for
+# it anywhere the rendered file should not be. `package` and `service` name what is already
+# there, so neither touches the network nor changes the host.
+- name: The action plugins over a real ssh link
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Copy a file from the controller
+      copy:
+        src: greeting.txt
+        dest: "{{ dest }}/copied.txt"
+        mode: "0644"
+    - name: Copy inline content
+      copy:
+        content: "inline content\n"
+        dest: "{{ dest }}/content.txt"
+        mode: "0644"
+    - name: Render a template
+      template:
+        src: rendered.j2
+        dest: "{{ dest }}/rendered.txt"
+        mode: "0600"
+    - name: Unpack an archive from the controller
+      unarchive:
+        src: bundle.tar.gz
+        dest: "{{ dest }}/unpacked"
+        mode: "0644"
+    - name: A package that is already installed
+      package:
+        name: bash
+        state: present
+      become: true
+    - name: A unit that is already running
+      service:
+        name: systemd-journald
+        state: started
+      become: true

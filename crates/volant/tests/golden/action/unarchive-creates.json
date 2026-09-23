@@ -1,0 +1,7 @@
+{
+  "_ansible_no_log": false,
+  "action": "unarchive",
+  "changed": false,
+  "msg": "skipped, since /tmp/volant16-golden/unpacked/inside.txt exists",
+  "skipped": true
+}

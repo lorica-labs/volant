@@ -1,0 +1,15 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": false,
+  "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+  "diff": [],
+  "exception": "(traceback unavailable)",
+  "exit_status": 1,
+  "failed": true,
+  "msg": "failed to validate",
+  "stderr": "",
+  "stderr_lines": [],
+  "stdout": "",
+  "stdout_lines": []
+}

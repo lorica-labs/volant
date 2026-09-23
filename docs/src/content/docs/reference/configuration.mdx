@@ -60,7 +60,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
-  Where a three-part role name such as `acme.demo.hello` is looked for. Collections themselves are not loaded yet.
+  Where a three-part role name such as `acme.demo.hello` is looked for. A collection's modules are found by the controller's ansible-core, in the paths it is configured with: see [Modules from collections](/internals/python/#modules-from-collections).
 </Option>
 
 ## [privilege_escalation]

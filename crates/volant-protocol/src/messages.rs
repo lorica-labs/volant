@@ -19,6 +19,9 @@ use serde_json::{Map, Value};
 /// 5 added `Task.files`: a file travels as a content-addressed blob and the agent hands the
 /// module a private copy it consumes; an agent that did not know the field would run `copy` with
 /// no source.
+///
+/// `PutBlob.staged` did not move it again: no published release speaks 5 (`v0.1.0-alpha.7`
+/// speaks 4), so no agent that speaks 5 without knowing the field exists anywhere.
 pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Controller to agent.
@@ -45,6 +48,13 @@ pub enum ToAgent {
     PutBlob {
         hash: String,
         zip_b64: String,
+        /// A file one task stages rather than a payload the link reuses. The agent keeps it out
+        /// of its shared cache, in a directory of this connection's own that goes when the
+        /// connection does, and `HasBlob` never answers for it: two links to one host account
+        /// share the cache, and one consuming a file the other was told was there failed the
+        /// other's task.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        staged: bool,
     },
 }
 
@@ -479,14 +489,22 @@ mod tests {
         let put = ToAgent::PutBlob {
             hash: "ff".into(),
             zip_b64: "UEsDBA==".into(),
+            staged: false,
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&put).unwrap()).unwrap();
         assert_eq!(back, put);
-        assert!(
-            serde_json::to_string(&put)
-                .unwrap()
-                .starts_with(r#"{"type":"put_blob""#)
+        assert_eq!(
+            serde_json::to_string(&put).unwrap(),
+            r#"{"type":"put_blob","hash":"ff","zip_b64":"UEsDBA=="}"#,
+            "a payload carries no staged field"
         );
+        let file = ToAgent::PutBlob {
+            hash: "ff".into(),
+            zip_b64: "UEsDBA==".into(),
+            staged: true,
+        };
+        let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&file).unwrap()).unwrap();
+        assert_eq!(back, file);
 
         let has = ToAgent::HasBlob { hash: "ff".into() };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&has).unwrap()).unwrap();

@@ -79,7 +79,8 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
     }
 }
 
-/// Runs `module` with each of the task's files taken out of the cache and named in its
+/// Runs `module` with each of the task's files taken out of the connection's staging directory
+/// and named in its
 /// arguments, then removes whatever the module left of them.
 ///
 /// A file that cannot be staged fails the task before the module starts, and the files already
@@ -88,8 +89,8 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
 /// source.
 ///
 /// Written for a list, used with one: every action plugin sub-task stages a single `src`. With
-/// several, a refusal stops at the first file it cannot take, and the files after it stay in the
-/// cache untaken.
+/// several, a refusal stops at the first file it cannot take, and the files after it stay
+/// untaken in the connection's own directory, which goes when the connection does.
 fn staged(task: &Task, module: impl FnOnce(&Map<String, Value>) -> Run) -> Run {
     let remote_tmp = crate::blobs::remote_tmp();
     let mut args = task.args.clone();

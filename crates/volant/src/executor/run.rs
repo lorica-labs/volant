@@ -1280,6 +1280,7 @@ async fn place_blob<C: AgentChannel>(
     let put = ToAgent::PutBlob {
         hash: hash.into(),
         zip_b64: b64.into(),
+        staged: false,
     };
     blob_state(link, host, hash, &put, logs).await
 }

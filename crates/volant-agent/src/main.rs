@@ -20,14 +20,19 @@ fn main() {
         println!("volant-agent {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    if let Err(err) = serve() {
+    let remote_tmp = blobs::remote_tmp();
+    blobs::sweep(&remote_tmp);
+    let served = serve(&remote_tmp);
+    // Whichever way the conversation ended. A panic aborts the release build before this line,
+    // and a killed agent never reaches it: both leave their directory to the next agent's sweep.
+    blobs::end_connection(&remote_tmp);
+    if let Err(err) = served {
         eprintln!("volant-agent: {err}");
         std::process::exit(1);
     }
 }
 
-fn serve() -> io::Result<()> {
-    let remote_tmp = blobs::remote_tmp();
+fn serve(remote_tmp: &str) -> io::Result<()> {
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
     // while a task is running.
     let (tx, rx) = mpsc::channel::<io::Result<ToAgent>>();
@@ -90,7 +95,7 @@ fn serve() -> io::Result<()> {
             // The same answer is given mid-batch by `runner::is_cancelled`, which is why it
             // lives in `blobs` rather than here.
             ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
-                blobs::answer(&remote_tmp, &msg, &mut send)?;
+                blobs::answer(remote_tmp, &msg, &mut send)?;
             }
         }
     }

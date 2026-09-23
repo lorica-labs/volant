@@ -1095,6 +1095,8 @@ fn sub_task(
         timeout: task.timeout,
         environment: item.environment.clone(),
         payload: Some(payload.under(&interpreter)),
+        // Nothing staged: a `Sub` with files is refused above until `copy` wires them.
+        files: Vec::new(),
     })
 }
 

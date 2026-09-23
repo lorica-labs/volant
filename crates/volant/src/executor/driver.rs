@@ -1032,7 +1032,15 @@ pub(super) async fn drive_host(
                 delegate,
             }) = batch_action.take()
             {
-                let (index, items) = &batch[0];
+                // The batch rule above keeps a plugin task alone. Should that ever break, the host
+                // stops here naming it, rather than running `batch[0]` and dropping the rest.
+                let (index, items) = match plugin_step(&batch) {
+                    Ok(step) => step,
+                    Err(msg) => {
+                        unreachable = Some(msg);
+                        break 'run;
+                    }
+                };
                 let step = &c.steps[*index];
                 let interpreters = link.interpreters().to_vec();
                 let playbook_dir = store
@@ -1446,6 +1454,19 @@ pub(super) async fn drive_host(
         .await;
 }
 
+/// The one step of a batch an action plugin backs, or the controller error that ends the host
+/// when the batch holds anything else: the plugin branch runs one step, so a second one would be
+/// reported by nobody and never run.
+fn plugin_step<T>(batch: &[(usize, T)]) -> Result<&(usize, T), String> {
+    match batch {
+        [only] => Ok(only),
+        _ => Err(format!(
+            "a task backed by an action plugin has to be alone in its batch, and this one holds steps {:?}",
+            batch.iter().map(|(index, _)| index).collect::<Vec<_>>()
+        )),
+    }
+}
+
 /// What a batch whose one task an action plugin backs needs to run it.
 struct PluginBatch {
     kind: Kind,
@@ -1797,6 +1818,18 @@ impl Driver<'_> {
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// A plugin batch is exactly one step, and anything else ends the host naming the steps.
+    ///
+    /// What would make this red: the branch reading `batch[0]` again, which runs the first step
+    /// and leaves the others unreported - a task that finishes `ok` having never run.
+    #[test]
+    fn a_plugin_batch_holds_its_one_step_and_nothing_else() {
+        assert_eq!(plugin_step(&[(4, ())]), Ok(&(4, ())));
+        let err = plugin_step(&[(4, ()), (5, ())]).expect_err("two steps");
+        assert!(err.contains("[4, 5]"), "{err}");
+        plugin_step::<()>(&[]).expect_err("no step");
+    }
     use serde_json::json;
 
     /// Everything a playbook can hide a cross-host read in has to be searched, or a barrier

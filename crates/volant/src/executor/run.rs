@@ -1534,8 +1534,8 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
     (received, ended)
 }
 
-/// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` as a
-/// string and not the list beside it. The reference's `_execute_module` adds both to every
+/// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` and not the
+/// list beside it. The reference's `_execute_module` adds both to every
 /// module result that lacks them, so a Python module's result has them there; here the agent
 /// writes them for `command` and `raw` alone, and every result an agent sends passes through
 /// [`run_agent_batch`], plugin sub-tasks included.
@@ -1544,10 +1544,26 @@ fn add_output_lines(result: &mut TaskResult) {
         if result.0.contains_key(lines) {
             continue;
         }
-        if let Some(text) = result.0.get(key).and_then(Value::as_str) {
-            let split = splitlines(text).into_iter().map(Value::from).collect();
-            result.0.insert(lines.to_string(), Value::Array(split));
-        }
+        // `data.get('stdout') or ''` in the reference: a value Python reads as false splits as
+        // an empty string. Any other value that is not a string is left alone.
+        let split = match result.0.get(key) {
+            Some(Value::String(text)) => splitlines(text).into_iter().map(Value::from).collect(),
+            Some(value) if python_falsy(value) => Vec::new(),
+            _ => continue,
+        };
+        result.0.insert(lines.to_string(), Value::Array(split));
+    }
+}
+
+/// Whether Python's `bool()` is false for the value a module sent: `None`, `False`, a zero, or
+/// an empty list or dict.
+fn python_falsy(value: &Value) -> bool {
+    match value {
+        Value::Null | Value::Bool(false) => true,
+        Value::Number(n) => matches!(n.to_string().as_str(), "0" | "0.0" | "-0.0"),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 
@@ -2833,7 +2849,11 @@ mod tests {
         let mut agent = FakeAgent::answering(
             one_result(
                 4,
-                json!({"stdout": "a\nb\r\nc\rd\u{2028}e\n", "stderr": "", "rc": 0}),
+                json!({
+                    "stdout": "a\nb\r\nc\rd\u{2028}e\x0bf\x1cg\u{85}h\u{2029}i\n",
+                    "stderr": "",
+                    "rc": 0
+                }),
             )
             .to_vec(),
         );
@@ -2851,7 +2871,10 @@ mod tests {
         )
         .await;
         let result = received[0].clone().expect("a result").0;
-        assert_eq!(result["stdout_lines"], json!(["a", "b", "c", "d", "e"]));
+        assert_eq!(
+            result["stdout_lines"],
+            json!(["a", "b", "c", "d", "e", "f", "g", "h", "i"])
+        );
         assert_eq!(result["stderr_lines"], json!([]));
 
         let mut kept = TaskResult(vars(
@@ -2860,6 +2883,14 @@ mod tests {
         add_output_lines(&mut kept);
         assert_eq!(kept.0["stdout_lines"], json!(["kept"]));
         assert!(!kept.0.contains_key("stderr_lines"), "{:?}", kept.0);
+
+        // `data.get('stdout') or ''`: a value Python reads as false gives an empty list.
+        for falsy in [json!(null), json!(false), json!(0)] {
+            let mut empty = TaskResult(vars(json!({"stdout": falsy, "stderr": falsy})));
+            add_output_lines(&mut empty);
+            assert_eq!(empty.0["stdout_lines"], json!([]), "{falsy}");
+            assert_eq!(empty.0["stderr_lines"], json!([]), "{falsy}");
+        }
     }
 
     /// A union holding every module a plugin may run, each keyed by its own short name.

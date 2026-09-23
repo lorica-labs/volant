@@ -412,9 +412,16 @@ fn store_with(
     Ok(final_path)
 }
 
+/// How many times a file was read and hashed, so a test can tell a verification that ran from
+/// one that was skipped.
+#[cfg(test)]
+pub(crate) static HASHED: AtomicU64 = AtomicU64::new(0);
+
 /// Whether the file at `at` reads back as the payload named `hash`. A file that is not there is
 /// not a match; anything else the filesystem says is an error rather than a silent `false`.
 fn matches_hash(at: &Path, hash: &str) -> io::Result<bool> {
+    #[cfg(test)]
+    HASHED.fetch_add(1, Ordering::Relaxed);
     match fs::read(at) {
         Ok(zip) => Ok(blake3::hash(&zip).to_hex().to_string() == hash),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),

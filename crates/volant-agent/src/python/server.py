@@ -226,6 +226,8 @@ def main():
                 "stderr": streams["stderr"]["text"],
                 "truncated": streams["stdout"]["truncated"]
                 or streams["stderr"]["truncated"],
+                # Sent so the agent's sentence quotes the bound applied here, not a copy of it.
+                "limit": STREAM_LIMIT,
             },
         )
 

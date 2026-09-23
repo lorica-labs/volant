@@ -1524,7 +1524,7 @@ sys.stdout.write(base64.b64encode(buf.getvalue()).decode())
             String::from_utf8_lossy(&built.stderr)
         );
         let zip_b64 = String::from_utf8(built.stdout).unwrap();
-        let zip = crate::blobs::decode_b64(&zip_b64).unwrap();
+        let zip = volant_protocol::encoding::b64_decode(&zip_b64).unwrap();
         let hash = blake3::hash(&zip).to_hex().to_string();
         crate::blobs::store(remote_tmp.to_str().unwrap(), &hash, &zip_b64).unwrap();
         PythonPayload {

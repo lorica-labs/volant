@@ -178,7 +178,8 @@ fn store_with(
     hash: &str,
     zip_b64: &str,
 ) -> io::Result<PathBuf> {
-    let zip = decode_b64(zip_b64).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    let zip = volant_protocol::encoding::b64_decode(zip_b64)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     let actual = blake3::hash(&zip).to_hex().to_string();
     if actual != hash {
         return Err(io::Error::new(
@@ -366,61 +367,13 @@ fn free_bytes(_dir: &Path) -> io::Result<u64> {
     Ok(u64::MAX)
 }
 
-/// Standard base64 with padding, the form `modify_module` hands the zip back in.
-///
-/// Written here rather than pulled in: the agent is uploaded to every managed host, and one
-/// decoder of thirty lines is cheaper than a dependency for a single call. Newlines are skipped
-/// so a wrapped encoding decodes, and anything else is refused with the offset that broke it -
-/// a payload half-decoded into something that happens to hash to nothing is not a failure an
-/// operator could read.
-pub(crate) fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(text.len() / 4 * 3);
-    let mut acc: u32 = 0;
-    let mut bits = 0u32;
-    let mut padded = false;
-    for (index, &byte) in text.as_bytes().iter().enumerate() {
-        match byte {
-            b'\n' | b'\r' => continue,
-            b'=' => {
-                padded = true;
-                continue;
-            }
-            _ if padded => return Err(format!("base64 character after padding at offset {index}")),
-            _ => {}
-        }
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return Err(format!("invalid base64 character at offset {index}")),
-        };
-        acc = (acc << 6) | u32::from(value);
-        bits += 6;
-        if bits == 24 {
-            out.extend_from_slice(&[(acc >> 16) as u8, (acc >> 8) as u8, acc as u8]);
-            acc = 0;
-            bits = 0;
-        }
-    }
-    match bits {
-        0 => {}
-        12 => out.push((acc >> 4) as u8),
-        18 => {
-            out.push((acc >> 10) as u8);
-            out.push((acc >> 2) as u8);
-        }
-        _ => return Err("base64 ends in the middle of a byte".to_string()),
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    use volant_protocol::encoding::b64_encode as b64;
 
     /// A payload whose bytes do not hash to the name it arrived under never lands, and the error
     /// says both hashes so an operator can tell a corrupted transfer from a wrong name.
@@ -606,24 +559,18 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
-    /// The decoder is checked against a known encoding and on every padding length, because one
-    /// byte wrong turns every payload the controller sends into a hash mismatch.
+    /// `store` names a blob by the hash of the bytes it decoded, so the decoder it calls is pinned
+    /// here through `store` itself, on the zip magic the controller sends first.
+    ///
+    /// What would make this red: `store` decoding with anything but the shared decoder, or that
+    /// decoder dropping the second byte of a one-`=` tail - every payload would then arrive
+    /// under a hash its bytes do not have.
     #[test]
-    fn base64_decodes_the_zip_magic_and_every_padding_length() {
-        assert_eq!(decode_b64("UEsDBA==").unwrap(), b"PK\x03\x04");
-        assert!(decode_b64("").unwrap().is_empty());
-        for len in 0..=9usize {
-            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
-            assert_eq!(decode_b64(&b64(&bytes)).unwrap(), bytes, "{len} bytes");
-        }
-        assert!(
-            decode_b64("A").is_err(),
-            "one character cannot end a payload"
-        );
-        assert!(
-            decode_b64("UEsDBA==A").is_err(),
-            "nothing follows the padding"
-        );
+    fn store_decodes_the_zip_magic_it_names() {
+        let dir = tempdir();
+        let h = hash_of(b"PK\x03\x04");
+        let at = store(dir.path().to_str().unwrap(), &h, "UEsDBA==").unwrap();
+        assert_eq!(fs::read(at).unwrap(), b"PK\x03\x04");
     }
 
     /// A payload larger than what the filesystem has left is refused with both figures and the
@@ -698,26 +645,6 @@ mod tests {
 
     fn hash_of(bytes: &[u8]) -> String {
         blake3::hash(bytes).to_hex().to_string()
-    }
-
-    /// Standard base64 with padding, the form the controller sends in.
-    fn b64(bytes: &[u8]) -> String {
-        const ALPHABET: &[u8; 64] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
-        for chunk in bytes.chunks(3) {
-            let mut block = [0u8; 3];
-            block[..chunk.len()].copy_from_slice(chunk);
-            let bits = u32::from_be_bytes([0, block[0], block[1], block[2]]);
-            for slot in 0..4 {
-                if slot <= chunk.len() {
-                    out.push(ALPHABET[(bits >> (18 - 6 * slot)) as usize & 0x3f] as char);
-                } else {
-                    out.push('=');
-                }
-            }
-        }
-        out
     }
 
     /// A directory of this process's own, removed when the test ends. The agent depends on

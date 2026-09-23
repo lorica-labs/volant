@@ -13,7 +13,7 @@
   <a href="https://codecov.io/gh/lorica-labs/volant"><img src="https://codecov.io/gh/lorica-labs/volant/graph/badge.svg" alt="Coverage"></a>
   <a href="https://crates.io/crates/volant"><img src="https://img.shields.io/crates/v/volant?include_prereleases&label=crates.io" alt="crates.io"></a>
   <a href="https://github.com/lorica-labs/volant/releases"><img src="https://img.shields.io/github/v/release/lorica-labs/volant?include_prereleases&label=release" alt="Latest release"></a>
-  <a href="https://volant.sh/"><img src="https://img.shields.io/badge/docs-lorica--labs.github.io%2Fvolant-0d9488" alt="Documentation"></a>
+  <a href="https://volant.sh/"><img src="https://img.shields.io/badge/docs-volant.sh-0d9488" alt="Documentation"></a>
   <a href="https://github.com/lorica-labs/volant/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License"></a>
 </p>
 

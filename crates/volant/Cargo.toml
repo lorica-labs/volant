@@ -10,6 +10,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://volant.sh"
 authors.workspace = true
 build = "build.rs"
 

@@ -240,7 +240,13 @@ impl Renderer {
         let line = match outcome {
             Outcome::Ok => self.paint(OK, &format!("ok: [{who}]{item}{tail}")),
             Outcome::Changed => self.paint(CHANGED, &format!("changed: [{who}]{item}{tail}")),
-            Outcome::Skipped => self.paint(SKIPPED, &format!("skipping: [{host}]{item}")),
+            // Measured on ansible-core 2.19.12: a loop item's own `skipping:` line ends with a
+            // trailing space before the newline (`skipping: [h] => (item=x) `); the task's own
+            // `skipping: [h]`, with no item, carries none.
+            Outcome::Skipped => {
+                let trailer = if label.is_some() { " " } else { "" };
+                self.paint(SKIPPED, &format!("skipping: [{host}]{item}{trailer}"))
+            }
             // A rescued failure shows exactly like one nothing catches: measured on
             // ansible-core 2.19.12, the line is the same `fatal: ... FAILED!` and the only
             // difference is in the recap. Showing it any other way would hide from the
@@ -789,7 +795,7 @@ mod tests {
         });
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "changed: [h] => (item=one)");
-        assert_eq!(lines[1], "skipping: [h] => (item=two)");
+        assert_eq!(lines[1], "skipping: [h] => (item=two) ");
         assert_eq!(
             lines[2],
             r#"failed: [h] (item=three) => {"failed": true, "rc": 1}"#

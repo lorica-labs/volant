@@ -506,7 +506,13 @@ mod tests {
     /// driver's retry loop would run around a module the plugin never picked.
     #[test]
     fn the_plugins_this_release_runs_are_admitted_and_their_retries_refused() {
-        for module in ["package", "service", "copy", "ansible.builtin.package"] {
+        for module in [
+            "package",
+            "service",
+            "copy",
+            "template",
+            "ansible.builtin.package",
+        ] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - name: Now\n      {module}: name=bash\n"),
                 "x.yml",
@@ -518,15 +524,12 @@ mod tests {
             };
             assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
         }
-        for module in ["template", "unarchive"] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: Later\n      {module}: src=a dest=b\n"
-            ));
-            assert!(
-                text.contains(&format!("module '{module}' needs an action plugin")),
-                "{text}"
-            );
-        }
+        let text =
+            refusal("- hosts: all\n  tasks:\n    - name: Later\n      unarchive: src=a dest=b\n");
+        assert!(
+            text.contains("module 'unarchive' needs an action plugin"),
+            "{text}"
+        );
         let text = refusal(
             "- hosts: all\n  tasks:\n    - name: Again\n      package: name=bash\n      until: false\n",
         );

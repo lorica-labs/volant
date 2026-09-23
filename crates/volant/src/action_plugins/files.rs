@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use volant_protocol::encoding::b64_encode;
 use volant_protocol::frame::MAX_FRAME_LEN;
 
-use super::FileBlob;
+use super::{Context, FileBlob};
 use crate::compile::Origin;
 
 /// The largest file one blob carries: what fits in a frame once in base64, with room left for
@@ -56,17 +56,38 @@ pub(crate) fn not_found(name: &str, searched: &[PathBuf]) -> String {
     )
 }
 
+/// This engine's own refusal of a controller path a managed host chose, made before the path is
+/// so much as looked up: a lookup that answers "not found" already tells a host whether a
+/// controller path exists.
+///
+/// Stricter than the reference, on purpose. Measured on ansible-core 2.19.12, the reference
+/// sends whatever controller file a registered value names, `~/.ssh` included, so a host that
+/// controls a command's output can have any file the operator can read sent to it.
+pub(crate) fn refuse_host_named(ctx: &Context<'_>, arg: &str) -> Result<(), String> {
+    if ctx.args_untrusted.contains(arg) {
+        return Err(format!(
+            "the '{arg}' of this task was named by a managed host, and a controller file a host chose is never sent"
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses `len` bytes that could not fit in one frame, naming both sizes.
+pub(crate) fn fits(name: &str, len: usize) -> Result<(), String> {
+    if len > MAX_FILE_LEN {
+        return Err(format!(
+            "{name} is {len} bytes; one frame carries at most {MAX_FILE_LEN}"
+        ));
+    }
+    Ok(())
+}
+
 /// A file's bytes as a blob, refused when they could not fit in one frame.
 ///
 /// Named by the blake3 of the bytes, as the union is: the agent refuses a blob whose bytes hash
 /// to anything else.
 pub(crate) fn blob_of(name: &str, bytes: &[u8]) -> Result<FileBlob, String> {
-    if bytes.len() > MAX_FILE_LEN {
-        return Err(format!(
-            "{name} is {} bytes; one frame carries at most {MAX_FILE_LEN}",
-            bytes.len()
-        ));
-    }
+    fits(name, bytes.len())?;
     Ok(FileBlob {
         hash: blake3::hash(bytes).to_hex().to_string(),
         b64: b64_encode(bytes),

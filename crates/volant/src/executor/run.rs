@@ -2804,6 +2804,7 @@ mod tests {
             crate::action_plugins::Kind::Copy => "copy",
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
+            crate::action_plugins::Kind::Template => "template",
         });
         let item = Item {
             args: vars(args),

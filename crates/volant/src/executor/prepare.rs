@@ -828,6 +828,7 @@ mod tests {
             hash: "ab".into(),
             zip_b64: "UEsDBA==".into(),
             modules: facts,
+            refused: BTreeMap::new(),
         });
         let payload_of = |module: &str| {
             let mut plan = plan();

@@ -58,6 +58,12 @@ pub struct Union {
     /// Keyed by [`payload_key`]: `ping` and `ansible.builtin.ping` are one entry, and
     /// `ansible.posix.sysctl` is its own, whatever else in the run is called `sysctl`.
     pub modules: BTreeMap<String, ModuleFacts>,
+    /// A collection's module a role file named and the controller's ansible-core did not resolve
+    /// to a module it can build, with the refusal the pre-flight gives a play naming it
+    /// (`preflight::refusal_of`): kept out of the union, and said by the include that
+    /// reaches it. A union may hold only these, with no zip and no module: nothing is sent then,
+    /// since no task has a payload.
+    pub refused: BTreeMap<String, String>,
 }
 
 /// The key a module's facts are filed under in [`Union::modules`], and looked up by.
@@ -416,11 +422,17 @@ fn union_from(
         .filter(|m| is_collection_name(m))
         .cloned()
         .collect();
+    let mut refused = BTreeMap::new();
     if !asked.is_empty() {
         let resolved = builder.resolve(&asked)?;
         for (task, module) in named {
             if let Some(answer) = resolved.get(module) {
                 crate::preflight::check_resolved(task, module, answer)?;
+            }
+        }
+        for (module, answer) in &resolved {
+            if let Some(why) = crate::preflight::refusal_of(module, answer) {
+                refused.insert(module.clone(), why);
             }
         }
         names.retain(|m| {
@@ -430,9 +442,16 @@ fn union_from(
         });
     }
     if names.is_empty() {
-        return Ok(None);
+        return Ok((!refused.is_empty()).then(|| Union {
+            hash: String::new(),
+            zip_b64: String::new(),
+            modules: BTreeMap::new(),
+            refused,
+        }));
     }
-    builder.union(&names).map(Some)
+    let mut union = builder.union(&names)?;
+    union.refused = refused;
+    Ok(Some(union))
 }
 
 /// The sentence a run that gathers facts and nothing else gets on top of [`refusal_for`].
@@ -655,6 +674,7 @@ fn exchange<W: Write, R: Read>(to: W, from: R, modules: &[String]) -> anyhow::Re
         hash,
         zip_b64,
         modules: facts,
+        refused: BTreeMap::new(),
     })
 }
 
@@ -1032,6 +1052,39 @@ mod tests {
             built.modules.keys().collect::<Vec<_>>(),
             ["volanttest.coll.good"]
         );
+        // What was set aside is kept in the pre-flight's words, even with nothing left to build,
+        // and an include reaching one says it: the install hint for a missing collection, not
+        // the sentence for a name nothing read. Red if only removed modules are kept, or if the
+        // reasons go with a union that holds no module.
+        let set_aside = std::collections::BTreeSet::from(
+            ["volanttest.coll.moved", "volanttest.coll.gone"].map(str::to_string),
+        );
+        let kept = union_from(start, &set_aside, &[])
+            .unwrap()
+            .expect("the reasons are kept");
+        assert!(kept.modules.is_empty(), "{:?}", kept.modules);
+        let included = crate::playbook::parse(
+            "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Moved\n      volanttest.coll.moved: a=1\n",
+            "included.yml",
+        )
+        .unwrap();
+        let compiled = crate::compile::compile(
+            &included.plays[0],
+            &crate::roles::RoleSearch::default(),
+            &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+        )
+        .unwrap();
+        let text = format!(
+            "{:#}",
+            crate::preflight::check_built(&compiled, Some(&kept)).unwrap_err()
+        );
+        assert!(
+            text.starts_with(
+                "task 'Moved': couldn't resolve module/action 'volanttest.coll.moved'"
+            ) && text
+                .ends_with("install it with ansible-galaxy collection install absentns.absent"),
+            "{text}"
+        );
         // Named by a task, each is refused by its own sentence.
         for (module, says) in [
             (
@@ -1151,6 +1204,35 @@ mod tests {
                     if reason.contains("'community.general.atomic_host' module has been removed")),
                 "{:?}",
                 resolved["community.general.atomic_host"]
+            );
+            // Named only in a file an include reads, the removed module stays out of the union,
+            // and the include that reaches it fails with the reason the controller gave.
+            let modules = std::collections::BTreeSet::from(
+                ["community.general.atomic_host", "ping"].map(str::to_string),
+            );
+            let built = union_from(PythonBuilder::start, &modules, &[])
+                .unwrap()
+                .expect("ping is built");
+            let included = crate::playbook::parse(
+                "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Atomic\n      community.general.atomic_host: revision=latest\n",
+                "included.yml",
+            )
+            .unwrap();
+            let compiled = crate::compile::compile(
+                &included.plays[0],
+                &crate::roles::RoleSearch::default(),
+                &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+            )
+            .unwrap();
+            let text = format!(
+                "{:#}",
+                crate::preflight::check_built(&compiled, Some(&built)).unwrap_err()
+            );
+            assert!(
+                text.starts_with(
+                    "task 'Atomic': module 'community.general.atomic_host' cannot run: "
+                ) && text.contains("'community.general.atomic_host' module has been removed"),
+                "{text}"
             );
         } else {
             skip_or_fail(&format!(

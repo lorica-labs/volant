@@ -1832,12 +1832,19 @@ pub(super) fn record_registered(
 ///
 /// Returns the restricted names [`VarStore::gather_facts`] took out and has not warned about
 /// yet in this run, for the caller to warn about.
+///
+/// A task that failed writes nothing, as in the reference, which records facts only for a task
+/// that did not fail, `ignore_errors` or not. `results` have been through `failed_when`, and a
+/// loop is judged whole: one failed item fails the task.
 pub(super) fn record_facts(
     vars: &mut VarStore,
     targets: &[String],
     results: &[(Option<Value>, TaskResult)],
 ) -> Vec<String> {
     let mut removed = Vec::new();
+    if results.iter().any(|(_, result)| result.failed()) {
+        return removed;
+    }
     for (_, result) in results {
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
@@ -3148,6 +3155,7 @@ mod tests {
     ) {
         let t = task(match kind {
             crate::action_plugins::Kind::Copy => "copy",
+            crate::action_plugins::Kind::Dnf => "dnf",
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
             crate::action_plugins::Kind::Template => "template",
@@ -3172,6 +3180,7 @@ mod tests {
                     args: &item.args,
                     args_untrusted: &item.args_untrusted,
                     running_vars: &running,
+                    delegated: false,
                     item_vars: &item.vars,
                     templar: &templar,
                     origin: &origin,
@@ -3420,6 +3429,275 @@ mod tests {
             msg(&result),
             "Could not detect a package manager. Try using the \"use\" option."
         );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+    }
+
+    /// Without gathered facts and without `use_backend`, a `dnf` task asks `setup` for
+    /// `ansible_pkg_mgr` alone, then runs `dnf` for `dnf`, `dnf4`, `yum` and `yum4` and `dnf5`
+    /// for `dnf5`, and its result carries the answer as `ansible_facts.pkg_mgr`, which enters the
+    /// host's facts as the host's own words. Measured on ansible-core 2.19.12 on a host that runs
+    /// `apt`: the `setup` goes out filtered and `gather_subset: ["!all"]`; the rest is read off
+    /// its `plugins/action/dnf.py`, since no host measured runs `dnf`.
+    ///
+    /// What would make this red: `dnf` still refused, or sent as a module of its own before the
+    /// question is asked; `yum` or a `4` name sent as a module the union does not hold; the
+    /// answer dropped from the result, where the reference keeps it - unlike `package`, whose
+    /// `setup` leaves nothing; or the fact recorded as trusted, which lets a host's answer be
+    /// rendered as a template.
+    #[tokio::test]
+    async fn a_dnf_task_asks_setup_then_runs_the_backend_it_names() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        for (answer, module) in [
+            ("dnf", "dnf"),
+            ("dnf4", "dnf"),
+            ("yum", "dnf"),
+            ("yum4", "dnf"),
+            ("dnf5", "dnf5"),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_pkg_mgr": answer}, "changed": false}),
+                    )
+                    .to_vec(),
+                    one_result(2, json!({"changed": false, "results": []})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let sent = batches_sent(&agent);
+            let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+            assert_eq!(modules, ["setup", module], "{answer}: {:?}", agent.sent);
+            assert_eq!(
+                Value::Object(sent[0][0].args.clone()),
+                json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
+            );
+            assert_eq!(
+                Value::Object(sent[1][0].args.clone()),
+                json!({"name": "bash"})
+            );
+            assert_eq!(
+                sent[1][0].payload.as_ref().map(|p| p.module_fqn.as_str()),
+                Some(format!("ansible.modules.{module}").as_str())
+            );
+            let result = ran.expect("the item finished");
+            assert_eq!(
+                Value::Object(result.0.clone()),
+                json!({"ansible_facts": {"pkg_mgr": answer}, "changed": false, "results": []}),
+                "{answer}"
+            );
+            let mut store = one_host_store();
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let scope = crate::vars::Scope::default();
+            assert_eq!(
+                store.for_host("h1", &scope)["ansible_facts"]["pkg_mgr"],
+                json!(answer)
+            );
+            assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
+        }
+
+        // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
+        // rather than the facts, and installs with what it answers.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_pkg_mgr": "dnf"}, "changed": false}),
+                )
+                .to_vec(),
+                one_result(2, json!({"changed": true})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use_backend": ""}),
+            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let modules: Vec<&str> = batches_sent(&agent)
+            .iter()
+            .map(|b| b[0].module.as_str())
+            .collect();
+        assert_eq!(modules, ["setup", "dnf"], "{:?}", agent.sent);
+        assert_eq!(
+            Value::Object(batches_sent(&agent)[1][0].args.clone()),
+            json!({"name": "bash"})
+        );
+        assert_eq!(
+            Value::Object(ran.expect("the item finished").0),
+            json!({"ansible_facts": {"pkg_mgr": "dnf"}, "changed": true})
+        );
+
+        // Gathered facts that name a backend ask nothing, and the result carries nothing more
+        // than the module's; `use_backend` wins over the facts and never reaches the module
+        // (measured: `Running ansible.legacy.dnf5 as the backend for the dnf action plugin`).
+        for (args, running, module) in [
+            (
+                json!({"name": "bash"}),
+                json!({"ansible_facts": {"pkg_mgr": "dnf5"}}),
+                "dnf5",
+            ),
+            (
+                json!({"name": "bash", "use_backend": "dnf5"}),
+                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+                "dnf5",
+            ),
+            (json!({"name": "bash", "use": "dnf4"}), json!({}), "dnf"),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"changed": false})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) =
+                plugin_item(Kind::Dnf, args, running, &mut agent, &python3(), &mut stop).await;
+            let sent = batches_sent(&agent);
+            assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+            assert_eq!(sent[0][0].module, module);
+            assert_eq!(
+                Value::Object(sent[0][0].args.clone()),
+                json!({"name": "bash"})
+            );
+            assert_eq!(
+                Value::Object(ran.expect("the item finished").0),
+                json!({"changed": false})
+            );
+        }
+    }
+
+    /// A host whose `setup` names no `dnf` fails the task with the reference's two sentences, and
+    /// the `pkg_mgr` its result carries stays out of the host's facts. Measured on ansible-core
+    /// 2.19.12 on a host that runs `apt`: `AnsiballZ_setup.py` answers `apt`, the task fails with
+    /// a `msg` that is a list of two sentences - the stray `}` is in the reference's source - and
+    /// `ansible_facts.pkg_mgr` is undefined at the next task.
+    ///
+    /// What would make this red: a sentence of this engine's own, or one string where the
+    /// reference has two; `apt` sent after all; the failed result's facts recorded, which the
+    /// reference never does for a failed task; `use` and `use_backend` both taken; a
+    /// `use_backend` naming no backend failed without asking the host; or a failed `setup`
+    /// reported as the two sentences, which drops its cause.
+    #[tokio::test]
+    async fn a_dnf_task_on_a_host_without_dnf_fails_in_the_reference_s_words() {
+        use crate::action_plugins::Kind;
+        let undetected = json!([
+            "Could not detect which major revision of dnf is in use, which is required to determine module backend.",
+            "You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})",
+        ]);
+        let mut stop = watch::channel(false).1;
+        // A `use_backend` naming no backend asks the host too, as the reference does: its test
+        // of `VALID_BACKENDS` that runs the `setup` is not under the `auto`/`yum` one.
+        for args in [
+            json!({"name": "bash"}),
+            json!({"name": "bash", "use_backend": "apt"}),
+        ] {
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                    )
+                    .to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                args.clone(),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(result.0["msg"], undetected);
+            let modules: Vec<&str> = batches_sent(&agent)
+                .iter()
+                .map(|b| b[0].module.as_str())
+                .collect();
+            assert_eq!(modules, ["setup"], "{args}: {:?}", agent.sent);
+            // The reference puts the answer in the result before it fails, so it is
+            // registered...
+            assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
+            // ...and not kept as a fact, because the task failed.
+            let mut store = one_host_store();
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let host = store.for_host("h1", &crate::vars::Scope::default());
+            assert!(
+                host.get("ansible_facts")
+                    .and_then(|f| f.get("pkg_mgr"))
+                    .is_none(),
+                "{host:?}"
+            );
+        }
+
+        let mut agent = FakeAgent::answering(Vec::new());
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            result.0["msg"],
+            json!("parameters are mutually exclusive: ('use', 'use_backend')")
+        );
+        assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
+
+        // A `setup` that failed fails the task with its cause under the reference's sentence,
+        // read off `plugins/action/dnf.py`, and without the facts it carried.
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"failed": true, "msg": "boom", "ansible_facts": {"ansible_pkg_mgr": "dnf"}}),
+                )
+                .to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Dnf,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            result.0["msg"],
+            json!("Failed to fetch ansible_pkg_mgr to determine the dnf action backend: boom")
+        );
+        assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
         assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
     }
 
@@ -3876,6 +4154,7 @@ mod tests {
             hash: hash.to_string(),
             zip_b64: "UEsDBA==".to_string(),
             modules: BTreeMap::new(),
+            refused: BTreeMap::new(),
         }
     }
 
@@ -4494,6 +4773,56 @@ mod tests {
             ),
             "SHADOWED / probe-hostname"
         );
+    }
+
+    /// A failed task keeps none of the facts its host's results carry, whatever module ran there
+    /// (a controller-side `set_fact` writes its own as it runs, and is not judged here): the
+    /// reference records facts only in the branch of its strategy that a task that is neither
+    /// failed, unreachable nor skipped takes, `ignore_errors` or not. Measured on ansible-core
+    /// 2.19.12 with a `dnf` task that failed carrying `ansible_facts: {pkg_mgr: apt}`: the fact is
+    /// undefined at the next task. A loop is judged whole, as the reference judges it: one failed
+    /// item fails the task, so the facts of the items that did not fail go too.
+    ///
+    /// What would make this red: `record_facts` reading a failed result's facts, which lets a
+    /// task that failed change what the next task reads; or reading `failed` before
+    /// `failed_when` decided, which drops the facts of a result the playbook forgave.
+    #[test]
+    fn a_failed_task_keeps_none_of_its_facts() {
+        let scope = crate::vars::Scope::default();
+        let fact = |value: Value| TaskResult(vars(value));
+        let mut store = one_host_store();
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[(
+                None,
+                fact(json!({"failed": true, "msg": "boom", "ansible_facts": {"kept": 1}})),
+            )],
+        );
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[
+                (
+                    Some(json!(1)),
+                    fact(json!({"changed": false, "ansible_facts": {"looped": 1}})),
+                ),
+                (Some(json!(2)), fact(json!({"failed": true, "rc": 1}))),
+            ],
+        );
+        let host = store.for_host("h1", &scope);
+        assert!(!host.contains_key("kept"), "{host:?}");
+        assert!(!host.contains_key("looped"), "{host:?}");
+        // A non-zero `rc` that `failed_when: false` forgave: `failed` is what decides.
+        record_facts(
+            &mut store,
+            &["h1".to_string()],
+            &[(
+                None,
+                fact(json!({"rc": 2, "failed": false, "ansible_facts": {"forgiven": 1}})),
+            )],
+        );
+        assert_eq!(store.for_host("h1", &scope)["forgiven"], json!(1));
     }
 
     /// A managed host cannot choose where its own next task connects, as whom, or under which

@@ -472,7 +472,6 @@ pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
     "async_status",
-    "dnf",
     "fetch",
     "gather_facts",
     "group_by",
@@ -488,6 +487,10 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
     (
         "copy",
         "Copy a file from the controller, or `content:`, to the host.",
+    ),
+    (
+        "dnf",
+        "Install or remove packages with `dnf` or `dnf5`, whichever the host runs.",
     ),
     (
         "package",
@@ -577,6 +580,8 @@ pub fn documentation_table() -> String {
 ## On the warm Python path
 
 Every other module ansible-core ships is a Python module, and Volant runs it as one. The host needs a Python 3 interpreter, and the controller needs ansible-core to build the payload. [The warm Python path](/internals/python/) explains how it works.
+
+Modules from collections installed on the controller run the same way. The controller's ansible-core resolves each name before the first connection, and Volant never installs a collection. If a play or one of its roles names a module from a collection that is not installed, the run stops before it reaches a host and prints the `ansible-galaxy collection install` command that fixes it. Volant refuses, by name, a module that its collection runs through an action plugin, because it does not run a collection's action plugins. A module that only a dynamic include brings in is refused when a host reaches the include, which then fails for that host. Volant keeps a collection's module under its full name, so that module never stands in for a builtin module or for another collection's module with the same short name.
 
 The exceptions are the modules ansible-core runs through an action plugin that Volant does not have yet. What the playbook asks for lives in the plugin, not in the module, so sending the module alone would do something else and call it a success. Those modules are not supported yet: Volant names them before the run reaches a host. Fact gathering still works: a play's `gather_facts` runs the `setup` module directly.
 
@@ -937,7 +942,7 @@ mod tests {
                 assert!(is_builtin(m) && !is_known(m), "{m}");
             }
         }
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 12);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 11);
         assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
         for m in &implemented {
             assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");

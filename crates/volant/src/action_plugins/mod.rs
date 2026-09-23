@@ -16,6 +16,7 @@
 //! so no host value reaches the variables by a way of its own.
 
 pub(crate) mod copy;
+mod dnf;
 pub(crate) mod files;
 mod package;
 mod service;
@@ -52,6 +53,7 @@ pub fn is_action_backed(module: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Copy,
+    Dnf,
     Package,
     Service,
     Template,
@@ -69,6 +71,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
     }
     match short {
         "copy" => Some(Kind::Copy),
+        "dnf" => Some(Kind::Dnf),
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
         "template" => Some(Kind::Template),
@@ -86,6 +89,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
 pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
         Kind::Copy | Kind::Template => &["stat", "file", "copy"],
+        Kind::Dnf => &["setup", "dnf", "dnf5"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
         Kind::Unarchive => &["stat", "unarchive"],
@@ -141,6 +145,9 @@ pub(crate) struct Context<'a> {
     pub args_untrusted: &'a BTreeSet<String>,
     /// The variables of the host the module runs on - the delegate's when there is one.
     pub running_vars: &'a Map<String, Value>,
+    /// Whether that host is a delegate: the facts a result carries are filed under the host the
+    /// task was written for, so a plugin that would hand back the delegate's has to know.
+    pub delegated: bool,
     /// The item's own variables, for `template`.
     pub item_vars: &'a HostVars,
     pub templar: &'a Templar,
@@ -154,6 +161,7 @@ pub(crate) struct Context<'a> {
 pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     match kind {
         Kind::Copy => copy::start(ctx),
+        Kind::Dnf => Box::new(dnf::Dnf::new(ctx)),
         Kind::Package => Box::new(package::Package::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
         Kind::Template => template::start(ctx),
@@ -161,13 +169,34 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     }
 }
 
-/// The filtered `setup` both plugins run when the facts do not say which backend to use, exactly
+/// The filtered `setup` `package`, `service` and `dnf` run when the facts do not say which backend to use, exactly
 /// as ansible-core 2.19.12 was measured to send it: one fact, and no subset gathered.
 fn setup_for(fact: &str) -> Step {
     let mut args = Map::new();
     args.insert("filter".into(), Value::from(vec![fact]));
     args.insert("gather_subset".into(), Value::from(vec!["!all"]));
     Sub::run("setup", args)
+}
+
+/// A filtered `setup` that failed, as `package` and `dnf` fail with it: the `setup` result under
+/// the reference's sentence for the `action` plugin. Its facts go, though: a filtered `setup` is
+/// never kept, and a result is where `record_facts` would find them.
+fn setup_failed(mut facts: TaskResult, action: &str) -> TaskResult {
+    let msg = facts
+        .0
+        .get("msg")
+        .and_then(Value::as_str)
+        .unwrap_or("None")
+        .to_string();
+    facts.0.remove("ansible_facts");
+    facts.0.insert("failed".into(), Value::Bool(true));
+    facts.0.insert(
+        "msg".into(),
+        Value::String(format!(
+            "Failed to fetch ansible_pkg_mgr to determine the {action} action backend: {msg}"
+        )),
+    );
+    facts
 }
 
 /// `ansible_facts.<name>` of the host the module runs on, when it is a string.
@@ -213,6 +242,7 @@ mod tests {
             "pause",
             "package",
             "service",
+            "dnf",
             "copy",
             "template",
             "unarchive",
@@ -233,6 +263,8 @@ mod tests {
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
         assert_eq!(kind("ansible.builtin.copy"), Some(Kind::Copy));
+        assert_eq!(kind("ansible.legacy.dnf"), Some(Kind::Dnf));
+        assert_eq!(kind("community.general.dnf"), None);
         assert_eq!(kind("ansible.builtin.template"), Some(Kind::Template));
         assert_eq!(kind("ansible.builtin.unarchive"), Some(Kind::Unarchive));
         assert_eq!(kind("ansible.legacy.unarchive"), Some(Kind::Unarchive));
@@ -262,6 +294,7 @@ mod tests {
     fn a_plugin_runs_only_what_the_union_can_hold() {
         for kind in [
             Kind::Copy,
+            Kind::Dnf,
             Kind::Package,
             Kind::Service,
             Kind::Template,

@@ -254,6 +254,7 @@ mod tests {
             args,
             args_untrusted: untrusted,
             running_vars: &running,
+            delegated: false,
             item_vars: &item_vars,
             templar: &templar,
             origin: &origin,

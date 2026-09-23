@@ -1510,8 +1510,11 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
             }
         };
         match msg {
-            Ok(Some(FromAgent::TaskResult { index, result, .. })) => {
+            Ok(Some(FromAgent::TaskResult {
+                index, mut result, ..
+            })) => {
                 if let Some(slot) = received.get_mut(index) {
+                    add_output_lines(&mut result);
                     *slot = Some(result);
                 }
             }
@@ -1527,6 +1530,57 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
         }
     };
     (received, ended)
+}
+
+/// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` as a
+/// string and not the list beside it. The reference's `_execute_module` adds both to every
+/// module result that lacks them, so a Python module's result has them there; here the agent
+/// writes them for `command` and `raw` alone, and every result an agent sends passes through
+/// [`run_agent_batch`], plugin sub-tasks included.
+fn add_output_lines(result: &mut TaskResult) {
+    for (key, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
+        if result.0.contains_key(lines) {
+            continue;
+        }
+        if let Some(text) = result.0.get(key).and_then(Value::as_str) {
+            let split = splitlines(text).into_iter().map(Value::from).collect();
+            result.0.insert(lines.to_string(), Value::Array(split));
+        }
+    }
+}
+
+/// Python's `str.splitlines()`: every line boundary Python knows, `\r\n` counted as one, and no
+/// empty line after a final boundary.
+fn splitlines(text: &str) -> Vec<&str> {
+    let boundary = |c: char| {
+        matches!(
+            c,
+            '\n' | '\r'
+                | '\x0b'
+                | '\x0c'
+                | '\x1c'
+                | '\x1d'
+                | '\x1e'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    };
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(boundary) {
+        out.push(&rest[..at]);
+        let width = if rest[at..].starts_with("\r\n") {
+            2
+        } else {
+            rest[at..].chars().next().map_or(1, char::len_utf8)
+        };
+        rest = &rest[at + width..];
+    }
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
 }
 
 pub(super) fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool) -> Outcome {
@@ -2759,6 +2813,51 @@ mod tests {
             "{:?}",
             agent.sent
         );
+    }
+
+    /// A result carrying `stdout` or `stderr` comes back with the `_lines` of each, split the way
+    /// Python's `str.splitlines()` splits, whatever module produced it. The reference's
+    /// `_execute_module` adds them to every module result that lacks them, so a Python module's
+    /// `register` reads `r.stderr_lines` there; the agent adds them for `command` and `raw` only.
+    ///
+    /// What would make this red: the addition in `run_agent_batch` removed, which leaves
+    /// `failed_when: "'error' in r.stderr_lines"` on a `pip` task reading an undefined name; or
+    /// a list the module wrote itself replaced, or one built from a value that is not a string.
+    #[tokio::test]
+    async fn a_module_result_gains_the_lines_of_its_output() {
+        let mut stop = watch::channel(false).1;
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(
+            one_result(
+                4,
+                json!({"stdout": "a\nb\r\nc\rd\u{2028}e\n", "stderr": "", "rc": 0}),
+            )
+            .to_vec(),
+        );
+        let tasks = vec![protocol_task(&task("pip"), &bare_item(), None)];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            4,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        let result = received[0].clone().expect("a result").0;
+        assert_eq!(result["stdout_lines"], json!(["a", "b", "c", "d", "e"]));
+        assert_eq!(result["stderr_lines"], json!([]));
+
+        let mut kept = TaskResult(vars(
+            json!({"stdout": "one", "stdout_lines": ["kept"], "stderr": 3}),
+        ));
+        add_output_lines(&mut kept);
+        assert_eq!(kept.0["stdout_lines"], json!(["kept"]));
+        assert!(!kept.0.contains_key("stderr_lines"), "{:?}", kept.0);
     }
 
     /// A union holding every module a plugin may run, each keyed by its own short name.

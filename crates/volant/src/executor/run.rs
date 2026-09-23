@@ -1561,7 +1561,9 @@ fn add_output_lines(result: &mut TaskResult) {
 /// nothing - into an error summary whenever the result failed, and drops a falsy one otherwise;
 /// `error_summary` renders that summary as `(traceback unavailable)` while tracebacks are off,
 /// which is the default. Measured on ansible-core 2.19.12: a failed `copy`, `lineinfile` and
-/// `command` each register that string, and a `stat` that succeeds registers no `exception`.
+/// `command` each register that string, and a `stat` that succeeds registers no `exception`. So
+/// does a failed `raw`, which never goes through `_parse_returned_data`: `TaskExecutor._execute`
+/// normalises every task's final result the same way (`maybe_raise_on_result`).
 fn summarise_exception(result: &mut TaskResult) {
     let sent = result.0.remove("exception");
     let failed = result.0.get("failed").is_some_and(|v| !python_falsy(v));

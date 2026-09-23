@@ -405,7 +405,7 @@ mod tests {
             "{% include 'other.j2' %}\n",
         )
         .unwrap();
-        std::fs::write(dir.join("templates/latin.j2"), b"caf\xe9\n").unwrap();
+        std::fs::write(dir.join("templates/latin.j2"), b"x\xe9\n").unwrap();
         let searched = search_paths(
             &crate::compile::Origin {
                 file_dir: dir.clone(),

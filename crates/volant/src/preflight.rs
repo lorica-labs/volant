@@ -486,10 +486,10 @@ mod tests {
             "{text}"
         );
         let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.template: src=a dest=b\n",
+            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.unarchive: src=a dest=b\n",
         );
         assert!(
-            text.contains("module 'ansible.builtin.template' needs an action plugin"),
+            text.contains("module 'ansible.builtin.unarchive' needs an action plugin"),
             "{text}"
         );
         let pb = parse("- hosts: all\n  tasks:\n    - debug: msg=hi\n", "x.yml").unwrap();

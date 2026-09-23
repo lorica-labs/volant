@@ -1098,7 +1098,9 @@ mod tests {
                     read.insert(c[1].to_string());
                 }
                 for c in bypass.captures_iter(code) {
-                    if &c[1] != "ansible_facts" {
+                    // `template` only asks whether `ansible_managed` is there before writing its
+                    // own; the value decides nothing and reaches the file as text.
+                    if !matches!(&c[1], "ansible_facts" | "ansible_managed") {
                         bypasses.push(format!("{}: {}", path.display(), &c[1]));
                     }
                 }

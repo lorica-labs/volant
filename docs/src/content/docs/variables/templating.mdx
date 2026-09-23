@@ -33,6 +33,8 @@ A `when` whose value is not a boolean is rejected as well.
     - "'already up to date' not in migrate.stderr"
 ```
 
+A condition wrapped in `{{ }}` that renders to a string is evaluated once more as a condition, as ansible-core 2.19 does. With `healthy: "true"` in the play's `vars`, `when: "{{ healthy }}"` runs the task. This second evaluation never happens when the first render read a value from a managed host: the task fails with `Encountered untrusted template or expression.` instead. See [Trusted and untrusted values](/variables/trust/).
+
 ## What is available
 
 On top of MiniJinja's own Jinja2 builtins, Volant adds these from Ansible:
@@ -40,10 +42,13 @@ On top of MiniJinja's own Jinja2 builtins, Volant adds these from Ansible:
 | Kind | Names |
 |---|---|
 | Filters | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
-| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed`, `failed`, `succeeded`, `skipped`, `version` (and `version_compare`) |
-| Lookups | `env`, `file`, `vars`, `pipe`, `first_found`, `template`, under their short name and their `ansible.builtin.*` name |
+| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version` (and `version_compare`) |
+| Lookups | `env`, `file`, `vars`, `pipe`, `first_found`, `fileglob`, `template` |
+| From `ansible.utils` | the `ansible.utils.ipwrap` filter, under that name only |
 
-A filter, test or lookup that is not in this list fails with its own name, never silently. Each one is checked against ansible-core in the golden test corpus under `crates/volant/tests/golden`.
+Every filter, test and lookup in this list also answers under its `ansible.builtin.*` name, so `{{ data | ansible.builtin.to_json }}` works. A filter, test or lookup that is not in this list fails with its own name, never silently. That includes the filters of any other collection.
+
+`first_found`, `fileglob` and `template` look for files along `ansible_search_path`. In a role's task that is the role's directory, the directory of the task's file, then the playbook's directory. Outside a role it is the playbook's directory. `role_path` is set in a role's task and is undefined outside one. `fileglob` tries a relative pattern under `files/` of each entry, then in the entry itself, and the first entry with a match wins. It returns files only, sorted, and a single match comes back as a string. Each one is checked against ansible-core in the golden test corpus under `crates/volant/tests/golden`.
 
 A value also answers a handful of Python methods: `.split()`, `.startswith()` and `.find()` on a string, `.keys()` on a mapping, and the others that `minijinja-contrib`'s Python compatibility layer provides. A method neither that layer nor the engine knows fails with its own name rather than silently doing nothing.
 
@@ -67,7 +72,7 @@ The file's own trailing newline survives the render. [Action plugins](/reference
 
 - The `!vault` and `!unsafe` YAML tags are detected and not supported yet. There is no decryption and no unsafe marking yet.
 - Other Ansible filters, tests and lookups, such as `hash`, `password_hash`, `ipaddr`, the `version` filter and `json_query`, are not supported yet.
-- In a template file, `template_host`, `template_uid` and `template_run_date` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
+- In a template file, `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
 - In a template file, `{% include %}` and `{% import %}` fail: nothing loads a second file during a render.
 - The six delimiter options (`variable_start_string` and its five relatives) and an `output_encoding` other than UTF-8 are not supported yet.
 

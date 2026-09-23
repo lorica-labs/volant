@@ -17,7 +17,7 @@ Volant applies Ansible's rules exactly:
 
 `[tags] run` and `[tags] skip` in `ansible.cfg`, and `ANSIBLE_RUN_TAGS` and `ANSIBLE_SKIP_TAGS`, are defaults. The command line adds to them rather than replacing them.
 
-Tags written on an `include_tasks` or an `include_role` stop at the statement: `--tags inc` runs the include, not what it brings in. The play's own tags do reach the included tasks. This is how Ansible behaves, not a Volant shortcut.
+Tags written on an `include_tasks` or an `include_role` stop at the statement: `--tags inc` runs the include, not what it brings in. The tags of the play, of the role entry and of the blocks around the statement do reach the included tasks, so `--tags nginx` on a role tagged `nginx` runs the files that role includes. This is how Ansible behaves, not a Volant shortcut.
 
 ## Look before you run
 

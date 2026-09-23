@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Run `template` as an action plugin: render the file on the controller once, then hand it to the same path `copy` uses.
 - Run `unarchive` as an action plugin: extract a controller archive or one already on the host, skipping the task when `creates:` already exists.
 - Add the Jinja filters, tests, methods and lookups the template engine was missing: `b64decode`, `b64encode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `from_yaml`, `to_yaml`, `to_nice_yaml`, `to_uuid`, `type_debug`, `quote` and `regex_escape`; the `changed`, `failed`, `succeeded`, `skipped` and `version` tests; a handful of Python methods on strings and mappings, through `minijinja-contrib`; and the `first_found` and `template` lookups.
+- Run modules from installed collections, such as `ansible.posix.sysctl` or `community.general.ufw`, on the warm Python path. The controller's ansible-core says what each name is, and a missing collection, a collection's action plugin or a module that cannot be built is refused before the first connection. Volant never installs a collection. ([#211](https://github.com/lorica-labs/volant/pull/211))
+- Add the `fileglob` lookup and the `ansible.utils.ipwrap` filter, and answer every filter and test under its `ansible.builtin.*` name too. ([#210](https://github.com/lorica-labs/volant/pull/210))
 - An install script: `curl -fsSL https://volant.sh/install.sh | sh` installs the newest release, controller and agents together, after checking its checksum.
 - The release controller carries its agents. `cargo binstall volant`, the shell installer and the release archives give a `volant` that runs local and SSH tasks with nothing else installed. On first use the agents are extracted to `~/.cache/volant/agents/<version>`, or under `$XDG_CACHE_HOME`.
 
@@ -27,6 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - A controller started through a symbolic link finds its agents next to the file the link points at. On macOS it used to look in the directory of the link.
+- A file staged for a module belongs to the connection that sent it. Two links to one host no longer consume each other's files, and a staged file left by a cancelled batch, a lost link or a killed agent is cleaned up. ([#191](https://github.com/lorica-labs/volant/pull/191))
+- A vars file holding only `---` and a comment loads as an empty mapping, a templated `ignore_errors` is rendered when the task runs, `ansible_search_path` is set for every task and `role_path` for a role's, and Python module results get `stdout_lines` and `stderr_lines`. ([#196](https://github.com/lorica-labs/volant/pull/196))
+- Tasks brought in by `include_tasks` or `include_role` inherit the tags and other keywords of the play, role and blocks around the statement. Under `--tags`, a tagged role's included files used to run nothing while the run exited 0. The Python union also carries the modules of every file of the roles in play, and a failed module's `exception` no longer shows as a raw object. ([#199](https://github.com/lorica-labs/volant/pull/199))
+- A task's own `vars:` built from a lookup that needs the role's search path, such as `lookup('template')`, now resolve. ([#200](https://github.com/lorica-labs/volant/pull/200))
+- A loop whose every item was skipped prints the task's own `skipping:` line after the item lines, as ansible-core does. ([#202](https://github.com/lorica-labs/volant/pull/202))
+- A `notify` naming no handler in a dynamically included file ends the run with exit code 1, as ansible-core does. `fatal:` lines no longer show `"failed": true`, module warnings are printed as `[WARNING]:` lines, and an interrupted `pause` ends the run without counting a failure. ([#204](https://github.com/lorica-labs/volant/pull/204))
 
 ## [0.1.0-alpha.7](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) - 2026-09-22
 

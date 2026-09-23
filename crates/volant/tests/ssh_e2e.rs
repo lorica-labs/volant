@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -692,15 +692,7 @@ const RUNNING_UNIT: &str = "systemd-journald.service";
 /// a missing piece fails here, saying which, rather than as a task failure or a `changed` count
 /// that happens to match. The host is localhost, so it is asked directly.
 fn assert_host_can_run_the_action_play() {
-    let sudo = Command::new("sudo")
-        .args(["-n", "true"])
-        .output()
-        .unwrap_or_else(|e| panic!("running 'sudo -n true': {e}"));
-    assert!(
-        sudo.status.success(),
-        "the play's package and service tasks escalate, and 'sudo -n true' failed: {}",
-        String::from_utf8_lossy(&sudo.stderr)
-    );
+    assert_passwordless_sudo("the play's package and service tasks escalate");
     let show = Command::new("systemctl")
         .args(["show", "-p", "LoadState", "--value", RUNNING_UNIT])
         .output()
@@ -718,6 +710,19 @@ fn assert_host_can_run_the_action_play() {
         String::from_utf8_lossy(&active.stdout).trim(),
         "active",
         "{RUNNING_UNIT} must already run, or the first pass would count one change more"
+    );
+}
+
+/// `sudo -n true`, failing with `why` the test needs it rather than as a task that happens to fail.
+fn assert_passwordless_sudo(why: &str) {
+    let sudo = Command::new("sudo")
+        .args(["-n", "true"])
+        .output()
+        .unwrap_or_else(|e| panic!("running 'sudo -n true': {e}"));
+    assert!(
+        sudo.status.success(),
+        "{why}, and 'sudo -n true' failed: {}",
+        String::from_utf8_lossy(&sudo.stderr)
     );
 }
 
@@ -1052,4 +1057,270 @@ fn ssh_two_links_reuse_the_union_the_host_holds() {
         "the second run wrote the union again instead of reusing it"
     );
     remove_as_root(&dir);
+}
+
+/// Fails unless `VOLANT_PYTHON` sees every version `golden/COLLECTIONS` pins, on ansible-core's
+/// own `C.COLLECTIONS_PATHS` (which reads `ANSIBLE_COLLECTIONS_PATH`), the rule `golden.rs`
+/// applies to the collection golden. A collection read at another version, or not at all, would
+/// make the play below prove something about a module nobody recorded. `ssh-test` always sets
+/// `VOLANT_PYTHON`, so there is no skip.
+fn assert_the_pinned_collections_are_installed() {
+    let pins = include_str!("golden/COLLECTIONS");
+    let python = std::env::var("VOLANT_PYTHON").expect(
+        "VOLANT_PYTHON names a python with ansible-core; ssh-test checks this before any ssh_* test runs",
+    );
+    // A collection's version comes from its MANIFEST.json, `netaddr`'s from an import.
+    let script = r#"
+import json, os, sys
+from ansible import constants as C
+found = {}
+for line in sys.argv[1].splitlines():
+    name = line.split(" ", 1)[0]
+    if name == "netaddr":
+        try:
+            import netaddr
+            found[name] = netaddr.__version__
+        except ImportError:
+            pass
+        continue
+    namespace, collection = name.split(".", 1)
+    for root in C.COLLECTIONS_PATHS:
+        manifest = os.path.join(os.path.expanduser(root), "ansible_collections", namespace, collection, "MANIFEST.json")
+        if os.path.exists(manifest):
+            with open(manifest, encoding="utf-8") as f:
+                found[name] = json.load(f)["collection_info"]["version"]
+            break
+print(json.dumps(found))
+"#;
+    let out = Command::new(&python)
+        .args(["-c", script, pins])
+        .output()
+        .unwrap_or_else(|e| panic!("running {python}: {e}"));
+    assert!(
+        out.status.success(),
+        "{python} could not read its collections: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let found: BTreeMap<String, String> = serde_json::from_slice(&out.stdout).unwrap();
+    let mismatched: Vec<String> = pins
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(name, version)| found.get(*name).map(String::as_str) != Some(*version))
+        .map(|(name, version)| {
+            let got = found.get(name).map_or("not installed", String::as_str);
+            format!("{name} is {got}, not {version}")
+        })
+        .collect();
+    assert!(
+        mismatched.is_empty(),
+        "VOLANT_PYTHON's collections do not match COLLECTIONS: {}",
+        mismatched.join("; ")
+    );
+}
+
+/// Two collection modules over a real ssh link, twice: `ansible.posix.sysctl` writing its file
+/// only (`sysctl_set` and `reload` both false) and `community.general.ini_file`. The host's
+/// pythons have no ansible-core, so both modules and every `module_utils` they import came in the
+/// run's union; the first pass changes both files and the second finds them in place.
+///
+/// The value written is the opposite of the kernel's own, so a `sysctl -w` that ran anyway would
+/// either fail the task (this account cannot write `/proc/sys`) or move the value read back.
+/// `test.ini` is 23 bytes: the size recorded for the same section, option and value by the
+/// collection golden, measured on ansible-core 2.19.12 with community.general 13.4.0.
+///
+/// What would make this red: a collection module reached by its short name, or missing from the
+/// union (a failed task, since no host python could import it); a module that reports `changed`
+/// without writing (a file missing or holding something else); a second pass above 0.
+#[test]
+#[ignore = "needs sshd on localhost and the pinned collections, run through just ssh-test"]
+fn ssh_a_collection_module_runs_from_the_union() {
+    assert_host_and_controller_pythons_are_distinct();
+    assert_the_pinned_collections_are_installed();
+    let dir = tmp("collections");
+    let inv = inventory(&dir, &[("box", "")]);
+    let forward = "/proc/sys/net/ipv4/ip_forward";
+    let kernel = std::fs::read_to_string(forward).unwrap();
+    let value = if kernel.trim() == "1" { "0" } else { "1" };
+    for (pass, changed) in [("first", 2), ("second", 0)] {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &inv,
+                "-e",
+                &format!("dest={}", dir.display()),
+                "-e",
+                &format!("sysctl_value={value}"),
+                &fixture("ssh/collections.yml"),
+            ],
+            Duration::from_secs(180),
+        );
+        let text = both(&out);
+        assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");
+        assert_recap(&text, "box", changed);
+        let sysctl = std::fs::read_to_string(dir.join("sysctl.conf"))
+            .unwrap_or_else(|e| panic!("{pass} pass, sysctl.conf: {e}\n{text}"));
+        assert!(
+            sysctl
+                .lines()
+                .any(|l| l == format!("net.ipv4.ip_forward={value}")),
+            "{pass} pass, sysctl.conf holds {sysctl:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(forward).unwrap(),
+            kernel,
+            "{pass} pass: the kernel's own value moved"
+        );
+        let ini = dir.join("test.ini");
+        let written = std::fs::read_to_string(&ini)
+            .unwrap_or_else(|e| panic!("{pass} pass, test.ini: {e}\n{text}"));
+        assert!(
+            written.lines().any(|l| l == "[golden]")
+                && written.lines().any(|l| l == "color = blue")
+                && written.len() == 23,
+            "{pass} pass, test.ini holds {written:?}"
+        );
+        let mode = std::fs::metadata(&ini).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "{pass} pass, mode of test.ini");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Removes a directory as root however the test holding it ends: the escalated tasks, and the
+/// files a test plants as root, leave entries this account cannot remove.
+struct RemovedAsRoot(PathBuf);
+
+impl Drop for RemovedAsRoot {
+    fn drop(&mut self) {
+        remove_as_root(&self.0);
+    }
+}
+
+/// Every regular file under `root`, relative to it, sorted.
+fn files_under(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut todo = vec![root.to_path_buf()];
+    while let Some(at) = todo.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                found.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// `fetch` over a real ssh link, with and without `flat`, with and without `become`, twice, then
+/// the relative `src` that climbs out of `dest`, with and without `become`, refused both times.
+///
+/// Measured on ansible-core 2.19.12 against a separate host: `src:
+/// ../../../../../../../../tmp/<path>` without `flat` was written on the controller at
+/// `/tmp/<path>`, outside `dest`, because the reference checks containment before it has built
+/// the path. Here the host is the controller, so the file the host would send and the place the
+/// reference would write are the same file: the marker. It is planted root-only, so the escalated
+/// task can read it and this account cannot: a fetch that climbed out would find no local sum to
+/// compare, write its copy beside the marker and rename it over, and the marker would no longer
+/// be root's. The two escalated fetches of a root-only file are what prove `become` took effect.
+///
+/// What would make this red: the climbing path written (the marker replaced, or a temporary file
+/// beside it), or refused for another reason (the sentence); a file written anywhere under `dest`
+/// but where the reference puts it; a fetch that reports `changed` without writing the host's
+/// bytes; a second pass above 0.
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_fetch_writes_under_dest_and_nowhere_else() {
+    assert_passwordless_sudo("the play fetches a root-only file under become, and one is planted");
+    // `/tmp` by name rather than `temp_dir()`: the climbing `src` names `/tmp` itself.
+    let dir = Path::new("/tmp").join(format!("volant-ssh-fetch-{}", std::process::id()));
+    remove_as_root(&dir);
+    let _cleanup = RemovedAsRoot(dir.clone());
+    let (host, escape, dest) = (dir.join("host"), dir.join("escape"), dir.join("dest"));
+    std::fs::create_dir_all(&host).unwrap();
+    std::fs::create_dir_all(&escape).unwrap();
+    let plain = b"fetched without become\n";
+    std::fs::write(host.join("plain.txt"), plain).unwrap();
+    let plant = |bytes: &[u8], at: &Path| {
+        let staged = dir.join("staged");
+        std::fs::write(&staged, bytes).unwrap();
+        let (from, to) = (staged.display().to_string(), at.display().to_string());
+        as_root(&["install", "-o", "0", "-g", "0", "-m", "0600", &from, &to]);
+        std::fs::remove_file(&staged).unwrap();
+    };
+    let secret = b"fetched under become\n";
+    plant(secret, &host.join("secret.txt"));
+    let marker = escape.join("esc.txt");
+    plant(b"the marker\n", &marker);
+    let before = std::fs::symlink_metadata(&marker).unwrap();
+    let climb = format!(
+        "{}{}",
+        "../".repeat(8),
+        marker.strip_prefix("/").unwrap().display()
+    );
+    let refusal = format!(
+        "the fetched path {} is outside '{}'",
+        marker.display(),
+        dest.display()
+    );
+    let inv = inventory(&dir, &[("box", "")]);
+    let under_host = format!("box{}", host.display());
+    let expected: [(String, &[u8]); 4] = [
+        (format!("{under_host}/plain.txt"), plain),
+        (format!("{under_host}/secret.txt"), secret),
+        ("flat-become/secret.txt".into(), secret),
+        ("flat/plain.txt".into(), plain),
+    ];
+    for (pass, changed) in [("first", 4), ("second", 0)] {
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &inv,
+                "-e",
+                &format!("host_dir={}", host.display()),
+                "-e",
+                &format!("dest={}", dest.display()),
+                "-e",
+                &format!("climb={climb}"),
+                &fixture("ssh/fetch.yml"),
+            ],
+            Duration::from_secs(180),
+        );
+        let text = both(&out);
+        let after = std::fs::symlink_metadata(&marker)
+            .unwrap_or_else(|e| panic!("{pass} pass, the marker is gone: {e}\n{text}"));
+        assert!(
+            (after.ino(), after.uid(), after.len()) == (before.ino(), 0, before.len()),
+            "{pass} pass, something was written over the marker outside dest:\n{text}"
+        );
+        assert_eq!(
+            files_under(&escape),
+            ["esc.txt"],
+            "{pass} pass, something was written beside the marker:\n{text}"
+        );
+        assert_eq!(
+            text.matches(&refusal).count(),
+            2,
+            "{pass} pass, both climbing fetches are refused by name:\n{text}"
+        );
+        assert_eq!(out.status.code(), Some(0), "{pass} pass: {text}");
+        assert_recap(&text, "box", changed);
+        assert_eq!(
+            recap(&text, "box").get("ignored"),
+            Some(&2),
+            "{pass} pass: {text}"
+        );
+        let mut want: Vec<&str> = expected.iter().map(|(p, _)| p.as_str()).collect();
+        want.sort_unstable();
+        assert_eq!(files_under(&dest), want, "{pass} pass: {text}");
+        for (path, bytes) in &expected {
+            assert!(
+                std::fs::read(dest.join(path)).unwrap() == *bytes,
+                "{pass} pass, {path} does not hold the host's bytes"
+            );
+        }
+    }
 }

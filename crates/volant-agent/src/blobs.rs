@@ -97,14 +97,67 @@ pub fn path(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
     Ok(dir(remote_tmp).join(hash))
 }
 
-/// The directory of this connection's own staged files, `<cache>/stage-<pid>`, created with the
-/// same privacy as the cache.
+/// The name of this connection's own directory: `stage-<host>-<pid>`.
+///
+/// A pid means something on one host only, and the cache can be shared by several: a home
+/// directory mounted over NFS on every host puts `~/.ansible/tmp` in one place for all of them.
+/// Without the host, two hosts with one pid would share one directory, and one host's sweep would
+/// read another host's live agent as dead.
+fn stage_name() -> String {
+    format!("stage-{}-{}", host(), std::process::id())
+}
+
+/// This host's name as [`host_component`] writes it, read once, so a host renamed mid-run still
+/// removes and sweeps under the name it started with.
+fn host() -> &'static str {
+    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOST.get_or_init(host_name)
+}
+
+/// This host's name as one path component the sweep can split on: `[A-Za-z0-9._]` kept, anything
+/// else - `-` included, so the last `-` of a directory name is always the one before the pid -
+/// replaced by `_`, and at most 64 bytes.
+fn host_component(raw: &[u8]) -> String {
+    let name: String = raw
+        .iter()
+        .take(64)
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || b == b'.' || b == b'_' {
+                char::from(b)
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.is_empty() {
+        "unnamed".to_string()
+    } else {
+        name
+    }
+}
+
+#[cfg(unix)]
+fn host_name() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` is writable for its whole length, which is the length passed.
+    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    host_component(if ok { &buf[..len] } else { b"" })
+}
+
+#[cfg(not(unix))]
+fn host_name() -> String {
+    host_component(b"")
+}
+
+/// The directory of this connection's own staged files, `<cache>/stage-<host>-<pid>`, created
+/// with the same privacy as the cache.
 ///
 /// One per agent process rather than the shared cache: two links to one host account (two
 /// inventory names for one machine, two hosts delegating to one) run two agents on one cache,
 /// and a file one of them consumed was one the other had been told was there.
 fn stage_dir(remote_tmp: &str) -> io::Result<PathBuf> {
-    let dir = cache_dir(remote_tmp)?.join(format!("stage-{}", std::process::id()));
+    let dir = cache_dir(remote_tmp)?.join(stage_name());
     create_private(&dir)?;
     check_private(&dir)?;
     Ok(dir)
@@ -141,7 +194,7 @@ pub fn take(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
 /// batch - is often a rendered secret, and nothing else would ever remove it. An agent that dies
 /// before it gets here leaves the directory to [`sweep`] on the next start.
 pub fn end_connection(remote_tmp: &str) {
-    let dir = dir(remote_tmp).join(format!("stage-{}", std::process::id()));
+    let dir = dir(remote_tmp).join(stage_name());
     match fs::remove_dir_all(&dir) {
         Err(err) if err.kind() != io::ErrorKind::NotFound => {
             eprintln!(
@@ -153,14 +206,16 @@ pub fn end_connection(remote_tmp: &str) {
     }
 }
 
-/// Removes what dead agents of this user staged: `stage-<pid>` directories, and the
-/// `stage-<hash>-<pid>-<n>` files the previous layout left in the cache itself.
+/// Removes the `stage-<host>-<pid>` directories dead agents of this user left on this host.
 ///
-/// Only a pid that no longer exists is removed (`kill(pid, 0)` says `ESRCH`), because two agents
-/// of one user run at once whenever two runs reach one host. A pid reused by another live
-/// process leaves the entry where it is; that is the safe way round, and the entry goes once
-/// that process has. The one exception is this agent's own pid, which no live agent can hold.
-/// A cache this agent does not own is not touched at all.
+/// Only this host's entries are looked at: another host sharing the cache has its own pids, and
+/// `ESRCH` here says nothing about them. Entries without a host - the `stage-<hash>-<pid>-<n>`
+/// files of the layout before this one, which no release wrote - cannot be placed on a host, so
+/// they are left too. Only a pid that no longer exists is removed (`kill(pid, 0)` says `ESRCH`),
+/// because two agents of one user run at once whenever two runs reach one host. A pid reused by
+/// another live process leaves the entry where it is; that is the safe way round, and the entry
+/// goes once that process has. The one exception is this agent's own pid, which no live agent
+/// can hold. A cache this agent does not own is not touched at all.
 pub fn sweep(remote_tmp: &str) {
     let cache = dir(remote_tmp);
     if check_private(&cache).is_err() {
@@ -174,11 +229,10 @@ pub fn sweep(remote_tmp: &str) {
         let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("stage-")) else {
             continue;
         };
-        // `stage-<pid>` now, `stage-<hash>-<pid>-<n>` before.
-        let pid = match rest.split('-').collect::<Vec<_>>()[..] {
-            [pid] | [_, pid, _] => pid.parse::<u32>().ok(),
-            _ => None,
-        };
+        let pid = rest
+            .rsplit_once('-')
+            .filter(|(name, _)| *name == host())
+            .and_then(|(_, pid)| pid.parse::<u32>().ok());
         if !pid.is_some_and(|pid| pid == std::process::id() || !alive(pid)) {
             continue;
         }
@@ -275,7 +329,10 @@ where
             Err(err) => {
                 send(&FromAgent::Log {
                     level: LogLevel::Error,
-                    message: format!("storing payload {hash}: {err}"),
+                    message: format!(
+                        "storing {} {hash}: {err}",
+                        if *staged { "file" } else { "payload" }
+                    ),
                 })?;
                 send(&FromAgent::BlobState {
                     hash: hash.clone(),
@@ -792,6 +849,19 @@ mod tests {
         );
         assert_eq!(tmp_from_exe(Path::new("/usr/local/bin/volant-agent")), None);
         assert_eq!(tmp_from_exe(Path::new("volant-agent")), None);
+    }
+
+    /// A host name becomes one path component with no `-` in it, so the sweep's last `-` is
+    /// always the one before the pid.
+    ///
+    /// What would make this red: a `/` kept, which puts the directory somewhere other than the
+    /// cache; or no cap, which lets a long name past the filesystem's limit on one component.
+    #[test]
+    fn a_host_name_becomes_one_safe_component() {
+        assert_eq!(host_component(b"web-1.example_org"), "web_1.example_org");
+        assert_eq!(host_component(b"a/../b c"), "a_.._b_c");
+        assert_eq!(host_component(&[b'x'; 300]).len(), 64);
+        assert_eq!(host_component(b""), "unnamed");
     }
 
     fn hash_of(bytes: &[u8]) -> String {

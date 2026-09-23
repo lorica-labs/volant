@@ -505,13 +505,14 @@ fn has_blob_never_answers_for_a_staged_file() {
     );
 }
 
-/// An agent starting up removes what a dead agent of this user staged, in both layouts, and
-/// leaves a live one's directory alone.
+/// An agent starting up removes what a dead agent of this user left on this host, and leaves
+/// alone a live one's directory, another host's, and the earlier layout that names no host.
 ///
 /// What would make this red: the sweep removing a directory without asking whether its pid is
-/// alive. Two runs reaching one host run two agents of one user at once, and the second to start
-/// would pull the file out from under the first one's module. The live pid here is the test's
-/// own.
+/// alive - two runs reaching one host run two agents of one user at once, and the second to
+/// start would pull the file out from under the first one's module; or the sweep ignoring the
+/// host in the name. A home directory mounted over NFS shares the cache between hosts, and a pid
+/// that is dead here says nothing about the host that wrote it. The live pid is the test's own.
 #[test]
 fn the_next_agent_sweeps_what_a_dead_agent_staged_and_keeps_a_live_ones() {
     use std::os::unix::fs::DirBuilderExt;
@@ -519,36 +520,119 @@ fn the_next_agent_sweeps_what_a_dead_agent_staged_and_keeps_a_live_ones() {
     let scratch = Scratch::new("sweep");
     let cache = cache_dir(&scratch.0);
     fs::DirBuilder::new().mode(0o700).create(&cache).unwrap();
-    let mut gone = Command::new("true").spawn().expect("true starts");
-    let dead = gone.id();
-    gone.wait().unwrap();
+    let dead = dead_pid();
     let live = std::process::id();
-    for pid in [dead, live] {
-        let dir = cache.join(format!("stage-{pid}"));
+    let host = this_host();
+    let mine_dead = format!("stage-{host}-{dead}");
+    let mine_live = format!("stage-{host}-{live}");
+    let elsewhere = format!("stage-{}-{dead}", other_host(&host));
+    for name in [&mine_dead, &mine_live, &elsewhere] {
+        let dir = cache.join(name);
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("0".repeat(64)), b"a staged secret").unwrap();
     }
     let old = format!("stage-{}-{dead}-0", "0".repeat(64));
     fs::write(cache.join(&old), b"a staged secret").unwrap();
-    let old_live = format!("stage-{}-{live}-0", "0".repeat(64));
-    fs::write(cache.join(&old_live), b"a staged secret").unwrap();
 
+    started(&scratch.0);
+
+    let mut kept = vec![mine_live.clone(), elsewhere, old];
+    kept.sort();
+    assert_eq!(
+        entries(&cache),
+        kept,
+        "only this host's dead agent's directory goes"
+    );
+    assert_eq!(entries(&cache.join(&mine_live)), vec!["0".repeat(64)]);
+}
+
+/// A cache this agent does not own outright is not swept at all, even of an entry that would be
+/// swept in a private one.
+///
+/// What would make this red: the sweep acting before it checks the cache's owner and mode, which
+/// lets anyone who can write the directory name what this agent deletes.
+#[test]
+fn a_cache_others_can_write_is_not_swept() {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let scratch = Scratch::new("sweep-open");
+    let cache = cache_dir(&scratch.0);
+    fs::DirBuilder::new().mode(0o755).create(&cache).unwrap();
+    let stale = format!("stage-{}-{}", this_host(), dead_pid());
+    fs::create_dir(cache.join(&stale)).unwrap();
+
+    started(&scratch.0);
+
+    assert_eq!(entries(&cache), vec![stale]);
+}
+
+/// A staged file the agent refuses is named a file in the log, not a payload.
+#[test]
+fn a_refused_staged_file_is_logged_as_a_file() {
+    let scratch = Scratch::new("refused-file");
     let mut link = Link::open(&scratch.0);
-    // The sweep runs before the agent reads its first frame, so an answer means it is over.
+    let wrong = "0".repeat(64);
+    link.send(&ToAgent::PutBlob {
+        hash: wrong.clone(),
+        zip_b64: b64_encode(b"a file"),
+        staged: true,
+    });
+    match link.recv() {
+        FromAgent::Log { message, .. } => {
+            assert!(
+                message.starts_with(&format!("storing file {wrong}: ")),
+                "{message}"
+            );
+        }
+        other => panic!("expected the refusal's log, got {other:?}"),
+    }
+}
+
+/// Starts an agent on `remote_tmp` and waits until it has answered: the sweep runs before the
+/// agent reads its first frame, so an answer means it is over.
+fn started(remote_tmp: &Path) {
+    let mut link = Link::open(remote_tmp);
     link.send(&ToAgent::Hello {
         protocol: volant_protocol::PROTOCOL_VERSION,
     });
     assert!(matches!(link.recv(), FromAgent::Ready { .. }));
+}
 
+/// The pid of a process that has exited and been reaped.
+fn dead_pid() -> u32 {
+    let mut gone = Command::new("true").spawn().expect("true starts");
+    let pid = gone.id();
+    gone.wait().unwrap();
+    pid
+}
+
+/// This host's name as the agent puts it in a directory name: `[A-Za-z0-9._]` kept, anything else
+/// `_`, at most 64 bytes. Written out again rather than shared, so a change on the agent's side
+/// has to be made here too.
+fn this_host() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` is writable for its whole length, which is the length passed.
     assert_eq!(
-        entries(&cache),
-        vec![old_live, format!("stage-{live}")],
-        "the dead agent's entries go, the live one's stay"
+        unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) },
+        0
     );
-    assert_eq!(
-        entries(&cache.join(format!("stage-{live}"))),
-        vec!["0".repeat(64)]
-    );
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    buf[..len]
+        .iter()
+        .take(64)
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || b == b'.' || b == b'_' {
+                char::from(b)
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// A host name that is not `host`.
+fn other_host(host: &str) -> String {
+    format!("{host}.elsewhere")
 }
 
 /// The interpreter the staged-file tests run their module under.
@@ -739,7 +823,7 @@ impl Link {
 
     /// Where this link's agent keeps the files it was sent to stage.
     fn stage_dir(&self, remote_tmp: &Path) -> PathBuf {
-        cache_dir(remote_tmp).join(format!("stage-{}", self.child.id()))
+        cache_dir(remote_tmp).join(format!("stage-{}-{}", this_host(), self.child.id()))
     }
 
     /// Ends the conversation as a controller that went away does, and waits for the agent.

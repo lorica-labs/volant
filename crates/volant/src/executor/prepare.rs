@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rendering one task for one host: variables, escalation, environment and loop items.
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -335,8 +334,8 @@ pub(super) struct Item {
     pub(super) environment: BTreeMap<String, String>,
     /// Set when `when` was false: the skip result to report.
     pub(super) skipped: Option<TaskResult>,
-    /// The task's `ignore_errors` as rendered for this host, when it was written as a template.
-    /// The same on every item of the task: see [`as_run`].
+    /// The task's `ignore_errors` as rendered for this item, when it was written as a template
+    /// and the item was not skipped. The readers fall back to the task's keyword without it.
     pub(super) ignore_errors: Option<bool>,
 }
 
@@ -506,6 +505,12 @@ pub(super) fn prepare(
             };
             (map, untrusted)
         };
+        // Per item, against the item's own variables, and never for an item a `when` left out:
+        // the reference evaluates the conditional before it renders the task's keywords.
+        let ignore_errors = match (&task.ignore_errors, &skipped) {
+            (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, &vars, templar)?),
+            _ => None,
+        };
         // A skipped item runs nothing, so a layer it could not render is not its problem: the
         // reference does not evaluate `environment` for a task a `when` left out.
         let environment = if skipped.is_some() {
@@ -521,17 +526,11 @@ pub(super) fn prepare(
             vars,
             environment,
             skipped,
-            ignore_errors: None,
+            ignore_errors,
         });
     }
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
-    }
-    if let Some(Flag::Template(raw)) = &task.ignore_errors {
-        let verdict = ignore_errors_for(raw, &base, templar)?;
-        for item in &mut items {
-            item.ignore_errors = Some(verdict);
-        }
     }
     let delegate = delegate_for(task, &base, templar)?;
     if is_local(&task.module) {
@@ -668,13 +667,10 @@ fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path)
     }
 }
 
-/// `ignore_errors` written as a template, rendered and read the way a boolean variable is.
-/// Measured on ansible-core 2.19.12, the reference renders it when the task runs, and a value
-/// that is not a boolean fails the task with the sentence the loader refuses a literal with.
-///
-/// Rendered once, against the task's variables and not one loop item's, the way `delegate_to`
-/// is: the verdict is the task's, and every line and the recap read the one verdict. A task a
-/// `when` skipped never renders it, as in the reference.
+/// `ignore_errors` written as a template, rendered for one item and read the way the reference
+/// reads a boolean keyword ([`strict_boolean`]). Measured on ansible-core 2.19.12, the reference
+/// renders it when the task runs, and a value that is not a boolean fails the task with the
+/// sentence the loader refuses a literal with.
 fn ignore_errors_for(raw: &str, vars: &HostVars, templar: &Templar) -> Result<bool, TemplateError> {
     let keyword = |detail: String| {
         TemplateError(format!(
@@ -682,7 +678,7 @@ fn ignore_errors_for(raw: &str, vars: &HostVars, templar: &Templar) -> Result<bo
         ))
     };
     let rendered = templar.render(raw, vars).map_err(|e| keyword(e.0))?;
-    as_bool_value(&rendered).ok_or_else(|| {
+    strict_boolean(&rendered).ok_or_else(|| {
         keyword(format!(
             "The value {} could not be converted to 'bool'.",
             python_repr(&rendered)
@@ -690,16 +686,21 @@ fn ignore_errors_for(raw: &str, vars: &HostVars, templar: &Templar) -> Result<bo
     })
 }
 
-/// The task as the driver runs and reports it for this host: an `ignore_errors` template
-/// replaced by what `prepare` rendered it to. Every other task is borrowed as it stands.
-pub(super) fn as_run<'a>(task: &'a PlayTask, items: &[Item]) -> Cow<'a, PlayTask> {
-    match items.first().and_then(|item| item.ignore_errors) {
-        Some(verdict) => {
-            let mut task = task.clone();
-            task.ignore_errors = Some(Flag::Fixed(verdict));
-            Cow::Owned(task)
-        }
-        None => Cow::Borrowed(task),
+/// ansible-core's `boolean(value, strict=True)`, ported from
+/// `ansible/module_utils/parsing/convert_bool.py` (2.19.12), which a boolean keyword is read
+/// with: a real boolean; `1`, `1.0`, `0`, `0.0`; or one of `y yes on 1 true t` and
+/// `n no off 0 false f`, trimmed and in any case. Anything else is not a boolean.
+fn strict_boolean(value: &Value) -> Option<bool> {
+    let word = match value {
+        Value::Bool(b) => return Some(*b),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.trim().to_lowercase(),
+        _ => return None,
+    };
+    match word.as_str() {
+        "y" | "yes" | "on" | "1" | "1.0" | "true" | "t" => Some(true),
+        "n" | "no" | "off" | "0" | "0.0" | "-0.0" | "false" | "f" => Some(false),
+        _ => None,
     }
 }
 
@@ -883,49 +884,94 @@ mod tests {
         step_of(t, Origin::default())
     }
 
-    /// `ignore_errors` written as a template is rendered for the host that runs the task, and
-    /// the driver reads the task with the verdict in the template's place. Measured on
-    /// ansible-core 2.19.12: `ignore_errors: "{{ ansible_check_mode }}"` on a failing `command`
-    /// fails the task outside `--check`, and a render that is not a boolean fails it with
-    /// `Error processing keyword 'ignore_errors': The value ... could not be converted to 'bool'.`
+    /// Each item's verdict, as `prepare` rendered it.
+    fn verdicts(step: &Step, store: &Mutex<VarStore>) -> Vec<Option<bool>> {
+        prepared(step, store)
+            .unwrap()
+            .iter()
+            .map(|i| i.ignore_errors)
+            .collect()
+    }
+
+    /// `ignore_errors` written as a template is rendered for each item that runs, and read the
+    /// way ansible-core's `boolean(strict=True)` reads a keyword. Measured on ansible-core
+    /// 2.19.12: `ignore_errors: "{{ ansible_check_mode }}"` on a failing `command` fails the task
+    /// outside `--check`, and a render that is not a boolean fails it with `Error processing
+    /// keyword 'ignore_errors': The value ... could not be converted to 'bool'.`
     ///
-    /// What would make this red: the render in `prepare` removed, which leaves the template in
-    /// place and every template reads as not ignoring, `"{{ true }}"` included; `as_run` handing
-    /// back the task as written; or a render that is not a boolean read as `false` rather than
-    /// refused.
+    /// What would make this red: the render in `prepare` removed, which leaves every template
+    /// reading as not ignoring, `"{{ true }}"` included; a reader narrower than the reference's,
+    /// which refuses `-e lenient=1`; or a render that is not a boolean read as `false` rather
+    /// than refused.
     #[test]
     fn a_templated_ignore_errors_is_rendered_when_the_task_runs() {
         let store = store_at(Path::new("."));
-        let step = failing("{{ ansible_check_mode }}");
-        let items = prepared(&step, &store).unwrap();
-        let run = as_run(&step.task, &items);
-        assert_eq!(run.ignore_errors, Some(Flag::Fixed(false)));
-        assert!(!run.ignores_errors());
-
-        let step = failing("{{ true }}");
-        let items = prepared(&step, &store).unwrap();
-        assert!(as_run(&step.task, &items).ignores_errors());
-
-        let Err(err) = prepared(&failing("{{ 'maybe' }}"), &store) else {
-            panic!("a render that is not a boolean is refused");
-        };
-        assert!(
-            err.0.contains(
-                "Error processing keyword 'ignore_errors': The value 'maybe' could not be converted to 'bool'."
-            ),
-            "{}",
-            err.0
-        );
+        for (template, want) in [
+            ("{{ ansible_check_mode }}", false),
+            ("{{ true }}", true),
+            ("{{ 1 }}", true),
+            ("{{ 0.0 }}", false),
+            ("{{ ' Y ' }}", true),
+            ("{{ 'Off' }}", false),
+            ("{{ 't' }}", true),
+        ] {
+            assert_eq!(
+                verdicts(&failing(template), &store),
+                [Some(want)],
+                "{template}"
+            );
+        }
+        for (template, shown) in [("{{ 'maybe' }}", "'maybe'"), ("{{ 2 }}", "2")] {
+            let Err(err) = prepared(&failing(template), &store) else {
+                panic!("{template} is not a boolean");
+            };
+            assert!(
+                err.0.contains(&format!(
+                    "Error processing keyword 'ignore_errors': The value {shown} could not be converted to 'bool'."
+                )),
+                "{}",
+                err.0
+            );
+        }
 
         // A task a `when` left out never renders it, so a template it could not render is not
-        // its problem.
+        // its problem; a task that wrote no template carries no verdict of its own.
         let mut step = failing("{{ nosuch }}");
         step.task.when = vec!["false".into()];
         assert!(prepared(&step, &store).is_ok());
-
         let step = step_of(task("command"), Origin::default());
-        let items = prepared(&step, &store).unwrap();
-        assert!(matches!(as_run(&step.task, &items), Cow::Borrowed(_)));
+        assert_eq!(verdicts(&step, &store), [None]);
+    }
+
+    /// Each loop item renders its own verdict against its own variables, so items can disagree,
+    /// and an outer `item` an include handed down does not decide for the inner loop's items. An
+    /// item a `when` left out renders nothing.
+    ///
+    /// What would make this red: the verdict rendered once against the task's variables, which
+    /// fails on `item` as undefined, or reads the outer one for every item.
+    #[test]
+    fn each_loop_item_renders_its_own_ignore_errors() {
+        let store = store_at(Path::new("."));
+        let mut step = failing("{{ item }}");
+        step.task.loop_items = Some(json!([true, false, "yes"]));
+        assert_eq!(
+            verdicts(&step, &store),
+            [Some(true), Some(false), Some(true)]
+        );
+
+        let mut values = Map::new();
+        values.insert("item".into(), json!(false));
+        step.include_params = Some(Arc::new(IncludeParams {
+            values,
+            untrusted: BTreeSet::new(),
+        }));
+        step.task.loop_items = Some(json!([true]));
+        assert_eq!(verdicts(&step, &store), [Some(true)]);
+
+        let mut step = failing("{{ true }}");
+        step.task.loop_items = Some(json!([1, 2]));
+        step.task.when = vec!["item == 1".into()];
+        assert_eq!(verdicts(&step, &store), [Some(true), None]);
     }
 
     /// A step an include brought in goes through the same `prepare`, so its templated
@@ -947,8 +993,7 @@ mod tests {
             values,
             untrusted: BTreeSet::new(),
         }));
-        let items = prepared(&step, &store).unwrap();
-        assert!(as_run(&step.task, &items).ignores_errors());
+        assert_eq!(verdicts(&step, &store), [Some(true)]);
     }
 
     /// `role_path` and `ansible_search_path` in a role's task and in a playbook's. Measured on

@@ -25,7 +25,7 @@ use crate::vars::VarStore;
 
 use super::coordinator::{Event, Progress, escalated_links};
 use super::include::{report_include, resolve_include};
-use super::prepare::{Item, PlayPlan, Prepared, as_run, prepare, retry_name};
+use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Retry, chosen_interpreter, conditional_error, fact_targets, failed_task_value, finish, notify,
@@ -628,6 +628,7 @@ pub(super) async fn drive_host(
                         &labels,
                         &[],
                         &[],
+                        &[],
                         Dump::No,
                         false,
                         None,
@@ -659,8 +660,6 @@ pub(super) async fn drive_host(
                     pos = next;
                 }
                 Ok(Prepared::Local(items, delegate)) => {
-                    let effective = as_run(task, &items);
-                    let task = &*effective;
                     if !batch.is_empty() {
                         break;
                     }
@@ -778,6 +777,7 @@ pub(super) async fn drive_host(
                         task,
                         &results,
                         &labels,
+                        &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                         &lefts,
                         &names,
                         dump,
@@ -979,6 +979,7 @@ pub(super) async fn drive_host(
                         &[None],
                         &[],
                         &[],
+                        &[],
                         Dump::No,
                         rescuable,
                         batch_delegate.as_deref(),
@@ -1044,7 +1045,6 @@ pub(super) async fn drive_host(
                     }
                 };
                 let step = &c.steps[*index];
-                let task = as_run(&step.task, items);
                 let interpreters = link.interpreters().to_vec();
                 let playbook_dir = store
                     .lock()
@@ -1079,7 +1079,7 @@ pub(super) async fn drive_host(
                             &name,
                             &mut batch_id,
                             plugin.as_mut(),
-                            &task,
+                            &step.task,
                             item,
                             plan.python.as_deref(),
                             &interpreters,
@@ -1117,8 +1117,7 @@ pub(super) async fn drive_host(
             } else if let Some(retry) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
-                let effective = as_run(&c.steps[*index].task, items);
-                let task = &*effective;
+                let task = &c.steps[*index].task;
                 names = items
                     .iter()
                     .map(|item| retry_name(task, &item.vars, &templar))
@@ -1208,8 +1207,7 @@ pub(super) async fn drive_host(
                 let mut tasks = Vec::new();
                 let mut origin = Vec::new();
                 for (bi, (index, items)) in batch.iter().enumerate() {
-                    let effective = as_run(&c.steps[*index].task, items);
-                    let task = &*effective;
+                    let task = &c.steps[*index].task;
                     // Per step, never per batch: a task's own `vars:` may name an interpreter,
                     // and a batch holds whatever shares a connection, not whatever shares an
                     // interpreter. Reading the batch's first step for all of them would run one
@@ -1268,8 +1266,7 @@ pub(super) async fn drive_host(
             // stalls every barrier behind it.
             let mut undecided_reported = false;
             for (bi, (index, items)) in batch.iter().enumerate() {
-                let effective = as_run(&c.steps[*index].task, items);
-                let task = &*effective;
+                let task = &c.steps[*index].task;
                 let mut results = Vec::new();
                 let mut labels = Vec::new();
                 let mut reached = true;
@@ -1325,6 +1322,7 @@ pub(super) async fn drive_host(
                     task,
                     &results,
                     &labels,
+                    &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                     retried,
                     retried_names,
                     Dump::No,
@@ -1399,6 +1397,7 @@ pub(super) async fn drive_host(
                 task,
                 &results,
                 &[None],
+                &[],
                 &[],
                 &[],
                 Dump::No,

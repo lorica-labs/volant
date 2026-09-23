@@ -1086,7 +1086,8 @@ fn sub_task(
     Ok(Task {
         module: sub.module.to_string(),
         args: sub.args.clone(),
-        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
+        ignore_errors: item.ignore_errors.unwrap_or_else(|| task.ignores_errors())
+            || task.loop_items.is_some(),
         timeout: task.timeout,
         environment: item.environment.clone(),
         payload: Some(payload.under(&interpreter)),
@@ -1192,7 +1193,8 @@ pub(super) fn protocol_task(
         // An item is not the task: a failing item never stops the ones behind it, exactly as in
         // Ansible. The task's own failure is decided later, by `report_task`, from every item's
         // result.
-        ignore_errors: task.ignores_errors() || task.loop_items.is_some(),
+        ignore_errors: item.ignore_errors.unwrap_or_else(|| task.ignores_errors())
+            || task.loop_items.is_some(),
         timeout: task.timeout,
         environment: item.environment.clone(),
         // One payload for every item of the task: a loop varies the arguments, never the

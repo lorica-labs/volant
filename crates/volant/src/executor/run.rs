@@ -664,10 +664,27 @@ pub(super) fn finish(
     result: TaskResult,
     templar: &Templar,
 ) -> TaskResult {
+    // A run that hit the `timeout` keyword is reported as it stands. In ansible-core 2.19.12 the
+    // timeout is an exception raised out of the handler's run, past everything that would have
+    // judged the result, so `failed_when: false` cannot make a pass of it.
+    if timed_out(&result) {
+        return result;
+    }
     match apply_conditions(task, item, result, templar) {
         Ok(r) => r,
         Err(e) => TaskResult::failed_with(e.0),
     }
+}
+
+/// Whether a result is the one [`TaskResult::timed_out`] builds: a failure carrying the period
+/// it ran out of.
+fn timed_out(result: &TaskResult) -> bool {
+    result.failed()
+        && result
+            .0
+            .get("timedout")
+            .and_then(|t| t.get("period"))
+            .is_some()
 }
 
 /// Applies `changed_when` and `failed_when` to one result, with `result` bound to it.
@@ -950,7 +967,11 @@ pub(super) fn retry_plan(
         None => 3,
     };
     let delay = match &task.delay {
-        Some(raw) => Duration::from_secs_f64(number(raw, "delay")?.max(0.0)),
+        // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`.
+        Some(raw) => match number(raw, "delay")? {
+            d if d < 0.0 => Duration::from_secs(1),
+            d => Duration::from_secs_f64(d),
+        },
         None => Duration::from_secs(5),
     };
     Ok(Some(Retry {
@@ -1010,6 +1031,14 @@ pub(super) fn judge_attempt(
     retry: &Retry,
     templar: &Templar,
 ) -> Attempt {
+    // Out of the whole loop, as the reference's timeout exception is: see `finish`.
+    if timed_out(&raw) {
+        return Attempt::Done(raw);
+    }
+    // Before the conditions, which may read it, and again after them, since a condition that
+    // could not be evaluated hands back a result of its own.
+    let mut raw = raw;
+    raw.0.insert("attempts".into(), json!(attempt));
     let mut r = finish(task, item, raw, templar);
     r.0.insert("attempts".into(), json!(attempt));
     match until_holds(task, item, &r, retry, templar) {
@@ -1286,6 +1315,12 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
                 sub.module
             )));
         };
+        // The `timeout` keyword bounds the reference's whole action, and running out of it ends
+        // the action there: the item's result is the timeout, never something the plugin made of
+        // it.
+        if timed_out(&result) {
+            return Ok(result);
+        }
         last = Some(result);
     }
 }
@@ -4878,6 +4913,154 @@ mod tests {
             panic!("a passing run ends the loop");
         };
         assert_eq!(r.0["attempts"], json!(1));
+    }
+
+    /// `attempts` is on the result before `changed_when` and `failed_when` read it, and still on
+    /// it when a condition could not be evaluated. ansible-core 2.19.12 `task_executor.py` sets
+    /// it right after `failed` ("Make attempts and retries available early to allow their use in
+    /// changed/failed_when"), then binds the registered name, then applies the conditions.
+    ///
+    /// What would make this red: `attempts` set only after the conditions, which leaves
+    /// `r.attempts` undefined under `changed_when` and fails a task whose command passed on its
+    /// second run; or the failure a broken condition reports losing the count.
+    #[test]
+    fn changed_when_reads_the_attempt_it_judges() {
+        let mut t = task("command");
+        t.register = Some("r".into());
+        t.retries = Some(json!(3));
+        t.delay = Some(json!(0));
+        t.until = vec!["r.rc == 0".into()];
+        t.changed_when = vec!["r.attempts > 1".into()];
+        let item = bare_item();
+        let templar = Templar::new(PathBuf::from("."));
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let rc = |rc: i64| TaskResult(vars(json!({"rc": rc, "changed": true})));
+        assert!(matches!(
+            judge_attempt(&t, &item, rc(1), 1, &retry, &templar),
+            Attempt::Again(3)
+        ));
+        let Attempt::Done(r) = judge_attempt(&t, &item, rc(0), 2, &retry, &templar) else {
+            panic!("rc 0 ends the loop");
+        };
+        assert!(!r.failed(), "{r:?}");
+        assert_eq!(r.0["changed"], json!(true), "{r:?}");
+        assert_eq!(r.0["attempts"], json!(2));
+
+        // An `until` the failure satisfies, so that the loop ends on the result the broken
+        // condition handed back, and not on one an `until` reading a missing `rc` would raise.
+        t.changed_when = vec!["r.nosuchkey".into()];
+        t.until = vec!["r.failed".into()];
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let Attempt::Done(r) = judge_attempt(&t, &item, rc(0), 1, &retry, &templar) else {
+            panic!("the failure satisfies `until`");
+        };
+        assert!(r.failed(), "{r:?}");
+        assert!(msg(&r).contains("undefined"), "{r:?}");
+        assert_eq!(r.0["attempts"], json!(1), "{r:?}");
+    }
+
+    /// A run that hit the `timeout` keyword ends the task as it stands: no second run, no
+    /// `attempts`, and `failed_when` never consulted. In ansible-core 2.19.12 the timeout is an
+    /// exception raised out of the whole attempt loop (`_task_timeout.TaskTimeoutError`, a
+    /// `BaseException`), so nothing after the handler's run executes.
+    ///
+    /// What would make this red: a timed-out run judged like any failure, which retries a task
+    /// the reference gives up on at once, or lets `failed_when: false` turn a timeout into a pass.
+    #[test]
+    fn a_timed_out_run_is_never_retried_nor_judged() {
+        let mut t = task("command");
+        t.retries = Some(json!(3));
+        t.delay = Some(json!(0));
+        t.failed_when = vec!["false".into()];
+        let item = bare_item();
+        let templar = Templar::new(PathBuf::from("."));
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let Attempt::Done(r) =
+            judge_attempt(&t, &item, TaskResult::timed_out(1), 1, &retry, &templar)
+        else {
+            panic!("a timeout ends the loop");
+        };
+        assert_eq!(r, TaskResult::timed_out(1));
+        assert_eq!(
+            finish(&t, &item, TaskResult::timed_out(1), &templar),
+            TaskResult::timed_out(1)
+        );
+    }
+
+    /// A negative `delay` waits one second, as `task_executor.py` has it (`if delay < 0: delay =
+    /// 1`), and zero waits nothing.
+    ///
+    /// What would make this red: a negative delay clamped to zero, which retries a flapping
+    /// service in a tight loop where the reference paces it.
+    #[test]
+    fn a_negative_delay_waits_one_second() {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut t = task("command");
+        t.retries = Some(json!(1));
+        for (delay, want) in [(-3, 1), (0, 0), (2, 2)] {
+            t.delay = Some(json!(delay));
+            let retry = retry_plan(&t, Some(&bare_item()), &templar)
+                .unwrap()
+                .expect("a retry plan");
+            assert_eq!(retry.delay, Duration::from_secs(want), "delay: {delay}");
+        }
+    }
+
+    /// The plugin path follows both rules: `changed_when` reads `attempts`, and a sub-task that
+    /// timed out is the item's result as it stands, with nothing after it sent.
+    ///
+    /// What would make this red: the plugin handed the timed-out `stat` as if it had answered,
+    /// which dresses the timeout as a `copy` failure and retries it; or `attempts` set after the
+    /// conditions on this path, which the shared `judge_attempt` is there to prevent.
+    #[tokio::test]
+    async fn a_plugin_s_retries_follow_the_same_two_rules() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
+                one_result(3, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(4, json!({"changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let mut t = retried_copy(3);
+        t.register = Some("r".into());
+        t.changed_when = vec!["r.attempts > 1".into()];
+        let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/attempts"), &mut agent, &mut stop).await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert!(!result.failed(), "{result:?}");
+        assert_eq!(result.0["changed"], json!(true), "{result:?}");
+        assert_eq!(result.0["attempts"], json!(2));
+
+        let timed_out = Value::Object(TaskResult::timed_out(1).0);
+        let mut agent = FakeAgent::answering(
+            [vec![state("ab", true)], one_result(1, timed_out).to_vec()].concat(),
+        );
+        let (ran, lefts) = copy_attempts(
+            &retried_copy(3),
+            copy_args("/tmp/v/slow"),
+            &mut agent,
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
+        assert_eq!(result.0["timedout"], json!({"period": 1}));
+        assert!(!result.0.contains_key("attempts"), "{result:?}");
+        assert_eq!(lefts, Vec::<u32>::new());
+        assert_eq!(modules_sent(&agent), ["stat"]);
     }
 
     /// `until` reads the result the whole sequence ended with, judged by the task's conditions,

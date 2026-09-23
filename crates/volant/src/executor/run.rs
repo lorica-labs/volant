@@ -1211,7 +1211,8 @@ fn no_payload(module: &str) -> TaskResult {
 /// A module the union does not hold fails by name, and is never sent as if it were native: every
 /// module a plugin can pick is in the union by construction ([`crate::python::modules_to_build`]),
 /// so reaching that arm is a controller bug, and `service` is a name the agent would take for a
-/// module it runs itself.
+/// module it runs itself. The agent's own `command`, `raw` and `shell` are the exception, sent
+/// with no payload as a playbook's would be: `reboot` runs its commands through `raw`.
 fn sub_task(
     task: &PlayTask,
     item: &Item,
@@ -1220,6 +1221,13 @@ fn sub_task(
     interpreters: &[String],
     asked: Option<&str>,
 ) -> Result<Task, TaskResult> {
+    if volant_protocol::modules::native(sub.module).is_some() {
+        return Ok(Task {
+            module: sub.module.to_string(),
+            args: sub.args.clone(),
+            ..protocol_task(task, item, None)
+        });
+    }
     let Some(payload) = union.and_then(|union| {
         union.modules.get(sub.module).map(|facts| ModulePayload {
             blob: union.hash.clone(),
@@ -1265,8 +1273,9 @@ fn sub_task(
     clippy::too_many_arguments,
     reason = "the item, the plugin driving it, and the link and run state each sub-task goes over"
 )]
-pub(super) async fn run_plugin_item<C: AgentChannel>(
+pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
     link: &mut C,
+    relink: &mut R,
     host: &str,
     batch_id: &mut u64,
     plugin: &mut dyn crate::action_plugins::Plugin,
@@ -1279,12 +1288,96 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> Result<TaskResult, Result<BatchOutcome, String>> {
+    use crate::action_plugins::{Step, gone};
     let mut last = None;
+    // Failed tries in the reconnection in hand, which the pause before the next one grows with.
+    // A probe the plugin was not satisfied with counts as one, as in the reference's loop.
+    let mut tries: Option<u32> = None;
     loop {
-        let sub = match plugin.next(last.take()) {
-            crate::action_plugins::Step::Done(result) => return Ok(result),
-            crate::action_plugins::Step::Run(sub) => sub,
+        let (sub, dropping) = match plugin.next(last.take()) {
+            Step::Done(result) => return Ok(result),
+            Step::Run(sub) => (sub, false),
+            Step::RunDropping(sub) => (sub, true),
+            Step::Reconnect {
+                probe,
+                wait,
+                timeout,
+                attempt,
+            } => {
+                if wait_or_stop(wait, stop, stop_broken).await.is_none() {
+                    return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
+                }
+                let mut failed = tries.map_or(0, |t| t + 1);
+                let deadline = tokio::time::Instant::now() + timeout;
+                let mut why = "the host did not come back".to_string();
+                let built = match sub_task(task, item, &probe, union, interpreters, asked) {
+                    Ok(built) => built,
+                    Err(failure) => return Ok(failure),
+                };
+                last = Some(loop {
+                    if failed > 0 {
+                        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if wait_or_stop(relink.pause(failed).min(left), stop, stop_broken)
+                            .await
+                            .is_none()
+                        {
+                            return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
+                        }
+                    }
+                    let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if left.is_zero() {
+                        break gone(&why);
+                    }
+                    failed += 1;
+                    let bound = attempt.map_or(left, |a| a.min(left));
+                    // Watched on the side as well, since a connection attempt can take as long as
+                    // `bound` and an interruption is not made to wait for it.
+                    let mut watcher = stop.clone();
+                    let stopped = async move {
+                        if watcher.wait_for(|stopped| *stopped).await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                    };
+                    let once = async {
+                        relink.relink(link).await?;
+                        *batch_id += 1;
+                        let (mut flat, ended) = send_batch(
+                            link,
+                            host,
+                            *batch_id,
+                            vec![built.clone()],
+                            stop,
+                            stop_broken,
+                            logs,
+                        )
+                        .await;
+                        let answer: Result<Option<TaskResult>, String> = match ended {
+                            Ok(BatchOutcome::Cancelled { .. }) => Ok(None),
+                            Ok(_) => flat.pop().flatten().map(Some).ok_or_else(|| {
+                                "the agent ended the probe without its result".to_string()
+                            }),
+                            Err(err) => Err(err),
+                        };
+                        answer
+                    };
+                    let tried = tokio::select! {
+                        tried = tokio::time::timeout(bound, once) => tried,
+                        () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                    };
+                    match tried {
+                        Ok(Ok(Some(result))) => break result,
+                        Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                        Ok(Err(err)) => why = err,
+                        Err(_) => {
+                            why = format!("no answer after {} seconds", bound.as_secs_f64());
+                        }
+                    }
+                });
+                tries = Some(failed.saturating_sub(1));
+                continue;
+            }
         };
+        tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
             Ok(built) => built,
             Err(failure) => return Ok(failure),
@@ -1300,16 +1393,21 @@ pub(super) async fn run_plugin_item<C: AgentChannel>(
         }
         let (mut flat, ended) =
             send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
-        if !matches!(
-            ended,
-            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
-        ) {
-            return Err(ended);
+        let result = flat.pop().flatten();
+        match ended {
+            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }) => {}
+            // The link went, which a sub-task that may take it down reports to the plugin
+            // instead of ending the host's run.
+            Err(err) if dropping && result.is_none() => {
+                last = Some(gone(&err));
+                continue;
+            }
+            _ => return Err(ended),
         }
         // A batch the agent ended cleanly with no result in it has lost a sub-task's result
         // between two turns. Handed to the plugin as nothing, it would be read as the module's
         // own answer; the item fails naming it instead.
-        let Some(result) = flat.pop().flatten() else {
+        let Some(result) = result else {
             return Ok(TaskResult::failed_with(format!(
                 "the agent ended the '{}' sub-task without its result",
                 sub.module
@@ -1333,6 +1431,8 @@ pub(super) struct PluginStart<'a> {
     pub(super) delegated: bool,
     /// Whether the task escalates: the link its sub-tasks go over is the escalated one.
     pub(super) escalated: bool,
+    /// Whether that link runs the agent on the controller itself.
+    pub(super) local: bool,
     pub(super) templar: &'a Templar,
     pub(super) origin: &'a crate::compile::Origin,
     pub(super) playbook_dir: &'a std::path::Path,
@@ -1356,8 +1456,9 @@ pub(super) struct PluginStart<'a> {
     clippy::too_many_arguments,
     reason = "run_plugin_item's arguments, plus the retry plan and the lines it prints"
 )]
-pub(super) async fn run_plugin_attempts<C: AgentChannel>(
+pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
     link: &mut C,
+    relink: &mut R,
     host: &str,
     batch_id: &mut u64,
     start: &PluginStart<'_>,
@@ -1387,6 +1488,7 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel>(
                     running_vars: start.running_vars,
                     delegated: start.delegated,
                     escalated: start.escalated,
+                    local: start.local,
                     item_vars: &item.vars,
                     templar: start.templar,
                     origin: start.origin,
@@ -1396,6 +1498,7 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel>(
             );
             run_plugin_item(
                 link,
+                relink,
                 host,
                 batch_id,
                 plugin.as_mut(),
@@ -1494,6 +1597,63 @@ pub(super) trait AgentChannel {
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
+}
+
+/// How a plugin that expects its host to go away gets a link to it again.
+pub(super) trait Relink<C> {
+    /// Replaces `link` with a fresh one to the same host, under the same user, after dropping
+    /// every other link kept for that host: a link the host outlived is of no use to anybody.
+    /// `link` is left as it was when no fresh one could be opened.
+    async fn relink(&mut self, link: &mut C) -> Result<(), String>;
+
+    /// How long to wait before the next try, after `failed` of them: the reference's doubling
+    /// from one second, capped at twelve (`reboot.py`, which adds up to a second at random).
+    fn pause(&self, failed: u32) -> Duration {
+        Duration::from_secs(1 << failed.saturating_sub(1).min(4)).min(Duration::from_secs(12))
+    }
+}
+
+/// [`Relink`] for the driver's links: `key` is the one the batch runs on, taken out of `links`
+/// while the plugin holds it.
+pub(super) struct Relinker<'a> {
+    pub(super) links: &'a mut HashMap<LinkKey, AgentLink>,
+    pub(super) checked: &'a mut HashSet<LinkKey>,
+    pub(super) key: &'a LinkKey,
+    pub(super) escalation: Option<&'a Escalation>,
+    pub(super) agents: &'a AgentSource,
+    pub(super) defaults: &'a ConnectionDefaults,
+}
+
+impl Relink<AgentLink> for Relinker<'_> {
+    async fn relink(&mut self, link: &mut AgentLink) -> Result<(), String> {
+        // Closed off-task, as a replaced escalated link is: their agents died with the host.
+        let stale: Vec<LinkKey> = self
+            .links
+            .keys()
+            .filter(|k| k.host == self.key.host)
+            .cloned()
+            .collect();
+        for key in stale {
+            self.checked.remove(&key);
+            if let Some(old) = self.links.remove(&key) {
+                tokio::spawn(old.shutdown());
+            }
+        }
+        // Checked again by the next batch if this never comes back up: the link left in place is
+        // the one the host outlived.
+        self.checked.remove(self.key);
+        let fresh = connect(
+            &self.key.transport,
+            self.agents,
+            self.defaults,
+            self.escalation,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let old = std::mem::replace(link, fresh);
+        tokio::spawn(old.shutdown());
+        Ok(())
+    }
 }
 
 impl AgentChannel for AgentLink {
@@ -2922,6 +3082,15 @@ mod tests {
         assert_eq!(fact_targets(&t, "h1", &live), live);
     }
 
+    /// A plugin that reconnects, where the test expects none to: every try fails.
+    struct NoRelink;
+
+    impl<C> Relink<C> for NoRelink {
+        async fn relink(&mut self, _link: &mut C) -> Result<(), String> {
+            Err("this test opens no connection".into())
+        }
+    }
+
     /// An agent that answers what the test scripted, and remembers what a link remembers.
     struct FakeAgent {
         sent: Vec<ToAgent>,
@@ -3359,11 +3528,43 @@ mod tests {
         Result<TaskResult, Result<BatchOutcome, String>>,
         Vec<String>,
     ) {
+        plugin_item_on(
+            kind,
+            args,
+            running,
+            agent,
+            &mut NoRelink,
+            false,
+            interpreters,
+            stop,
+        )
+        .await
+    }
+
+    /// [`plugin_item`], with a way to reconnect and a choice of whether the link is local.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "plugin_item's, plus the two it fixes"
+    )]
+    async fn plugin_item_on<R: Relink<FakeAgent>>(
+        kind: crate::action_plugins::Kind,
+        args: Value,
+        running: Value,
+        agent: &mut FakeAgent,
+        relink: &mut R,
+        local: bool,
+        interpreters: &[String],
+        stop: &mut watch::Receiver<bool>,
+    ) -> (
+        Result<TaskResult, Result<BatchOutcome, String>>,
+        Vec<String>,
+    ) {
         let t = task(match kind {
             crate::action_plugins::Kind::Copy => "copy",
             crate::action_plugins::Kind::Dnf => "dnf",
             crate::action_plugins::Kind::Fetch => "fetch",
             crate::action_plugins::Kind::Package => "package",
+            crate::action_plugins::Kind::Reboot => "reboot",
             crate::action_plugins::Kind::Service => "service",
             crate::action_plugins::Kind::Template => "template",
             crate::action_plugins::Kind::Unarchive => "unarchive",
@@ -3389,6 +3590,7 @@ mod tests {
                     running_vars: &running,
                     delegated: false,
                     escalated: false,
+                    local,
                     item_vars: &item.vars,
                     templar: &templar,
                     origin: &origin,
@@ -3398,6 +3600,7 @@ mod tests {
             );
             run_plugin_item(
                 agent,
+                relink,
                 "h1",
                 &mut batch_id,
                 plugin.as_mut(),
@@ -4749,6 +4952,7 @@ mod tests {
             running_vars: &running,
             delegated: false,
             escalated: false,
+            local: false,
             templar: &templar,
             origin: &origin,
             playbook_dir: Path::new("."),
@@ -4756,6 +4960,7 @@ mod tests {
         let mut lefts = Vec::new();
         let ran = run_plugin_attempts(
             agent,
+            &mut NoRelink,
             "h1",
             &mut 0,
             &start,
@@ -5716,5 +5921,476 @@ mod tests {
             "the task kept running on a real agent after the real stop_batch forward: {}",
             String::from_utf8_lossy(&survivors.stdout)
         );
+    }
+
+    /// What one connection attempt of a scripted reconnection does.
+    enum Try {
+        /// A fresh link comes up, answering what this agent was scripted to.
+        Up(FakeAgent),
+        /// No link, for this reason.
+        Down(&'static str),
+        /// No answer at all, for as long as anybody waits.
+        Hangs,
+    }
+
+    /// Reconnections a test scripted, one entry per try, then `after` for every try past them.
+    /// Keeps every link it replaced, so a test reads what each one was sent.
+    struct Scripted {
+        tries: std::collections::VecDeque<Try>,
+        after: Option<fn() -> FakeAgent>,
+        attempts: usize,
+        retired: Vec<FakeAgent>,
+        /// Raised on the first try, for a test of the run being interrupted while it waits.
+        stop: Option<watch::Sender<bool>>,
+        /// A millisecond in place of the reference's seconds, so the schedule's shape is tested
+        /// without its length (`the_pause_doubles_from_one_second_up_to_twelve`), unless a test
+        /// needs a pause long enough to be interrupted.
+        pause: Duration,
+    }
+
+    impl Scripted {
+        fn new(tries: Vec<Try>) -> Self {
+            Scripted {
+                tries: tries.into(),
+                after: None,
+                attempts: 0,
+                retired: Vec::new(),
+                stop: None,
+                pause: Duration::from_millis(1),
+            }
+        }
+    }
+
+    impl Relink<FakeAgent> for Scripted {
+        async fn relink(&mut self, link: &mut FakeAgent) -> Result<(), String> {
+            self.attempts += 1;
+            if let Some(stop) = self.stop.take() {
+                let _ = stop.send(true);
+            }
+            let next = self
+                .tries
+                .pop_front()
+                .or_else(|| self.after.map(|make| Try::Up(make())));
+            match next {
+                Some(Try::Up(fresh)) => {
+                    self.retired.push(std::mem::replace(link, fresh));
+                    Ok(())
+                }
+                Some(Try::Down(why)) => Err(why.to_string()),
+                Some(Try::Hangs) => std::future::pending().await,
+                None => Err("the script ran out".to_string()),
+            }
+        }
+
+        fn pause(&self, _failed: u32) -> Duration {
+            self.pause
+        }
+    }
+
+    /// Every `raw` line and module a set of links was sent, in order.
+    fn sent_lines(links: &[&FakeAgent]) -> Vec<Vec<String>> {
+        links
+            .iter()
+            .map(|agent| {
+                batches_sent(agent)
+                    .iter()
+                    .map(|b| match b[0].module.as_str() {
+                        "raw" => b[0].args["_raw_params"].as_str().unwrap_or("").to_string(),
+                        module => module.to_string(),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn raw_answer(batch: u64, rc: i64, stdout: &str) -> [FromAgent; 2] {
+        one_result(
+            batch,
+            json!({"rc": rc, "stdout": stdout, "stderr": "", "changed": true}),
+        )
+    }
+
+    /// The host a `reboot` starts on: `setup`, the boot id, `find`, and whatever `shutdown`
+    /// answers, which is nothing at all when `shutdown` is `None` - the link goes down under it.
+    fn before_the_reboot(shutdown: Option<Vec<FromAgent>>) -> FakeAgent {
+        FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_distribution": "Ubuntu",
+                        "ansible_distribution_version": "24.04", "ansible_os_family": "Debian"}}),
+                )
+                .to_vec(),
+                raw_answer(2, 0, "old-boot-id\n").to_vec(),
+                one_result(
+                    3,
+                    json!({"files": [{"path": "/sbin/shutdown"}], "matched": 1}),
+                )
+                .to_vec(),
+                shutdown.unwrap_or_default(),
+            ]
+            .concat(),
+        )
+    }
+
+    async fn reboot_item(
+        args: Value,
+        agent: &mut FakeAgent,
+        relink: &mut Scripted,
+        local: bool,
+        stop: &mut watch::Receiver<bool>,
+    ) -> Result<TaskResult, Result<BatchOutcome, String>> {
+        // A broken wait is a wait that never ends: bounded here, so it fails rather than hangs.
+        let (ran, _) = tokio::time::timeout(
+            Duration::from_secs(30),
+            plugin_item_on(
+                crate::action_plugins::Kind::Reboot,
+                args,
+                json!({}),
+                agent,
+                relink,
+                local,
+                &python3(),
+                stop,
+            ),
+        )
+        .await
+        .expect("the item ended within thirty seconds");
+        ran
+    }
+
+    /// The whole sequence measured on ansible-core 2.19.12 with `reboot: {}` on a real host:
+    /// `setup` of the `min` subset, the boot id, `find` for `shutdown`, `/sbin/shutdown -r 0
+    /// "Reboot initiated by Ansible"` under which the link goes down, then fresh links until the
+    /// boot id changes - through two that did not come up and one that still read the old boot
+    /// id - and `whoami`. The result is the reference's `{"changed": true, "elapsed": <s>,
+    /// "rebooted": true}`.
+    ///
+    /// What would make this red: the link lost under `shutdown` taken for the host lost, which
+    /// reports it unreachable; a failed connection taken for the end; the old boot id taken for
+    /// a new boot, which stops one link early; the boot id read again on the link that was open
+    /// before the reboot rather than on a fresh one; or `whoami` never run.
+    #[tokio::test]
+    async fn a_reboot_waits_through_dead_links_for_a_new_boot_id() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(vec![
+            Try::Down("ssh: connect to host target port 22: No route to host"),
+            Try::Down("Timeout (12s) waiting for privilege escalation prompt"),
+            Try::Up(FakeAgent::answering(
+                raw_answer(5, 0, "old-boot-id\n").to_vec(),
+            )),
+            Try::Up(FakeAgent::answering(
+                [
+                    raw_answer(6, 0, "new-boot-id\n").to_vec(),
+                    raw_answer(7, 0, "root\n").to_vec(),
+                ]
+                .concat(),
+            )),
+        ]);
+        let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+            .await
+            .expect("the item ran to its end");
+        assert_eq!(
+            Value::Object(result.0),
+            json!({"changed": true, "elapsed": 0, "rebooted": true})
+        );
+        assert_eq!(
+            relink.attempts, 4,
+            "two down, one on the old boot, one back"
+        );
+        let links: Vec<&FakeAgent> = relink.retired.iter().chain([&agent]).collect();
+        assert_eq!(
+            sent_lines(&links),
+            [
+                vec![
+                    "setup",
+                    "cat /proc/sys/kernel/random/boot_id",
+                    "find",
+                    "/sbin/shutdown -r 0 \"Reboot initiated by Ansible\"",
+                ],
+                vec!["cat /proc/sys/kernel/random/boot_id"],
+                vec!["cat /proc/sys/kernel/random/boot_id", "whoami"],
+            ]
+        );
+        let first = batches_sent(links[0]);
+        assert_eq!(
+            Value::Object(first[0][0].args.clone()),
+            json!({"gather_subset": ["min"]})
+        );
+        assert_eq!(
+            Value::Object(first[2][0].args.clone()),
+            json!({"paths": ["/sbin", "/bin", "/usr/sbin", "/usr/bin", "/usr/local/sbin"],
+                "patterns": ["shutdown"], "file_type": "any"})
+        );
+        assert!(
+            first[1][0].payload.is_none() && first[3][0].payload.is_none(),
+            "the commands are the agent's own `raw`"
+        );
+    }
+
+    /// A host whose boot id never changes fails the task once `reboot_timeout` has run out, in
+    /// the reference's words (`reboot.py`, `do_until_success_or_timeout`), with `rebooted: true`.
+    ///
+    /// What would make this red: the wait never ending - `volant_within` is not needed, the
+    /// test's own clock is one second - or ending on the first unchanged answer, or failing
+    /// with a sentence of its own.
+    #[tokio::test]
+    async fn a_boot_id_that_never_changes_times_out_by_name() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(Vec::new());
+        relink.after = Some(|| FakeAgent::answering(raw_answer(9, 0, "old-boot-id\n").to_vec()));
+        let result = reboot_item(
+            json!({"reboot_timeout": 1}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await
+        .expect("the item ran to its end");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            msg(&result),
+            "Timed out waiting for last boot time check (timeout=1)"
+        );
+        assert_eq!(result.0["rebooted"], json!(true));
+        assert!(relink.attempts > 1, "{}", relink.attempts);
+    }
+
+    /// A `shutdown` that answers and fails is the task's failure at once, with the reference's
+    /// sentence, and no reconnection is tried: nothing is going to reboot.
+    ///
+    /// What would make this red: the answer ignored because the link is expected to die, which
+    /// waits out the whole `reboot_timeout` - ten minutes by default - for a reboot that was
+    /// refused.
+    #[tokio::test]
+    async fn a_refused_shutdown_fails_at_once() {
+        let mut stop = watch::channel(false).1;
+        let refused = one_result(
+            4,
+            json!({"rc": 1, "stdout": "", "stderr": "Failed to set wall message, ignoring: Interactive authentication required.\n", "changed": true}),
+        )
+        .to_vec();
+        let mut agent = before_the_reboot(Some(refused));
+        let mut relink = Scripted::new(Vec::new());
+        let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+            .await
+            .expect("the item ran to its end");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            msg(&result),
+            "Reboot command failed. Error was: ', Failed to set wall message, ignoring: Interactive authentication required.'"
+        );
+        assert_eq!(result.0["rebooted"], json!(false));
+        assert_eq!(relink.attempts, 0);
+    }
+
+    /// No `shutdown` in the search paths fails the task naming them as Python prints a list, and
+    /// nothing is run in its place.
+    #[tokio::test]
+    async fn a_shutdown_nowhere_to_be_found_fails_naming_the_paths() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_distribution": "Ubuntu",
+                        "ansible_distribution_version": "24.04", "ansible_os_family": "Debian"}}),
+                )
+                .to_vec(),
+                raw_answer(2, 0, "old-boot-id\n").to_vec(),
+                one_result(3, json!({"files": [], "matched": 0})).to_vec(),
+            ]
+            .concat(),
+        );
+        let mut relink = Scripted::new(Vec::new());
+        let result = reboot_item(
+            json!({"search_paths": ["/opt/bin", "/usr/local/bin"]}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await
+        .expect("the item ran to its end");
+        assert_eq!(
+            msg(&result),
+            "Unable to find command \"shutdown\" in search paths: ['/opt/bin', '/usr/local/bin']"
+        );
+        assert_eq!(batches_sent(&agent).len(), 3, "no shutdown sent");
+    }
+
+    /// On the controller's own connection, `reboot` refuses before anything runs, with the
+    /// reference's result: there is only one machine it could restart.
+    ///
+    /// What would make this red: the guard gone, which runs `shutdown -r` on the machine running
+    /// the playbook.
+    #[tokio::test]
+    async fn a_local_connection_is_never_rebooted() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(Vec::new());
+        let mut relink = Scripted::new(Vec::new());
+        let result = reboot_item(json!({}), &mut agent, &mut relink, true, &mut stop)
+            .await
+            .expect("the item ran to its end");
+        assert_eq!(
+            Value::Object(result.0),
+            json!({"changed": false, "elapsed": 0, "failed": true,
+                "msg": "Running reboot with local connection would reboot the control node.",
+                "rebooted": false})
+        );
+        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+    }
+
+    /// An interruption during the pause between two tries ends the item at once, as one during a
+    /// retry's `delay` does, and nothing more is tried.
+    ///
+    /// What would make this red: the pause not watching the stop, which sits out the whole pause
+    /// - here a minute - before the next try notices it.
+    #[tokio::test]
+    async fn an_interruption_ends_the_pause_between_two_tries() {
+        let (tx, mut stop) = watch::channel(false);
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(vec![Try::Down("No route to host")]);
+        relink.stop = Some(tx);
+        relink.pause = Duration::from_secs(60);
+        let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
+        assert!(
+            matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
+            "{ended:?}"
+        );
+        assert_eq!(relink.attempts, 1);
+    }
+
+    /// An interruption while a try hangs ends the item at once, without waiting for the try.
+    ///
+    /// What would make this red: the try not raced against the stop, which waits for it as long
+    /// as `reboot_timeout` allows - ten minutes by default.
+    #[tokio::test]
+    async fn an_interruption_ends_a_try_that_hangs() {
+        let (tx, mut stop) = watch::channel(false);
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(vec![Try::Hangs]);
+        relink.stop = Some(tx);
+        let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
+        assert!(
+            matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
+            "{ended:?}"
+        );
+        assert_eq!(relink.attempts, 1);
+    }
+
+    /// `connect_timeout` bounds each try: one that hangs is given up after it, and the next one
+    /// runs.
+    ///
+    /// What would make this red: the bound dropped, which leaves the wait on the hung try until
+    /// `reboot_timeout` - here five seconds - and times the task out.
+    #[tokio::test]
+    async fn connect_timeout_gives_up_on_a_try_that_hangs() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(vec![
+            Try::Hangs,
+            Try::Up(FakeAgent::answering(
+                [
+                    raw_answer(5, 0, "new-boot-id\n").to_vec(),
+                    raw_answer(6, 0, "root\n").to_vec(),
+                ]
+                .concat(),
+            )),
+        ]);
+        let result = reboot_item(
+            json!({"connect_timeout": 1, "reboot_timeout": 5}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await
+        .expect("the item ran to its end");
+        assert!(!result.failed(), "{result:?}");
+        assert_eq!(relink.attempts, 2);
+    }
+
+    /// The reference's schedule between two tries: 1, 2, 4, 8, then 12 seconds for good.
+    #[test]
+    fn the_pause_doubles_from_one_second_up_to_twelve() {
+        let pauses: Vec<u64> = (1..=7)
+            .map(|n| Relink::<FakeAgent>::pause(&NoRelink, n).as_secs())
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 12, 12, 12]);
+    }
+
+    /// Reconnecting drops every link kept for the host - its own and the escalated one - and
+    /// no other host's, and puts a fresh link in place of the one the plugin holds. Run against
+    /// real agents on the local connection.
+    ///
+    /// What would make this red: the escalated link left in the map, which the next escalated
+    /// task reuses unchecked - it was checked once this play - and fails on as a dead host.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnecting_drops_the_host_s_links_and_no_other() {
+        let exe = std::env::current_exe().expect("this test's own binary path");
+        let agent_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .expect("deps/ has a parent")
+            .to_path_buf();
+        // SAFETY: nextest gives every test its own process, and nothing else here reads it.
+        unsafe {
+            std::env::set_var("VOLANT_AGENT_DIR", &agent_dir);
+        }
+        let source = AgentSource::discover();
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        let key = |host: &str, user: Option<&str>| LinkKey {
+            host: host.to_string(),
+            become_user: user.map(str::to_string),
+            transport: Transport::Local,
+        };
+        let mut links = HashMap::new();
+        let mut checked = HashSet::new();
+        for k in [key("h1", Some("root")), key("h2", None)] {
+            let link = connect(&Transport::Local, &source, &defaults, None)
+                .await
+                .expect("a real agent");
+            checked.insert(k.clone());
+            links.insert(k, link);
+        }
+        let mine = key("h1", None);
+        checked.insert(mine.clone());
+        let mut held = connect(&Transport::Local, &source, &defaults, None)
+            .await
+            .expect("a real agent");
+        let mut relink = Relinker {
+            links: &mut links,
+            checked: &mut checked,
+            key: &mine,
+            escalation: None,
+            agents: &source,
+            defaults: &defaults,
+        };
+        relink.relink(&mut held).await.expect("a fresh link");
+        let left: Vec<&LinkKey> = links.keys().collect();
+        assert_eq!(left, [&key("h2", None)]);
+        assert_eq!(checked, HashSet::from([key("h2", None)]));
+        held.handshake().await.expect("the fresh link answers");
+        held.shutdown().await;
+        for (_, link) in links.drain() {
+            link.shutdown().await;
+        }
     }
 }

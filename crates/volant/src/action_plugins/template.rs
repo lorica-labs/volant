@@ -265,6 +265,7 @@ mod tests {
             running_vars: &running,
             delegated: false,
             escalated: false,
+            local: false,
             item_vars,
             templar: &templar,
             origin: &origin,
@@ -286,7 +287,7 @@ mod tests {
         let absent = TaskResult(map(json!({"stat": {"exists": false}})));
         match plugin.next(Some(absent)) {
             Step::Run(sub) => sub,
-            Step::Done(result) => panic!("done before `copy`: {result:?}"),
+            other => panic!("done before `copy`: {other:?}"),
         }
     }
 
@@ -304,7 +305,7 @@ mod tests {
                 assert!(result.failed(), "{result:?}");
                 result.0["msg"].as_str().unwrap().to_string()
             }
-            Step::Run(sub) => panic!("a sub-task was sent: {sub:?}"),
+            other => panic!("a sub-task was sent: {other:?}"),
         }
     }
 

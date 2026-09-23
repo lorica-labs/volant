@@ -527,6 +527,7 @@ mod tests {
             running_vars: &running,
             delegated: false,
             escalated,
+            local: false,
             item_vars,
             templar: &templar,
             origin: &origin,
@@ -564,6 +565,7 @@ mod tests {
                     }));
                     subs.push(sub);
                 }
+                other => panic!("a step this plugin never takes: {other:?}"),
             }
         }
     }

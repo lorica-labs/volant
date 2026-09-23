@@ -256,6 +256,7 @@ mod tests {
             running_vars: &running,
             delegated: false,
             escalated: false,
+            local: false,
             item_vars: &item_vars,
             templar: &templar,
             origin: &origin,
@@ -275,7 +276,7 @@ mod tests {
         });
         match plugin.next(last) {
             Step::Run(sub) => sub,
-            Step::Done(result) => panic!("done early: {result:?}"),
+            other => panic!("done early: {other:?}"),
         }
     }
 
@@ -285,7 +286,7 @@ mod tests {
         };
         match plugin.next(Some(TaskResult(last))) {
             Step::Done(result) => Value::Object(result.0),
-            Step::Run(sub) => panic!("another sub-task: {sub:?}"),
+            other => panic!("another sub-task: {other:?}"),
         }
     }
 
@@ -295,7 +296,7 @@ mod tests {
                 assert!(result.failed(), "{result:?}");
                 result.0["msg"].as_str().unwrap().to_string()
             }
-            Step::Run(sub) => panic!("a sub-task was sent: {sub:?}"),
+            other => panic!("a sub-task was sent: {other:?}"),
         }
     }
 

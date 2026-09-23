@@ -28,10 +28,11 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, PluginStart, Retry, chosen_interpreter, fact_targets, failed_task_value, finish,
-    judge_attempt, notify, python_for, record_facts, record_registered, requested_interpreter,
-    retry_plan, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
-    running_host_vars, step_tasks, take_warnings, unresolved_notify, wait_or_stop,
+    Attempt, PluginStart, Relinker, Retry, chosen_interpreter, fact_targets, failed_task_value,
+    finish, judge_attempt, notify, python_for, record_facts, record_registered,
+    requested_interpreter, retry_plan, reuse_or_connect, run_agent_batch, run_local,
+    run_plugin_attempts, running_host_vars, step_tasks, take_warnings, unresolved_notify,
+    wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1046,11 +1047,26 @@ pub(super) async fn drive_host(
                 };
                 let step = &c.steps[*index];
                 let interpreters = link.interpreters().to_vec();
+                // Out of the map while the plugin holds it, so that a plugin reconnecting can
+                // drop the host's other links, and back in once the task is done, fresh or not.
+                let Some(mut owned) = links.remove(&key) else {
+                    unreachable = Some("the batch lost its connection".to_string());
+                    break 'run;
+                };
+                let mut relink = Relinker {
+                    links: &mut links,
+                    checked: &mut checked,
+                    key: &key,
+                    escalation: batch_escalation.as_ref(),
+                    agents: &agents,
+                    defaults: &options.defaults,
+                };
                 let playbook_dir = store
                     .lock()
                     .expect("vars lock")
                     .playbook_dir()
                     .to_path_buf();
+                let mut stopped = false;
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
@@ -1075,12 +1091,14 @@ pub(super) async fn drive_host(
                         ),
                         delegated: delegate.is_some(),
                         escalated: batch_escalation.is_some(),
+                        local: matches!(key.transport, Transport::Local),
                         templar: &templar,
                         origin: &step.origin,
                         playbook_dir: &playbook_dir,
                     };
                     let ran = run_plugin_attempts(
-                        link,
+                        &mut owned,
+                        &mut relink,
                         &name,
                         &mut batch_id,
                         &start,
@@ -1100,7 +1118,10 @@ pub(super) async fn drive_host(
                     match ran {
                         // Stopped between two attempts: nothing more runs, as for every other
                         // wait the stop ends.
-                        Ok(None) => break 'run,
+                        Ok(None) => {
+                            stopped = true;
+                            break;
+                        }
                         Ok(Some(result)) => received[0][ii] = Some(result),
                         // The link lost or the run interrupted: this item has no result and the
                         // ones behind it do not run, exactly as for any batch the agent did not
@@ -1122,6 +1143,10 @@ pub(super) async fn drive_host(
                             })
                             .await;
                     }
+                }
+                links.insert(key.clone(), owned);
+                if stopped {
+                    break 'run;
                 }
                 outcome
             } else if let Some(retry) = batch_retry.clone() {

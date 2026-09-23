@@ -5,9 +5,9 @@
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 //! 27 names in both. A module whose plugin is not written here cannot be run by sending its
 //! payload to the agent: the action plugin is where its real behaviour lives. `script` reads its
-//! file on the controller, `reboot` waits there for the host. Sending the module alone would run
-//! something that is not what the playbook asked for, so those names are refused before the first
-//! connection.
+//! file on the controller, `wait_for_connection` waits there for the host. Sending the module
+//! alone would run something that is not what the playbook asked for, so those names are refused
+//! before the first connection.
 //!
 //! A plugin that is written here runs on the controller as a small state machine: asked for the
 //! next sub-task, handed the result of the last one, until it hands back the task's result. Each
@@ -20,12 +20,14 @@ mod dnf;
 mod fetch;
 pub(crate) mod files;
 mod package;
+mod reboot;
 mod service;
 mod template;
 mod unarchive;
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -57,6 +59,7 @@ pub(crate) enum Kind {
     Dnf,
     Fetch,
     Package,
+    Reboot,
     Service,
     Template,
     Unarchive,
@@ -76,6 +79,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
         "dnf" => Some(Kind::Dnf),
         "fetch" => Some(Kind::Fetch),
         "package" => Some(Kind::Package),
+        "reboot" => Some(Kind::Reboot),
         "service" => Some(Kind::Service),
         "template" => Some(Kind::Template),
         "unarchive" => Some(Kind::Unarchive),
@@ -95,6 +99,8 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
         Kind::Dnf => &["setup", "dnf", "dnf5"],
         Kind::Fetch => &["stat", "slurp"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
+        // Its commands go through the agent's own `raw`, which needs no payload.
+        Kind::Reboot => &["setup", "find"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
         Kind::Unarchive => &["stat", "unarchive"],
     }
@@ -130,11 +136,39 @@ impl Sub {
 }
 
 /// What a plugin asks for next.
+#[derive(Debug)]
 pub(crate) enum Step {
     /// One more module on the host; its result comes back on the next call.
     Run(Sub),
+    /// One more module, under which the link may go away. Its result comes back on the next
+    /// call, or, when the link went before it answered, [`gone`] naming why: a `shutdown` that
+    /// took the connection down with it has done what it was asked.
+    RunDropping(Sub),
+    /// The host is expected to have gone away: after `wait`, the host's links are dropped - its
+    /// own and any escalated one kept for it - and a fresh one is opened, retrying with a
+    /// growing pause, for at most `timeout`. Each connection attempt is given `attempt` at most.
+    /// `probe` runs on the first link that comes up and its result comes back on the next call;
+    /// when none came up in time, [`gone`] naming the last failure does.
+    Reconnect {
+        probe: Sub,
+        wait: Duration,
+        timeout: Duration,
+        attempt: Option<Duration>,
+    },
     /// The task's result for this item.
     Done(TaskResult),
+}
+
+/// What a plugin is handed for a sub-task whose link went away before it answered.
+pub(crate) fn gone(why: &str) -> TaskResult {
+    let mut result = TaskResult::failed_with(why);
+    result.0.insert("unreachable".into(), Value::Bool(true));
+    result
+}
+
+/// Whether a result is [`gone`]'s rather than a module's.
+fn is_gone(result: &TaskResult) -> bool {
+    result.0.get("unreachable") == Some(&Value::Bool(true))
 }
 
 /// A plugin, item by item: asked for the next sub-task, handed the result of the last.
@@ -154,6 +188,8 @@ pub(crate) struct Context<'a> {
     pub delegated: bool,
     /// Whether the task escalates: the link its sub-tasks go over is the escalated one.
     pub escalated: bool,
+    /// Whether that link runs the agent on the controller itself (`connection: local`).
+    pub local: bool,
     /// The item's own variables, for `template`.
     pub item_vars: &'a HostVars,
     pub templar: &'a Templar,
@@ -170,6 +206,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
         Kind::Dnf => Box::new(dnf::Dnf::new(ctx)),
         Kind::Fetch => fetch::start(ctx),
         Kind::Package => Box::new(package::Package::new(ctx)),
+        Kind::Reboot => Box::new(reboot::Reboot::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
         Kind::Template => template::start(ctx),
         Kind::Unarchive => unarchive::start(ctx),
@@ -254,19 +291,20 @@ mod tests {
             "template",
             "unarchive",
             "fetch",
+            "reboot",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }
-        assert!(is_action_backed("reboot"), "reboot is action-backed");
+        assert!(is_action_backed("script"), "script is action-backed");
     }
 
     /// The two prefixes that name the same modules are read as such, and another collection's
     /// module of the same name is not this one.
     #[test]
     fn the_builtin_prefixes_name_the_same_modules() {
-        assert!(is_action_backed("ansible.builtin.reboot"));
-        assert!(is_action_backed("ansible.legacy.reboot"));
-        assert!(!is_action_backed("community.general.reboot"));
+        assert!(is_action_backed("ansible.builtin.script"));
+        assert!(is_action_backed("ansible.legacy.script"));
+        assert!(!is_action_backed("community.general.script"));
         assert_eq!(kind("ansible.builtin.package"), Some(Kind::Package));
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
@@ -279,7 +317,9 @@ mod tests {
         assert_eq!(kind("community.general.unarchive"), None);
         assert_eq!(kind("ansible.builtin.fetch"), Some(Kind::Fetch));
         assert_eq!(kind("community.general.fetch"), None);
-        assert_eq!(kind("reboot"), None);
+        assert_eq!(kind("ansible.builtin.reboot"), Some(Kind::Reboot));
+        assert_eq!(kind("community.general.reboot"), None);
+        assert_eq!(kind("script"), None);
     }
 
     /// Every plugin the modules page lists is one this release dispatches.
@@ -307,6 +347,7 @@ mod tests {
             Kind::Dnf,
             Kind::Fetch,
             Kind::Package,
+            Kind::Reboot,
             Kind::Service,
             Kind::Template,
             Kind::Unarchive,

@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 
 mod file;
 mod filters;
+pub(crate) use filters::python_json;
 mod lookups;
 mod tests;
 mod yaml_dump;

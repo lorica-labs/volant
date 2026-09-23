@@ -12,8 +12,6 @@
 //! registered value names, so a host that controls a command's output can have any file the
 //! operator can read sent to it.
 
-use std::fmt::Write as _;
-
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::encoding::sha1_hex;
@@ -170,42 +168,9 @@ fn content_text(content: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Bool(true) => "True".into(),
         Value::Bool(false) => "False".into(),
-        other => python_dumps(other),
+        // `json.dumps` with its defaults, `ensure_ascii` among them.
+        other => crate::template::python_json(other, None, false, true, 0),
     }
-}
-
-/// `json.dumps` with its defaults: `", "` and `": "` between items, keys in their order, and
-/// every character past ASCII escaped.
-fn python_dumps(value: &Value) -> String {
-    match value {
-        Value::Object(map) => {
-            let fields: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("{}: {}", ascii_string(k), python_dumps(v)))
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
-        Value::Array(items) => {
-            let items: Vec<String> = items.iter().map(python_dumps).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::String(s) => ascii_string(s),
-        other => other.to_string(),
-    }
-}
-
-fn ascii_string(s: &str) -> String {
-    let mut out = String::new();
-    for c in Value::String(s.to_string()).to_string().chars() {
-        if c.is_ascii() {
-            out.push(c);
-        } else {
-            for unit in c.encode_utf16(&mut [0; 2]) {
-                let _ = write!(out, "\\u{unit:04x}");
-            }
-        }
-    }
-    out
 }
 
 /// A plugin with one step to hand, then the result of that step as the task's.

@@ -289,7 +289,13 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 /// Measured against ansible-core 2.19.12: `{b: 1, a: 2, c: 3} | to_json` gives
 /// `{"b": 1, "a": 2, "c": 3}`, so `to_json` keeps the order the mapping was written in.
 fn to_json(value: Value) -> Result<Value, Error> {
-    Ok(Value::from(python_json(&json(&value), None, false, 0)))
+    Ok(Value::from(python_json(
+        &json(&value),
+        None,
+        false,
+        false,
+        0,
+    )))
 }
 
 /// `to_nice_json` is the one that sorts: the reference calls `json.dumps` with
@@ -301,20 +307,43 @@ fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         &json(&value),
         Some(indent),
         true,
+        false,
         0,
     )))
 }
 
-fn python_json(
+/// Python's `json.dumps`, the one imitation of it in this crate: `", "` between items without an
+/// indent and `","` with one, `": "` after a key, keys in their order unless `sort_keys`. With
+/// `ensure_ascii`, which is `json.dumps`' own default, every character past ASCII is escaped as
+/// `\uXXXX`, a UTF-16 surrogate pair for one outside the basic plane.
+pub(crate) fn python_json(
     v: &serde_json::Value,
     indent: Option<usize>,
     sort_keys: bool,
+    ensure_ascii: bool,
     depth: usize,
 ) -> String {
     let pad = |d: usize| {
         indent
             .map(|i| format!("\n{}", " ".repeat(i * d)))
             .unwrap_or_default()
+    };
+    let string = |s: &str| {
+        let quoted = serde_json::to_string(s).unwrap_or_default();
+        if !ensure_ascii {
+            return quoted;
+        }
+        let mut out = String::new();
+        for c in quoted.chars() {
+            if c.is_ascii() {
+                out.push(c);
+            } else {
+                for unit in c.encode_utf16(&mut [0; 2]) {
+                    let _ = write!(out, "\\u{unit:04x}");
+                }
+            }
+        }
+        out
     };
     match v {
         serde_json::Value::Object(map) if map.is_empty() => "{}".to_string(),
@@ -331,8 +360,8 @@ fn python_json(
                     format!(
                         "{}{}: {}",
                         pad(depth + 1),
-                        serde_json::to_string(k).unwrap_or_default(),
-                        python_json(&map[k], indent, sort_keys, depth + 1)
+                        string(k),
+                        python_json(&map[k], indent, sort_keys, ensure_ascii, depth + 1)
                     )
                 })
                 .collect();
@@ -346,12 +375,13 @@ fn python_json(
                     format!(
                         "{}{}",
                         pad(depth + 1),
-                        python_json(v, indent, sort_keys, depth + 1)
+                        python_json(v, indent, sort_keys, ensure_ascii, depth + 1)
                     )
                 })
                 .collect();
             format!("[{}{}]", fields.join(sep), pad(depth))
         }
+        serde_json::Value::String(s) => string(s),
         other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
@@ -836,9 +866,12 @@ mod tests {
     #[test]
     fn python_json_uses_pythons_separators_indent_and_key_order() {
         let v = serde_json::json!({"b": 1, "a": [1, 2]});
-        assert_eq!(python_json(&v, None, false, 0), r#"{"b": 1, "a": [1, 2]}"#);
         assert_eq!(
-            python_json(&v, Some(4), true, 0),
+            python_json(&v, None, false, false, 0),
+            r#"{"b": 1, "a": [1, 2]}"#
+        );
+        assert_eq!(
+            python_json(&v, Some(4), true, false, 0),
             "{\n    \"a\": [\n        1,\n        2\n    ],\n    \"b\": 1\n}"
         );
     }

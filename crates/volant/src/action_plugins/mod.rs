@@ -4,9 +4,9 @@
 //!
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 //! 27 names in both. A module whose plugin is not written here cannot be run by sending its
-//! payload to the agent: the action plugin is where its real behaviour lives. `template` renders
-//! on the controller, `unarchive` reads its archive there. Sending the module alone would run something
-//! that is not what the playbook asked for, so those names are refused before the first
+//! payload to the agent: the action plugin is where its real behaviour lives. `unarchive` reads
+//! its archive on the controller, `fetch` writes there. Sending the module alone would run
+//! something that is not what the playbook asked for, so those names are refused before the first
 //! connection.
 //!
 //! A plugin that is written here runs on the controller as a small state machine: asked for the
@@ -19,6 +19,7 @@ pub(crate) mod copy;
 pub(crate) mod files;
 mod package;
 mod service;
+mod template;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -35,8 +36,8 @@ use crate::vars::HostVars;
 /// The names this release already implements are **not** here, whether natively (`command`,
 /// `shell`, `raw`), on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`,
 /// `set_fact`, `validate_argument_spec`) or through a plugin of its own (`copy`, `package`,
-/// `service`). `normal` is not here either: it is the only action plugin with no module of the
-/// same name, so no playbook can name it.
+/// `service`, `template`). `normal` is not here either: it is the only action plugin with no
+/// module of the same name, so no playbook can name it.
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
@@ -48,7 +49,6 @@ pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "reboot",
     "script",
     "set_stats",
-    "template",
     "unarchive",
     "uri",
     "wait_for_connection",
@@ -76,6 +76,7 @@ pub(crate) enum Kind {
     Copy,
     Package,
     Service,
+    Template,
 }
 
 /// The plugin this release runs for a module name, read as the builtin registry reads one.
@@ -87,6 +88,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
         "copy" => Some(Kind::Copy),
         "package" => Some(Kind::Package),
         "service" => Some(Kind::Service),
+        "template" => Some(Kind::Template),
         _ => None,
     }
 }
@@ -99,7 +101,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
 /// facts are known, so a plugin can only ever pick among these.
 pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
-        Kind::Copy => &["stat", "file", "copy"],
+        Kind::Copy | Kind::Template => &["stat", "file", "copy"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
     }
@@ -155,9 +157,7 @@ pub(crate) struct Context<'a> {
     /// The variables of the host the module runs on - the delegate's when there is one.
     pub running_vars: &'a Map<String, Value>,
     /// The item's own variables, for `template`.
-    #[expect(dead_code, reason = "read by `template`")]
     pub item_vars: &'a HostVars,
-    #[expect(dead_code, reason = "read by `template`")]
     pub templar: &'a Templar,
     /// Where the task was written, for `src` search paths.
     pub origin: &'a crate::compile::Origin,
@@ -171,6 +171,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
         Kind::Copy => copy::start(ctx),
         Kind::Package => Box::new(package::Package::new(ctx)),
         Kind::Service => Box::new(service::Service::new(ctx)),
+        Kind::Template => template::start(ctx),
     }
 }
 
@@ -216,7 +217,7 @@ mod tests {
         let mut sorted = BUILTIN_ACTION_PLUGINS.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, BUILTIN_ACTION_PLUGINS, "the list is kept sorted");
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 14);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 13);
         for absent in [
             "setup",
             "command",
@@ -231,10 +232,11 @@ mod tests {
             "package",
             "service",
             "copy",
+            "template",
         ] {
             assert!(!is_action_backed(absent), "{absent} is not action-backed");
         }
-        for present in ["template", "unarchive"] {
+        for present in ["unarchive", "fetch"] {
             assert!(is_action_backed(present), "{present} is action-backed");
         }
     }
@@ -243,14 +245,15 @@ mod tests {
     /// module of the same name is not this one.
     #[test]
     fn the_builtin_prefixes_name_the_same_modules() {
-        assert!(is_action_backed("ansible.builtin.template"));
-        assert!(is_action_backed("ansible.legacy.template"));
-        assert!(!is_action_backed("community.general.template"));
+        assert!(is_action_backed("ansible.builtin.unarchive"));
+        assert!(is_action_backed("ansible.legacy.unarchive"));
+        assert!(!is_action_backed("community.general.unarchive"));
         assert_eq!(kind("ansible.builtin.package"), Some(Kind::Package));
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
         assert_eq!(kind("ansible.builtin.copy"), Some(Kind::Copy));
-        assert_eq!(kind("template"), None);
+        assert_eq!(kind("ansible.builtin.template"), Some(Kind::Template));
+        assert_eq!(kind("unarchive"), None);
     }
 
     /// Every module a plugin can run is a builtin module ansible-core builds a payload for, and
@@ -262,7 +265,7 @@ mod tests {
     /// here all the same: a plugin runs the module directly, as the reference's does.
     #[test]
     fn a_plugin_runs_only_what_the_union_can_hold() {
-        for kind in [Kind::Copy, Kind::Package, Kind::Service] {
+        for kind in [Kind::Copy, Kind::Package, Kind::Service, Kind::Template] {
             for module in modules_for(kind) {
                 assert!(volant_protocol::modules::is_builtin(module), "{module}");
                 assert!(!volant_protocol::modules::is_known(module), "{module}");

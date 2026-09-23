@@ -18,12 +18,9 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::encoding::sha1_hex;
 
-use super::files::{blob_of, not_found, search_paths};
+use super::files::{blob_of, fits, not_found, refuse_host_named, search_paths};
 use super::{Context, Plugin, Step, Sub, lost};
 use crate::executor::as_bool_value;
-
-/// What the reference answers for a `src` a managed host chose, which it does send.
-const HOST_NAMED: &str = "the 'src' of this task was named by a managed host, and a controller file a host chose is never sent";
 
 /// The arguments the reference hands on to `file` when the destination is already right: its
 /// `REAL_FILE_ARGS`, less `src`, which it deletes.
@@ -73,8 +70,13 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
         // Measured: with `remote_src` the module runs alone, with the task's arguments as they
         // are, and no `stat` before it.
         Ok(None) => Box::new(Then(Some(Sub::run("copy", ctx.args.clone())))),
-        Err(msg) => Box::new(Then(Some(Step::Done(TaskResult::failed_with(msg))))),
+        Err(msg) => failing(msg),
     }
+}
+
+/// A plugin that fails the item with `msg` before the host is asked anything.
+pub(super) fn failing(msg: String) -> Box<dyn Plugin> {
+    Box::new(Then(Some(Step::Done(TaskResult::failed_with(msg)))))
 }
 
 /// The source bytes, `None` for a `remote_src` the host copies by itself, or the refusal.
@@ -107,11 +109,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     if flag(args, "remote_src", false) {
         return Ok(None);
     }
-    // Before the name is so much as looked up: a lookup that answers "not found" already tells
-    // a host whether a controller path exists.
-    if ctx.args_untrusted.contains("src") {
-        return Err(HOST_NAMED.into());
-    }
+    refuse_host_named(ctx, "src")?;
     let searched = search_paths(ctx.origin, ctx.playbook_dir, "files", src);
     let Some(found) = searched.iter().find(|p| p.exists()) else {
         return Err(format!(
@@ -122,8 +120,16 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     if found.is_dir() {
         return Err(format!("copying a directory is not supported yet: {src}"));
     }
-    let bytes = std::fs::read(found)
-        .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
+    let unreadable = |err: std::io::Error| format!("could not read src={}: {err}", found.display());
+    let basename = found
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // Before the read, so a file no frame can carry is never loaded whole. Refused whatever the
+    // host holds, where the reference would still run `file` on a destination already right.
+    let len = std::fs::metadata(found).map_err(unreadable)?.len();
+    fits(&basename, usize::try_from(len).unwrap_or(usize::MAX))?;
+    let bytes = std::fs::read(found).map_err(unreadable)?;
     let mut args = args.clone();
     args.insert("src".into(), Value::String(found.display().to_string()));
     // Read off the local file, as the reference does. Left to the module, `preserve` would
@@ -133,16 +139,14 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     }
     Ok(Some(CopyOf {
         bytes,
-        basename: found
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        basename,
         args,
     }))
 }
 
+/// `mode: preserve` read off a controller file, as the reference writes it: `0%03o`.
 #[cfg(unix)]
-fn local_mode(path: &std::path::Path) -> Result<String, String> {
+pub(super) fn local_mode(path: &std::path::Path) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(path)
         .map_err(|err| format!("could not read the mode of {}: {err}", path.display()))?
@@ -152,7 +156,7 @@ fn local_mode(path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(not(unix))]
-fn local_mode(path: &std::path::Path) -> Result<String, String> {
+pub(super) fn local_mode(path: &std::path::Path) -> Result<String, String> {
     Err(format!(
         "mode: preserve reads a unix mode, and {} has none on this controller",
         path.display()
@@ -742,6 +746,13 @@ mod tests {
             run(plugin.as_mut(), None).args["path"],
             json!("/tmp/v/hello.txt")
         );
+        // And when that name is itself a directory, the reference looks at the same path again:
+        // `copy.py` joins the source's name to `dest`, not to the path it looked at first.
+        let sub = run(
+            plugin.as_mut(),
+            Some(json!({"stat": {"exists": true, "isdir": true}})),
+        );
+        assert_eq!(sub.args["path"], json!("/tmp/v/hello.txt"));
 
         let mut args = Map::new();
         args.insert("content".into(), json!("x"));
@@ -859,6 +870,31 @@ mod tests {
             assert!(result.failed(), "{result:?}");
             assert_eq!(result.0["msg"], json!(msg));
         }
+    }
+
+    /// A source too big for one frame is refused by its size, before it is read and before the
+    /// host is asked anything.
+    ///
+    /// What would make this red: the size checked only on the bytes once read, which loads the
+    /// whole file and runs `stat` for a transfer that can never happen.
+    #[test]
+    fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
+        let (dir, mut args) = hello("big", json!({}));
+        let big = std::fs::File::create(dir.join("files/big.bin")).unwrap();
+        let len = crate::action_plugins::files::MAX_FILE_LEN + 1;
+        big.set_len(u64::try_from(len).unwrap()).unwrap();
+        args.insert("src".into(), json!("big.bin"));
+        let mut plugin = start_in(&args, &BTreeSet::new(), &dir);
+        let Step::Done(result) = plugin.next(None) else {
+            panic!("a sub-task was sent")
+        };
+        assert_eq!(
+            result.0["msg"],
+            json!(format!(
+                "big.bin is {len} bytes; one frame carries at most {}",
+                crate::action_plugins::files::MAX_FILE_LEN
+            ))
+        );
     }
 
     /// A `stat` that fails ends the task in the reference's words, and a `copy` that fails is

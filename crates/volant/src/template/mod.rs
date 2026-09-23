@@ -527,13 +527,30 @@ impl Templar {
 
     /// A `when` clause. Ansible accepts `{{ }}` around it with a warning; the result must be a
     /// boolean, anything else is an error in the reference release.
+    ///
+    /// A delimited condition that renders to a string is evaluated again as a condition, the
+    /// way the reference treats a string an author wrote (`healthy: "true"`, `cond: "1 == 1"`).
+    /// Never when the first pass read a value from a managed host or a lookup's text: that
+    /// string is data, and compiling it is how a host would run code here.
     pub fn condition<'a>(
         &self,
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<bool, TemplateError> {
-        let expr = single_expression(expr).unwrap_or(expr.trim());
-        match self.evaluate(expr, vars)? {
+        let (ctx, tainted) = context_of(vars.into());
+        let delimited = single_expression(expr);
+        let mut value = self.evaluate_in(delimited.unwrap_or(expr.trim()), &ctx)?;
+        if delimited.is_some()
+            && let Value::String(text) = &value
+        {
+            if tainted.load(Ordering::Relaxed) {
+                return Err(TemplateError(
+                    "Encountered untrusted template or expression.".into(),
+                ));
+            }
+            value = self.evaluate_in(single_expression(text).unwrap_or(text.trim()), &ctx)?;
+        }
+        match value {
             Value::Bool(b) => Ok(b),
             other => Err(TemplateError(format!(
                 "Conditional result was {other} of type {}, which evaluates to {}. Conditionals must have a boolean result.",
@@ -846,5 +863,61 @@ mod unit {
             "{err}"
         );
         assert!(t.condition("missing > 3", &Map::new()).is_err());
+    }
+
+    /// A delimited condition whose render is an **author** string is evaluated again, measured
+    /// on ansible-core 2.19.12 for `when` and `assert` alike: `healthy: "true"` makes
+    /// `when: "{{ healthy }}"` run the task, `cond_s: "1 == 1"` makes it pass, and
+    /// `hello: "hello"` fails the boolean rule. A string a host wrote is never evaluated again:
+    /// with a registered `s.stdout` of `1 == 2` the reference refuses `"{{ s.stdout }}"` with
+    /// `Encountered untrusted template or expression.`, and bare `s.stdout` fails the boolean
+    /// rule. The payload here is `1 == 1`, so compiling it would answer `true`.
+    ///
+    /// What would make this red: the second evaluation not happening (`healthy` refused), or
+    /// happening without reading the first pass's taint, so that a registered result, another
+    /// host's untrusted variable or a lookup's text is compiled on the controller.
+    #[test]
+    fn a_delimited_condition_reads_an_author_string_again_and_never_a_host_one() {
+        let t = Templar::new(std::env::temp_dir());
+        let map = vars(json!({
+            "healthy": "true",
+            "cond_s": "1 == 1",
+            "hello": "hello",
+            "s": {"stdout": "1 == 1"},
+        }));
+        let view = Arc::new(vars(json!({"h2": {"x": "1 == 1"}})));
+        assert!(t.condition("{{ healthy }}", &map).unwrap());
+        assert!(t.condition("{{ cond_s }}", &map).unwrap());
+        let boolean = "Conditionals must have a boolean result";
+        let err = t.condition("{{ hello }}", &map).unwrap_err();
+        assert!(err.0.contains(boolean), "{err}");
+        // Bare, the string is the result and nothing is evaluated again.
+        let err = t.condition("healthy", &map).unwrap_err();
+        assert!(err.0.contains(boolean), "{err}");
+
+        let registered = BTreeSet::from(["s".to_string()]);
+        let hosts = BTreeSet::from(["h2".to_string()]);
+        let from_host = Vars {
+            map: &map,
+            hostvars: Some(&view),
+            shared: None,
+            untrusted: Some(&registered),
+            untrusted_hosts: Some(&hosts),
+        };
+        for text in [
+            "{{ s.stdout }}",
+            "{{ hostvars['h2'].x }}",
+            "{{ lookup('env', 'PATH') }}",
+        ] {
+            let err = t.condition(text, from_host).unwrap_err();
+            assert_eq!(
+                err.0, "Encountered untrusted template or expression.",
+                "{text}"
+            );
+        }
+        let err = t.condition("s.stdout", from_host).unwrap_err();
+        assert!(err.0.contains(boolean), "{err}");
+        // The author's strings stay author strings beside a host's.
+        assert!(t.condition("{{ cond_s }}", from_host).unwrap());
     }
 }

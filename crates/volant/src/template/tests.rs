@@ -177,7 +177,10 @@ fn version_test(
             .unwrap_or_else(|| "eq".into()),
     };
     for option in ["strict", "version_type"] {
-        if kwargs.get::<Option<Value>>(option)?.is_some() {
+        if kwargs
+            .get::<Option<Value>>(option)?
+            .is_some_and(|v| !v.is_none())
+        {
             return Err(failed_test(
                 name,
                 &format!("{option}= is not supported yet"),

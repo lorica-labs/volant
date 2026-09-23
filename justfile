@@ -170,10 +170,13 @@ ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
     VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only --no-tests=fail -E 'test(/^ssh_/)'
-    # The python module and action plugin goldens, here because this is the job that names the
-    # recorded ansible-core in VOLANT_PYTHON, which turns each comparison's skip into a failure.
-    # The action plugin one also needs `sudo -n` and systemd, and fails here without them.
-    cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys)'
+    # The python module, action plugin and collection module goldens, and the two collection
+    # resolution tests of python.rs, here because this is the job that names the recorded
+    # ansible-core in VOLANT_PYTHON, which turns each comparison's skip into a failure. The action
+    # plugin one also needs `sudo -n` and systemd, and fails here without them; the collection ones
+    # need the pinned collections this job installs. Without this line the two python.rs tests run
+    # in no job at all: the `test` job's ansible-core-less pythons skip them.
+    cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold)'
 
 # The commit the bench corpus is pinned to, so the thing being timed cannot change under the
 # recipe. Refreshed by hand with `git ls-remote https://github.com/ansible-lockdown/UBUNTU22-CIS

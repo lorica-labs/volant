@@ -1,0 +1,5 @@
+{
+  "_ansible_no_log": false,
+  "action": "ansible.posix.sysctl",
+  "changed": true
+}

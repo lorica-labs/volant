@@ -676,13 +676,113 @@ fn reference_python() -> Option<std::path::PathBuf> {
     }
 }
 
+/// The versions `COLLECTIONS` pins: the three real collections, plus `netaddr`, which is not a
+/// collection but is needed in the same controller environment for `ansible.utils.ipwrap` and is
+/// pinned the same way.
+#[cfg(target_os = "linux")]
+fn pinned_collections() -> Vec<(String, String)> {
+    include_str!("golden/COLLECTIONS")
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(name, version)| (name.to_string(), version.to_string()))
+        .collect()
+}
+
+/// What `generate.py`'s own `_installed_collections()` runs, in the interpreter's own words: a
+/// collection's version comes from its `MANIFEST.json`, found on one of `C.COLLECTIONS_PATHS`;
+/// `netaddr` is a plain import next to it. Kept in the interpreter this refuses to run without
+/// (`reference_python()`) rather than reimplemented in Rust, because a manifest's shape and a
+/// collection's path list are ansible-core's own to read.
+///
+/// The tuple of names is built from `pinned_collections()` rather than written out a second time:
+/// `COLLECTIONS` gaining a fourth pin (or losing one) must not also require editing this string
+/// by hand to match.
+#[cfg(target_os = "linux")]
+fn collection_version_script() -> String {
+    let tuple = pinned_collections()
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| name != "netaddr")
+        .map(|name| format!("{name:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"
+import json, os
+from ansible import constants as C
+versions = {{}}
+for fqcn in ({tuple},):
+    namespace, name = fqcn.split(".", 1)
+    for root in C.COLLECTIONS_PATHS:
+        manifest = os.path.join(os.path.expanduser(root), "ansible_collections", namespace, name, "MANIFEST.json")
+        if os.path.exists(manifest):
+            with open(manifest, encoding="utf-8") as f:
+                versions[fqcn] = json.load(f)["collection_info"]["version"]
+            break
+try:
+    import netaddr
+    versions["netaddr"] = netaddr.__version__
+except ImportError:
+    pass
+print(json.dumps(versions))
+"#
+    )
+}
+
+/// What in `COLLECTIONS` this `python` does not actually have installed, one line per pin, on the
+/// model of `controller_python`'s own version check: a collection found alone at another version
+/// names both; one nowhere on the path reads `not installed`.
+#[cfg(target_os = "linux")]
+fn collection_mismatches(python: &std::path::Path) -> Vec<String> {
+    let out = std::process::Command::new(python)
+        .args(["-c", &collection_version_script()])
+        .output()
+        .expect("python runs");
+    let installed: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(&out.stdout).unwrap_or_default();
+    pinned_collections()
+        .into_iter()
+        .filter_map(|(name, version)| {
+            let got = installed.get(&name).cloned();
+            (got.as_deref() != Some(version.as_str())).then(|| {
+                format!(
+                    "{name} is {}, not {version}",
+                    got.unwrap_or_else(|| "not installed".into())
+                )
+            })
+        })
+        .collect()
+}
+
+/// `ANSIBLE_COLLECTIONS_PATHS`/`ANSIBLE_COLLECTIONS_PATH` from this test process's own
+/// environment, to forward through `run_recorded_play` to the child it otherwise strips along
+/// with every other `ANSIBLE_*`.
+///
+/// The `ssh` job installs the pinned collections under its own job directory and sets this
+/// variable to it, outside every path `default_collections_path` (`config.rs`) tries on its own.
+/// Stripping it unconditionally made the collection golden pass on the dev machine, where the
+/// pinned collections also happen to sit on that default path, for a reason that does not hold in
+/// the job: there, Volant would search only the empty defaults and find nothing.
+#[cfg(target_os = "linux")]
+fn collections_path_env() -> Vec<(&'static str, String)> {
+    ["ANSIBLE_COLLECTIONS_PATHS", "ANSIBLE_COLLECTIONS_PATH"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name, value)))
+        .collect()
+}
+
 /// Runs `playbook`, already written under `dir`, against `localhost` over the local connection,
 /// at `-v`, and returns once it exits or panics at a deadline.
+///
+/// `extra_env` is set on the child after every `ANSIBLE_*` variable is stripped from it, so a
+/// caller can forward the one or two names it actually needs (`collections_path_env()`) without
+/// reopening the door to the rest of this process's own `ANSIBLE_*` environment.
 #[cfg(target_os = "linux")]
 fn run_recorded_play(
     dir: &std::path::Path,
     playbook: &str,
     python: &std::path::Path,
+    extra_env: &[(&str, String)],
 ) -> std::process::Output {
     std::fs::write(
         dir.join("hosts.ini"),
@@ -710,6 +810,9 @@ fn run_recorded_play(
         if name.starts_with("ANSIBLE_") {
             command.env_remove(name);
         }
+    }
+    for (name, value) in extra_env {
+        command.env(name, value);
     }
     let mut child = command.spawn().expect("volant starts");
     // A play that cannot reach its host waits rather than returning, and a hung test says
@@ -802,7 +905,7 @@ fn a_python_module_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    let out = run_recorded_play(dir, "python-modules.yml", &python);
+    let out = run_recorded_play(dir, "python-modules.yml", &python, &[]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
     let id = identity();
@@ -1100,7 +1203,7 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    let out = run_recorded_play(dir, "action-plugins.yml", &python);
+    let out = run_recorded_play(dir, "action-plugins.yml", &python, &[]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut results = results_by_task(&stdout);
     // Read back through `register`, where the recording's JSON callback line shows keys the
@@ -1186,6 +1289,135 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     assert!(
         failures.is_empty(),
         "{} key(s) differ from ansible-core across {} case(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
+        failures.len(),
+        fixtures.len(),
+        failures.join("\n"),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The directory `generate.py`'s `collection_modules()` recorded against, and the one this test
+/// runs Volant against. Fixed for the same reason `PYTHON_MODULES_DIR` is: `sysctl`'s
+/// `sysctl_file` and `ini_file`'s `path`/`diff` headers carry it, and those are compared by
+/// value.
+#[cfg(target_os = "linux")]
+const COLLECTION_DIR: &str = "/tmp/volant16-golden-collection";
+
+/// Neither recorded module returns a key that moves between runs or machines (no timestamp, no
+/// inode, no filesystem attribute), so nothing is loosened: every key compares by value, on the
+/// model of `MODULE_RULES` with its lists empty.
+#[cfg(target_os = "linux")]
+const COLLECTION_RULES: Rules = Rules {
+    by_type: &[],
+    may_be_null: &[],
+    known: &[],
+};
+
+/// What an installed collection's own module returns is the reference's result, key by key,
+/// exactly like `a_python_module_returns_the_reference_s_own_keys`: neither `ansible.posix.sysctl`
+/// nor `community.general.ini_file` is served by an action plugin (A1), so each reaches the host
+/// as a plain Python module of the union, and the comparison needs nothing the python-modules test
+/// does not already have.
+///
+/// `sysctl_set` and `reload` are both false: the file `sysctl_file` names is written, and nothing
+/// under `/proc/sys` moves. `ini_file` is a module of a different collection with no effect of its
+/// own, recorded in the same play so the union this proves carries both without their `sysctl`-
+/// shaped short names colliding.
+///
+/// The version rule mirrors `ANSIBLE_VERSION`'s: a collection this interpreter has, at a version
+/// `COLLECTIONS` does not pin, is a named, loud skip; under `VOLANT_PYTHON` it fails instead,
+/// because a runner with no collections installed at all would otherwise report every module
+/// golden green having compared nothing (A10).
+///
+/// What would make this red: a collection module reached under its short name instead of its full
+/// one, colliding with a builtin or another collection's module of the same name; a result whose
+/// keys are plausible and wrong; `ini_file`'s `mode` or ownership read from the wrong field.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_collection_module_returns_the_reference_s_own_keys() {
+    let fixtures: [(&str, &str, &str); 2] = [
+        (
+            "sysctl",
+            "ansible.posix.sysctl",
+            include_str!("golden/collection/sysctl.json"),
+        ),
+        (
+            "ini_file",
+            "community.general.ini_file",
+            include_str!("golden/collection/ini_file.json"),
+        ),
+    ];
+    let Some(python) = reference_python() else {
+        return;
+    };
+    let mismatched = collection_mismatches(&python);
+    if !mismatched.is_empty() {
+        let why = format!(
+            "the controller's collections do not match COLLECTIONS: {}",
+            mismatched.join("; ")
+        );
+        assert!(
+            std::env::var_os("VOLANT_PYTHON").is_none(),
+            "VOLANT_PYTHON cannot reproduce the recording: {why}"
+        );
+        eprintln!("skipped: {why}.");
+        return;
+    }
+
+    let dir = std::path::Path::new(COLLECTION_DIR);
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).expect("the recorded directory is writable");
+    // The same arguments `generate.py` recorded against, on the same paths, in the same order.
+    std::fs::write(
+        dir.join("collection-modules.yml"),
+        format!(
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n\
+             \x20   - name: sysctl\n      ansible.posix.sysctl: {{name: net.ipv4.ip_forward, \
+             value: \"1\", sysctl_file: {dir}/sysctl.conf, sysctl_set: false, reload: false}}\n\
+             \x20   - name: ini_file\n      community.general.ini_file: {{path: {dir}/test.ini, \
+             section: golden, option: color, value: blue, mode: \"0644\"}}\n",
+            dir = COLLECTION_DIR
+        ),
+    )
+    .expect("the play is written");
+    let out = run_recorded_play(
+        dir,
+        "collection-modules.yml",
+        &python,
+        &collections_path_env(),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let results = results_by_task(&stdout);
+    let id = identity();
+    let mut findings = Findings::default();
+    for (name, action, recorded) in fixtures {
+        let reference: Value = serde_json::from_str(recorded).expect("the fixture parses");
+        assert_eq!(
+            reference["action"],
+            Value::from(action),
+            "{name}.json was recorded from a task that ran something else"
+        );
+        let Some(ours) = results.get(name) else {
+            findings.failures.push(format!(
+                "{name}: no result at all - the task did not run, or did not report"
+            ));
+            continue;
+        };
+        match (reference.as_object(), ours.as_object()) {
+            (Some(want), Some(got)) => {
+                compare_keys(name, "", want, got, &id, &COLLECTION_RULES, &mut findings);
+            }
+            _ => findings
+                .failures
+                .push(format!("{name}: reference {reference}, ours {ours}")),
+        }
+    }
+    findings.check_spent(&COLLECTION_RULES);
+    let failures = findings.failures;
+    let _ = std::fs::remove_dir_all(dir);
+    assert!(
+        failures.is_empty(),
+        "{} key(s) differ from ansible-core across {} module(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
         failures.len(),
         fixtures.len(),
         failures.join("\n"),

@@ -1,0 +1,11 @@
+# The four Galaxy roles the proof runs, pinned. Installed by `just proof-roles`, never copied
+# into this repository, so what runs is the published archive.
+roles:
+  - name: geerlingguy.security
+    version: 3.0.2
+  - name: geerlingguy.nginx
+    version: 3.3.1
+  - name: geerlingguy.git
+    version: 3.0.1
+  - name: geerlingguy.pip
+    version: 3.1.2

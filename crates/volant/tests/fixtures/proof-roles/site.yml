@@ -1,0 +1,9 @@
+# Four roles from Ansible Galaxy, run as published. Installed by `just proof-roles`, never
+# copied into this repository.
+- hosts: targets
+  become: true
+  roles:
+    - { role: geerlingguy.security, tags: [security] }
+    - { role: geerlingguy.nginx, tags: [nginx] }
+    - { role: geerlingguy.git, tags: [git] }
+    - { role: geerlingguy.pip, tags: [pip] }

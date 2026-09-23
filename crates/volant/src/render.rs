@@ -198,6 +198,8 @@ impl Renderer {
         if body.get("failed") == Some(&serde_json::Value::Bool(false)) {
             body.remove("failed");
         }
+        // Registered and never shown: the reference's callback pops it off every line, measured.
+        body.remove("exception");
         if dump == Dump::Debug {
             // Ansible cleans a `debug` result before showing it, so the message stands alone:
             // whatever `changed_when` and `failed_when` decided is counted, never printed, and
@@ -493,6 +495,41 @@ mod tests {
             r#"fatal: [web5]: FAILED! => {"failed": true, "rc": 1}"#
         );
         assert_eq!(lines[7], "...ignoring");
+    }
+
+    /// A result's `exception` is registered and never shown on its line.
+    ///
+    /// Measured on ansible-core 2.19.12, at verbosity 0 and at `-v`: a `copy` whose `validate`
+    /// names a missing program registers `exception: "(traceback unavailable)"`, and its line is
+    /// `fatal: [h1]: FAILED! => {"changed": false, "checksum": ..., "msg": "Error executing
+    /// command.", "rc": 2, ...}` with no `exception` in it - the default callback's
+    /// `_handle_exception` pops the key before the line is written.
+    ///
+    /// What would make this red: the key left on the line, which is what showed the module's
+    /// serialized `{"__ansible_type": "ErrorSummary", ...}` there.
+    #[test]
+    fn a_result_s_exception_stays_off_its_line() {
+        let out = capture(|r| {
+            r.result(
+                "h1",
+                Outcome::Failed,
+                &result(json!({
+                    "changed": false,
+                    "exception": "(traceback unavailable)",
+                    "failed": true,
+                    "msg": "Error executing command.",
+                    "rc": 2
+                })),
+                None,
+                Dump::No,
+                false,
+                None,
+            );
+        });
+        assert_eq!(
+            out.trim_end(),
+            r#"fatal: [h1]: FAILED! => {"changed": false, "failed": true, "msg": "Error executing command.", "rc": 2}"#
+        );
     }
 
     #[test]

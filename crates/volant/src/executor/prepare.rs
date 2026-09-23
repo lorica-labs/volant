@@ -598,7 +598,7 @@ pub(super) fn prepare(
     let payload = plan.python.as_ref().and_then(|union| {
         union
             .modules
-            .get(volant_protocol::modules::short_name(&task.module))
+            .get(crate::python::payload_key(&task.module))
             .map(|facts| {
                 Box::new(ModulePayload {
                     blob: union.hash.clone(),
@@ -806,6 +806,24 @@ mod tests {
                 extensions: Map::new(),
             },
         );
+        // A collection's module beside one of the same short name: each task gets its own.
+        for (key, fqn) in [
+            ("sysctl", "ansible.modules.sysctl"),
+            (
+                "ansible.posix.sysctl",
+                "ansible_collections.ansible.posix.plugins.modules.sysctl",
+            ),
+        ] {
+            facts.insert(
+                key.to_string(),
+                crate::python::ModuleFacts {
+                    module_fqn: fqn.into(),
+                    profile: "legacy".into(),
+                    rlimit_nofile: 0,
+                    extensions: Map::new(),
+                },
+            );
+        }
         let union = Arc::new(crate::python::Union {
             hash: "ab".into(),
             zip_b64: "UEsDBA==".into(),
@@ -855,6 +873,14 @@ mod tests {
         assert_eq!(built.blob, "ab");
         assert_eq!(built.facts.module_fqn, "ansible.modules.lineinfile");
         assert_eq!(kind, None);
+        assert_eq!(
+            payload_of("ansible.posix.sysctl")
+                .0
+                .expect("the run built one for it")
+                .facts
+                .module_fqn,
+            "ansible_collections.ansible.posix.plugins.modules.sysctl"
+        );
         assert!(
             payload_of("command").0.is_none(),
             "a module this release runs itself travels without a payload"

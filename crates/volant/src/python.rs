@@ -55,9 +55,59 @@ pub struct Union {
     /// `zip_data` already encoded, so re-encoding raw bytes for the frame would decode and
     /// encode the same 631 KB for nothing.
     pub zip_b64: String,
-    /// Keyed by the short module name, as `short_name` reads it, whatever spelling the playbook
-    /// used: `ping` and `ansible.builtin.ping` are one entry.
+    /// Keyed by [`payload_key`]: `ping` and `ansible.builtin.ping` are one entry, and
+    /// `ansible.posix.sysctl` is its own, whatever else in the run is called `sysctl`.
     pub modules: BTreeMap<String, ModuleFacts>,
+}
+
+/// The key a module's facts are filed under in [`Union::modules`], and looked up by.
+///
+/// A builtin keeps its short name, so the three spellings of `ping` are one entry. Every other
+/// name is kept whole: two collections may each ship a `sysctl`, and a collection may ship a
+/// module named like a builtin, so a key shortened to the last segment would hand a task the
+/// module of whichever of them was built last.
+pub fn payload_key(module: &str) -> &str {
+    if volant_protocol::modules::is_builtin(module) {
+        short_name(module)
+    } else {
+        module
+    }
+}
+
+/// Whether only an installed collection can answer to this name: qualified, and under neither of
+/// the two prefixes that name ansible-core's own modules. `ansible.builtin.nosuch` is not one: it
+/// is a typo in a namespace ansible-core owns whole, and no collection can supply it.
+pub fn is_collection_name(module: &str) -> bool {
+    module.contains('.')
+        && !module.starts_with("ansible.builtin.")
+        && !module.starts_with("ansible.legacy.")
+}
+
+/// What the controller's ansible-core makes of one module name it was asked about.
+///
+/// Only the helper can answer: the collections are the controller's, installed where its
+/// ansible-core looks for them, and nothing is fetched to find out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    /// A module it can build; `collection` is `None` for a builtin, else `(name, version)`, the
+    /// version being `*` for a collection that carries no `MANIFEST.json`, as ansible-galaxy
+    /// lists it.
+    Module {
+        fqcn: String,
+        collection: Option<(String, String)>,
+    },
+    /// A name a collection serves through an action plugin, its own or one its `runtime.yml`
+    /// routes it to: refused, by name.
+    ActionPlugin { fqcn: String },
+    /// A name ansible-core knows and this release cannot run: a module its collection removed
+    /// (a `runtime.yml` tombstone), one with no Python source (a `.ps1` module whose `.py` holds
+    /// only its documentation), or one the helper failed to build. `reason` is ansible-core's
+    /// own sentence.
+    Unusable { reason: String },
+    /// Nothing answers to it; `collection` names what would have to be installed, and is `None`
+    /// when that collection is installed and has no such module, or the name names no
+    /// collection at all.
+    Missing { collection: Option<String> },
 }
 
 /// Whether this module runs through the warm Python path.
@@ -78,11 +128,18 @@ pub struct Union {
 /// `ansible_facts` into the variable store, because they would have reported `ok` and left the
 /// next task reading `ansible_facts.*` undefined. `record_facts` merges them now, so they are in
 /// it.
+///
+/// A collection's module is in the set as well: the controller's ansible-core resolves it before
+/// the first connection ([`union_for`]), and builds it into the union like a builtin when it is
+/// a module it can build.
 pub fn is_python_module(module: &str) -> bool {
     use volant_protocol::modules::{
         import_module, include_module, is_builtin, is_known, short_name,
     };
 
+    if is_collection_name(module) {
+        return true;
+    }
     is_builtin(module)
         && !is_known(module)
         // The statements and the pseudo-module this engine answers itself. They are builtin
@@ -117,7 +174,7 @@ pub fn modules_to_build<'a>(
                     .map(|m| (*m).to_string()),
             );
         } else if is_python_module(module) {
-            out.insert(short_name(module).to_string());
+            out.insert(payload_key(module).to_string());
         }
     }
     out
@@ -132,8 +189,10 @@ pub fn modules_to_build<'a>(
 /// under `tasks/` and `handlers/` of each role the plays use or an include names, and of its
 /// `meta/main.yml` dependencies, and every file an include or an
 /// import names by a literal path, followed down. A name that is not a module this release builds
-/// is dropped by [`modules_to_build`]: a file for another platform naming a collection's module
-/// costs nothing here, and is refused by name by the include if a host ever reaches it.
+/// is dropped by [`modules_to_build`]. A collection's module goes in, and [`union_for`] leaves it
+/// out again if the controller's ansible-core cannot build it: a file for another platform naming
+/// a collection nobody installed costs nothing, and the include refuses it by name if a host ever
+/// reaches it.
 ///
 /// A role file that cannot be read or parsed refuses the run, naming the file: the role is broken.
 /// A literal include target that cannot be is left to the include, which fails the host reaching
@@ -307,15 +366,73 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 ///
 /// An error here is a refusal the operator reads instead of a run that starts, connects, and
 /// then cannot run its first Python task.
-pub fn union_for(modules: &std::collections::BTreeSet<String>) -> anyhow::Result<Option<Union>> {
+///
+/// A collection's module is resolved first, by the same helper, and only what resolves to a
+/// module it can build goes into the union. `named` is every `(task, module)` the compiled plays
+/// name themselves: one of those that is missing, or served by an action plugin, is refused here
+/// by `preflight::check_resolved`. A collection's module found only in a role file is
+/// dropped instead, because a file for another platform is no reason to refuse the run.
+pub fn union_for(
+    modules: &std::collections::BTreeSet<String>,
+    named: &[(String, String)],
+) -> anyhow::Result<Option<Union>> {
     if modules.is_empty() {
         return Ok(None);
     }
-    let names: Vec<String> = modules.iter().cloned().collect();
-    PythonBuilder::start()
-        .map_err(|err| no_builder(&err, &names))?
-        .union(&names)
-        .map(Some)
+    union_from(PythonBuilder::start, modules, named)
+}
+
+/// [`union_for`] with the helper's start handed in, so what happens when there is none is
+/// testable without touching the process environment.
+fn union_from(
+    start: impl FnOnce() -> anyhow::Result<PythonBuilder>,
+    modules: &std::collections::BTreeSet<String>,
+    named: &[(String, String)],
+) -> anyhow::Result<Option<Union>> {
+    let mut names: Vec<String> = modules.iter().cloned().collect();
+    let mut builder = match start() {
+        Ok(builder) => builder,
+        // Nothing the plays name needs a payload, only names a role file for another platform
+        // holds: the run went without ansible-core before those names were resolved at all.
+        Err(_)
+            if names
+                .iter()
+                .all(|m| is_collection_name(m) && !named.iter().any(|(_, n)| n == m)) =>
+        {
+            return Ok(None);
+        }
+        // A name a task gives outside `ansible.builtin` is refused with the reference's own
+        // sentence first: `ansible.builtins.debug` is a typo before it is a reason to install
+        // anything, and only ansible-core could have said which of the two it is.
+        Err(err) => {
+            if let Some((task, module)) = named.iter().find(|(_, m)| modules.contains(m)) {
+                return Err(crate::preflight::unresolvable_here(task, module, &err));
+            }
+            return Err(no_builder(&err, &names));
+        }
+    };
+    let asked: Vec<String> = names
+        .iter()
+        .filter(|m| is_collection_name(m))
+        .cloned()
+        .collect();
+    if !asked.is_empty() {
+        let resolved = builder.resolve(&asked)?;
+        for (task, module) in named {
+            if let Some(answer) = resolved.get(module) {
+                crate::preflight::check_resolved(task, module, answer)?;
+            }
+        }
+        names.retain(|m| {
+            resolved
+                .get(m)
+                .is_none_or(|r| matches!(r, Resolved::Module { .. }))
+        });
+    }
+    if names.is_empty() {
+        return Ok(None);
+    }
+    builder.union(&names).map(Some)
 }
 
 /// The sentence a run that gathers facts and nothing else gets on top of [`refusal_for`].
@@ -418,8 +535,15 @@ impl PythonBuilder {
         start_from(explicit.as_deref(), virtual_env.as_deref())
     }
     fn under(python: &str) -> anyhow::Result<PythonBuilder> {
+        PythonBuilder::under_with(python, &[])
+    }
+
+    /// [`PythonBuilder::under`] with variables set for the helper alone, which is how a test
+    /// points ansible-core at a collection it wrote without touching this process's environment.
+    fn under_with(python: &str, env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
         let mut child = Command::new(python)
             .args(["-c", HELPER])
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -441,6 +565,11 @@ impl PythonBuilder {
     pub fn union(&mut self, modules: &[String]) -> anyhow::Result<Union> {
         exchange(&mut self.stdin, &mut self.stdout, modules)
     }
+
+    /// What the controller's ansible-core makes of each name, one answer per name asked.
+    pub fn resolve(&mut self, modules: &[String]) -> anyhow::Result<BTreeMap<String, Resolved>> {
+        resolve_exchange(&mut self.stdin, &mut self.stdout, modules)
+    }
 }
 
 impl Drop for PythonBuilder {
@@ -456,6 +585,11 @@ impl Drop for PythonBuilder {
 /// The probing, split from the environment read so the order that is walked, and the refusal
 /// when nothing is left, are both testable without touching the process environment.
 fn start_from(explicit: Option<&str>, virtual_env: Option<&str>) -> anyhow::Result<PythonBuilder> {
+    PythonBuilder::under(&find_python(explicit, virtual_env)?)
+}
+
+/// The first candidate interpreter that has ansible-core, or the refusal naming what was tried.
+fn find_python(explicit: Option<&str>, virtual_env: Option<&str>) -> anyhow::Result<String> {
     let tried = candidates(explicit, virtual_env);
     let found = tried.iter().find(|python| {
         Command::new(python)
@@ -469,7 +603,7 @@ fn start_from(explicit: Option<&str>, virtual_env: Option<&str>) -> anyhow::Resu
     let Some(python) = found else {
         bail!(refusal_for(&tried.join(", ")));
     };
-    PythonBuilder::under(python)
+    Ok(python.clone())
 }
 
 /// One request and its answer, over anything that reads and writes.
@@ -477,18 +611,13 @@ fn start_from(explicit: Option<&str>, virtual_env: Option<&str>) -> anyhow::Resu
 /// Split out from [`PythonBuilder::union`] so the two ways an answer goes wrong - the helper
 /// dying without writing, and the helper reporting a module it could not build - are testable
 /// without an ansible-core on the machine running the tests.
-fn exchange<W: Write, R: Read>(mut to: W, from: R, modules: &[String]) -> anyhow::Result<Union> {
-    let request = serde_json::json!({ "modules": modules });
-    write_frame(&mut to, request.to_string().as_bytes())
-        .context("sending a module request to the python helper")?;
-    let Some(answer) = read_frame(from).context("reading the python helper's answer")? else {
-        bail!("the python helper exited before answering; no module payload was built");
-    };
-    let answer: Value = serde_json::from_slice(&answer)
-        .context("the python helper answered something that is not JSON")?;
-    if let Some(error) = answer.get("error").and_then(Value::as_str) {
-        bail!("the python helper could not build the modules: {error}");
-    }
+fn exchange<W: Write, R: Read>(to: W, from: R, modules: &[String]) -> anyhow::Result<Union> {
+    let answer = ask(
+        to,
+        from,
+        &serde_json::json!({ "modules": modules }),
+        "build the modules",
+    )?;
     let zip_b64 = answer
         .get("zip_b64")
         .and_then(Value::as_str)
@@ -509,16 +638,16 @@ fn exchange<W: Write, R: Read>(mut to: W, from: R, modules: &[String]) -> anyhow
         .and_then(Value::as_object)
         .context("the python helper's answer carries no module facts")?;
     for (name, value) in built {
-        // Keyed by the short name whatever the playbook wrote, so `ping` and
-        // `ansible.builtin.ping` in one run are one entry and a caller that reads its task's
-        // module the way the registries read it finds what was built for it.
-        facts.insert(short_name(name).to_string(), module_facts(name, value)?);
+        // Keyed by `payload_key` whatever the playbook wrote, so `ping` and
+        // `ansible.builtin.ping` in one run are one entry, a collection's `sysctl` is never
+        // another's, and `prepare` finds what was built for a task by the same function.
+        facts.insert(payload_key(name).to_string(), module_facts(name, value)?);
     }
     // The answer has to cover the request. Without this the helper - a future one, or one that
     // failed halfway and answered anyway - can report success having built nothing, and every
     // host then receives a blob holding none of the modules its tasks name.
     for asked in modules {
-        if !facts.contains_key(short_name(asked)) {
+        if !facts.contains_key(payload_key(asked)) {
             bail!("the python helper built no payload for '{asked}'");
         }
     }
@@ -527,6 +656,89 @@ fn exchange<W: Write, R: Read>(mut to: W, from: R, modules: &[String]) -> anyhow
         zip_b64,
         modules: facts,
     })
+}
+
+/// One request to the helper and its answer, refusing a dead helper, an answer that is not JSON
+/// and the helper's own error, which names what it could not `doing`.
+fn ask<W: Write, R: Read>(
+    mut to: W,
+    from: R,
+    request: &Value,
+    doing: &str,
+) -> anyhow::Result<Value> {
+    write_frame(&mut to, request.to_string().as_bytes())
+        .context("sending a module request to the python helper")?;
+    let Some(answer) = read_frame(from).context("reading the python helper's answer")? else {
+        bail!("the python helper exited before answering; no module payload was built");
+    };
+    let answer: Value = serde_json::from_slice(&answer)
+        .context("the python helper answered something that is not JSON")?;
+    if let Some(error) = answer.get("error").and_then(Value::as_str) {
+        bail!("the python helper could not {doing}: {error}");
+    }
+    Ok(answer)
+}
+
+/// The `resolve` request and its answer, one [`Resolved`] per name asked.
+///
+/// A name left unanswered, or answered in a shape this does not know, is refused rather than
+/// read as missing: a module taken for missing is only dropped from the union when a role file
+/// alone names it, and a helper that answered nothing would then build a run whose collection
+/// modules all fail per host.
+fn resolve_exchange<W: Write, R: Read>(
+    to: W,
+    from: R,
+    modules: &[String],
+) -> anyhow::Result<BTreeMap<String, Resolved>> {
+    let answer = ask(
+        to,
+        from,
+        &serde_json::json!({ "resolve": modules }),
+        "resolve the modules",
+    )?;
+    let answers = answer
+        .get("resolved")
+        .and_then(Value::as_object)
+        .context("the python helper's answer carries no resolution")?;
+    let text =
+        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+    let mut out = BTreeMap::new();
+    for asked in modules {
+        let value = answers
+            .get(asked)
+            .with_context(|| format!("the python helper did not resolve '{asked}'"))?;
+        let resolved = if let Some(fqcn) = text(value, "module") {
+            let collection = match value.get("collection").unwrap_or(&Value::Null) {
+                Value::Null => None,
+                Value::Array(pair) => match pair.as_slice() {
+                    [Value::String(name), Value::String(version)] => {
+                        Some((name.clone(), version.clone()))
+                    }
+                    _ => bail!(
+                        "the python helper named the collection of '{asked}' as {pair:?}, not as a name and a version"
+                    ),
+                },
+                other => bail!(
+                    "the python helper named the collection of '{asked}' as {other}, not as a name and a version"
+                ),
+            };
+            Resolved::Module { fqcn, collection }
+        } else if let Some(fqcn) = text(value, "action_plugin") {
+            Resolved::ActionPlugin { fqcn }
+        } else if let Some(reason) = text(value, "unusable") {
+            Resolved::Unusable { reason }
+        } else if let Some(missing) = value.get("missing") {
+            Resolved::Missing {
+                collection: missing.as_str().map(str::to_string),
+            }
+        } else {
+            bail!(
+                "the python helper resolved '{asked}' to something this release cannot read: {value}"
+            );
+        };
+        out.insert(asked.clone(), resolved);
+    }
+    Ok(out)
 }
 
 fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFacts> {
@@ -556,6 +768,421 @@ fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFacts> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// Two modules with one short name stay two modules: a collection's module is built under its
+    /// full name and looked up by it, and a builtin keeps its short key.
+    ///
+    /// Measured on ansible-core 2.19.12 through this helper: asked for `ansible.posix.sysctl`, it
+    /// answers under that name with `module_fqn`
+    /// `ansible_collections.ansible.posix.plugins.modules.sysctl`.
+    ///
+    /// What would make this red: a key cut down to the last segment, which files
+    /// `ansible.posix.sysctl` and `community.general.sysctl` under one `sysctl` and runs whichever
+    /// was built last for both tasks; or a collection's module dropped from what the run builds,
+    /// which is how it was before collections were resolved at all.
+    #[test]
+    fn two_modules_of_one_short_name_stay_two_in_the_union() {
+        let answer = br#"{"zip_b64": "UEsD", "modules": {
+            "sysctl": {"module_fqn": "ansible.modules.sysctl", "profile": "legacy",
+                "rlimit_nofile": 0, "extensions": {}},
+            "ansible.posix.sysctl": {"module_fqn":
+                "ansible_collections.ansible.posix.plugins.modules.sysctl", "profile": "legacy",
+                "rlimit_nofile": 0, "extensions": {}},
+            "community.general.sysctl": {"module_fqn":
+                "ansible_collections.community.general.plugins.modules.sysctl",
+                "profile": "legacy", "rlimit_nofile": 0, "extensions": {}}}}"#;
+        let asked =
+            ["sysctl", "ansible.posix.sysctl", "community.general.sysctl"].map(str::to_string);
+        let union = exchange(Vec::new(), framed(answer), &asked).unwrap();
+        assert_eq!(union.modules.len(), 3, "{:?}", union.modules.keys());
+        assert_eq!(
+            union.modules[payload_key("ansible.posix.sysctl")].module_fqn,
+            "ansible_collections.ansible.posix.plugins.modules.sysctl"
+        );
+        assert_eq!(
+            union.modules[payload_key("community.general.sysctl")].module_fqn,
+            "ansible_collections.community.general.plugins.modules.sysctl"
+        );
+        assert_eq!(payload_key("ansible.builtin.ping"), "ping");
+        assert_eq!(payload_key("ansible.legacy.ping"), "ping");
+        let built = modules_to_build([
+            "ansible.posix.sysctl",
+            "community.general.sysctl",
+            "ansible.builtin.ping",
+            "ping",
+        ]);
+        assert_eq!(
+            built.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["ansible.posix.sysctl", "community.general.sysctl", "ping"]
+        );
+    }
+
+    /// The helper's resolution, read one name at a time.
+    ///
+    /// What would make this red: a name left unanswered read as missing, which drops it from the
+    /// union and fails its task on every host instead of the run on the controller; a shape
+    /// this does not know read as anything at all; or a collection that is not a name and a
+    /// version read as a builtin.
+    #[test]
+    fn the_helper_resolution_is_read_name_by_name() {
+        let answer = br#"{"resolved": {
+            "a.b.mod": {"module": "a.b.mod", "collection": ["a.b", "1.2.3"]},
+            "a.b.act": {"action_plugin": "a.b.act"},
+            "a.b.none": {"missing": null},
+            "c.d.mod": {"missing": "c.d"},
+            "a.b.gone": {"unusable": "The 'a.b.gone' module has been removed."}}}"#;
+        let asked = ["a.b.mod", "a.b.act", "a.b.none", "c.d.mod", "a.b.gone"].map(str::to_string);
+        let mut sent = Vec::new();
+        let resolved = resolve_exchange(&mut sent, framed(answer), &asked).unwrap();
+        assert!(
+            String::from_utf8_lossy(&sent).contains(r#"{"resolve":["a.b.mod","#),
+            "{sent:?}"
+        );
+        assert_eq!(
+            resolved.into_iter().collect::<Vec<_>>(),
+            [
+                (
+                    "a.b.act".to_string(),
+                    Resolved::ActionPlugin {
+                        fqcn: "a.b.act".into()
+                    }
+                ),
+                (
+                    "a.b.gone".to_string(),
+                    Resolved::Unusable {
+                        reason: "The 'a.b.gone' module has been removed.".into()
+                    }
+                ),
+                (
+                    "a.b.mod".to_string(),
+                    Resolved::Module {
+                        fqcn: "a.b.mod".into(),
+                        collection: Some(("a.b".into(), "1.2.3".into())),
+                    }
+                ),
+                (
+                    "a.b.none".to_string(),
+                    Resolved::Missing { collection: None }
+                ),
+                (
+                    "c.d.mod".to_string(),
+                    Resolved::Missing {
+                        collection: Some("c.d".into())
+                    }
+                ),
+            ]
+        );
+        for (answer, says) in [
+            (&br#"{"resolved": {}}"#[..], "did not resolve 'x.y.z'"),
+            (br#"{"resolved": {"x.y.z": {"other": 1}}}"#, "cannot read"),
+            (
+                br#"{"resolved": {"x.y.z": {"module": "x.y.z", "collection": "x.y"}}}"#,
+                "not as a name and a version",
+            ),
+            (
+                br#"{"error": "RuntimeError: boom"}"#,
+                "could not resolve the modules: RuntimeError: boom",
+            ),
+        ] {
+            let err = resolve_exchange(Vec::new(), framed(answer), &["x.y.z".to_string()])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(says), "{err}");
+        }
+    }
+
+    /// A controller without ansible-core refuses a run whose plays name a collection's module,
+    /// and runs one whose only such names sit in a role file for another platform, as it did
+    /// before those names were read at all.
+    ///
+    /// What would make this red: the helper demanded for a name nothing will run on this host,
+    /// which refuses a native playbook over a role's other-platform file; or the refusal dropped
+    /// for a name a task does run, which reaches the host with no payload.
+    #[test]
+    fn a_role_file_alone_never_demands_ansible_core() {
+        let none = || Err(anyhow::anyhow!("{}", refusal_for("python3")));
+        let modules = std::collections::BTreeSet::from(["community.general.zypper".to_string()]);
+        assert_eq!(union_from(none, &modules, &[]).unwrap(), None);
+        let named = [("Z".to_string(), "community.general.zypper".to_string())];
+        let err = union_from(none, &modules, &named).unwrap_err().to_string();
+        assert!(err.contains("VOLANT_PYTHON"), "{err}");
+        let modules = std::collections::BTreeSet::from([
+            "community.general.zypper".to_string(),
+            "ping".to_string(),
+        ]);
+        let err = union_from(none, &modules, &[]).unwrap_err().to_string();
+        assert!(err.contains("VOLANT_PYTHON"), "{err}");
+
+        // A dotted typo a task gives is the reference's misspelling first, then why nothing could
+        // tell a typo from a missing collection. Red if it reads as the interpreter refusal
+        // alone, which sends the operator to install ansible-core to fix a typo.
+        let modules = std::collections::BTreeSet::from(["ansible.builtins.debug".to_string()]);
+        let named = [("D".to_string(), "ansible.builtins.debug".to_string())];
+        let err = union_from(none, &modules, &named).unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
+        let err = format!("{err:#}");
+        assert!(
+            err.starts_with(
+                "task 'D': couldn't resolve module/action 'ansible.builtins.debug'. This often indicates a misspelling"
+            ),
+            "{err}"
+        );
+        assert!(err.contains("VOLANT_PYTHON"), "{err}");
+    }
+
+    /// A collection written for the test, under its own `ANSIBLE_COLLECTIONS_PATH`, holding every
+    /// shape the controller has to tell apart. Measured on ansible-core 2.19.12 with this very
+    /// layout: `routed` has `action_plugin` set by `runtime.yml`, `winmod` resolves to its `.ps1`
+    /// without `mod_type` and to a documentation-only `.py` with it, `onlyps` resolves to nothing
+    /// with it, `gone` raises `AnsiblePluginRemovedError` (as `community.general.atomic_host` does
+    /// in community.general 13.4.0), and `moved` resolves to nothing with a `redirect_list` ending
+    /// in `absentns.absent.moved`.
+    fn fixture_collection(root: &std::path::Path) {
+        let coll = root.join("ansible_collections/volanttest/coll");
+        for dir in ["plugins/modules", "plugins/action", "meta"] {
+            std::fs::create_dir_all(coll.join(dir)).unwrap();
+        }
+        let write = |path: &str, text: &str| std::fs::write(coll.join(path), text).unwrap();
+        write(
+            "MANIFEST.json",
+            r#"{"collection_info": {"namespace": "volanttest", "name": "coll", "version": "1.0.0"}}"#,
+        );
+        let module = "from ansible.module_utils.basic import AnsibleModule\n\ndef main():\n    AnsibleModule(argument_spec={}).exit_json(changed=False)\n\nif __name__ == '__main__':\n    main()\n";
+        write("plugins/modules/good.py", module);
+        write("plugins/modules/routed.py", module);
+        write("plugins/modules/winmod.py", "DOCUMENTATION = 'x'\n");
+        write("plugins/modules/winmod.ps1", "#!powershell\n");
+        write("plugins/modules/onlyps.ps1", "#!powershell\n");
+        write(
+            "plugins/action/act.py",
+            "from ansible.plugins.action import ActionBase\n\nclass ActionModule(ActionBase):\n    pass\n",
+        );
+        write(
+            "meta/runtime.yml",
+            "requires_ansible: '>=2.15'\nplugin_routing:\n  modules:\n    routed:\n      action_plugin: volanttest.coll.act\n    gone:\n      tombstone:\n        removal_version: 1.0.0\n        warning_text: use good instead\n    moved:\n      redirect: absentns.absent.moved\n",
+        );
+    }
+
+    /// Every shape a collection's name can take on the controller, each answered on its own, and
+    /// only the buildable ones reaching the union.
+    ///
+    /// What would make this red: `runtime.yml`'s `action_plugin` ignored, which sends `routed`
+    /// without the controller half its collection routes it to; the loader left to pick `.ps1`
+    /// or the documentation `.py`, which answers `Module` for something `union` then fails to
+    /// build, taking the whole run down over a Windows file of a cross-platform role; a
+    /// tombstone raising out of the request, which fails the run for a name no task may run; or
+    /// a redirect into a missing collection answered without that collection's name.
+    #[test]
+    fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
+        let python = match find_python(
+            std::env::var("VOLANT_PYTHON").ok().as_deref(),
+            std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        ) {
+            Ok(python) => python,
+            Err(why) => return skip_or_fail(&format!("{why:#}")),
+        };
+        let root = std::env::temp_dir().join(format!("volant-fixture-coll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        fixture_collection(&root);
+        let path = root.display().to_string();
+        let start = || PythonBuilder::under_with(&python, &[("ANSIBLE_COLLECTIONS_PATH", &path)]);
+        let names = ["good", "routed", "winmod", "onlyps", "gone", "moved"]
+            .map(|m| format!("volanttest.coll.{m}"));
+        let resolved = start().unwrap().resolve(&names).unwrap();
+        assert_eq!(
+            resolved["volanttest.coll.good"],
+            Resolved::Module {
+                fqcn: "volanttest.coll.good".into(),
+                collection: Some(("volanttest.coll".into(), "1.0.0".into())),
+            }
+        );
+        assert_eq!(
+            resolved["volanttest.coll.routed"],
+            Resolved::ActionPlugin {
+                fqcn: "volanttest.coll.routed".into()
+            }
+        );
+        assert!(
+            matches!(&resolved["volanttest.coll.winmod"], Resolved::Unusable { reason } if reason.contains("'old'")),
+            "{:?}",
+            resolved["volanttest.coll.winmod"]
+        );
+        assert_eq!(
+            resolved["volanttest.coll.onlyps"],
+            Resolved::Missing { collection: None }
+        );
+        assert!(
+            matches!(&resolved["volanttest.coll.gone"], Resolved::Unusable { reason } if reason.contains("has been removed. use good instead")),
+            "{:?}",
+            resolved["volanttest.coll.gone"]
+        );
+        assert_eq!(
+            resolved["volanttest.coll.moved"],
+            Resolved::Missing {
+                collection: Some("absentns.absent".into())
+            }
+        );
+
+        // Found only by the role scan, the unusable names stay out and the run builds the rest.
+        let modules = std::collections::BTreeSet::from(names.clone());
+        let built = union_from(start, &modules, &[])
+            .unwrap()
+            .expect("good is built");
+        assert_eq!(
+            built.modules.keys().collect::<Vec<_>>(),
+            ["volanttest.coll.good"]
+        );
+        // Named by a task, each is refused by its own sentence.
+        for (module, says) in [
+            (
+                "volanttest.coll.winmod",
+                "cannot run: module 'volanttest.coll.winmod' is built as 'old'",
+            ),
+            (
+                "volanttest.coll.gone",
+                "cannot run: AnsiblePluginRemovedError: The 'volanttest.coll.gone' module has been removed",
+            ),
+            (
+                "volanttest.coll.moved",
+                "ansible-galaxy collection install absentns.absent",
+            ),
+        ] {
+            let named = [("T".to_string(), module.to_string())];
+            let err = union_from(start, &modules, &named).unwrap_err();
+            assert!(format!("{err:#}").contains(says), "{module}: {err:#}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The version of `ansible.posix` the collection tests are written against, the one
+    /// installed on the controller that measured them.
+    const ANSIBLE_POSIX: &str = "2.2.2";
+
+    /// The same for `community.general`.
+    const COMMUNITY_GENERAL: &str = "13.4.0";
+
+    /// The helper under the controller's ansible-core, or `None` after saying why the test is
+    /// skipped. Under `VOLANT_PYTHON` there is no skip.
+    fn helper_or_skip() -> Option<PythonBuilder> {
+        match PythonBuilder::start() {
+            Ok(helper) => Some(helper),
+            Err(why) => {
+                skip_or_fail(&format!("{why:#}"));
+                None
+            }
+        }
+    }
+
+    fn skip_or_fail(why: &str) {
+        if std::env::var_os("VOLANT_PYTHON").is_some() {
+            panic!("VOLANT_PYTHON cannot resolve the pinned collections: {why}");
+        }
+        eprintln!(
+            "skipped: {why}. Set VOLANT_PYTHON to an ansible-core with ansible.posix {ANSIBLE_POSIX}."
+        );
+    }
+
+    /// The controller's own ansible-core answers what its collections hold, and a collection's
+    /// module lands in the union under its full name.
+    ///
+    /// Measured on ansible-core 2.19.12 with `ansible.posix` 2.2.2 installed under
+    /// `~/.ansible/collections`: `sysctl` is a module with no action plugin, `synchronize` has one
+    /// (`ansible_collections.ansible.posix.plugins.action.synchronize`), and a name in a
+    /// collection nobody installed resolves to nothing.
+    ///
+    /// What would make this red: the collection's version read from anything but its manifest;
+    /// `synchronize` answered as a module, which would send it without its controller half; a
+    /// missing collection answered without its name, which leaves the operator with the typo
+    /// sentence; a scan-only name that cannot be built kept in the union, which refuses the build;
+    /// or a task naming `synchronize` let through.
+    #[test]
+    fn the_controller_resolves_what_its_collections_hold() {
+        let Some(mut helper) = helper_or_skip() else {
+            return;
+        };
+        let asked = [
+            "ansible.posix.sysctl",
+            "ansible.posix.synchronize",
+            "ansible.posix.nosuch",
+            "nosuch.coll.mod",
+            "nodots.x",
+            "community.general.ufw",
+            "community.general.atomic_host",
+        ]
+        .map(str::to_string);
+        let resolved = helper.resolve(&asked).unwrap();
+        let sysctl = Resolved::Module {
+            fqcn: "ansible.posix.sysctl".into(),
+            collection: Some(("ansible.posix".into(), ANSIBLE_POSIX.into())),
+        };
+        if resolved["ansible.posix.sysctl"] != sysctl {
+            skip_or_fail(&format!(
+                "the controller's ansible.posix.sysctl is {:?}, not ansible.posix {ANSIBLE_POSIX}",
+                resolved["ansible.posix.sysctl"]
+            ));
+            return;
+        }
+        assert_eq!(
+            resolved["ansible.posix.synchronize"],
+            Resolved::ActionPlugin {
+                fqcn: "ansible.posix.synchronize".into()
+            }
+        );
+        assert_eq!(
+            resolved["ansible.posix.nosuch"],
+            Resolved::Missing { collection: None }
+        );
+        assert_eq!(
+            resolved["nosuch.coll.mod"],
+            Resolved::Missing {
+                collection: Some("nosuch.coll".into())
+            }
+        );
+        assert_eq!(resolved["nodots.x"], Resolved::Missing { collection: None });
+        // community.general 13.4.0's `runtime.yml` tombstones `atomic_host` (removed in 13.0.0):
+        // the loader raises for it, and that is this name's answer, not the request's.
+        let general = Resolved::Module {
+            fqcn: "community.general.ufw".into(),
+            collection: Some(("community.general".into(), COMMUNITY_GENERAL.into())),
+        };
+        if resolved["community.general.ufw"] == general {
+            assert!(
+                matches!(&resolved["community.general.atomic_host"], Resolved::Unusable { reason }
+                    if reason.contains("'community.general.atomic_host' module has been removed")),
+                "{:?}",
+                resolved["community.general.atomic_host"]
+            );
+        } else {
+            skip_or_fail(&format!(
+                "the controller's community.general.ufw is {:?}, not community.general {COMMUNITY_GENERAL}",
+                resolved["community.general.ufw"]
+            ));
+        }
+        let union = helper
+            .union(&["ansible.posix.sysctl".to_string(), "ping".to_string()])
+            .unwrap();
+        assert_eq!(
+            union.modules["ansible.posix.sysctl"].module_fqn,
+            "ansible_collections.ansible.posix.plugins.modules.sysctl"
+        );
+        assert_eq!(union.modules["ping"].module_fqn, "ansible.modules.ping");
+
+        let modules = std::collections::BTreeSet::from(
+            ["ansible.posix.synchronize", "nosuch.coll.mod", "ping"].map(str::to_string),
+        );
+        let built = union_from(PythonBuilder::start, &modules, &[])
+            .unwrap()
+            .expect("ping is built");
+        assert_eq!(built.modules.keys().collect::<Vec<_>>(), ["ping"]);
+        let named = [("Sync".to_string(), "ansible.posix.synchronize".to_string())];
+        let err = union_from(PythonBuilder::start, &modules, &named).unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
+        assert!(
+            format!("{err:#}")
+                .contains("module 'ansible.posix.synchronize' needs an action plugin"),
+            "{err:#}"
+        );
+    }
 
     /// The controller's interpreter is chosen in one order and that order is visible: an
     /// explicit `VOLANT_PYTHON`, then the active virtualenv, then `python3` on `PATH`.
@@ -759,8 +1386,12 @@ mod tests {
             );
         }
         assert!(
-            !is_python_module("community.general.lineinfile"),
-            "another collection's module is not ours to build"
+            is_python_module("community.general.lineinfile"),
+            "a collection's module goes to the controller's ansible-core to resolve"
+        );
+        assert!(
+            !is_python_module("ansible.builtin.nosuch"),
+            "no collection can supply a name ansible-core owns"
         );
     }
 
@@ -815,8 +1446,8 @@ mod tests {
     /// run stopped at `module 'apt' needs a python payload, and this run built none for it`.
     ///
     /// What would make this red: the union built from the compiled steps alone, which leaves
-    /// out `apt`, `stat` and `ping`; or a collection's module in the other platform's file
-    /// refused, when nothing will ever run it on this host.
+    /// out `apt`, `stat` and `ping`; or a collection's module in the other platform's file left
+    /// out, which is then never resolved and fails by name on a host that does reach it.
     #[test]
     fn the_union_holds_what_a_dynamic_include_may_read() {
         let dir = std::env::temp_dir().join(format!("volant-union-reach-{}", std::process::id()));
@@ -835,7 +1466,10 @@ mod tests {
         );
         write(
             "roles/r/tasks/setup-Suse.yml",
-            "- community.general.zypper: name=x\n",
+            // Written for other platforms, and read here only for the union: a free-form Windows
+            // command and a `key=value` string with a spaced template in it are parsed, not
+            // refused, whatever this release would make of them if a host reached them.
+            "- community.general.zypper: name=x\n- ansible.windows.win_shell: Get-Service foo\n- ns.coll.mod: port={{ x }}\n",
         );
         write(
             "roles/r/tasks/sub/deep.yaml",
@@ -862,9 +1496,12 @@ mod tests {
         assert_eq!(
             union,
             [
+                "ansible.windows.win_shell",
                 "apt",
                 "apt_repository",
+                "community.general.zypper",
                 "lineinfile",
+                "ns.coll.mod",
                 "ping",
                 "stat",
                 "systemd"
@@ -885,7 +1522,7 @@ mod tests {
     /// playbook on a machine that has no ansible-core - including the ones that never needed it.
     #[test]
     fn a_run_with_no_python_module_builds_nothing() {
-        let none = union_for(&std::collections::BTreeSet::new()).expect("nothing to build");
+        let none = union_for(&std::collections::BTreeSet::new(), &[]).expect("nothing to build");
         assert!(none.is_none());
     }
 

@@ -1546,11 +1546,13 @@ mod tests {
     /// reading a playbook written for a release that has the module.
     #[test]
     fn a_module_name_is_kept_whatever_it_names() {
-        // `file`'s args are given as `key=value` rather than the free-form `echo a` the other
-        // two carry: it is a python module now read by `module_args` like any other, and
-        // `echo a` is not a valid shorthand for it, matching what the reference would also
-        // refuse. The other two are names this release resolves nothing for, so their arguments
-        // are left unparsed and `echo a` is never looked at.
+        // `file`'s args are given as `key=value` rather than the free-form `echo a`
+        // `nosuchmodule` carries: it is a python module now read by `module_args` like any
+        // other, and `echo a` is not a valid shorthand for it, matching what the reference would
+        // also refuse. `nosuchmodule` is a name this release resolves nothing for, so its
+        // arguments are left unparsed and `echo a` is never looked at. A collection's module is
+        // read like `file`: the controller's ansible-core resolves it before the run, and one
+        // whose arguments were dropped here would run with none.
         //
         // The parsed arguments are asserted below, not just the module name: a name kept while
         // its arguments parsed into nothing would pass a test that only checked the name, which
@@ -1562,7 +1564,11 @@ mod tests {
                 "path=/tmp/x state=touch",
                 &[("path", "/tmp/x"), ("state", "touch")][..],
             ),
-            ("community.general.command", "echo a", &[][..]),
+            (
+                "community.general.ufw",
+                "rule=allow port=22",
+                &[("rule", "allow"), ("port", "22")][..],
+            ),
         ] {
             let pb = parse(
                 &format!(

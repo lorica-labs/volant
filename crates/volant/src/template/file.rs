@@ -34,6 +34,20 @@ impl Templar {
     /// `Templar`'s own so it keeps every filter, test and lookup the engine has, carries the
     /// file's own `trim_blocks`/`lstrip_blocks`; a render per task does not make cloning it worth
     /// caching.
+    ///
+    /// Two things ansible-core's own `template` action does after Jinja2 renders are reproduced
+    /// here rather than left to minijinja, read from the reference's source
+    /// (`plugins/action/template.py`, `_post_render_mutation` in
+    /// `_internal/_templating/_engine.py`):
+    ///
+    /// 1. Jinja2's lexer normalises every `\r\n` and lone `\r` in the source to `\n` before it
+    ///    ever sees the template; minijinja does not, so the same normalisation happens here.
+    /// 2. Jinja2 itself renders with `keep_trailing_newline=False`, which can drop more than the
+    ///    reference keeps once a block tag's `trim_blocks` also eats a newline right beside it;
+    ///    the reference's own fix is not to change that, but to count the trailing `\n` of the
+    ///    original text and of Jinja's result afterwards, and append the difference. Doing the
+    ///    same here, on the *original*, non-normalised text, is what makes `trailing_newlines`
+    ///    read `text` rather than the normalised copy that was actually rendered.
     pub fn render_file<'a>(
         &self,
         text: &str,
@@ -43,19 +57,13 @@ impl Templar {
         let mut env = self.env.clone();
         env.set_trim_blocks(options.trim_blocks);
         env.set_lstrip_blocks(options.lstrip_blocks);
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let (ctx, _tainted) = context_of(vars.into());
-        let mut rendered = env.render_str(text, ctx).map_err(convert_error)?;
-        // Measured against the reference: a role's `sshd_config_snippet.j2` reduces to a false
-        // `{% if %}` followed by the file's own final newline, and the reference writes that one
-        // byte, `\n`. `trim_blocks`
-        // strips the newline right after the block tag it closes, even when that newline is also
-        // the template's very last character, so `set_keep_trailing_newline(true)` (which only
-        // restores a newline the *source* stripping would have dropped, not one `trim_blocks`
-        // already consumed) cannot put it back either; measured, dropping the call changes no
-        // test here. The source's own final newline is restored directly instead, which covers
-        // both cases and matches the reference regardless of what `trim_blocks` did to it.
-        if text.ends_with('\n') && !rendered.ends_with('\n') {
-            rendered.push('\n');
+        let mut rendered = env.render_str(&normalized, ctx).map_err(convert_error)?;
+        let wanted = trailing_newlines(text);
+        let got = trailing_newlines(&rendered);
+        if wanted > got {
+            rendered.extend(std::iter::repeat_n('\n', wanted - got));
         }
         Ok(if options.newline_sequence == "\n" {
             rendered
@@ -63,6 +71,13 @@ impl Templar {
             rendered.replace('\n', &options.newline_sequence)
         })
     }
+}
+
+/// The count of literal `\n` characters at the very end of `s`, stopping at the first character
+/// that is not one (a `\r` included): on `"x\r\n\r\n"` this is 1, not 2, which is what makes it
+/// match the reference's own count on the text it was given, before any `\r\n` normalisation.
+fn trailing_newlines(s: &str) -> usize {
+    s.chars().rev().take_while(|&c| c == '\n').count()
 }
 
 #[cfg(test)]
@@ -153,24 +168,56 @@ mod tests {
     }
 
     /// The final newline of the file survives, and a template that renders to nothing but it
-    /// writes it: measured, `sshd_config_snippet.j2` with its `if` false is one byte, `\n`.
+    /// writes it: measured, a role's `sshd_config_snippet.j2` with its `if` false is one byte,
+    /// `\n`. The engine drops more than the source's own trailing newlines once a block tag's
+    /// `trim_blocks` eats one beside the render's own stripping; each pair below has the same
+    /// number of trailing newlines on both sides, however many the source held.
     #[test]
     fn the_final_newline_is_kept() {
+        let r = |t: &str| {
+            templar()
+                .render_file(t, &Map::new(), &FileRender::default())
+                .unwrap()
+        };
+        assert_eq!(r("{% if false %}x{% endif %}\n"), "\n");
+        assert_eq!(r("a"), "a");
+        assert_eq!(r("a\n\n"), "a\n\n");
+        assert_eq!(r("\n\n"), "\n\n");
+        assert_eq!(r("{% if true %}x{% endif %}\n\n"), "x\n\n");
+        assert_eq!(r("{% raw %}a\n{% endraw %}\n\n"), "a\n\n");
+    }
+
+    /// Jinja2's lexer rewrites every `\r\n` and lone `\r` in the source to `\n` before it ever
+    /// sees the template; minijinja does not. Without the normalisation, `\r` survives into a
+    /// render whose `newline_sequence` is still `\n`, and the crlf case below would double up.
+    #[test]
+    fn the_source_s_own_crlf_is_normalised_like_the_reference() {
         assert_eq!(
             templar()
-                .render_file(
-                    "{% if false %}x{% endif %}\n",
-                    &Map::new(),
-                    &FileRender::default()
-                )
+                .render_file("x\r\ny\r\n", &Map::new(), &FileRender::default())
                 .unwrap(),
-            "\n"
+            "x\ny\n"
         );
         assert_eq!(
             templar()
-                .render_file("a", &Map::new(), &FileRender::default())
+                .render_file(
+                    "x\r\ny\r\n",
+                    &Map::new(),
+                    &FileRender {
+                        newline_sequence: "\r\n".into(),
+                        ..Default::default()
+                    }
+                )
                 .unwrap(),
-            "a"
+            "x\r\ny\r\n"
+        );
+        // The reference counts trailing newlines on the raw text, not the normalised copy: a
+        // trailing `\r\n\r\n` is one `\n` run broken by a `\r`, not two.
+        assert_eq!(
+            templar()
+                .render_file("x\r\n\r\n", &Map::new(), &FileRender::default())
+                .unwrap(),
+            "x\n"
         );
     }
 }

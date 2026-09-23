@@ -895,11 +895,6 @@ const ACTION_KNOWN_DIFFERENCES: &[(&str, &str)] = &[
     // `(traceback unavailable)` when tracebacks are off (`error_summary` in
     // `_internal/_templating/_transform.py`). Volant passes the module's result on without it.
     ("copy-validate-fail", "exception"),
-    // The reference's `_execute_module` (`plugins/action/__init__.py`) splits `stdout` and
-    // `stderr` into `stdout_lines` and `stderr_lines` for every module result that has them; the
-    // `copy` module returns only the two strings, and Volant does not add the split.
-    ("copy-validate-fail", "stderr_lines"),
-    ("copy-validate-fail", "stdout_lines"),
 ];
 
 #[cfg(target_os = "linux")]

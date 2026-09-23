@@ -628,6 +628,7 @@ pub(super) async fn drive_host(
                         &labels,
                         &[],
                         &[],
+                        &[],
                         Dump::No,
                         false,
                         None,
@@ -776,6 +777,7 @@ pub(super) async fn drive_host(
                         task,
                         &results,
                         &labels,
+                        &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                         &lefts,
                         &names,
                         dump,
@@ -965,7 +967,7 @@ pub(super) async fn drive_host(
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
                     let mut task = c.steps[index].task.clone();
-                    task.ignore_errors = Some(false);
+                    task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
                     let results = vec![(None, TaskResult::failed_with(msg))];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
                     let result = report_task(
@@ -975,6 +977,7 @@ pub(super) async fn drive_host(
                         &task,
                         &results,
                         &[None],
+                        &[],
                         &[],
                         &[],
                         Dump::No,
@@ -1319,6 +1322,7 @@ pub(super) async fn drive_host(
                     task,
                     &results,
                     &labels,
+                    &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                     retried,
                     retried_names,
                     Dump::No,
@@ -1393,6 +1397,7 @@ pub(super) async fn drive_host(
                 task,
                 &results,
                 &[None],
+                &[],
                 &[],
                 &[],
                 Dump::No,

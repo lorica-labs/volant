@@ -1458,4 +1458,37 @@ mod tests {
         assert!(format!("{err:#}").contains("all.yml"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// A vars file holding a document start and a comment and nothing else is an empty mapping.
+    /// The two texts are the ones `geerlingguy.docker` and `geerlingguy.git` ship as
+    /// `vars/main.yml`; measured on ansible-core 2.19.12, the reference loads both as empty, where
+    /// this engine refused them with `a variables file must contain a mapping`. A file holding a
+    /// scalar is still refused.
+    ///
+    /// What would make this red: the empty document read as anything but null on its way out of
+    /// the YAML loader (saphyr resolves it to an empty string), or a fix that accepts any scalar
+    /// in place of a mapping, which lets `42` through.
+    #[test]
+    fn a_vars_file_holding_only_a_comment_is_empty_and_a_scalar_is_refused() {
+        let dir = std::env::temp_dir().join(format!("volant-empty-vars-{}", rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for text in [
+            "---\n# Empty file\n",
+            "---\n# This space intentionally left blank.\n",
+        ] {
+            let file = dir.join("main.yml");
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(load_vars_file(&file).unwrap(), Map::new(), "{text:?}");
+        }
+        for text in ["42\n", "\"x\"\n", "---\n''\n"] {
+            let file = dir.join("main.yml");
+            std::fs::write(&file, text).unwrap();
+            let err = load_vars_file(&file).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("a variables file must contain a mapping"),
+                "{text:?}: {err:#}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

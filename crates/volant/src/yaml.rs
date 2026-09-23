@@ -11,7 +11,28 @@ use serde_json::{Map, Value};
 pub fn load<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
     let docs =
         MarkedYaml::load_from_str(text).with_context(|| format!("{source}: invalid YAML"))?;
+    if holds_nothing(text) {
+        return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
+    }
     Ok(docs.into_iter().map(|doc| lower(doc, text)).collect())
+}
+
+/// Whether every line of `text` is blank, a comment or a document marker. Such a stream holds
+/// only empty documents, which PyYAML reads as null; saphyr hands each back as an empty string.
+/// Measured on ansible-core 2.19.12, a vars file holding only `---` and a comment loads as empty.
+///
+/// Decided from the text rather than from the node: saphyr gives an empty plain scalar, an empty
+/// block scalar (`a: |`) and an empty `!!str` the same empty string over a zero-width span, and
+/// PyYAML reads the last two as `''`. A stream with no line of content holds neither.
+fn holds_nothing(text: &str) -> bool {
+    text.lines().all(|line| {
+        let line = line.trim();
+        let line = line
+            .strip_prefix("---")
+            .or_else(|| line.strip_prefix("..."))
+            .map_or(line, str::trim_start);
+        line.is_empty() || line.starts_with('#')
+    })
 }
 
 /// Drops the source positions `MarkedYaml` tracks once loading is done, applying PyYAML's
@@ -254,6 +275,31 @@ mod tests {
             v,
             json!({"a": 1, "b": ["x", 2.5, true, null], "c": {"d": "text"}})
         );
+    }
+
+    /// A document holding nothing but markers and comments is null, the way PyYAML reads it,
+    /// while an empty block scalar and an empty `!!str` stay empty strings, which is what PyYAML
+    /// loads them as.
+    ///
+    /// What would make this red: `holds_nothing` removed - saphyr then hands the comment-only
+    /// document back as `""` - or an emptiness rule read off the node instead, which cannot tell
+    /// `a: |` from a document of nothing and turns `copy: {content: |}` into a null content.
+    #[test]
+    fn an_empty_document_is_null_and_an_empty_block_scalar_is_not() {
+        for text in ["---\n# only a comment\n", "---\n", "--- # c\n...\n"] {
+            let docs = load(text, "t.yml").unwrap();
+            assert_eq!(to_json(&docs[0]).unwrap(), Value::Null, "{text:?}");
+        }
+        for (text, want) in [
+            ("a: |\nb: 1\n", json!({"a": "", "b": 1})),
+            ("a: |-\n\nb: 2\n", json!({"a": "", "b": 2})),
+            ("- |\n- x\n", json!(["", "x"])),
+            ("a: !!str\n", json!({"a": ""})),
+            ("b: ''\nc: \"\"\n", json!({"b": "", "c": ""})),
+        ] {
+            let docs = load(text, "t.yml").unwrap();
+            assert_eq!(to_json(&docs[0]).unwrap(), want, "{text:?}");
+        }
     }
 
     #[test]

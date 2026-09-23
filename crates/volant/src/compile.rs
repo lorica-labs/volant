@@ -1532,7 +1532,10 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .collect::<Vec<_>>();
     // Measured: a block saying `ignore_errors: true` loses to a task saying `ignore_errors:
     // false` inside it, which is why the keyword is three-state all the way down here.
-    task.ignore_errors = inner.ignore_errors.or(outer.ignore_errors);
+    task.ignore_errors = inner
+        .ignore_errors
+        .clone()
+        .or_else(|| outer.ignore_errors.clone());
     task.timeout = inner.timeout.or(outer.timeout);
     // Both three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.

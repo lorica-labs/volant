@@ -99,6 +99,8 @@ pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result
         if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
         }
+        check_pause(compiled, step, std::io::stdin().is_terminal())
+            .map_err(|e| Refusal::or(CODE, e))?;
         check_notify(compiled, &step.task)?;
     }
     for handler in &compiled.handlers {
@@ -312,7 +314,6 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.module
         );
     }
-    check_pause(task, std::io::stdin().is_terminal())?;
     check_arguments(task)
 }
 
@@ -320,12 +321,23 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
 pub(crate) const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant does not read the answer and would carry on without waiting for one. Give the pause seconds or minutes and no prompt, or redirect standard input.";
 
 /// A `pause` that would wait for an answer, refused before the first connection when standard
-/// input is a terminal. Both halves are known before anything runs: the shape is written in the
-/// playbook (a `prompt`, or neither `seconds` nor `minutes`), and the terminal is this process's.
-/// Refused at the task instead, it would stop the run after earlier tasks changed the hosts. The
-/// driver still refuses it when reached, for a `pause` a dynamic include names.
-fn check_pause(task: &PlayTask, interactive: bool) -> anyhow::Result<()> {
-    if !interactive || short_name(&task.module) != "pause" {
+/// input is a terminal and the step runs whatever happens. The shape is written in the playbook
+/// (a `prompt`, or neither `seconds` nor `minutes`), and the terminal is this process's; refused
+/// at the task instead, it would stop the run after earlier tasks changed the hosts.
+///
+/// Only a step that is sure to run is refused here. A `when` on it or on a block around it
+/// (folded into the task's own list), or a place inside a `rescue`, can leave the pause
+/// unreached; a `never` tag leaves it out of the compiled steps unless `--tags` asks for it, and the reference runs such a playbook to its end; `pause()` refuses the
+/// one that is reached, as it does for a `pause` a dynamic include names. Handlers are not
+/// steps, so they are left to it too.
+fn check_pause(
+    compiled: &crate::compile::Compiled,
+    step: &crate::compile::Step,
+    interactive: bool,
+) -> anyhow::Result<()> {
+    let task = &step.task;
+    if !interactive || short_name(&task.module) != "pause" || !runs_whatever_happens(compiled, step)
+    {
         return Ok(());
     }
     let has = |key: &str| task.args.contains_key(key);
@@ -333,6 +345,27 @@ fn check_pause(task: &PlayTask, interactive: bool) -> anyhow::Result<()> {
         bail!("task '{}': {PROMPT_REFUSED}", task.name);
     }
     Ok(())
+}
+
+/// Whether nothing written on a step or around it can leave it out: no `when` (a block's is
+/// folded into its tasks) and no `rescue` anywhere up its chain of blocks. A `never` tag needs no
+/// test of its own: the compiler drops such a task unless `--tags` selects it, and a selected one
+/// runs.
+fn runs_whatever_happens(compiled: &crate::compile::Compiled, step: &crate::compile::Step) -> bool {
+    if !step.task.when.is_empty() {
+        return false;
+    }
+    let (mut section, mut block) = (step.section, step.block);
+    loop {
+        if section == crate::compile::Section::Rescue {
+            return false;
+        }
+        let Some(index) = block else {
+            return true;
+        };
+        section = compiled.blocks[index].section;
+        block = compiled.blocks[index].parent;
+    }
 }
 
 /// Refuses `until`, `retries` and `delay` on a task that has nowhere to retry them, naming the
@@ -424,36 +457,66 @@ mod tests {
     use crate::playbook::parse;
     use crate::stats::error_code;
 
-    /// A `pause` that would wait for an answer is refused before anything connects when standard
-    /// input is a terminal, and a timed one, or any on a pipe, is not.
+    /// A `pause` that would wait for an answer on a terminal is refused before anything connects
+    /// when the step is sure to run, and left to the run when something may leave it out. A timed
+    /// one, or any on a pipe, is never refused here.
     ///
     /// What would make this red: the shape left to the task, which refuses it once the tasks
-    /// before it have changed the hosts; or a timed pause refused, which stops a playbook that
-    /// runs the same under both engines.
+    /// before it have changed the hosts; a timed pause refused, which stops a playbook that runs
+    /// the same under both engines; or a pause that may never run refused, which stops a playbook
+    /// the reference runs to its end (`when: confirm | default(false)`, a `never` tag, an
+    /// unreached `rescue`).
     #[test]
-    fn a_pause_that_would_prompt_on_a_terminal_is_refused_before_the_run() {
-        let pause = |args: &str| {
+    fn a_pause_that_would_prompt_on_a_terminal_is_refused_only_when_sure_to_run() {
+        let verdict_under = |tasks: &str, interactive: bool, run: Vec<String>| {
             let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - name: Wait\n      pause: {args}\n"),
+                &format!("- hosts: all\n  gather_facts: false\n  tasks:\n{tasks}"),
                 "x.yml",
             )
             .unwrap();
-            pb.plays[0].tasks[0].clone()
+            let compiled = crate::compile::compile(
+                &pb.plays[0],
+                &crate::roles::RoleSearch::default(),
+                &crate::compile::TagSelection::new(run, Vec::new()),
+            )
+            .unwrap();
+            compiled
+                .steps
+                .iter()
+                .try_for_each(|step| check_pause(&compiled, step, interactive))
+                .map_err(|e| format!("{e:#}"))
         };
-        for args in ["{prompt: Go?}", "{}", "{prompt: Go?, seconds: 1}"] {
-            let TaskOrBlock::Task(task) = pause(args) else {
-                unreachable!()
-            };
-            let err = check_pause(&task, true).expect_err(args);
-            assert_eq!(format!("{err:#}"), format!("task 'Wait': {PROMPT_REFUSED}"));
-            assert!(check_pause(&task, false).is_ok(), "{args}");
+        let verdict =
+            |tasks: &str, interactive: bool| verdict_under(tasks, interactive, Vec::new());
+        for pause in ["{prompt: Go?}", "{}", "{prompt: Go?, seconds: 1}"] {
+            let tasks = format!("    - name: Wait\n      pause: {pause}\n");
+            assert_eq!(
+                verdict(&tasks, true),
+                Err(format!("task 'Wait': {PROMPT_REFUSED}")),
+                "{pause}"
+            );
+            assert_eq!(verdict(&tasks, false), Ok(()), "{pause}");
         }
-        for args in ["{seconds: 1}", "{minutes: 1}"] {
-            let TaskOrBlock::Task(task) = pause(args) else {
-                unreachable!()
-            };
-            assert!(check_pause(&task, true).is_ok(), "{args}");
+        for tasks in [
+            "    - pause: {seconds: 1}\n",
+            "    - pause: {minutes: 1}\n",
+            "    - pause: {prompt: Go?}\n      when: confirm | default(false)\n",
+            "    - pause: {prompt: Go?}\n      tags: [never]\n",
+            "    - block:\n        - pause: {prompt: Go?}\n      when: confirm | default(false)\n",
+            "    - block:\n        - debug: msg=hi\n      rescue:\n        - pause: {prompt: Go?}\n",
+            "    - block:\n        - debug: msg=hi\n      rescue:\n        - block:\n            - pause: {prompt: Go?}\n",
+        ] {
+            assert_eq!(verdict(tasks, true), Ok(()), "{tasks}");
         }
+        // A `never` task that `--tags never` selects is in the compiled steps and runs.
+        assert!(
+            verdict_under(
+                "    - name: Wait\n      pause: {prompt: Go?}\n      tags: [never]\n",
+                true,
+                vec!["never".into()],
+            )
+            .is_err()
+        );
     }
 
     fn refusal(text: &str) -> String {

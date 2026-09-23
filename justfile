@@ -234,3 +234,70 @@ proof engine="volant": agent-musl
 proof-reset:
     test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
     ssh "$VOLANT_TARGET_HOST" 'sudo rm -rf /opt/volant-proof && sudo apt-get -qq -y purge tree ncdu > /dev/null && sudo apt-get -qq -y autoremove > /dev/null && echo reset'
+
+# Run the four pinned Galaxy roles (see tests/fixtures/proof-roles/requirements.yml) against the
+# machine named by VOLANT_TARGET_HOST, and optionally VOLANT_SECOND_HOST for a second line in the
+# inventory, under either engine (never in CI), and print the wall clock of the run itself
+# without the build or the role install in front of it.
+#
+# `ANSIBLE_PIPELINING` is ansible-core's own variable and is read only by the reference, for the
+# same reason as `proof`: volant keeps one agent alive per host for the whole run, so it has
+# nothing to pipeline. The roles come from Ansible Galaxy, installed once into `target/proof-
+# roles/` and never copied into this repository, so what runs is the published archive; a role
+# already installed at the pinned version (read from its own `.galaxy_install_info`) is left
+# alone rather than reinstalled on every call.
+proof-roles engine="volant" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    {
+      printf '[targets]\n'
+      printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST"
+      if [ -n "${VOLANT_SECOND_HOST:-}" ]; then
+        printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_SECOND_HOST" "$VOLANT_SECOND_HOST"
+      fi
+    } > target/proof-roles-inventory.ini
+    requirements=crates/volant/tests/fixtures/proof-roles/requirements.yml
+    play=crates/volant/tests/fixtures/proof-roles/site.yml
+    roles_dir="$PWD/target/proof-roles"
+    installed=true
+    while IFS= read -r role; do
+      version="$(grep -A1 "name: $role" "$requirements" | sed -n 's/.*version: //p')"
+      info="$roles_dir/$role/meta/.galaxy_install_info"
+      [ -f "$info" ] && grep -q "^version: $version\$" "$info" || { installed=false; break; }
+    done < <(grep 'name:' "$requirements" | sed 's/.*name: *//')
+    [ "$installed" = true ] || "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install -r "$requirements" -p "$roles_dir"
+    export ANSIBLE_ROLES_PATH="$roles_dir"
+    case "{{engine}}" in
+      volant)
+        just agent-musl
+        cargo build --release -p volant
+        VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+        VOLANT_AGENT_DIR="$PWD/target/agents" \
+          /usr/bin/time -f 'proof-roles volant %e s' \
+          ./target/release/volant playbook -i target/proof-roles-inventory.ini "$play" {{args}}
+        ;;
+      reference)
+        /usr/bin/time -f "proof-roles reference (pipelining ${ANSIBLE_PIPELINING:-False}) %e s" \
+          "$(uv tool dir)/ansible-core/bin/ansible-playbook" -i target/proof-roles-inventory.ini "$play" {{args}}
+        ;;
+      *)
+        echo "engine must be 'volant' or 'reference'"; exit 1
+        ;;
+    esac
+
+# Undo everything `proof-roles` writes, as far as it is safe to. Never touches sshd, /etc/ssh,
+# netbird, the account or sudo: this host is reachable only over ssh, and locking any of that out
+# would strand it beyond recovery. `unattended-upgrades` is left installed too, since Ubuntu ships
+# it by default and purging it is not part of undoing what the roles configured.
+proof-roles-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    ssh "$VOLANT_TARGET_HOST" '
+      set -euo pipefail
+      sudo apt-get -qq -y purge nginx nginx-common fail2ban python3-pip
+      sudo apt-get -qq -y autoremove
+      sudo rm -rf /etc/nginx /etc/fail2ban/jail.local /etc/apt/apt.conf.d/10periodic /etc/apt/apt.conf.d/50unattended-upgrades
+      echo reset
+    '

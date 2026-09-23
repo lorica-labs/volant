@@ -582,7 +582,7 @@ fn compare_keys(
         if rules.known.contains(&(module, path.as_str())) {
             // The exemption is spent here and checked back in below: a difference that has gone
             // away has to be taken off the list, not left to quietly excuse a future one.
-            if reference.is_some() && ours.is_none() {
+            if !matches!((reference, ours), (Some(r), Some(o)) if same(r, o)) {
                 continue;
             }
             failures.push(format!(
@@ -833,11 +833,16 @@ const ACTION_SRC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/acti
 
 /// What the generator writes in place of any string naming the reference's staged copy: its
 /// `src`, and the archive path `unarchive` quotes in the `tar` command line it ran. Volant's
-/// staged copies live under the agent's `remote_tmp`, and a string of ours naming one gets the
-/// same placeholder, so both keys are then compared by value: a `src` pointing anywhere else, the
-/// user's own file for instance, still differs.
+/// staged copies live under the agent's `remote_tmp`, and a string of ours naming one, or
+/// carrying one of the generator's own markers, gets the same placeholder, so both keys are then
+/// compared by value: a `src` pointing anywhere else, the user's own file for instance, still
+/// differs.
 #[cfg(target_os = "linux")]
 const STAGED_PLACEHOLDER: &str = "<golden-staged-path>";
+
+/// `STAGED_SRC_MARKERS` in `generate.py`.
+#[cfg(target_os = "linux")]
+const STAGED_MARKERS: &[&str] = &["ansible-tmp-", "/tmp/ansible", ".ansible/tmp"];
 
 /// `service`'s `status` is a live `systemctl show`, recorded with every value replaced by this.
 /// Ours gets the same treatment, so the comparison is over the keys, one by one.
@@ -850,9 +855,26 @@ const STATUS_PLACEHOLDER: &str = "<golden-systemd-value>";
 const ACTION_BY_TYPE: &[&str] = &["cache_update_time"];
 
 /// Differences this release really has in its action plugins, as `(case, path)`, with the same
-/// contract as `KNOWN_DIFFERENCES`: an entry that stops differing fails the test.
+/// contract as `KNOWN_DIFFERENCES`: an entry that stops differing fails the test. Each reason is
+/// what ansible-core 2.19.12's own source shows.
 #[cfg(target_os = "linux")]
-const ACTION_KNOWN_DIFFERENCES: &[(&str, &str)] = &[];
+const ACTION_KNOWN_DIFFERENCES: &[(&str, &str)] = &[
+    // `copy` with `content:` and `force: false` on an existing file: the reference returns
+    // `src=source` (`plugins/action/copy.py`), and `source` is the controller-side temporary file
+    // it wrote the content to, `tempfile.mkstemp(dir=C.DEFAULT_LOCAL_TMP, prefix='.')`, deleted
+    // before the task ends. Volant never writes that file and reports a name of the same shape
+    // with no directory, `.9063a9f0` in this run.
+    ("copy-force-false", "src"),
+    // A module's `fail_json` becomes, on the reference's controller, an error summary rendered as
+    // `(traceback unavailable)` when tracebacks are off (`error_summary` in
+    // `_internal/_templating/_transform.py`). Volant passes the module's result on without it.
+    ("copy-validate-fail", "exception"),
+    // The reference's `_execute_module` (`plugins/action/__init__.py`) splits `stdout` and
+    // `stderr` into `stdout_lines` and `stderr_lines` for every module result that has them; the
+    // `copy` module returns only the two strings, and Volant does not add the split.
+    ("copy-validate-fail", "stderr_lines"),
+    ("copy-validate-fail", "stdout_lines"),
+];
 
 #[cfg(target_os = "linux")]
 const ACTION_RULES: Rules = Rules {
@@ -864,7 +886,11 @@ const ACTION_RULES: Rules = Rules {
 #[cfg(target_os = "linux")]
 fn redact_staged(value: &mut Value, staged_root: &str) {
     match value {
-        Value::String(s) if s.starts_with(staged_root) => *s = STAGED_PLACEHOLDER.into(),
+        Value::String(s)
+            if s.starts_with(staged_root) || STAGED_MARKERS.iter().any(|m| s.contains(m)) =>
+        {
+            *s = STAGED_PLACEHOLDER.into();
+        }
         Value::Array(items) => items.iter_mut().for_each(|v| redact_staged(v, staged_root)),
         Value::Object(map) => map.values_mut().for_each(|v| redact_staged(v, staged_root)),
         _ => {}
@@ -1057,8 +1083,15 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut results = results_by_task(&stdout);
     if let Some(mut shown) = results.remove("unarchive-creates-registered")
-        && let Some(registered) = shown.get_mut("unarchive_creates").map(Value::take)
+        && let Some(mut registered) = shown.get_mut("unarchive_creates").map(Value::take)
     {
+        // A registered result carries the `failed: false` the executor sets on every result;
+        // the reference's JSON callback leaves it out, as an `ok:` line does. A `true` stays.
+        if let Some(map) = registered.as_object_mut()
+            && map.get("failed") == Some(&Value::Bool(false))
+        {
+            map.remove("failed");
+        }
         results.insert("unarchive-creates".into(), registered);
     }
     let staged_root = format!("{ACTION_DIR}/tmp/");

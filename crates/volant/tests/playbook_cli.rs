@@ -7412,11 +7412,12 @@ fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
 /// The two lookups a role reads, end to end, against the search path the controller gives a
 /// role's task. Measured on ansible-core 2.19.12: `lookup('first_found', ['files/x.txt'])`
 /// answers the role's own `files/x.txt`, and `lookup('template', 't.j2')`, with `templates/t.j2`
-/// holding `{{ '{{ 1 + 1 }}' }}`, shows `{{ 1 + 1 }}` under `debug: msg:`, never `2`.
+/// holding `{{ '{{ 1 + 1 }}' }}`, shows `{{ 1 + 1 }}` under both `debug: var:` reading a task's
+/// own `vars:` and `debug: msg:`, never `2`.
 ///
 /// What would make this red: `ansible_search_path` missing from a role task's variables (both
 /// lookups then look beside the playbook and fail), or the `template` arm of `lookup` not
-/// marking what it rendered as data (the debug shows `2`).
+/// marking what it rendered as data (either debug shows `2`).
 #[test]
 fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
     let dir = std::env::temp_dir().join(format!("volant-role-lookups-{}", std::process::id()));
@@ -7437,7 +7438,7 @@ fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
     );
     write(
         "roles/probe/tasks/main.yml",
-        "- name: Via lookup, rendered\n  debug:\n    msg: \"{{ via_lookup }}\"\n  vars:\n    via_lookup: \"{{ lookup('template', 't.j2') }}\"\n\
+        "- name: Via lookup, read back\n  debug:\n    var: via_lookup\n  vars:\n    via_lookup: \"{{ lookup('template', 't.j2') }}\"\n\
          - name: First found\n  debug:\n    msg: \"found={{ lookup('first_found', ['files/x.txt']) }}\"\n\
          - name: Snippet\n  debug:\n    msg: \"{{ lookup('template', 'snip.j2') }}\"\n  vars:\n    who: me\n",
     );
@@ -7458,8 +7459,8 @@ fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     assert!(
-        stdout.contains(r#""msg": "{{ 1 + 1 }}""#),
-        "debug: msg: rendered what the template lookup returned:\n{stdout}"
+        stdout.contains(r#""via_lookup": "{{ 1 + 1 }}""#),
+        "debug: var: read the lookup's text back as data, not as an expression to evaluate:\n{stdout}"
     );
     let found = dir.join("roles/probe/files/x.txt");
     assert!(

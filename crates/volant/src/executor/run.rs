@@ -3156,6 +3156,7 @@ mod tests {
         let t = task(match kind {
             crate::action_plugins::Kind::Copy => "copy",
             crate::action_plugins::Kind::Dnf => "dnf",
+            crate::action_plugins::Kind::Fetch => "fetch",
             crate::action_plugins::Kind::Package => "package",
             crate::action_plugins::Kind::Service => "service",
             crate::action_plugins::Kind::Template => "template",
@@ -3181,6 +3182,7 @@ mod tests {
                     args_untrusted: &item.args_untrusted,
                     running_vars: &running,
                     delegated: false,
+                    escalated: false,
                     item_vars: &item.vars,
                     templar: &templar,
                     origin: &origin,

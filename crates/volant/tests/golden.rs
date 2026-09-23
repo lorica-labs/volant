@@ -505,6 +505,22 @@ const MAY_BE_NULL: &[&str] = &["stat.version"];
 #[cfg(target_os = "linux")]
 const KNOWN_DIFFERENCES: &[(&str, &str)] = &[];
 
+/// What one golden comparison loosens: keys compared by type, the by-type keys that may be
+/// `null`, and the known differences it steps over, as `(case, path)`.
+#[cfg(target_os = "linux")]
+struct Rules {
+    by_type: &'static [&'static str],
+    may_be_null: &'static [&'static str],
+    known: &'static [(&'static str, &'static str)],
+}
+
+#[cfg(target_os = "linux")]
+const MODULE_RULES: Rules = Rules {
+    by_type: BY_TYPE,
+    may_be_null: MAY_BE_NULL,
+    known: KNOWN_DIFFERENCES,
+};
+
 /// The eight ownership keys, and which part of the running account each one must equal.
 #[cfg(target_os = "linux")]
 fn ownership<'a>(path: &str, id: &'a Identity) -> Option<&'a Value> {
@@ -517,7 +533,7 @@ fn ownership<'a>(path: &str, id: &'a Identity) -> Option<&'a Value> {
     }
 }
 
-/// `ok:`/`changed:` lines at `-v`, keyed by the task banner they arrived under.
+/// `ok:`/`changed:`/`fatal:` lines at `-v`, keyed by the task banner they arrived under.
 #[cfg(target_os = "linux")]
 fn results_by_task(stdout: &str) -> Map<String, Value> {
     let mut results = Map::new();
@@ -527,7 +543,9 @@ fn results_by_task(stdout: &str) -> Map<String, Value> {
             && let Some(end) = rest.find(']')
         {
             task = rest[..end].to_string();
-        } else if (line.starts_with("ok: [") || line.starts_with("changed: ["))
+        } else if ["ok: [", "changed: [", "fatal: ["]
+            .iter()
+            .any(|p| line.starts_with(p))
             && let Some((_, json)) = line.split_once(" => ")
             && let Ok(value) = serde_json::from_str(json)
         {
@@ -535,6 +553,31 @@ fn results_by_task(stdout: &str) -> Map<String, Value> {
         }
     }
     results
+}
+
+/// What a comparison found: the differences, and the known differences it stepped over.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct Findings {
+    failures: Vec<String>,
+    spent: Vec<(String, String)>,
+}
+
+#[cfg(target_os = "linux")]
+impl Findings {
+    /// A known difference whose key neither side carried was never looked at, which is not the
+    /// same as still differing: the case stopped reporting that key, or stopped running, and the
+    /// entry would otherwise sit there excusing nothing until it excuses something new.
+    fn check_spent(&mut self, rules: &Rules) {
+        for (case, path) in rules.known {
+            if !self.spent.iter().any(|(c, p)| c == case && p == path) {
+                self.failures.push(format!(
+                    "{case}.{path}: listed as a known difference but neither side has it - delete \
+                     the entry"
+                ));
+            }
+        }
+    }
 }
 
 /// One module's result against the reference's, key by key, walking into `stat`'s nested map.
@@ -545,7 +588,8 @@ fn compare_keys(
     want: &Map<String, Value>,
     got: &Map<String, Value>,
     id: &Identity,
-    failures: &mut Vec<String>,
+    rules: &Rules,
+    findings: &mut Findings,
 ) {
     let mut keys: Vec<&String> = want.keys().chain(got.keys()).collect();
     keys.sort_unstable();
@@ -560,13 +604,14 @@ fn compare_keys(
         if DROPPED.contains(&path.as_str()) {
             continue;
         }
-        if KNOWN_DIFFERENCES.contains(&(module, path.as_str())) {
+        if rules.known.contains(&(module, path.as_str())) {
+            findings.spent.push((module.to_string(), path.clone()));
             // The exemption is spent here and checked back in below: a difference that has gone
             // away has to be taken off the list, not left to quietly excuse a future one.
-            if reference.is_some() && ours.is_none() {
+            if !matches!((reference, ours), (Some(r), Some(o)) if same(r, o)) {
                 continue;
             }
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}.{path}: listed as a known difference but no longer differs - delete the \
                  KNOWN_DIFFERENCES entry (reference {reference:?}, ours {ours:?})"
             ));
@@ -576,25 +621,25 @@ fn compare_keys(
             continue;
         }
         let (Some(reference), Some(ours)) = (reference, ours) else {
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}.{path}: reference {reference:?}, ours {ours:?}"
             ));
             continue;
         };
         if let Some(mine) = ownership(&path, id) {
             if !same(ours, mine) {
-                failures.push(format!(
+                findings.failures.push(format!(
                     "{module}.{path}: this account is {mine}, ours reported {ours}"
                 ));
             }
             continue;
         }
-        if BY_TYPE.contains(&path.as_str()) {
+        if rules.by_type.contains(&path.as_str()) {
             let kind = |v: &Value| std::mem::discriminant(v);
-            let nullable =
-                MAY_BE_NULL.contains(&path.as_str()) && (reference.is_null() || ours.is_null());
+            let nullable = rules.may_be_null.contains(&path.as_str())
+                && (reference.is_null() || ours.is_null());
             if !nullable && kind(reference) != kind(ours) {
-                failures.push(format!(
+                findings.failures.push(format!(
                     "{module}.{path}: reference {reference} and ours {ours} are not even the same \
                      kind of value"
                 ));
@@ -603,12 +648,86 @@ fn compare_keys(
         }
         match (reference, ours) {
             (Value::Object(want), Value::Object(got)) => {
-                compare_keys(module, &path, want, got, id, failures);
+                compare_keys(module, &path, want, got, id, rules, findings);
             }
             _ if same(reference, ours) => {}
-            _ => failures.push(format!(
+            _ => findings.failures.push(format!(
                 "{module}.{path}: reference {reference}, ours {ours}"
             )),
+        }
+    }
+}
+
+/// The controller interpreter a golden comparison runs Volant with, or `None` after saying loudly
+/// why the comparison is skipped. Under `VOLANT_PYTHON` there is no skip: an interpreter that
+/// cannot reproduce the recording fails the test.
+#[cfg(target_os = "linux")]
+fn reference_python() -> Option<std::path::PathBuf> {
+    let recorded_version = include_str!("golden/ANSIBLE_VERSION").trim();
+    match controller_python(recorded_version) {
+        Ok(python) => Some(python),
+        Err(why) if std::env::var_os("VOLANT_PYTHON").is_some() => {
+            panic!("VOLANT_PYTHON cannot reproduce the recording: {why}")
+        }
+        Err(why) => {
+            eprintln!("skipped: {why}. Set VOLANT_PYTHON to an ansible-core {recorded_version}.");
+            None
+        }
+    }
+}
+
+/// Runs `playbook`, already written under `dir`, against `localhost` over the local connection,
+/// at `-v`, and returns once it exits or panics at a deadline.
+#[cfg(target_os = "linux")]
+fn run_recorded_play(
+    dir: &std::path::Path,
+    playbook: &str,
+    python: &std::path::Path,
+) -> std::process::Output {
+    std::fs::write(
+        dir.join("hosts.ini"),
+        "localhost ansible_connection=local\n",
+    )
+    .expect("the inventory is written");
+    let remote_tmp = dir.join("tmp");
+    std::fs::create_dir_all(&remote_tmp).expect("the blob cache directory is writable");
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
+        .arg("playbook")
+        .args(["-i", &dir.join("hosts.ini").display().to_string()])
+        .arg("-v")
+        .arg(dir.join(playbook))
+        .env("NO_COLOR", "1")
+        .env_remove("COLUMNS")
+        .env("VOLANT_PYTHON", python)
+        // The local agent inherits this run's environment and caches the payload under this
+        // directory, so the wipe before the run takes the cache with it rather than leaving it
+        // in the shared one.
+        .env("VOLANT_REMOTE_TMP", &remote_tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (name, _) in std::env::vars() {
+        if name.starts_with("ANSIBLE_") {
+            command.env_remove(name);
+        }
+    }
+    let mut child = command.spawn().expect("volant starts");
+    // A play that cannot reach its host waits rather than returning, and a hung test says
+    // nothing about the results it was written to compare.
+    let deadline = std::time::Duration::from_secs(120);
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().expect("volant is waitable") {
+            Some(_) => return child.wait_with_output().expect("volant output"),
+            None if started.elapsed() >= deadline => {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("volant output");
+                panic!(
+                    "volant did not finish within {deadline:?}:\n{}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
         }
     }
 }
@@ -652,16 +771,8 @@ fn a_python_module_returns_the_reference_s_own_keys() {
             include_str!("golden/python-modules/lineinfile.json"),
         ),
     ];
-    let recorded_version = include_str!("golden/ANSIBLE_VERSION").trim();
-    let python = match controller_python(recorded_version) {
-        Ok(python) => python,
-        Err(why) if std::env::var_os("VOLANT_PYTHON").is_some() => {
-            panic!("VOLANT_PYTHON cannot reproduce the recording: {why}")
-        }
-        Err(why) => {
-            eprintln!("skipped: {why}. Set VOLANT_PYTHON to an ansible-core {recorded_version}.");
-            return;
-        }
+    let Some(python) = reference_python() else {
+        return;
     };
 
     let dir = std::path::Path::new(PYTHON_MODULES_DIR);
@@ -676,8 +787,6 @@ fn a_python_module_returns_the_reference_s_own_keys() {
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644))
             .expect("the stat target's mode is set");
     }
-    let remote_tmp = dir.join("tmp");
-    std::fs::create_dir_all(&remote_tmp).expect("the blob cache directory is writable");
     // The same arguments `generate.py` recorded against, on the same paths, in the same order.
     // `gather_facts: false` because this play wants none: with facts gathered every run would
     // also be timing and comparing a `setup` nothing here asked for.
@@ -693,55 +802,11 @@ fn a_python_module_returns_the_reference_s_own_keys() {
         ),
     )
     .expect("the play is written");
-    std::fs::write(
-        dir.join("hosts.ini"),
-        "localhost ansible_connection=local\n",
-    )
-    .expect("the inventory is written");
-
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
-    command
-        .arg("playbook")
-        .args(["-i", &dir.join("hosts.ini").display().to_string()])
-        .arg("-v")
-        .arg(dir.join("python-modules.yml"))
-        .env("NO_COLOR", "1")
-        .env_remove("COLUMNS")
-        .env("VOLANT_PYTHON", &python)
-        // The local agent inherits this run's environment and caches the payload under this
-        // directory, so the wipe above takes the cache with it rather than leaving it in the
-        // shared one.
-        .env("VOLANT_REMOTE_TMP", &remote_tmp)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    for (name, _) in std::env::vars() {
-        if name.starts_with("ANSIBLE_") {
-            command.env_remove(name);
-        }
-    }
-    let mut child = command.spawn().expect("volant starts");
-    // A play that cannot reach its host waits rather than returning, and a hung test says
-    // nothing about the module results it was written to compare.
-    let deadline = std::time::Duration::from_secs(120);
-    let started = std::time::Instant::now();
-    let out = loop {
-        match child.try_wait().expect("volant is waitable") {
-            Some(_) => break child.wait_with_output().expect("volant output"),
-            None if started.elapsed() >= deadline => {
-                let _ = child.kill();
-                let out = child.wait_with_output().expect("volant output");
-                panic!(
-                    "volant did not finish within {deadline:?}:\n{}",
-                    String::from_utf8_lossy(&out.stdout)
-                );
-            }
-            None => std::thread::sleep(std::time::Duration::from_millis(25)),
-        }
-    };
+    let out = run_recorded_play(dir, "python-modules.yml", &python);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
     let id = identity();
-    let mut failures = Vec::new();
+    let mut findings = Findings::default();
     for (module, recorded) in fixtures {
         let reference: Value = serde_json::from_str(recorded).expect("the fixture parses");
         // The fixture's own `action` is the one thing this comparison asks of that key: a
@@ -752,22 +817,367 @@ fn a_python_module_returns_the_reference_s_own_keys() {
             "{module}.json was recorded from a task that ran something else"
         );
         let Some(ours) = results.get(module) else {
-            failures.push(format!(
+            findings.failures.push(format!(
                 "{module}: no result at all - the task did not run, or did not report"
             ));
             continue;
         };
         match (reference.as_object(), ours.as_object()) {
             (Some(want), Some(got)) => {
-                compare_keys(module, "", want, got, &id, &mut failures);
+                compare_keys(module, "", want, got, &id, &MODULE_RULES, &mut findings);
             }
-            _ => failures.push(format!("{module}: reference {reference}, ours {ours}")),
+            _ => findings
+                .failures
+                .push(format!("{module}: reference {reference}, ours {ours}")),
         }
     }
+    findings.check_spent(&MODULE_RULES);
+    let failures = findings.failures;
     let _ = std::fs::remove_dir_all(dir);
     assert!(
         failures.is_empty(),
         "{} key(s) differ from ansible-core across {} module(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
+        failures.len(),
+        fixtures.len(),
+        failures.join("\n"),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The directory `generate.py` recorded the action plugin fixtures in, fixed for the reason
+/// `PYTHON_MODULES_DIR` is: `dest`, `path` and `unarchive`'s skip message carry it, and they are
+/// compared by value.
+#[cfg(target_os = "linux")]
+const ACTION_DIR: &str = "/tmp/volant16-golden";
+
+/// The generator's own inputs, which the recording's `checksum`, `md5sum` and `size` were taken
+/// from.
+#[cfg(target_os = "linux")]
+const ACTION_SRC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/action-src");
+
+/// What the generator writes in place of any string naming the reference's staged copy: its
+/// `src`, and the archive path `unarchive` quotes in the `tar` command line it ran. Volant's
+/// staged copies live under the agent's `remote_tmp`, and a string of ours naming one, or
+/// carrying one of the generator's own markers, gets the same placeholder, so both keys are then
+/// compared by value: a `src` pointing anywhere else, the user's own file for instance, still
+/// differs.
+#[cfg(target_os = "linux")]
+const STAGED_PLACEHOLDER: &str = "<golden-staged-path>";
+
+/// `STAGED_SRC_MARKERS` in `generate.py`.
+#[cfg(target_os = "linux")]
+const STAGED_MARKERS: &[&str] = &["ansible-tmp-", "/tmp/ansible", ".ansible/tmp"];
+
+/// Keys every `systemctl show` of a unit prints, whatever the systemd version.
+#[cfg(target_os = "linux")]
+const STATUS_FLOOR: &[&str] = &["Id", "LoadState", "ActiveState", "SubState"];
+
+/// `apt`'s `cache_update_time` is the mtime of the host's package cache, a date that moves with
+/// every `apt update`. `service`'s `status` is a live `systemctl show` of the unit, recorded with
+/// every value replaced by a placeholder, and its key set changes with the systemd version (the
+/// recording's has `BindLogSockets` and `CanLiveMount`, which a runner's systemd 255 lacks): by
+/// type, with `STATUS_FLOOR` checked on our side.
+#[cfg(target_os = "linux")]
+const ACTION_BY_TYPE: &[&str] = &["cache_update_time", "status"];
+
+/// Differences this release really has in its action plugins, as `(case, path)`, with the same
+/// contract as `KNOWN_DIFFERENCES`: an entry that stops differing fails the test. Each reason is
+/// what ansible-core 2.19.12's own source shows.
+#[cfg(target_os = "linux")]
+const ACTION_KNOWN_DIFFERENCES: &[(&str, &str)] = &[
+    // `copy` with `content:` and `force: false` on an existing file: the reference returns
+    // `src=source` (`plugins/action/copy.py`), and `source` is the controller-side temporary file
+    // it wrote the content to, `tempfile.mkstemp(dir=C.DEFAULT_LOCAL_TMP, prefix='.')`, deleted
+    // before the task ends. Volant never writes that file and reports a name of the same shape
+    // with no directory, `.9063a9f0` in this run.
+    ("copy-force-false", "src"),
+    // A module's `fail_json` becomes, on the reference's controller, an error summary rendered as
+    // `(traceback unavailable)` when tracebacks are off (`error_summary` in
+    // `_internal/_templating/_transform.py`). Volant passes the module's result on without it.
+    ("copy-validate-fail", "exception"),
+];
+
+#[cfg(target_os = "linux")]
+const ACTION_RULES: Rules = Rules {
+    by_type: ACTION_BY_TYPE,
+    may_be_null: &[],
+    known: ACTION_KNOWN_DIFFERENCES,
+};
+
+#[cfg(target_os = "linux")]
+fn redact_staged(value: &mut Value, staged_root: &str) {
+    match value {
+        Value::String(s)
+            if s.starts_with(staged_root) || STAGED_MARKERS.iter().any(|m| s.contains(m)) =>
+        {
+            *s = STAGED_PLACEHOLDER.into();
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| redact_staged(v, staged_root)),
+        Value::Object(map) => map.values_mut().for_each(|v| redact_staged(v, staged_root)),
+        _ => {}
+    }
+}
+
+/// What an action plugin returns is the reference's result, key by key, not a plausible shape.
+///
+/// Every case `generate.py` recorded is replayed with the same arguments, in the same order, in
+/// the same directory, so each one meets the state the previous ones left: `copy-same` finds the
+/// file `copy-new` wrote, `copy-force-false` the one `copy-content` wrote. `dest`, `path`, `mode`,
+/// `size`, `checksum`, `md5sum`, `state`, `msg` and every other key are compared by value; the
+/// ownership keys against the account running the test; `cache_update_time`, `status` and a
+/// directory's `size` by type; `invocation` is dropped, and `diff` when it is `[]` on both sides.
+/// `unarchive-creates` is read back through `register`, because Volant prints no result on a
+/// `skipping:` line.
+///
+/// `package` and `service` escalate with `sudo -n` and ask systemd. A machine without either
+/// skips the test loudly, or fails it under `VOLANT_PYTHON`, which names a job that has to
+/// compare everything.
+///
+/// What would make this red: `copy` answering from its `stat` in the identical branch - the
+/// keys look right, `path` is missing; or `template` recording the rendered text's checksum
+/// computed another way than the module's.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_action_plugin_returns_the_reference_s_own_keys() {
+    let fixtures: [(&str, &str, &str); 14] = [
+        (
+            "copy-new",
+            "copy",
+            include_str!("golden/action/copy-new.json"),
+        ),
+        (
+            "copy-same",
+            "copy",
+            include_str!("golden/action/copy-same.json"),
+        ),
+        (
+            "copy-content",
+            "copy",
+            include_str!("golden/action/copy-content.json"),
+        ),
+        (
+            "copy-force-false",
+            "copy",
+            include_str!("golden/action/copy-force-false.json"),
+        ),
+        (
+            "copy-dest-dir",
+            "copy",
+            include_str!("golden/action/copy-dest-dir.json"),
+        ),
+        (
+            "copy-validate-fail",
+            "copy",
+            include_str!("golden/action/copy-validate-fail.json"),
+        ),
+        (
+            "copy-remote-src",
+            "copy",
+            include_str!("golden/action/copy-remote-src.json"),
+        ),
+        (
+            "template-new",
+            "template",
+            include_str!("golden/action/template-new.json"),
+        ),
+        (
+            "template-same",
+            "template",
+            include_str!("golden/action/template-same.json"),
+        ),
+        (
+            "template-lstrip",
+            "template",
+            include_str!("golden/action/template-lstrip.json"),
+        ),
+        (
+            "package-present",
+            "package",
+            include_str!("golden/action/package-present.json"),
+        ),
+        (
+            "service-started",
+            "service",
+            include_str!("golden/action/service-started.json"),
+        ),
+        (
+            "unarchive-local",
+            "unarchive",
+            include_str!("golden/action/unarchive-local.json"),
+        ),
+        (
+            "unarchive-creates",
+            "unarchive",
+            include_str!("golden/action/unarchive-creates.json"),
+        ),
+    ];
+    let Some(python) = reference_python() else {
+        return;
+    };
+    let missing: Vec<&str> = [
+        ("sudo -n true", "passwordless `sudo -n`"),
+        ("test -d /run/systemd/system", "running systemd"),
+    ]
+    .into_iter()
+    .filter(|(probe, _)| {
+        !std::process::Command::new("sh")
+            .args(["-c", probe])
+            .output()
+            .is_ok_and(|out| out.status.success())
+    })
+    .map(|(_, what)| what)
+    .collect();
+    if !missing.is_empty() {
+        let why = format!(
+            "`package` and `service` were recorded with `become` on systemd, and this machine \
+             has no {}",
+            missing.join(" and no ")
+        );
+        assert!(
+            std::env::var_os("VOLANT_PYTHON").is_none(),
+            "VOLANT_PYTHON cannot reproduce the recording: {why}"
+        );
+        eprintln!("skipped: {why}.");
+        return;
+    }
+
+    let dir = std::path::Path::new(ACTION_DIR);
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).expect("the recorded directory is writable");
+    // The tasks `action_plugins()` in `generate.py` records, with the same names: the two
+    // `setup-<n>` tasks make the directories later cases write into.
+    std::fs::write(
+        dir.join("action-plugins.yml"),
+        format!(
+            r#"- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: copy-new
+      copy: {{src: {src}/hello.txt, dest: {dir}/new.txt, mode: "0644"}}
+    - name: copy-same
+      copy: {{src: {src}/hello.txt, dest: {dir}/new.txt, mode: "0644"}}
+    - name: copy-content
+      copy: {{content: "x\n", dest: {dir}/content.txt, mode: "0644"}}
+    - name: copy-force-false
+      copy: {{content: "y\n", dest: {dir}/content.txt, force: false}}
+    - name: setup-4
+      file: {{path: {dir}/dir, state: directory, mode: "0775"}}
+    - name: copy-dest-dir
+      copy: {{src: {src}/hello.txt, dest: {dir}/dir/, mode: "0644"}}
+    - name: copy-validate-fail
+      copy: {{content: "", dest: {dir}/invalid.txt, validate: "test -s %s"}}
+      ignore_errors: true
+    - name: copy-remote-src
+      copy: {{src: {dir}/new.txt, dest: {dir}/remote.txt, remote_src: true, mode: "0644"}}
+    - name: template-new
+      template: {{src: {src}/motd.j2, dest: {dir}/motd, mode: "0644"}}
+      vars: {{who: golden, extra: true}}
+    - name: template-same
+      template: {{src: {src}/motd.j2, dest: {dir}/motd, mode: "0644"}}
+      vars: {{who: golden, extra: true}}
+    - name: template-lstrip
+      template: {{src: {src}/motd.j2, dest: {dir}/motd-lstrip, mode: "0644", lstrip_blocks: true}}
+      vars: {{who: golden, extra: true}}
+    - name: package-present
+      package: {{name: bash, state: present}}
+      become: true
+      ignore_errors: true
+    - name: service-started
+      service: {{name: systemd-journald, state: started}}
+      become: true
+      ignore_errors: true
+    - name: setup-13
+      file: {{path: {dir}/unpacked, state: directory, mode: "0775"}}
+    - name: unarchive-local
+      unarchive: {{src: {src}/bundle.tar.gz, dest: {dir}/unpacked}}
+    - name: unarchive-creates
+      unarchive: {{src: {src}/bundle.tar.gz, dest: {dir}/unpacked, creates: {dir}/unpacked/inside.txt}}
+      register: unarchive_creates
+    - name: unarchive-creates-registered
+      debug: {{var: unarchive_creates}}
+"#,
+            dir = ACTION_DIR,
+            src = ACTION_SRC,
+        ),
+    )
+    .expect("the play is written");
+    let out = run_recorded_play(dir, "action-plugins.yml", &python);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut results = results_by_task(&stdout);
+    if let Some(mut shown) = results.remove("unarchive-creates-registered")
+        && let Some(mut registered) = shown.get_mut("unarchive_creates").map(Value::take)
+    {
+        // A registered result carries the `failed: false` the executor sets on every result;
+        // the reference's JSON callback leaves it out, as an `ok:` line does. A `true` stays.
+        if let Some(map) = registered.as_object_mut()
+            && map.get("failed") == Some(&Value::Bool(false))
+        {
+            map.remove("failed");
+        }
+        results.insert("unarchive-creates".into(), registered);
+    }
+    let staged_root = format!("{ACTION_DIR}/tmp/");
+    let id = identity();
+    let empty = Value::Array(Vec::new());
+    let mut findings = Findings::default();
+    for (case, action, recorded) in fixtures {
+        let reference: Value = serde_json::from_str(recorded).expect("the fixture parses");
+        assert_eq!(
+            reference["action"],
+            Value::from(action),
+            "{case}.json was recorded from a task that ran something else"
+        );
+        let Some(mut ours) = results.get(case).cloned() else {
+            findings.failures.push(format!(
+                "{case}: no result at all - the task did not run, or did not report"
+            ));
+            continue;
+        };
+        redact_staged(&mut ours, &staged_root);
+        let (Value::Object(mut want), Value::Object(mut got)) = (reference.clone(), ours.clone())
+        else {
+            findings
+                .failures
+                .push(format!("{case}: reference {reference}, ours {ours}"));
+            continue;
+        };
+        if want.get("diff") == Some(&empty) && got.get("diff") == Some(&empty) {
+            want.remove("diff");
+            got.remove("diff");
+        }
+        // A directory's `size` is whatever the filesystem says it takes, 60 on the recording's
+        // tmpfs and 4096 on ext4, read by the module and never computed by Volant. A file's
+        // `size` stays by value.
+        if want.get("state") == Some(&Value::from("directory"))
+            && let (Some(reference), Some(ours)) = (want.remove("size"), got.remove("size"))
+            && std::mem::discriminant(&reference) != std::mem::discriminant(&ours)
+        {
+            findings.failures.push(format!(
+                "{case}.size: reference {reference} and ours {ours} are not even the same kind of \
+                 value"
+            ));
+        }
+        // `status` is compared by type, but an empty object is one too: ours has to be the
+        // unit's `systemctl show`, which always names these four.
+        if want.contains_key("status") {
+            let status = got.get("status").and_then(Value::as_object);
+            for key in STATUS_FLOOR {
+                if !status.is_some_and(|s| s.contains_key(*key)) {
+                    findings.failures.push(format!(
+                        "{case}.status.{key}: `systemctl show` always has it, ours {:?}",
+                        got.get("status")
+                    ));
+                }
+            }
+        }
+        compare_keys(case, "", &want, &got, &id, &ACTION_RULES, &mut findings);
+    }
+    findings.check_spent(&ACTION_RULES);
+    let failures = findings.failures;
+    let _ = std::fs::remove_dir_all(dir);
+    assert!(
+        failures.is_empty(),
+        "{} key(s) differ from ansible-core across {} case(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
         failures.len(),
         fixtures.len(),
         failures.join("\n"),

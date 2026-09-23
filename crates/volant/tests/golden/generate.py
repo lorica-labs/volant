@@ -385,7 +385,9 @@ def action_plugins():
         "copy",
         {"content": "y\n", "dest": f"{ACTION_TMP}/content.txt", "force": False},
     )
-    setup("file", {"path": dest_dir, "state": "directory"})
+    # An explicit mode on both directories: `unarchive-local` reports its destination's, and
+    # left to the umask it would name whoever ran the generator.
+    setup("file", {"path": dest_dir, "state": "directory", "mode": "0775"})
     add(
         "copy-dest-dir",
         "copy",
@@ -446,7 +448,7 @@ def action_plugins():
         {"name": "systemd-journald", "state": "started"},
         {"become": True, "ignore_errors": True},
     )
-    setup("file", {"path": unpacked_dir, "state": "directory"})
+    setup("file", {"path": unpacked_dir, "state": "directory", "mode": "0775"})
     add("unarchive-local", "unarchive", {"src": bundle, "dest": unpacked_dir})
     add(
         "unarchive-creates",

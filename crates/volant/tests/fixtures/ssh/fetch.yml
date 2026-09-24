@@ -1,0 +1,35 @@
+- name: fetch writes under dest and nowhere else
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Under the host's own directory
+      fetch:
+        src: "{{ host_dir }}/plain.txt"
+        dest: "{{ dest }}"
+    - name: Flat
+      fetch:
+        src: "{{ host_dir }}/plain.txt"
+        dest: "{{ dest }}/flat/"
+        flat: true
+    - name: Under the host's own directory, escalated
+      fetch:
+        src: "{{ host_dir }}/secret.txt"
+        dest: "{{ dest }}"
+      become: true
+    - name: Flat, escalated
+      fetch:
+        src: "{{ host_dir }}/secret.txt"
+        dest: "{{ dest }}/flat-become/"
+        flat: true
+      become: true
+    - name: A src that climbs out of dest
+      fetch:
+        src: "{{ climb }}"
+        dest: "{{ dest }}"
+      ignore_errors: true
+    - name: A src that climbs out of dest, escalated
+      fetch:
+        src: "{{ climb }}"
+        dest: "{{ dest }}"
+      become: true
+      ignore_errors: true

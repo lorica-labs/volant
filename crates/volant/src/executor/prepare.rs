@@ -436,32 +436,29 @@ pub(super) fn prepare(
     // playbook wrote binds author content; one over `{{ r.stdout_lines }}` binds data, and the
     // items of such a loop are never rendered again.
     let mut items_from_host = false;
-    let elements: Vec<Option<Value>> = match &task.loop_items {
-        None => vec![None],
+    // An undefined variable in the loop is kept rather than raised, the way the reference's
+    // `TaskExecutor.run` keeps `_loop_eval_error`: the task's `when`, read without an item,
+    // decides first, and the error is raised only if the task would run. Any other loop error
+    // is raised at once, as there.
+    let mut loop_error = None;
+    let listed = match &task.loop_items {
+        None => None,
         Some(raw) if let Some(lookup) = &task.loop_with => {
-            let (list, tainted) = with_lookup_items(templar, lookup, &task.module, raw, &base)?;
+            Some(with_lookup_items(templar, lookup, &task.module, raw, &base))
+        }
+        Some(raw) => Some(loop_list(templar, task, raw, &base)),
+    };
+    let elements: Vec<Option<Value>> = match listed {
+        None => vec![None],
+        Some(Ok((list, tainted))) => {
             items_from_host = tainted;
             list.into_iter().map(Some).collect()
         }
-        Some(raw) => {
-            let (rendered, tainted) = templar.render_value_tainted(raw, &base)?;
-            items_from_host = tainted;
-            let list = match rendered {
-                Value::Array(items) => items,
-                other => {
-                    return Err(TemplateError(format!(
-                        "Invalid data passed to 'loop', it requires a list, got this instead: {other}"
-                    )));
-                }
-            };
-            // `with_items` flattens one level; `loop` does not.
-            let list = if task.with_items {
-                flatten_once(list)
-            } else {
-                list
-            };
-            list.into_iter().map(Some).collect()
+        Some(Err(e)) if e.is_undefined() => {
+            loop_error = Some(e);
+            vec![None]
         }
+        Some(Err(e)) => return Err(e),
     };
     let mut items = Vec::new();
     for element in elements {
@@ -489,7 +486,11 @@ pub(super) fn prepare(
         };
         let mut skipped = None;
         for condition in &task.when {
-            if !templar.condition(condition, &vars)? {
+            // A conditional that cannot be evaluated yields to a kept loop error, as there.
+            let holds = templar
+                .condition(condition, &vars)
+                .map_err(|e| loop_error.clone().unwrap_or(e))?;
+            if !holds {
                 let mut r = Map::new();
                 r.insert("changed".into(), json!(false));
                 r.insert("skipped".into(), json!(true));
@@ -498,6 +499,11 @@ pub(super) fn prepare(
                 skipped = Some(TaskResult(r));
                 break;
             }
+        }
+        if skipped.is_none()
+            && let Some(e) = loop_error.take()
+        {
+            return Err(e);
         }
         // Rendered argument by argument rather than as one value, because a few arguments are
         // read back as engine input rather than as data - the name a `debug: var:` compiles -
@@ -735,12 +741,37 @@ fn strict_boolean(value: &Value) -> Option<bool> {
     }
 }
 
+/// The list a `loop:` or `with_items:` walks, and whether it came from a managed host.
+fn loop_list(
+    templar: &Templar,
+    task: &PlayTask,
+    raw: &Value,
+    vars: &HostVars,
+) -> Result<(Vec<Value>, bool), TemplateError> {
+    let (rendered, tainted) = templar.render_value_tainted(raw, vars)?;
+    let list = match rendered {
+        Value::Array(items) => items,
+        other => {
+            return Err(TemplateError(format!(
+                "Invalid data passed to 'loop', it requires a list, got this instead: {other}"
+            )));
+        }
+    };
+    // `with_items` flattens one level; `loop` does not.
+    let list = if task.with_items {
+        flatten_once(list)
+    } else {
+        list
+    };
+    Ok((list, tainted))
+}
+
 /// The items of a `with_<lookup>` loop: the terms, rendered, handed to the lookup as its
 /// arguments, and what it returns taken as a list. Read from ansible-core 2.19.12's
 /// `TaskExecutor._get_loop_items`: a string term is resolved and anything that is not a list
 /// becomes a list of one, and the lookup runs with `wantlist=True`.
 ///
-/// `with_first_found` alone drops, at any depth, a term that renders undefined: its plugin does
+/// `with_first_found` alone drops a term inside the list that renders undefined: its plugin does
 /// that when it is invoked as `with_` (`_recurse_terms(terms, omit_undefined=True)`). This is what
 /// lets the `raspberrypi` role's task, which names `detected_distribution` before any host has
 /// set it, reach its `when` on a host that is not a Pi.
@@ -756,7 +787,10 @@ fn with_lookup_items(
     vars: &HostVars,
 ) -> Result<(Vec<Value>, bool), TemplateError> {
     let mut tainted = false;
-    let terms = render_terms(templar, raw, vars, lookup == "first_found", &mut tainted)?;
+    // A term written as one string is resolved before the lookup sees it (`resolve_to_container`
+    // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`.
+    let omit_undefined = lookup == "first_found" && !raw.is_string();
+    let terms = render_terms(templar, raw, vars, omit_undefined, &mut tainted)?;
     let terms = match terms {
         Some(Value::Array(terms)) => terms,
         Some(term) => vec![term],
@@ -1165,6 +1199,69 @@ mod tests {
             untrusted: BTreeSet::new(),
         }));
         assert_eq!(verdicts(&step, &store), [Some(true)]);
+    }
+
+    /// An undefined variable in `loop:` or `with_*` waits for the task's `when`, the way
+    /// ansible-core 2.19.12's `TaskExecutor` keeps it (`_loop_eval_error`) and raises it only
+    /// once the conditional, evaluated without an `item`, says the task runs. A false `when`
+    /// skips the task with the ordinary skip result; a true one, none at all, or one that
+    /// cannot be evaluated fails it with the loop's own error. Any other loop error is not kept.
+    ///
+    /// What would make this red: the loop rendered with `?` before any `when` is read, which
+    /// fails the skipped cases; the kept error dropped once the `when` holds, which runs the task
+    /// with no items; or the conditional's own error raised in place of the loop's.
+    #[test]
+    fn an_undefined_loop_waits_for_the_when() {
+        let store = store_at(Path::new("."));
+        let loops = [
+            (json!("{{ nope }}"), false, None),
+            (json!("{{ nope }}"), true, None),
+            (json!(["{{ nope }}"]), false, Some("fileglob")),
+            (json!("{{ nope }}"), false, Some("first_found")),
+        ];
+        for (raw, with_items, with) in loops {
+            let mut t = task("debug");
+            t.loop_items = Some(raw.clone());
+            t.with_items = with_items;
+            t.loop_with = with.map(str::to_string);
+            t.when = vec!["true".into(), "nope is defined".into()];
+            let items = prepared(&step_of(t.clone(), Origin::default()), &store)
+                .unwrap_or_else(|e| panic!("{raw} is skipped: {}", e.0));
+            assert_eq!(items.len(), 1, "{raw}: the task, not an item");
+            assert_eq!(items[0].element, None);
+            let skipped = items[0].skipped.as_ref().expect("skipped").0.clone();
+            assert_eq!(
+                Value::Object(skipped),
+                json!({
+                    "changed": false,
+                    "skipped": true,
+                    "skip_reason": "Conditional result was False",
+                    "false_condition": "nope is defined",
+                }),
+                "{raw}"
+            );
+
+            for when in [vec![], vec!["true".to_string()], vec!["(".to_string()]] {
+                t.when = when.clone();
+                let Err(err) = prepared(&step_of(t.clone(), Origin::default()), &store) else {
+                    panic!("{raw} under {when:?} fails");
+                };
+                assert!(err.is_undefined(), "{raw} under {when:?}: {}", err.0);
+            }
+        }
+
+        // A loop that renders is untouched, and an error other than an undefined variable
+        // fails the task whatever its `when` says.
+        let mut t = task("debug");
+        t.loop_items = Some(json!([1, 2]));
+        t.when = vec!["false".into()];
+        let items = prepared(&step_of(t.clone(), Origin::default()), &store).unwrap();
+        assert_eq!(items.len(), 2);
+        t.loop_items = Some(json!("{{ ( }}"));
+        let Err(err) = prepared(&step_of(t, Origin::default()), &store) else {
+            panic!("a syntax error in the loop fails the task");
+        };
+        assert!(!err.is_undefined(), "{}", err.0);
     }
 
     /// `role_path` and `ansible_search_path` in a role's task and in a playbook's. Measured on

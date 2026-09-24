@@ -9,7 +9,7 @@ use crate::playbook::PlayTask;
 use crate::render::Dump;
 
 use super::coordinator::Event;
-use super::run::{classify, empty_loop_result, registered_value};
+use super::run::{classify, empty_loop_result, loops, registered_value};
 
 /// Sends the result lines of one task and its `TaskDone`. Returns the result a rescue would be
 /// given as `ansible_failed_result` when the task failed for good, and `None` when it did not:
@@ -50,7 +50,7 @@ pub(super) async fn report_task(
     rescuable: bool,
     delegate: Option<&str>,
 ) -> Option<TaskResult> {
-    let is_loop = task.loop_items.is_some();
+    let is_loop = loops(task, results.first().map(|(element, _)| element));
     let censored = task.censors();
     let ignores = |i: usize| {
         ignored

@@ -17,7 +17,7 @@ use crate::vars::VarStore;
 
 use super::coordinator::{Event, Progress};
 use super::prepare::{Item, PlayPlan, Prepared, prepare};
-use super::run::{classify, empty_loop_result, registered_value};
+use super::run::{classify, empty_loop_result, loops, registered_value};
 
 /// One expansion a host asked for at an include step.
 pub(super) struct IncludeGroup {
@@ -298,7 +298,7 @@ pub(super) async fn report_include(
     rescuable: bool,
     nothing_asked: bool,
 ) -> Option<TaskResult> {
-    let is_loop = task.loop_items.is_some();
+    let is_loop = loops(task, shown.first().map(|s| &s.element));
     let censored = task.censors();
     let mut any_failed = false;
     // A failure no item's `ignore_errors` swallowed: that is what fails the host.

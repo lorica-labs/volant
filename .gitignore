@@ -18,3 +18,7 @@
 
 # the collections the ssh job installs beside it
 /.collections/
+
+# the tree's own `git describe`, written by the `remote` recipe for `bench`/`bench-k3s` to read
+# on a copy that has no `.git` of its own
+/.volant-describe

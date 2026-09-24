@@ -121,8 +121,15 @@ ci-local:
 # VOLANT_REMOTE_DIR names the directory over there, defaulting to `volant`. Set it to work on
 # several branches at once without them sharing a target directory or overwriting each other's
 # sources: one worktree here, one directory there, one name.
+#
+# `git ls-files` never carries `.git` itself across, so a recipe run over there through this one
+# (`bench`, `bench-k3s`) has no `git describe` of its own to name the tree it measured. `.volant-
+# describe` is written here, on the side that still has `.git`, from this same commit the tar is
+# about to carry over, and travels as one more file in that same tar stream (added to the file list
+# by hand, since it is gitignored and `--exclude-standard` would otherwise leave it behind).
 remote +recipe:
-    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; git ls-files -z --cached --others --exclude-standard | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir'"
+    git describe --always --dirty > .volant-describe
+    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; { git ls-files -z --cached --others --exclude-standard; printf '.volant-describe\0'; } | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir'"
     dir="${VOLANT_REMOTE_DIR:-volant}"; ssh "$VOLANT_DEV_HOST" ". ~/.profile && cd '$dir' && just {{recipe}}"
 
 # Build the agent as a static musl binary, the only form that can be uploaded to another host
@@ -403,7 +410,16 @@ bench runs="3":
       sed -n '/PLAY RECAP/,$p' "$1" | tail -n +2 | tr -s ' '
     }
     check_recap() {
-      local ref="$1"; shift
+      local expected="$1" ref="$2"; shift 2
+      for log in "$ref" "$@"; do
+        local n
+        n="$(recap "$log" | grep -c .)"
+        [ "$n" -eq "$expected" ] || {
+          echo "PLAY RECAP for $log has $n host line(s), expected $expected:"
+          recap "$log"
+          exit 1
+        }
+      done
       for log in "$@"; do
         diff <(recap "$ref") <(recap "$log") > /dev/null || {
           echo "PLAY RECAP differs between passes:"
@@ -416,10 +432,20 @@ bench runs="3":
     median() {
       printf '%s\n' "$@" | sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
     }
+    describe() {
+      local d
+      d="$(git describe --always --dirty 2>/dev/null)" && { printf '%s' "$d"; return 0; }
+      if [ -f .volant-describe ]; then
+        printf '%s' "$(cat .volant-describe)"
+        return 0
+      fi
+      echo "no git metadata and no .volant-describe (sync with 'just remote' first): cannot name the measured tree" >&2
+      return 1
+    }
 
     ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
     ansible_core_version="$("$ansible_playbook" --version | head -1)"
-    volant_version="$(git describe --always --dirty 2>/dev/null || echo unknown)"
+    volant_version="$(describe)" || exit 1
     stamp="$(date -u +%Y-%m-%dT%H%MZ)"
     mkdir -p target/bench
 
@@ -464,7 +490,7 @@ bench runs="3":
       reference_logs+=("$log")
     done
 
-    check_recap "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+    check_recap "$hosts" "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
 
     flock -u 200
 
@@ -769,7 +795,16 @@ bench-k3s runs="3":
       sed -n '/PLAY RECAP/,$p' "$1" | tail -n +2 | tr -s ' '
     }
     check_recap() {
-      local ref="$1"; shift
+      local expected="$1" ref="$2"; shift 2
+      for log in "$ref" "$@"; do
+        local n
+        n="$(recap "$log" | grep -c .)"
+        [ "$n" -eq "$expected" ] || {
+          echo "PLAY RECAP for $log has $n host line(s), expected $expected:"
+          recap "$log"
+          exit 1
+        }
+      done
       for log in "$@"; do
         diff <(recap "$ref") <(recap "$log") > /dev/null || {
           echo "PLAY RECAP differs between passes:"
@@ -782,21 +817,47 @@ bench-k3s runs="3":
     median() {
       printf '%s\n' "$@" | sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
     }
+    describe() {
+      local d
+      d="$(git describe --always --dirty 2>/dev/null)" && { printf '%s' "$d"; return 0; }
+      if [ -f .volant-describe ]; then
+        printf '%s' "$(cat .volant-describe)"
+        return 0
+      fi
+      echo "no git metadata and no .volant-describe (sync with 'just remote' first): cannot name the measured tree" >&2
+      return 1
+    }
 
     ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
     ansible_core_version="$("$ansible_playbook" --version | head -1)"
-    volant_version="$(git describe --always --dirty 2>/dev/null || echo unknown)"
+    volant_version="$(describe)" || exit 1
     stamp="$(date -u +%Y-%m-%dT%H%MZ)"
     mkdir -p target/bench
 
+    # The trap is registered before anything is armed, not after: `_k3s-deadman-arm` leaves both
+    # hosts armed on success, and the very next step can block for an unbounded time (a sibling
+    # lane's own bench holding the lock). Arming, then waiting, then registering the trap left a
+    # window where a Ctrl-C during that wait killed the shell with the timer armed and no disarm or
+    # reset ever run - the exact gap `proof-k3s` avoids by never putting anything blocking between
+    # its own arm and its own trap. `armed` and `locked` gate what the trap actually does: it fires
+    # harmlessly before either is true (nothing was armed or locked yet to undo), and does the
+    # equivalent of `proof-k3s`'s own trap plus the reset once both are set.
+    armed=false
+    locked=false
+    trap '
+      if [ "$armed" = true ]; then just _k3s-deadman-disarm; just proof-k3s-reset; fi
+      if [ "$locked" = true ]; then flock -u 200; fi
+    ' EXIT
+
     just _k3s-deadman-arm
+    armed=true
     lock="${XDG_RUNTIME_DIR:-/tmp}/volant-bench.lock"
     exec 200>"$lock"
     if ! flock -n 200; then
       echo "waiting for another bench to release the lock"
       flock 200
     fi
-    trap 'just _k3s-deadman-disarm; just proof-k3s-reset; flock -u 200' EXIT
+    locked=true
 
     "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-fresh.log"
 
@@ -834,7 +895,7 @@ bench-k3s runs="3":
       reference_logs+=("$log")
     done
 
-    check_recap "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+    check_recap 2 "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
 
     volant_median="$(median "${volant_times[@]}")"
     reference_median="$(median "${reference_times[@]}")"

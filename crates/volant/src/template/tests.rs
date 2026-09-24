@@ -60,11 +60,6 @@ fn failed_test(name: &str, msg: &str) -> Error {
 }
 
 fn result_test(name: &str, which: Which, value: &Value) -> Result<bool, Error> {
-    // minijinja hands a test the undefined value rather than raising, so a missing name would
-    // otherwise be judged as a non-mapping here instead of failing as an undefined read.
-    if value.is_undefined() {
-        return Err(Error::from(ErrorKind::UndefinedError));
-    }
     let own = match which {
         Which::Changed => "changed",
         Which::Failed | Which::Succeeded => "failed",
@@ -171,7 +166,7 @@ fn version_test(
     operator: Option<String>,
     kwargs: &Kwargs,
 ) -> Result<bool, Error> {
-    if value.is_undefined() || version.is_undefined() {
+    if version.is_undefined() {
         return Err(Error::from(ErrorKind::UndefinedError));
     }
     let operator = match operator {

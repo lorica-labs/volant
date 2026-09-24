@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use minijinja::functions::Function;
-use minijinja::value::{Enumerator, FunctionArgs, FunctionResult, Object};
-use minijinja::{Environment, ErrorKind, UndefinedBehavior};
+use minijinja::value::{Enumerator, FunctionArgs, FunctionResult, Object, Rest};
+use minijinja::{Environment, ErrorKind, State, UndefinedBehavior};
 use serde_json::{Map, Value};
 
 mod file;
@@ -613,25 +613,64 @@ fn type_name(v: &Value) -> &'static str {
 /// ansible.builtin.default is unknown`, not by a syntax error — so registering the qualified
 /// string is all a name needs. `ansible.utils.ipwrap` is registered on its own, never through
 /// this: the reference never exposes it under `ansible.builtin`.
+///
+/// Measured on ansible-core 2.19.12, a filter given an undefined value does not run: the result
+/// is undefined too, so `nope | dict2items` fails as an undefined read and
+/// `nope | dict2items | default('x')` is `x`. The filter is wrapped here to do the same, except
+/// the few that exist to look at an undefined value.
 pub(crate) fn add_filter<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
 where
-    F: Function<Rv, Args> + Copy,
+    F: Function<Rv, Args>,
     Rv: FunctionResult,
     Args: for<'a> FunctionArgs<'a>,
 {
-    env.add_filter(name.to_string(), f);
-    env.add_filter(format!("ansible.builtin.{name}"), f);
+    let filter = undefined_through(name, f);
+    env.add_filter(format!("ansible.builtin.{name}"), filter.clone());
+    env.add_filter(name.to_string(), filter);
 }
 
-/// The test equivalent of [`add_filter`].
-pub(crate) fn add_test<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
+/// `f`, answering undefined when its input is undefined; see [`add_filter`].
+pub(crate) fn undefined_through<F, Rv, Args>(
+    name: &str,
+    f: F,
+) -> impl Fn(&State, Rest<minijinja::Value>) -> Result<minijinja::Value, minijinja::Error>
++ Clone
++ Send
++ Sync
++ 'static
 where
-    F: Function<Rv, Args> + Copy,
+    F: Function<Rv, Args>,
     Rv: FunctionResult,
     Args: for<'a> FunctionArgs<'a>,
 {
-    env.add_test(name.to_string(), f);
-    env.add_test(format!("ansible.builtin.{name}"), f);
+    let f = minijinja::Value::from_function(f);
+    let sees_undefined = ["default", "d", "mandatory", "type_debug"].contains(&name);
+    move |state: &State, args: Rest<minijinja::Value>| {
+        if !sees_undefined && args.first().is_some_and(minijinja::Value::is_undefined) {
+            return Ok(minijinja::Value::UNDEFINED);
+        }
+        f.call(state, &args)
+    }
+}
+
+/// The test equivalent of [`add_filter`]. A test given an undefined value fails as an undefined
+/// read (`nope is none`, measured), except `defined` and `undefined`.
+pub(crate) fn add_test<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
+where
+    F: Function<Rv, Args>,
+    Rv: FunctionResult,
+    Args: for<'a> FunctionArgs<'a>,
+{
+    let f = minijinja::Value::from_function(f);
+    let sees_undefined = ["defined", "undefined"].contains(&name);
+    let test = move |state: &State, args: Rest<minijinja::Value>| {
+        if !sees_undefined && args.first().is_some_and(minijinja::Value::is_undefined) {
+            return Err(minijinja::Error::from(ErrorKind::UndefinedError));
+        }
+        f.call(state, &args)
+    };
+    env.add_test(format!("ansible.builtin.{name}"), test.clone());
+    env.add_test(name.to_string(), test);
 }
 
 /// Python truthiness, for messages and for filters that need it.
@@ -1042,5 +1081,83 @@ mod unit {
         assert!(err.0.contains(boolean), "{err}");
         // The author's strings stay author strings beside a host's.
         assert!(t.condition("{{ cond_s }}", from_host).unwrap());
+    }
+
+    /// Every filter the engine registers, with the arguments it needs, minijinja's builtins
+    /// included, separated by `; `.
+    const FILTERS: &str = "bool; int; float; ternary(1, 2); combine({}); dict2items; \
+        items2dict; to_json; to_nice_json; from_json; basename; dirname; split(','); \
+        regex_replace('a', 'b'); regex_search('a'); regex_findall('a'); b64decode; b64encode; \
+        comment; difference([1]); intersect([1]); union([1]); flatten; from_yaml; to_uuid; \
+        quote; regex_escape; extract({}); ansible.utils.ipwrap; to_yaml; to_nice_yaml; safe; \
+        escape; e; lower; upper; title; capitalize; replace('a', 'b'); length; count; dictsort; \
+        items; reverse; trim; join(','); lines; round; abs; attr('a'); first; last; min; max; \
+        sort; list; string; batch(2); slice(2); sum; indent; select; reject; selectattr('a'); \
+        rejectattr('a'); map('upper'); groupby('a'); unique; chain([1]); zip([1]); pprint; \
+        format; ansible.builtin.dict2items; ansible.builtin.length";
+
+    /// The same for tests.
+    const TESTS: &str = "truthy; falsy; match('a'); search('a'); regex('a'); contains(1); \
+        changed; failed; succeeded; skipped; version('1', '>'); none; boolean; odd; even; \
+        divisibleby(2); number; integer; int; float; string; sequence; iterable; mapping; \
+        startingwith('a'); endingwith('a'); lower; upper; sameas(1); eq(1); equalto(1); ne(1); \
+        lt(1); le(1); gt(1); ge(1); in([1]); true; false; filter; test; safe; escaped; \
+        ansible.builtin.none";
+
+    /// Measured on ansible-core 2.19.12: a filter given an undefined value does not run, its
+    /// result is undefined as well, so `nope | dict2items` fails as an undefined read (the one a
+    /// skipped task's `loop:` may raise) and `nope | dict2items | default('x')` is `x`. A test
+    /// given one fails as an undefined read too (`nope is none`: `'nope' is undefined`). Red if
+    /// a filter answers with its own type error (`dict2items requires a dictionary`) or a test
+    /// judges the undefined value.
+    #[test]
+    fn an_undefined_input_stays_undefined_through_a_filter_or_a_test() {
+        let t = Templar::new(std::env::temp_dir());
+        let r = |text: String| t.render(&text, &Map::new());
+        for filter in FILTERS.split("; ") {
+            let err = r(format!("{{{{ nope | {filter} }}}}")).unwrap_err();
+            assert!(err.is_undefined(), "{filter}: {err}");
+            assert_eq!(
+                r(format!("{{{{ nope | {filter} | default('x') }}}}")),
+                Ok(json!("x")),
+                "{filter}"
+            );
+            assert_eq!(
+                r(format!("{{{{ nope | {filter} is defined }}}}")),
+                Ok(json!(false)),
+                "{filter}"
+            );
+        }
+        for test in TESTS.split("; ") {
+            let err = r(format!("{{{{ nope is {test} }}}}")).unwrap_err();
+            assert!(err.is_undefined(), "{test}: {err}");
+        }
+    }
+
+    /// The filters and tests that exist to look at an undefined value keep seeing it, measured
+    /// on ansible-core 2.19.12: `default` and `d` answer their fallback, `type_debug` says
+    /// `UndefinedMarker`, `defined` and `undefined` answer, and `mandatory` fails with its own
+    /// message rather than as an undefined read. Red if the short-circuit above catches them.
+    #[test]
+    fn the_filters_and_tests_made_for_undefined_still_see_it() {
+        let t = Templar::new(std::env::temp_dir());
+        for (text, want) in [
+            ("{{ nope | default('x') }}", json!("x")),
+            ("{{ nope | d('x') }}", json!("x")),
+            ("{{ nope | ansible.builtin.default('x') }}", json!("x")),
+            ("{{ nope | type_debug }}", json!("UndefinedMarker")),
+            ("{{ nope is defined }}", json!(false)),
+            ("{{ nope is ansible.builtin.defined }}", json!(false)),
+            ("{{ nope is undefined }}", json!(true)),
+            (
+                "{{ [{'a': 1}, {}] | selectattr('a', 'defined') | list }}",
+                json!([{"a": 1}]),
+            ),
+        ] {
+            assert_eq!(t.render(text, &Map::new()), Ok(want), "{text}");
+        }
+        let err = t.render("{{ nope | mandatory }}", &Map::new()).unwrap_err();
+        assert!(!err.is_undefined(), "{err}");
+        assert!(err.0.contains("Mandatory variable"), "{err}");
     }
 }

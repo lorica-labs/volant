@@ -1389,7 +1389,7 @@ mod unit {
     }
 
     /// Measured on ansible-core 2.19.12, each of these fails with `'nope' is undefined`, in a
-    /// task argument, around text, and in a `when:`. minijinja 2.24 concatenates by `Display` and
+    /// task argument, around text, inside a block, in a `when:` and in a `template` file. minijinja 2.24 concatenates by `Display` and
     /// only checks that neither side is undefined itself, so without [`concat`] the list printed
     /// as `[1, undefined]`. What the reference answers when nothing is undefined stays as it was,
     /// and so does `+`, which the reference lets carry the undefined value to `length`.
@@ -1403,6 +1403,7 @@ mod unit {
             "{{ 'x' ~ {'k': nope} }}",
             "{{ [1, nope] ~ 'x' }}",
             "pre {{ 'x' ~ [1, nope] }} post",
+            "{% block b %}{{ 'x' ~ [1, nope] }}{% endblock %}",
             "{{ ('x' ~ [1, nope]) | default('d') }}",
         ] {
             let err = t.render(text, &none).expect_err(&format!("leaked: {text}"));

@@ -349,6 +349,137 @@ proof-roles-reset:
       echo reset
     '
 
+# Time the four pinned Galaxy roles under both engines and print the ratio the public speed claim
+# cites. Builds once, installs the roles the same way `proof-roles` does, then runs one uncounted
+# warm-up pass per engine (filling Volant's payload cache and the host's own caches) followed by
+# `runs` timed passes of Volant and `runs` timed passes of the reference
+# (`ANSIBLE_PIPELINING=True`), each preceded by a wait for any leftover build or test on this
+# machine so it never inflates a measured time. Every timed pass's PLAY RECAP is compared against
+# the first one, engine included: a difference there means the two sides did not do the same work,
+# and the number would be meaningless.
+#
+# `flock` on a lock file outside the tree (so `git worktree remove` never takes it with it) is
+# held from the first warm-up pass to the last timed pass: several lanes can share this machine's
+# target and second host, and one bench timing a pass while another is mid-run once cost half a
+# day of measurements to a collision neither noticed until after the fact. The wait is unbounded
+# and never kills the other side; one line prints while this call is waiting for it.
+bench runs="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    hosts=1
+    [ -z "${VOLANT_SECOND_HOST:-}" ] || hosts=2
+
+    just agent-musl
+    cargo build --release -p volant
+
+    requirements=crates/volant/tests/fixtures/proof-roles/requirements.yml
+    play=crates/volant/tests/fixtures/proof-roles/site.yml
+    roles_dir="$PWD/target/proof-roles"
+    installed=true
+    while IFS= read -r role; do
+      version="$(grep -A1 "name: $role" "$requirements" | sed -n 's/.*version: //p')"
+      info="$roles_dir/$role/meta/.galaxy_install_info"
+      [ -f "$info" ] && grep -q "^version: $version\$" "$info" || { installed=false; break; }
+    done < <(grep 'name:' "$requirements" | sed 's/.*name: *//')
+    [ "$installed" = true ] || "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install --force -r "$requirements" -p "$roles_dir"
+    export ANSIBLE_ROLES_PATH="$roles_dir"
+
+    {
+      printf '[targets]\n'
+      printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_TARGET_HOST" "$VOLANT_TARGET_HOST"
+      if [ -n "${VOLANT_SECOND_HOST:-}" ]; then
+        printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$VOLANT_SECOND_HOST" "$VOLANT_SECOND_HOST"
+      fi
+    } > target/proof-roles-inventory.ini
+
+    idle() {
+      while pgrep -x cargo > /dev/null || pgrep -x rustc > /dev/null || pgrep -x cargo-nextest > /dev/null || pgrep -f bin/ansible-playbook > /dev/null; do
+        sleep 5
+      done
+      awk '{print "load " $1}' /proc/loadavg
+    }
+    recap() {
+      sed -n '/PLAY RECAP/,$p' "$1" | tail -n +2 | tr -s ' '
+    }
+    check_recap() {
+      local ref="$1"; shift
+      for log in "$@"; do
+        diff <(recap "$ref") <(recap "$log") > /dev/null || {
+          echo "PLAY RECAP differs between passes:"
+          echo "-- $ref --"; recap "$ref"
+          echo "-- $log --"; recap "$log"
+          exit 1
+        }
+      done
+    }
+    median() {
+      printf '%s\n' "$@" | sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
+    }
+
+    ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
+    ansible_core_version="$("$ansible_playbook" --version | head -1)"
+    volant_version="$(git describe --always --dirty)"
+    stamp="$(date -u +%Y-%m-%dT%H%MZ)"
+    mkdir -p target/bench
+
+    lock="${XDG_RUNTIME_DIR:-/tmp}/volant-bench.lock"
+    exec 200>"$lock"
+    if ! flock -n 200; then
+      echo "waiting for another bench to release the lock"
+      flock 200
+    fi
+
+    idle
+    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+    VOLANT_AGENT_DIR="$PWD/target/agents" \
+      ./target/release/volant playbook -i target/proof-roles-inventory.ini "$play" > "target/bench/$stamp-roles-volant-warmup.log"
+    idle
+    ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/proof-roles-inventory.ini "$play" > "target/bench/$stamp-roles-reference-warmup.log"
+
+    volant_logs=()
+    volant_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-roles-volant-$i.log"
+      start="$(date +%s.%N)"
+      VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+      VOLANT_AGENT_DIR="$PWD/target/agents" \
+      VOLANT_PROFILE_JSON="target/bench/$stamp-roles-volant-$i.jsonl" \
+        ./target/release/volant playbook -i target/proof-roles-inventory.ini "$play" > "$log"
+      end="$(date +%s.%N)"
+      volant_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      volant_logs+=("$log")
+    done
+
+    reference_logs=()
+    reference_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-roles-reference-$i.log"
+      start="$(date +%s.%N)"
+      ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/proof-roles-inventory.ini "$play" > "$log"
+      end="$(date +%s.%N)"
+      reference_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      reference_logs+=("$log")
+    done
+
+    check_recap "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+
+    flock -u 200
+
+    volant_median="$(median "${volant_times[@]}")"
+    reference_median="$(median "${reference_times[@]}")"
+    ratio="$(awk -v r="$reference_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
+
+    out="target/bench/$stamp-roles.txt"
+    {
+      printf 'bench roles hosts=%s date=%s volant=%s ansible-core=%s pipelining=True\n' "$hosts" "$stamp" "$volant_version" "$ansible_core_version"
+      printf 'volant    runs %s  median %s s\n' "${volant_times[*]}" "$volant_median"
+      printf 'reference runs %s  median %s s\n' "${reference_times[*]}" "$reference_median"
+      printf 'ratio %s\n' "$ratio"
+    } | tee "$out"
+
 # The commit the k3s proof's playbooks are pinned to, so what runs never drifts out from under
 # the recipe. The kubectl build the proof downloads and the k3s version the inventory pins are
 # kept together here too, so a version bump touches one place.
@@ -592,3 +723,127 @@ proof-k3s-reset:
     done
     rm -f target/k3s-inventory.ini
     echo "k3s-reset ok"
+
+# Time the official k3s-ansible playbook under both engines and print the ratio the public speed
+# claim for k3s cites. Sets the cluster up the same way `proof-k3s` does, then a `fresh` pass of
+# the reference without pipelining (the only pass that installs k3s, so its recap is its own and
+# never compared), one uncounted warm-up pass per engine, and `runs` timed passes of each engine
+# against the now-established cluster, exactly as `bench` does for the roles: idle wait, the
+# pass's own PLAY RECAP checked against the first timed pass, and `VOLANT_PROFILE_JSON` on every
+# timed Volant pass.
+#
+# `umask 077` covers the recipe because the fetched kubeconfig carries the cluster's admin
+# credentials, same reasoning as `proof-k3s`. The dead-man switch is armed once the build is done
+# and disarmed on every exit path, and `proof-k3s-reset` always runs after it, successful run or
+# not, so a failed bench never leaves k3s on either host. The bench lock (see `bench`) is held from
+# the `fresh` pass - the first pass that actually touches the two hosts - through that reset, since
+# `bench-k3s` and `bench` share the same two hosts and a `fresh` k3s install racing another lane's
+# timed roles pass would be exactly the collision the lock exists to prevent.
+bench-k3s runs="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    umask 077
+    test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+    test -n "${VOLANT_SECOND_HOST:-}" || { echo "VOLANT_SECOND_HOST is not set"; exit 1; }
+
+    just _k3s-clone
+    just _k3s-collections
+    just _k3s-kubectl
+    just _k3s-inventory
+    export ANSIBLE_COLLECTIONS_PATH="$PWD/target/collections"
+    export ANSIBLE_ROLES_PATH="$PWD/target/k3s-ansible/roles"
+    export PATH="$PWD/target/bin:$PATH"
+    play=target/k3s-ansible/playbooks/site.yml
+    kubeconfig="$PWD/target/k3s-kubeconfig"
+
+    just agent-musl
+    cargo build --release -p volant
+
+    idle() {
+      while pgrep -x cargo > /dev/null || pgrep -x rustc > /dev/null || pgrep -x cargo-nextest > /dev/null || pgrep -f bin/ansible-playbook > /dev/null; do
+        sleep 5
+      done
+      awk '{print "load " $1}' /proc/loadavg
+    }
+    recap() {
+      sed -n '/PLAY RECAP/,$p' "$1" | tail -n +2 | tr -s ' '
+    }
+    check_recap() {
+      local ref="$1"; shift
+      for log in "$@"; do
+        diff <(recap "$ref") <(recap "$log") > /dev/null || {
+          echo "PLAY RECAP differs between passes:"
+          echo "-- $ref --"; recap "$ref"
+          echo "-- $log --"; recap "$log"
+          exit 1
+        }
+      done
+    }
+    median() {
+      printf '%s\n' "$@" | sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
+    }
+
+    ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
+    ansible_core_version="$("$ansible_playbook" --version | head -1)"
+    volant_version="$(git describe --always --dirty)"
+    stamp="$(date -u +%Y-%m-%dT%H%MZ)"
+    mkdir -p target/bench
+
+    just _k3s-deadman-arm
+    lock="${XDG_RUNTIME_DIR:-/tmp}/volant-bench.lock"
+    exec 200>"$lock"
+    if ! flock -n 200; then
+      echo "waiting for another bench to release the lock"
+      flock 200
+    fi
+    trap 'just _k3s-deadman-disarm; just proof-k3s-reset; flock -u 200' EXIT
+
+    "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-fresh.log"
+
+    idle
+    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+    VOLANT_AGENT_DIR="$PWD/target/agents" \
+      ./target/release/volant playbook -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-volant-warmup.log"
+    idle
+    ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-reference-warmup.log"
+
+    volant_logs=()
+    volant_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-k3s-volant-$i.log"
+      start="$(date +%s.%N)"
+      VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" \
+      VOLANT_AGENT_DIR="$PWD/target/agents" \
+      VOLANT_PROFILE_JSON="target/bench/$stamp-k3s-volant-$i.jsonl" \
+        ./target/release/volant playbook -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "$log"
+      end="$(date +%s.%N)"
+      volant_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      volant_logs+=("$log")
+    done
+
+    reference_logs=()
+    reference_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-k3s-reference-$i.log"
+      start="$(date +%s.%N)"
+      ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "$log"
+      end="$(date +%s.%N)"
+      reference_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      reference_logs+=("$log")
+    done
+
+    check_recap "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+
+    volant_median="$(median "${volant_times[@]}")"
+    reference_median="$(median "${reference_times[@]}")"
+    ratio="$(awk -v r="$reference_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
+
+    out="target/bench/$stamp-k3s.txt"
+    {
+      printf 'bench k3s hosts=2 date=%s volant=%s ansible-core=%s pipelining=True\n' "$stamp" "$volant_version" "$ansible_core_version"
+      printf 'volant    runs %s  median %s s\n' "${volant_times[*]}" "$volant_median"
+      printf 'reference runs %s  median %s s\n' "${reference_times[*]}" "$reference_median"
+      printf 'ratio %s\n' "$ratio"
+    } | tee "$out"

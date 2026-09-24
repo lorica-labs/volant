@@ -449,37 +449,33 @@ pub fn py_split(text: &str) -> impl Iterator<Item = &str> {
 
 /// `str.splitlines()`.
 pub fn splitlines(text: &str) -> Vec<&str> {
+    let breaks = |c| {
+        matches!(
+            c,
+            '\n' | '\r'
+                | '\x0b'
+                | '\x0c'
+                | '\x1c'
+                | '\x1d'
+                | '\x1e'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    };
     let mut lines = Vec::new();
     let mut rest = text;
-    while !rest.is_empty() {
-        match rest.find(|c| {
-            matches!(
-                c,
-                '\n' | '\r'
-                    | '\x0b'
-                    | '\x0c'
-                    | '\x1c'
-                    | '\x1d'
-                    | '\x1e'
-                    | '\u{85}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-            )
-        }) {
-            Some(at) => {
-                lines.push(&rest[..at]);
-                let width = if rest[at..].starts_with("\r\n") {
-                    2
-                } else {
-                    rest[at..].chars().next().map_or(1, char::len_utf8)
-                };
-                rest = &rest[at + width..];
-            }
-            None => {
-                lines.push(rest);
-                rest = "";
-            }
-        }
+    while let Some(at) = rest.find(breaks) {
+        lines.push(&rest[..at]);
+        let width = if rest[at..].starts_with("\r\n") {
+            2
+        } else {
+            rest[at..].chars().next().map_or(1, char::len_utf8)
+        };
+        rest = &rest[at + width..];
+    }
+    if !rest.is_empty() {
+        lines.push(rest);
     }
     lines
 }

@@ -17,7 +17,7 @@ use crate::compile::{
 };
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
-use crate::profile::{Phase, TaskRecord, micros};
+use crate::profile::{Phase, Profile, TaskRecord, micros};
 use crate::python::ModulePayload;
 use crate::render::Dump;
 use crate::template::{Templar, TemplateError};
@@ -1169,6 +1169,17 @@ pub(super) async fn drive_host(
                 }
                 links.insert(key.clone(), owned);
                 if stopped {
+                    if let Some(link) = links.get_mut(&key) {
+                        file_timings(
+                            link,
+                            &options.profile,
+                            &name,
+                            &c,
+                            &[],
+                            batch[0].0,
+                            &prepare_micros,
+                        );
+                    }
                     break 'run;
                 }
                 outcome
@@ -1238,6 +1249,15 @@ pub(super) async fn drive_host(
                             Attempt::Again(left) => lefts[ii].push(left),
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
+                            file_timings(
+                                link,
+                                &options.profile,
+                                &name,
+                                &c,
+                                &[],
+                                batch[0].0,
+                                &prepare_micros,
+                            );
                             break 'run;
                         }
                     }
@@ -1291,21 +1311,15 @@ pub(super) async fn drive_host(
                 ended
             };
             if let Some(link) = links.get_mut(&key) {
-                let ledger = link.take_ledger();
-                let profile = &options.profile;
-                profile.phase(Some(&name), Phase::Blob, ledger.blob_micros);
-                profile.phase(Some(&name), Phase::Wire, ledger.wire_micros);
-                for (k, module, ran) in ledger.ran {
-                    let index = flat_steps.get(k).copied().unwrap_or(batch[0].0);
-                    profile.task(TaskRecord {
-                        host: name.clone(),
-                        index,
-                        task: c.steps[index].task.name.clone(),
-                        module,
-                        ran,
-                        prepare_micros: prepare_micros.get(&index).copied().unwrap_or(0),
-                    });
-                }
+                file_timings(
+                    link,
+                    &options.profile,
+                    &name,
+                    &c,
+                    &flat_steps,
+                    batch[0].0,
+                    &prepare_micros,
+                );
             }
             // Queued under the batch's first step, in front of the results it belongs with,
             // rather than written as it arrived: the coordinator owns everything a task shows.
@@ -1533,6 +1547,37 @@ pub(super) async fn drive_host(
             links: links.into_iter().collect(),
         })
         .await;
+}
+
+/// Files what `link` measured since it was last asked: its blob and wire time, and one record
+/// per result under the step it belongs to. `flat_steps` maps a flat batch's positions to their
+/// steps; the plugin and retry paths send the one step `first`, and leave it empty.
+///
+/// Called on the two ways a stopped run leaves a batch as well as at its end, so a profile
+/// written after an interruption still lists the attempts the run already showed.
+fn file_timings(
+    link: &mut AgentLink,
+    profile: &Profile,
+    host: &str,
+    steps: &Compiled,
+    flat_steps: &[usize],
+    first: usize,
+    prepare_micros: &HashMap<usize, u64>,
+) {
+    let ledger = link.take_ledger();
+    profile.phase(Some(host), Phase::Blob, ledger.blob_micros);
+    profile.phase(Some(host), Phase::Wire, ledger.wire_micros);
+    for (k, module, ran) in ledger.ran {
+        let index = flat_steps.get(k).copied().unwrap_or(first);
+        profile.task(TaskRecord {
+            host: host.to_string(),
+            index,
+            task: steps.steps[index].task.name.clone(),
+            module,
+            ran,
+            prepare_micros: prepare_micros.get(&index).copied().unwrap_or(0),
+        });
+    }
 }
 
 /// The one step of a batch an action plugin backs, or the controller error that ends the host
@@ -1881,6 +1926,33 @@ impl Driver<'_> {
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// The ledger is filed at the end of a batch and on both ways a stopped run leaves one, the
+    /// plugin loop and the retry loop, so an interrupted run's profile keeps the attempts the
+    /// run already showed. Read off this file: the driver has no harness short of a real agent.
+    ///
+    /// What would make this red: a `break 'run` on a stop that leaves the ledger behind.
+    #[test]
+    fn every_way_out_of_a_batch_files_its_timings() {
+        let source = include_str!("driver.rs");
+        let code = &source[..source.find("#[cfg(test)]").expect("a test module")];
+        assert_eq!(
+            code.matches("file_timings(").count(),
+            4,
+            "one definition, three calls"
+        );
+        for stop in [
+            "if stopped {",
+            "if driver.sleep_between(retry.delay).await.is_none() {",
+        ] {
+            let after = code.rfind(stop).expect(stop) + stop.len();
+            let arm = &code[after..after + code[after..].find("break 'run;").expect("a break")];
+            assert!(
+                arm.contains("file_timings("),
+                "{stop} leaves without filing:{arm}"
+            );
+        }
+    }
 
     /// A plugin batch is exactly one step, and anything else ends the host naming the steps.
     ///

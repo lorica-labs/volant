@@ -172,7 +172,8 @@ impl Profile {
         for ((module, path), records) in &modules {
             let ran: Vec<&Ran> = records.iter().filter_map(|r| r.ran.as_ref()).collect();
             let mut total: Vec<u64> = ran.iter().map(|r| r.micros).collect();
-            let sum: u64 = total.iter().sum();
+            // Figures a host reported, so summed without trusting them to fit.
+            let sum = total.iter().copied().fold(0, u64::saturating_add);
             let part = |f: fn(&Ran) -> Option<u64>| {
                 median(&mut ran.iter().filter_map(|r| f(r)).collect::<Vec<_>>())
             };
@@ -317,6 +318,20 @@ stat                     native         3         50          150         -     
 tasks by path: fallback=3 native=3 python=1 unreported=1
 ";
         assert_eq!(table, expected, "\n{table}");
+    }
+
+    /// Times a host reported are added without overflowing: the host is not trusted to send
+    /// figures that fit.
+    ///
+    /// What would make this red: a plain sum, which panics in a debug build and wraps in a
+    /// release one.
+    #[test]
+    fn a_host_s_figures_cannot_overflow_the_sum() {
+        let profile = Profile::default();
+        profile.task(record("h1", "stat", Some(ran(ExecPath::Native, u64::MAX))));
+        profile.task(record("h1", "stat", Some(ran(ExecPath::Native, u64::MAX))));
+        let table = profile.render();
+        assert!(table.contains(&format!(" {} ", u64::MAX)), "{table}");
     }
 
     /// The first line names each host's natives, which is how the golden comparison knows which

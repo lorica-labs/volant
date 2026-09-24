@@ -270,17 +270,14 @@ async fn run_all(
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let mut python = python::union_for(&python_modules, &named, &mut |warning| {
+    // The run's native policy goes on whatever union came back, built or kept from an earlier
+    // run: a union nobody armed keeps `Natives::default()`, which is natives off.
+    let python = python::union_for(&python_modules, &named, &mut |warning| {
         out.warning(&warning, false);
     })
-    .map_err(|e| Refusal::or(4, e))?;
+    .map_err(|e| Refusal::or(4, e))?
+    .map(|union| armed(union, &config, args));
     profile.phase(None, Phase::Union, micros(building));
-    if let Some(union) = &mut python {
-        union.natives = Natives {
-            enabled: config.native_modules,
-            facts: args.facts,
-        };
-    }
 
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
@@ -481,6 +478,18 @@ async fn run_all(
     Ok(exit_code(&stats))
 }
 
+/// `union` under the run's native policy: `[volant] native_modules` or `VOLANT_NATIVE_MODULES`,
+/// and `--facts`.
+fn armed(union: python::Union, config: &Config, args: &PlaybookArgs) -> python::Union {
+    python::Union {
+        natives: Natives {
+            enabled: config.native_modules,
+            facts: args.facts,
+        },
+        ..union
+    }
+}
+
 /// The tags the run selects, from the configuration file, the environment and the command line.
 ///
 /// Measured on ansible-core 2.19.12: `--tags` and `--skip-tags` **append** to the list
@@ -667,5 +676,133 @@ mod tests {
         assert_eq!(parse(&["--facts=native"]).unwrap().facts, Facts::Native);
         let err = parse(&["--facts", "nope"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue, "{err}");
+    }
+
+    /// The switch and `--facts` reach every payload the run sends, from the environment through
+    /// the configuration to the union the tasks take their payloads from.
+    ///
+    /// What would make this red: the policy not put on the union, which leaves it at
+    /// `Natives::default()`; or put there from anything but the configuration and the flag.
+    #[test]
+    fn the_native_switch_and_facts_reach_the_payloads() {
+        let core = |name: &str| python::ModuleFacts {
+            module_fqn: format!("ansible.modules.{name}"),
+            profile: "legacy".into(),
+            rlimit_nofile: 0,
+            extensions: serde_json::Map::new(),
+            core: true,
+        };
+        let union = python::Union {
+            hash: "ab".into(),
+            zip_b64: "UEsDBA==".into(),
+            modules: ["stat", "setup"]
+                .into_iter()
+                .map(|m| (m.to_string(), core(m)))
+                .collect(),
+            refused: std::collections::BTreeMap::default(),
+            natives: Natives::default(),
+        };
+        let forced = |config: &Config, extra: &[&str], module: &str| {
+            let args =
+                PlaybookArgs::try_parse_from(["volant"].iter().chain(extra).chain(&["site.yml"]))
+                    .unwrap();
+            armed(union.clone(), config, &args)
+                .payload(module)
+                .expect("the union holds it")
+                .force_python
+        };
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::remove_var("VOLANT_NATIVE_MODULES");
+        }
+        let on = Config::load().unwrap();
+        assert!(!forced(&on, &[], "stat"));
+        assert!(forced(&on, &[], "setup"), "--facts auto");
+        assert!(forced(&on, &["--facts", "python"], "setup"));
+        assert!(!forced(&on, &["--facts", "native"], "setup"));
+        unsafe { std::env::set_var("VOLANT_NATIVE_MODULES", "0") };
+        let off = Config::load().unwrap();
+        assert!(forced(&off, &[], "stat"), "VOLANT_NATIVE_MODULES=0");
+        assert!(forced(&off, &["--facts", "native"], "setup"));
+    }
+
+    /// Captures what `f` writes on this process's standard output, at the descriptor.
+    #[cfg(unix)]
+    fn stdout_of(f: impl FnOnce()) -> String {
+        use std::io::Write as _;
+        use std::os::fd::AsRawFd as _;
+        let path = std::env::temp_dir().join(format!("volant-stdout-{}", std::process::id()));
+        let file = std::fs::File::create(&path).unwrap();
+        std::io::stdout().flush().unwrap();
+        let saved = unsafe { libc::dup(1) };
+        assert!(saved >= 0);
+        assert!(unsafe { libc::dup2(file.as_raw_fd(), 1) } >= 0);
+        f();
+        std::io::stdout().flush().unwrap();
+        unsafe {
+            libc::dup2(saved, 1);
+            libc::close(saved);
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        text
+    }
+
+    /// `--profile` adds nothing to standard output, where the run and its recap go, and
+    /// `VOLANT_PROFILE_JSON` gets the profile whatever became of the run: here a play that
+    /// matches no host, then a playbook that does not exist.
+    ///
+    /// What would make this red: the table printed on stdout, which puts it in the middle of
+    /// what a script compares against the reference; or the variable not read, which leaves the
+    /// golden comparison without the natives line it starts from.
+    #[cfg(unix)]
+    #[test]
+    fn the_profile_stays_off_stdout_and_lands_in_its_file() {
+        let dir = std::env::temp_dir().join(format!("volant-cli-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let playbook = dir.join("site.yml");
+        std::fs::write(
+            &playbook,
+            "- hosts: nosuch
+  gather_facts: false
+  tasks:
+    - debug: {msg: hi}
+",
+        )
+        .unwrap();
+        let json = dir.join("profile.jsonl");
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("VOLANT_PROFILE_JSON", &json);
+        }
+        let playbook_arg = playbook.display().to_string();
+        let args = |extra: &[&str]| {
+            PlaybookArgs::try_parse_from(
+                ["volant", "--no-color"]
+                    .iter()
+                    .chain(extra)
+                    .chain(&[playbook_arg.as_str()]),
+            )
+            .unwrap()
+        };
+        let plain = stdout_of(|| assert_eq!(run(args(&[])), 0));
+        let profiled = stdout_of(|| assert_eq!(run(args(&["--profile"])), 0));
+        assert!(plain.contains("PLAY RECAP"), "{plain}");
+        assert_eq!(profiled, plain);
+        let first = std::fs::read_to_string(&json).unwrap();
+        assert_eq!(first.lines().next(), Some(r#"{"natives":{}}"#), "{first}");
+
+        std::fs::remove_file(&json).unwrap();
+        let missing = dir.join("missing.yml").display().to_string();
+        let args = PlaybookArgs::try_parse_from(["volant", missing.as_str()]).unwrap();
+        assert_ne!(run(args), 0);
+        let written = std::fs::read_to_string(&json).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            written.lines().next(),
+            Some(r#"{"natives":{}}"#),
+            "{written}"
+        );
     }
 }

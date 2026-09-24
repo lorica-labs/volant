@@ -1026,27 +1026,31 @@ mod tests {
     }
 
     /// The task goes out with `force_python` wherever an agent's native module must not answer
-    /// for it: natives switched off for the run, a module that is not ansible-core's own (a
-    /// `library/stat.py` is built as `ansible.modules.stat` all the same), and `setup` unless
-    /// `--facts native` asked for the native collector.
+    /// for it: natives switched off for the run, a module that is not ansible-core's own
+    /// (measured, a `library/stat.py` is built as `ansible.legacy.stat`; `core` is the second
+    /// barrier), and ansible-core's `setup`, whatever name the task wrote, unless `--facts
+    /// native` asked for the native collector.
     ///
     /// What would make this red: the flag never set, or set on the payload and dropped on the way
     /// to the wire.
     #[test]
     fn a_task_is_sent_to_python_where_a_native_must_not_answer() {
         use crate::python::{Facts, ModuleFacts, Natives};
-        let facts = |core: bool| ModuleFacts {
-            module_fqn: "ansible.modules.x".into(),
+        let facts = |name: &str, core: bool| ModuleFacts {
+            module_fqn: format!("ansible.modules.{name}"),
             profile: "legacy".into(),
             rlimit_nofile: 0,
             extensions: Map::new(),
             core,
         };
         let modules = BTreeMap::from([
-            ("stat".to_string(), facts(true)),
-            ("setup".to_string(), facts(true)),
+            ("stat".to_string(), facts("stat", true)),
+            ("setup".to_string(), facts("setup", true)),
             // The module a `library/lineinfile.py` builds.
-            ("lineinfile".to_string(), facts(false)),
+            ("lineinfile".to_string(), facts("lineinfile", false)),
+            // A collection's name `runtime.yml` redirects to `ansible.builtin.setup`: the helper
+            // builds ansible-core's own file, under its own name.
+            ("my.coll.facts".to_string(), facts("setup", true)),
         ]);
         let forced = |natives: Natives, module: &str| -> bool {
             let mut plan = plan();
@@ -1079,11 +1083,19 @@ mod tests {
             )
             .force_python
         };
-        let on = Natives::default();
+        let on = Natives {
+            enabled: true,
+            facts: Facts::Auto,
+        };
         let off = Natives {
             enabled: false,
             ..on
         };
+        assert_eq!(
+            Natives::default(),
+            off,
+            "a policy nobody set is natives off"
+        );
         assert!(!forced(on, "stat"));
         assert!(!forced(on, "ansible.builtin.stat"));
         assert!(forced(off, "stat"), "native_modules = false");
@@ -1092,6 +1104,7 @@ mod tests {
             "a module that is not ansible-core's own"
         );
         assert!(forced(on, "ansible.builtin.setup"), "--facts auto");
+        assert!(forced(on, "my.coll.facts"), "setup under another name");
         let python = Natives {
             facts: Facts::Python,
             ..on

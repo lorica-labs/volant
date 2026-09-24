@@ -2021,7 +2021,7 @@ async fn send_batch<C: AgentChannel>(
     let started = std::time::Instant::now();
     let modules: Vec<String> = tasks.iter().map(|t| t.module.clone()).collect();
     // The agent's own time, taken off the round trip so what is left is the wire's.
-    let mut agent = 0;
+    let mut agent: u64 = 0;
     if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
     }
@@ -2045,7 +2045,8 @@ async fn send_batch<C: AgentChannel>(
                 ..
             })) => {
                 if let Some(ledger) = link.timings() {
-                    agent += ran.as_ref().map_or(0, |r| r.micros);
+                    // The host's own figure, so added without trusting it to fit.
+                    agent = agent.saturating_add(ran.as_ref().map_or(0, |r| r.micros));
                     let module = modules.get(index).cloned().unwrap_or_default();
                     ledger.ran.push((index, module, ran));
                 }
@@ -3505,6 +3506,55 @@ mod tests {
         }
     }
 
+    /// The agent's times are the host's words: two tasks reporting `u64::MAX` cannot overflow
+    /// the sum the wire time is taken from.
+    ///
+    /// What would make this red: a plain `+=`, which panics in a debug build.
+    #[tokio::test]
+    async fn a_host_s_times_cannot_overflow_the_wire_time() {
+        let ran = volant_protocol::Ran {
+            path: volant_protocol::ExecPath::Native,
+            reason: None,
+            micros: u64::MAX,
+            fork_micros: None,
+            import_micros: None,
+            module_micros: None,
+        };
+        let answer = |index| FromAgent::TaskResult {
+            batch: 4,
+            index,
+            result: TaskResult(vars(json!({"changed": false}))),
+            ran: Some(ran.clone()),
+        };
+        let mut agent = FakeAgent::answering(vec![
+            answer(0),
+            answer(1),
+            FromAgent::BatchDone {
+                batch: 4,
+                outcome: BatchOutcome::Completed,
+            },
+        ]);
+        let tasks = vec![
+            protocol_task(&task("stat"), &bare_item(), None),
+            protocol_task(&task("stat"), &bare_item(), None),
+        ];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            4,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(received.iter().all(Option::is_some));
+        assert_eq!(agent.ledger.ran.len(), 2);
+        assert_eq!(agent.ledger.wire_micros, 0);
+    }
+
     /// What the agent says about how it ran each task is kept with the module that was asked
     /// for, by the task's position in the batch, for the driver to file in the profile.
     ///
@@ -4740,7 +4790,10 @@ mod tests {
             zip_b64: "UEsDBA==".to_string(),
             modules: BTreeMap::new(),
             refused: BTreeMap::new(),
-            natives: crate::python::Natives::default(),
+            natives: crate::python::Natives {
+                enabled: true,
+                facts: crate::python::Facts::Auto,
+            },
         }
     }
 

@@ -40,9 +40,10 @@ pub struct ModuleFacts {
     pub rlimit_nofile: u64,
     /// The wrapper's `extensions`; empty on ansible-core 2.19.12.
     pub extensions: Map<String, Value>,
-    /// Whether the file built is ansible-core's own module. A module from a `library` directory
-    /// or a collection is built under the same `ansible.modules.<name>` as the builtin it
-    /// shadows, so an agent's native module of that name would answer in its place. A helper
+    /// Whether the file built is ansible-core's own module. Measured on ansible-core 2.19.12, a
+    /// `library/stat.py` is built as `ansible.legacy.stat` and a collection's module under
+    /// `ansible_collections.`, neither of which the agent's `ansible.modules.<name>` lookup
+    /// matches; this is the second barrier, for whatever a wrapper names a module next. A helper
     /// that says nothing is read as `false`, which sends the payload.
     pub core: bool,
 }
@@ -59,30 +60,29 @@ pub enum Facts {
 }
 
 /// Which tasks of a run may be answered by an agent's native module instead of their payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The default is natives off: a union whose policy nobody set sends every task to Python, so a
+/// lost assignment shows as no native ever answering rather than as natives answering a run
+/// that switched them off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Natives {
     /// `[volant] native_modules`, or `VOLANT_NATIVE_MODULES`.
     pub enabled: bool,
     pub facts: Facts,
 }
 
-impl Default for Natives {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            facts: Facts::Auto,
-        }
-    }
-}
-
 impl Natives {
-    /// Whether the task running `module`, built as `facts`, has to run its payload whatever
-    /// native the agent has enabled.
-    pub fn force_python(&self, module: &str, facts: &ModuleFacts) -> bool {
+    /// Whether a task whose module was built as `facts` has to run its payload whatever native
+    /// the agent has enabled.
+    ///
+    /// `setup` is recognised by the name it was built under, which is the name the agent looks a
+    /// native up by: a collection's module redirected to `ansible.builtin.setup` is ansible-core's
+    /// `setup` whatever the task called it.
+    pub fn force_python(&self, facts: &ModuleFacts) -> bool {
         if !self.enabled || !facts.core {
             return true;
         }
-        short_name(module) == "setup" && self.facts != Facts::Native
+        facts.module_fqn == "ansible.modules.setup" && self.facts != Facts::Native
     }
 }
 
@@ -119,7 +119,7 @@ impl Union {
         Some(ModulePayload {
             blob: self.hash.clone(),
             facts: facts.clone(),
-            force_python: self.natives.force_python(module, facts),
+            force_python: self.natives.force_python(facts),
         })
     }
 }
@@ -1205,6 +1205,14 @@ mod tests {
         assert_eq!(union.modules["stat"].module_fqn, "ansible.legacy.stat");
         assert!(!union.modules["stat"].core, "the library's stat.py");
         assert!(union.modules["ping"].core);
+        let mut union = union;
+        union.natives.enabled = true;
+        assert!(
+            !union
+                .payload("ping")
+                .expect("the union holds it")
+                .force_python
+        );
         assert!(
             union
                 .payload("stat")

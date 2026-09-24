@@ -20,7 +20,7 @@ This is a public open source repository. Everything visible in it follows the ru
 ## Code
 
 - `// SPDX-License-Identifier: GPL-3.0-or-later` first line of every `.rs` file.
-- `just check` before every pull request. New dependencies are justified in the pull request.
+- `just check-local` before every pull request; CI runs the rest of `just check`. New dependencies are justified in the pull request.
 - No `scripts/` directory: `justfile` recipes, and a shell script only when a one-line recipe cannot do it.
 
 ## Skills

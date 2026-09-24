@@ -28,12 +28,19 @@ golden:
 # Everything CI runs, in the same order
 check: fmt lint test
 
+# Before opening a pull request: formatting, clippy, the tests and typos. The rest of `lint`
+# (the doc build, cargo deny, cargo machete, actionlint, zizmor) runs in CI on every pull request.
+check-local: fmt clippy test
+    typos
+
 fmt:
     cargo fmt --all --check
     taplo fmt --check
 
-lint:
+clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+lint: clippy
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
     cargo deny check
     cargo machete

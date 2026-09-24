@@ -783,6 +783,14 @@ bench-k3s runs="3":
     kubeconfig="$PWD/target/k3s-kubeconfig"
 
     just agent-musl
+    # The k3s play delegates a task to the control node itself (127.0.0.1): that connection needs
+    # an agent built for this machine's own architecture, not the musl one `agent-musl` builds for
+    # the two remote hosts. Without it the delegated task fails "no executable agent binary
+    # 'volant-agent'" - measured on a worktree whose target/ had never built this binary before
+    # (proof-k3s can look fine without this step only because some other build in the same tree
+    # happened to leave target/release/volant-agent behind first).
+    cargo build -p volant-agent --release
+    cp target/release/volant-agent target/agents/volant-agent
     cargo build --release -p volant
 
     idle() {

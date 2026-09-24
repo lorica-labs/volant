@@ -1405,6 +1405,7 @@ mod unit {
             "pre {{ 'x' ~ [1, nope] }} post",
             "{% block b %}{{ 'x' ~ [1, nope] }}{% endblock %}",
             "{{ ('x' ~ [1, nope]) | default('d') }}",
+            "{{ ('x' ~ nope) | default('d') }}",
         ] {
             let err = t.render(text, &none).expect_err(&format!("leaked: {text}"));
             assert!(err.is_undefined(), "{text}: {err}");

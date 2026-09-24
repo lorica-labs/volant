@@ -1,0 +1,32 @@
+{
+  "_ansible_no_log": false,
+  "action": "file",
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "_diff_peek": null,
+      "_original_basename": null,
+      "access_time": null,
+      "access_time_format": "%Y%m%d%H%M.%S",
+      "attributes": null,
+      "follow": true,
+      "force": false,
+      "group": null,
+      "mode": null,
+      "modification_time": null,
+      "modification_time_format": "%Y%m%d%H%M.%S",
+      "owner": null,
+      "path": "/tmp/volant16b-golden/gone",
+      "recurse": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": null,
+      "state": "absent",
+      "unsafe_writes": false
+    }
+  },
+  "path": "/tmp/volant16b-golden/gone",
+  "state": "absent"
+}

@@ -1,0 +1,44 @@
+{
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "backup": "/tmp/volant16b-golden/l.conf.109299.2026-09-24@18:25:24~",
+  "changed": true,
+  "diff": [
+    {
+      "after": "",
+      "after_header": "/tmp/volant16b-golden/l.conf (content)",
+      "before": "",
+      "before_header": "/tmp/volant16b-golden/l.conf (content)"
+    },
+    {
+      "after_header": "/tmp/volant16b-golden/l.conf (file attributes)",
+      "before_header": "/tmp/volant16b-golden/l.conf (file attributes)"
+    }
+  ],
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": true,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "a=3",
+      "mode": null,
+      "owner": null,
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^a=",
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "line replaced"
+}

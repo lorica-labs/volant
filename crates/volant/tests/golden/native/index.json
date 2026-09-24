@@ -1,0 +1,872 @@
+{
+  "apt-absent-missing": {
+    "args": {
+      "name": "volant-no-such-package",
+      "state": "absent"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "volatile": [],
+    "why": ""
+  },
+  "apt-present-installed": {
+    "args": {
+      "name": "bash",
+      "state": "present"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": ""
+  },
+  "apt-present-list": {
+    "args": {
+      "name": [
+        "bash",
+        "coreutils"
+      ],
+      "state": "present"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": ""
+  },
+  "apt-present-unknown": {
+    "args": {
+      "name": "volant-no-such-package",
+      "state": "present"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "apt",
+    "volatile": [],
+    "why": "not installed"
+  },
+  "apt-present-update-fresh": {
+    "args": {
+      "cache_valid_time": 86400,
+      "name": "bash",
+      "update_cache": true
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": ""
+  },
+  "apt-update-fresh": {
+    "args": {
+      "cache_valid_time": 86400,
+      "update_cache": true
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": ""
+  },
+  "copy-module-created": {
+    "args": {
+      "content": "one\n",
+      "dest": "/tmp/volant16b-golden/c.txt",
+      "mode": "0644"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "volatile": [
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
+  "copy-module-modified-backup": {
+    "args": {
+      "backup": true,
+      "content": "two\n",
+      "dest": "/tmp/volant16b-golden/c.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "volatile": [
+      "backup_file",
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
+  "copy-module-no-dir": {
+    "args": {
+      "content": "x\n",
+      "dest": "/tmp/volant16b-golden/nodir/x.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "volatile": [
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
+  "copy-module-remote-src": {
+    "args": {
+      "dest": "/tmp/volant16b-golden/r.txt",
+      "remote_src": true,
+      "src": "/tmp/volant16b-golden/f.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "copy",
+    "volatile": [],
+    "why": "remote_src"
+  },
+  "copy-module-validate-fail": {
+    "args": {
+      "content": "",
+      "dest": "/tmp/volant16b-golden/v.txt",
+      "validate": "test -s %s"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "volatile": [
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
+  "file-absent-missing": {
+    "args": {
+      "path": "/tmp/volant16b-golden/gone",
+      "state": "absent"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-absent-present": {
+    "args": {
+      "path": "/tmp/volant16b-golden/d0",
+      "state": "absent"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-dest-alias": {
+    "args": {
+      "dest": "/tmp/volant16b-golden/a/b",
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-dir-created": {
+    "args": {
+      "mode": "0755",
+      "path": "/tmp/volant16b-golden/a/b",
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-dir-over-file": {
+    "args": {
+      "path": "/tmp/volant16b-golden/f.txt",
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-dir-same": {
+    "args": {
+      "mode": 493,
+      "path": "/tmp/volant16b-golden/a/b",
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-dir-symbolic": {
+    "args": {
+      "mode": "u=rwx,g=rx,o=",
+      "path": "/tmp/volant16b-golden/a/b",
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-link": {
+    "args": {
+      "path": "/tmp/volant16b-golden/l2",
+      "src": "/tmp/volant16b-golden/f.txt",
+      "state": "link"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "file",
+    "volatile": [],
+    "why": "state link"
+  },
+  "file-owner-unknown": {
+    "args": {
+      "owner": "volant-no-such-user",
+      "path": "/tmp/volant16b-golden/f.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-recurse": {
+    "args": {
+      "mode": "0755",
+      "path": "/tmp/volant16b-golden/a",
+      "recurse": true,
+      "state": "directory"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "file",
+    "volatile": [],
+    "why": "recurse"
+  },
+  "file-state-file-missing": {
+    "args": {
+      "path": "/tmp/volant16b-golden/missing",
+      "state": "file"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-state-file-mode": {
+    "args": {
+      "mode": "0600",
+      "path": "/tmp/volant16b-golden/f.txt",
+      "state": "file"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "file-state-file-same": {
+    "args": {
+      "path": "/tmp/volant16b-golden/f.txt",
+      "state": "file"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "volatile": [],
+    "why": ""
+  },
+  "group-created": {
+    "args": {
+      "gid": 64999,
+      "name": "volantshape"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "volatile": [],
+    "why": ""
+  },
+  "group-removed": {
+    "args": {
+      "name": "volantshape",
+      "state": "absent"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "volatile": [],
+    "why": ""
+  },
+  "group-same": {
+    "args": {
+      "gid": 64999,
+      "name": "volantshape"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-absent": {
+    "args": {
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^d=",
+      "state": "absent"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-absent-same": {
+    "args": {
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^d=",
+      "state": "absent"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-appended": {
+    "args": {
+      "line": "b=2",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^b="
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-backrefs": {
+    "args": {
+      "backrefs": true,
+      "line": "\\1=10",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^(a)=.*"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": "backrefs"
+  },
+  "lineinfile-created": {
+    "args": {
+      "create": true,
+      "line": "a=1",
+      "mode": "0644",
+      "path": "/tmp/volant16b-golden/l.conf"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-dir": {
+    "args": {
+      "line": "x",
+      "path": "/tmp/volant16b-golden"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-insertafter": {
+    "args": {
+      "insertafter": "^a=",
+      "line": "c=4",
+      "path": "/tmp/volant16b-golden/l.conf"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-lookahead": {
+    "args": {
+      "line": "a=9",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^(?!#)a="
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": "regex syntax"
+  },
+  "lineinfile-missing": {
+    "args": {
+      "line": "a=1",
+      "path": "/tmp/volant16b-golden/l.conf"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-mode": {
+    "args": {
+      "line": "a=3",
+      "mode": "0600",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^a="
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-replaced-backup": {
+    "args": {
+      "backup": true,
+      "line": "a=3",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^a="
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [
+      "backup"
+    ],
+    "why": ""
+  },
+  "lineinfile-same": {
+    "args": {
+      "create": true,
+      "line": "a=1",
+      "mode": "0644",
+      "path": "/tmp/volant16b-golden/l.conf"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-search-string": {
+    "args": {
+      "line": "c=5",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "search_string": "c=4"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-validate-fail": {
+    "args": {
+      "line": "e=7",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "validate": "false %s"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-validate-ok": {
+    "args": {
+      "line": "d=6",
+      "path": "/tmp/volant16b-golden/l.conf",
+      "validate": "test -s %s"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "volatile": [],
+    "why": ""
+  },
+  "package-facts": {
+    "args": {
+      "manager": "auto"
+    },
+    "become": true,
+    "compare": "live",
+    "expect": "native",
+    "module": "package_facts",
+    "volatile": [],
+    "why": ""
+  },
+  "service-facts": {
+    "args": {},
+    "become": true,
+    "compare": "live",
+    "expect": "native",
+    "module": "service_facts",
+    "volatile": [],
+    "why": ""
+  },
+  "setup-pkg-mgr": {
+    "args": {
+      "filter": [
+        "ansible_pkg_mgr"
+      ],
+      "gather_subset": [
+        "!all"
+      ]
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "setup",
+    "volatile": [],
+    "why": ""
+  },
+  "setup-service-mgr": {
+    "args": {
+      "filter": [
+        "ansible_service_mgr"
+      ],
+      "gather_subset": [
+        "!all"
+      ]
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "setup",
+    "volatile": [],
+    "why": ""
+  },
+  "stat-bare": {
+    "args": {
+      "get_attributes": false,
+      "get_checksum": false,
+      "get_mime": false,
+      "path": "/tmp/volant16b-golden/f.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "stat-dir": {
+    "args": {
+      "path": "/tmp/volant16b-golden"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "stat-file": {
+    "args": {
+      "path": "/tmp/volant16b-golden/f.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "stat-link-follow": {
+    "args": {
+      "follow": true,
+      "path": "/tmp/volant16b-golden/l"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "stat-link-nofollow": {
+    "args": {
+      "path": "/tmp/volant16b-golden/l"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "stat-missing": {
+    "args": {
+      "path": "/tmp/volant16b-golden/nope"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [],
+    "why": ""
+  },
+  "stat-plugin": {
+    "args": {
+      "checksum_algorithm": "sha1",
+      "follow": false,
+      "get_checksum": true,
+      "path": "/tmp/volant16b-golden/f.txt"
+    },
+    "become": false,
+    "compare": "exact",
+    "expect": "native",
+    "module": "stat",
+    "volatile": [
+      "stat.atime",
+      "stat.mtime",
+      "stat.ctime",
+      "stat.inode",
+      "stat.dev",
+      "stat.version"
+    ],
+    "why": ""
+  },
+  "systemd-daemon-reload": {
+    "args": {
+      "daemon_reload": true
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "systemd",
+    "volatile": [],
+    "why": ""
+  },
+  "systemd-enabled-only": {
+    "args": {
+      "enabled": true,
+      "name": "cron.service"
+    },
+    "become": true,
+    "compare": "keys",
+    "expect": "native",
+    "module": "systemd_service",
+    "volatile": [
+      "status"
+    ],
+    "why": ""
+  },
+  "systemd-missing-unit": {
+    "args": {
+      "name": "volant-no-such-unit",
+      "state": "started"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "systemd",
+    "volatile": [],
+    "why": ""
+  },
+  "systemd-started-same": {
+    "args": {
+      "enabled": true,
+      "name": "cron",
+      "state": "started"
+    },
+    "become": true,
+    "compare": "keys",
+    "expect": "native",
+    "module": "systemd",
+    "volatile": [
+      "status"
+    ],
+    "why": ""
+  },
+  "user-absent-missing": {
+    "args": {
+      "name": "volantshape",
+      "state": "absent"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "volatile": [],
+    "why": ""
+  },
+  "user-created": {
+    "args": {
+      "create_home": false,
+      "group": "volantshape",
+      "home": "/nonexistent-volantshape",
+      "name": "volantshape",
+      "shell": "/bin/sh",
+      "uid": 64999
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "volatile": [],
+    "why": ""
+  },
+  "user-password": {
+    "args": {
+      "name": "volantshape",
+      "password": "!"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "user",
+    "volatile": [],
+    "why": "password"
+  },
+  "user-removed": {
+    "args": {
+      "name": "volantshape",
+      "state": "absent"
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "volatile": [],
+    "why": ""
+  },
+  "user-same": {
+    "args": {
+      "create_home": false,
+      "group": "volantshape",
+      "home": "/nonexistent-volantshape",
+      "name": "volantshape",
+      "shell": "/bin/sh",
+      "uid": 64999
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "volatile": [],
+    "why": ""
+  },
+  "user-shell": {
+    "args": {
+      "create_home": false,
+      "group": "volantshape",
+      "home": "/nonexistent-volantshape",
+      "name": "volantshape",
+      "shell": "/bin/bash",
+      "uid": 64999
+    },
+    "become": true,
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "volatile": [],
+    "why": ""
+  }
+}

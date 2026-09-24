@@ -1,0 +1,33 @@
+{
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "changed": false,
+  "exception": "(traceback unavailable)",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": false,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "e=7",
+      "mode": null,
+      "owner": null,
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": null,
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": "false %s"
+    }
+  },
+  "msg": "failed to validate: rc:1 error:"
+}

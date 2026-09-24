@@ -1,0 +1,27 @@
+{
+  "_ansible_no_log": false,
+  "action": "package_facts",
+  "ansible_facts": {
+    "packages": {
+      "bash": [
+        {
+          "arch": "amd64",
+          "category": "shells",
+          "name": "bash",
+          "origin": "Ubuntu",
+          "source": "apt",
+          "version": "5.3-2ubuntu1"
+        }
+      ]
+    }
+  },
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "manager": [
+        "auto"
+      ],
+      "strategy": "first"
+    }
+  }
+}

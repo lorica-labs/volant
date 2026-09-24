@@ -1,0 +1,39 @@
+{
+  "_ansible_no_log": false,
+  "action": "apt",
+  "cache_update_time": 1790274206,
+  "cache_updated": false,
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "allow_change_held_packages": false,
+      "allow_downgrade": false,
+      "allow_unauthenticated": false,
+      "auto_install_module_deps": true,
+      "autoclean": false,
+      "autoremove": false,
+      "cache_valid_time": 0,
+      "clean": false,
+      "deb": null,
+      "default_release": null,
+      "dpkg_options": "force-confdef,force-confold",
+      "fail_on_autoremove": false,
+      "force": false,
+      "force_apt_get": false,
+      "install_recommends": null,
+      "lock_timeout": 60,
+      "name": "bash",
+      "only_upgrade": false,
+      "package": [
+        "bash"
+      ],
+      "policy_rc_d": null,
+      "purge": false,
+      "state": "present",
+      "update_cache": null,
+      "update_cache_retries": 5,
+      "update_cache_retry_max_delay": 12,
+      "upgrade": null
+    }
+  }
+}

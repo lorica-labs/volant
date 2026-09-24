@@ -1,0 +1,40 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": false,
+  "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+  "diff": [],
+  "exception": "(traceback unavailable)",
+  "exit_status": 1,
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "_original_basename": ".9w595szt",
+      "attributes": null,
+      "backup": false,
+      "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+      "content": null,
+      "dest": "/tmp/volant16b-golden/v.txt",
+      "directory_mode": null,
+      "follow": false,
+      "force": true,
+      "group": null,
+      "local_follow": null,
+      "mode": null,
+      "owner": null,
+      "remote_src": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": "<golden-staged-path>",
+      "unsafe_writes": false,
+      "validate": "test -s %s"
+    }
+  },
+  "msg": "failed to validate",
+  "stderr": "",
+  "stderr_lines": [],
+  "stdout": "",
+  "stdout_lines": []
+}

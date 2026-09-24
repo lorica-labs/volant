@@ -1,0 +1,35 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": false,
+  "checksum": "6fcf9dfbd479ed82697fee719b9f8c610a11ff2a",
+  "diff": [],
+  "exception": "(traceback unavailable)",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "_original_basename": ".tyth3s1f",
+      "attributes": null,
+      "backup": false,
+      "checksum": "6fcf9dfbd479ed82697fee719b9f8c610a11ff2a",
+      "content": null,
+      "dest": "/tmp/volant16b-golden/nodir/x.txt",
+      "directory_mode": null,
+      "follow": false,
+      "force": true,
+      "group": null,
+      "local_follow": null,
+      "mode": null,
+      "owner": null,
+      "remote_src": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": "<golden-staged-path>",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "Destination directory /tmp/volant16b-golden/nodir does not exist"
+}

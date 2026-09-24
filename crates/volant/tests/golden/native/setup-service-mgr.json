@@ -1,0 +1,21 @@
+{
+  "_ansible_no_log": false,
+  "_ansible_verbose_override": true,
+  "action": "setup",
+  "ansible_facts": {
+    "ansible_service_mgr": "systemd"
+  },
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "fact_path": "/etc/ansible/facts.d",
+      "filter": [
+        "ansible_service_mgr"
+      ],
+      "gather_subset": [
+        "!all"
+      ],
+      "gather_timeout": 10
+    }
+  }
+}

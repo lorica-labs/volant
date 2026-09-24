@@ -1,0 +1,50 @@
+{
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "backup": "",
+  "changed": true,
+  "diff": [
+    {
+      "after": "",
+      "after_header": "/tmp/volant16b-golden/l.conf (content)",
+      "before": "",
+      "before_header": "/tmp/volant16b-golden/l.conf (content)"
+    },
+    {
+      "after": {
+        "mode": "0600"
+      },
+      "after_header": "/tmp/volant16b-golden/l.conf (file attributes)",
+      "before": {
+        "mode": "0644"
+      },
+      "before_header": "/tmp/volant16b-golden/l.conf (file attributes)"
+    }
+  ],
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": false,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "a=3",
+      "mode": "0600",
+      "owner": null,
+      "path": "/tmp/volant16b-golden/l.conf",
+      "regexp": "^a=",
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "ownership, perms or SE linux context changed"
+}

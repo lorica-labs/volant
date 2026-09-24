@@ -1,0 +1,18 @@
+{
+  "_ansible_no_log": false,
+  "action": "stat",
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "checksum_algorithm": "sha1",
+      "follow": false,
+      "get_attributes": true,
+      "get_checksum": true,
+      "get_mime": true,
+      "path": "/tmp/volant16b-golden/nope"
+    }
+  },
+  "stat": {
+    "exists": false
+  }
+}

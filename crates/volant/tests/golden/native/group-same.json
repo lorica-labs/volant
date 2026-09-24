@@ -1,0 +1,22 @@
+{
+  "_ansible_no_log": false,
+  "action": "group",
+  "changed": false,
+  "gid": 64999,
+  "invocation": {
+    "module_args": {
+      "force": false,
+      "gid": 64999,
+      "gid_max": null,
+      "gid_min": null,
+      "local": false,
+      "name": "volantshape",
+      "non_unique": false,
+      "state": "present",
+      "system": false
+    }
+  },
+  "name": "volantshape",
+  "state": "present",
+  "system": false
+}

@@ -1,0 +1,43 @@
+{
+  "_ansible_no_log": false,
+  "action": "copy",
+  "backup_file": "/tmp/volant16b-golden/c.txt.109075.2026-09-24@18:25:19~",
+  "changed": true,
+  "checksum": "7bbef45b3bc70855010e02460717643125c3beca",
+  "dest": "/tmp/volant16b-golden/c.txt",
+  "diff": [],
+  "gid": 999999999,
+  "group": "<golden-generator-account>",
+  "invocation": {
+    "module_args": {
+      "_original_basename": ".e_rltkb6",
+      "attributes": null,
+      "backup": true,
+      "checksum": "7bbef45b3bc70855010e02460717643125c3beca",
+      "content": null,
+      "dest": "/tmp/volant16b-golden/c.txt",
+      "directory_mode": null,
+      "follow": false,
+      "force": true,
+      "group": null,
+      "local_follow": null,
+      "mode": null,
+      "owner": null,
+      "remote_src": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": "<golden-staged-path>",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "md5sum": "c193497a1a06b2c72230e6146ff47080",
+  "mode": "0644",
+  "owner": "<golden-generator-account>",
+  "size": 4,
+  "src": "<golden-staged-path>",
+  "state": "file",
+  "uid": 999999999
+}

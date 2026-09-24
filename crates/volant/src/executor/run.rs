@@ -6430,7 +6430,7 @@ mod tests {
     }
 
     /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`
-    /// under `timeout: 1` whose host never comes back ends at one second with the timeout's own
+    /// under `timeout: 2` whose host never comes back ends at two seconds with the timeout's own
     /// result, not after `reboot_timeout`. Read from ansible-core 2.19.12 `task_executor.py`: the
     /// alarm wraps the action's whole run and raises out of it.
     ///
@@ -6443,7 +6443,7 @@ mod tests {
         let mut relink = Scripted::new(Vec::new());
         relink.after = Some(|| FakeAgent::answering(raw_answer(9, 0, "old-boot-id\n").to_vec()));
         let result = reboot_item_under(
-            Some(1),
+            Some(2),
             json!({}),
             &mut agent,
             &mut relink,
@@ -6452,12 +6452,14 @@ mod tests {
         )
         .await
         .expect("the item ran to its end");
-        assert_eq!(result, TaskResult::timed_out(1));
-        let first = batches_sent(&relink.retired[0]);
-        assert!(
-            first.iter().all(|b| b[0].timeout == Some(1)),
-            "each sub-task carries what is left of the item's time: {first:?}"
-        );
+        assert_eq!(result, TaskResult::timed_out(2));
+        // Each sub-task carries what is left of the item's time, in whole seconds: all of it at
+        // the start, one second of it once the host has been away for more than one.
+        let timeouts = |link: &FakeAgent| -> Vec<Option<u64>> {
+            batches_sent(link).iter().map(|b| b[0].timeout).collect()
+        };
+        assert_eq!(timeouts(&relink.retired[0]), [Some(2); 4]);
+        assert_eq!(timeouts(relink.retired.last().expect("a probe")), [Some(1)]);
     }
 
     /// A `shutdown` that answered and then took the link down reports its answer: a refusal

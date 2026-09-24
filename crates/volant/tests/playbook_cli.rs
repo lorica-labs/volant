@@ -7908,6 +7908,41 @@ fn a_task_an_action_plugin_backs_retries_through_the_driver() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// A task an action plugin backs runs over the link the host already has, and leaves it for
+/// the next task: the agent that answers before a `copy` is the one that answers after it.
+///
+/// What would make this red: the driver not putting the link back once the plugin is done with
+/// it, which connects a new agent for the next task, with a new process id.
+#[test]
+fn a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("plugin-link");
+    let file = dir.join("link.yml");
+    std::fs::write(
+        &file,
+        format!(
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: sh -c 'echo $PPID'\n      register: a\n    - copy:\n        content: \"x\\n\"\n        dest: {dir}/x.txt\n    - command: sh -c 'echo $PPID'\n      register: b\n    - assert:\n        that: a.stdout == b.stdout\n",
+            dir = dir.display()
+        ),
+    )
+    .expect("the playbook is written");
+    let out = volant_within_env(
+        &["playbook", file.to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("All assertions passed"), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// `ansible_run_tags` and `ansible_skip_tags` are the run's own tag options. Measured on
 /// ansible-core 2.19.12: `run=['all'] skip=[]` with no option, `run=['kubeconfig']` under
 /// `--tags kubeconfig`, `skip=['foo']` under `--skip-tags foo`.

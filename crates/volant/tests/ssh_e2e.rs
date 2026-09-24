@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
+#[path = "common/collections.rs"]
+mod collections;
+
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -1065,52 +1068,10 @@ fn ssh_two_links_reuse_the_union_the_host_holds() {
 /// make the play below prove something about a module nobody recorded. `ssh-test` always sets
 /// `VOLANT_PYTHON`, so there is no skip.
 fn assert_the_pinned_collections_are_installed() {
-    let pins = include_str!("golden/COLLECTIONS");
     let python = std::env::var("VOLANT_PYTHON").expect(
         "VOLANT_PYTHON names a python with ansible-core; ssh-test checks this before any ssh_* test runs",
     );
-    // A collection's version comes from its MANIFEST.json, `netaddr`'s from an import.
-    let script = r#"
-import json, os, sys
-from ansible import constants as C
-found = {}
-for line in sys.argv[1].splitlines():
-    name = line.split(" ", 1)[0]
-    if name == "netaddr":
-        try:
-            import netaddr
-            found[name] = netaddr.__version__
-        except ImportError:
-            pass
-        continue
-    namespace, collection = name.split(".", 1)
-    for root in C.COLLECTIONS_PATHS:
-        manifest = os.path.join(os.path.expanduser(root), "ansible_collections", namespace, collection, "MANIFEST.json")
-        if os.path.exists(manifest):
-            with open(manifest, encoding="utf-8") as f:
-                found[name] = json.load(f)["collection_info"]["version"]
-            break
-print(json.dumps(found))
-"#;
-    let out = Command::new(&python)
-        .args(["-c", script, pins])
-        .output()
-        .unwrap_or_else(|e| panic!("running {python}: {e}"));
-    assert!(
-        out.status.success(),
-        "{python} could not read its collections: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let found: BTreeMap<String, String> = serde_json::from_slice(&out.stdout).unwrap();
-    let mismatched: Vec<String> = pins
-        .lines()
-        .filter_map(|line| line.split_once(' '))
-        .filter(|(name, version)| found.get(*name).map(String::as_str) != Some(*version))
-        .map(|(name, version)| {
-            let got = found.get(name).map_or("not installed", String::as_str);
-            format!("{name} is {got}, not {version}")
-        })
-        .collect();
+    let mismatched = collections::collection_mismatches(Path::new(&python));
     assert!(
         mismatched.is_empty(),
         "VOLANT_PYTHON's collections do not match COLLECTIONS: {}",

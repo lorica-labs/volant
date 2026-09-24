@@ -2,9 +2,10 @@
 //! The dispatcher between a native module and its Python payload, through the real agent binary.
 //!
 //! These run against `volant_echo`, a native built only with the `test-natives` feature, which
-//! this package's own dev-dependency on itself turns on for its tests. Every payload here names
+//! this package's own dev-dependency on itself turns on for its tests. Most payloads here name
 //! an interpreter that does not exist and a blob the agent does not hold, so reaching the Python
-//! path shows as that path's own failure rather than as a module's answer.
+//! path shows as that path's own failure rather than as a module's answer; the hand-back test
+//! runs a real stub module instead, to see what it was given.
 #![cfg(unix)]
 
 use std::io::{BufReader, Write};
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Map, Value, json};
-use volant_protocol::encoding::b64_encode;
+use volant_protocol::encoding::{b64_decode, b64_encode};
 use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{
     ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Ran, StagedFile, Task, TaskResult,
@@ -24,10 +25,14 @@ use volant_protocol::{
 /// native; a disabled native, or a module of the same name from anywhere but ansible-core's own
 /// modules, never reaches one.
 ///
+/// A native's answer gets the `changed: false` the Python path fills in for a module that did
+/// not say: `volant_echo` never writes `changed` itself.
+///
 /// What would make this red: `force_python` ignored (`Native` where `Python` is asked for); a
 /// hand-back taken as the answer (a result with no Python failure in it); a stub native listed
-/// in `Ready.natives` or consulted at all; or the native looked up by the name the playbook
-/// wrote, which answers for another collection's module.
+/// in `Ready.natives` or consulted at all; the native looked up by the name the playbook
+/// wrote, which answers for another collection's module; or a native's result sent without
+/// `changed`, which `r is changed` then reads as undefined.
 #[test]
 fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     let scratch = Scratch::new("dispatch");
@@ -118,6 +123,56 @@ fn a_native_reads_the_files_staged_for_its_task() {
     assert!(!src.exists(), "the staged file outlived its task");
 }
 
+/// After a native hands the task back, the payload runs once, on the arguments the native saw:
+/// the staged file under `src`, still there, and the task's own arguments. The module here is
+/// a real one, run by the host's Python from a union the agent holds.
+///
+/// What would make this red: the payload given the task's arguments rather than the staged
+/// ones (no `src`), run after the staged file is removed (no content), or run twice (a count
+/// of 2 in the module's own tally).
+#[test]
+fn after_a_hand_back_the_payload_runs_once_on_the_staged_arguments() {
+    let scratch = Scratch::new("hand-back");
+    let mut agent = Agent::spawn(&scratch.0);
+    agent.hello();
+    let union = build_payload(concat!(
+        "\n    import os",
+        "\n    with open(args['tally'], 'a') as f:",
+        "\n        f.write('run ')",
+        "\n    src = args.get('src')",
+        "\n    content = open(src).read() if src and os.path.exists(src) else None",
+        "\n    print(json.dumps({'src_content': content, 'fallback': args.get('fallback')}))",
+        "\n",
+    ));
+    let union_hash = agent.put(&union, false);
+    let file_hash = agent.put(b"what copy would copy", true);
+    let tally = scratch.0.join("tally");
+    let mut handed_back = task(
+        "ansible.modules.volant_echo",
+        json!({"fallback": "outside the subset", "tally": tally}),
+    );
+    let payload = handed_back.payload.as_mut().unwrap();
+    payload.blob = union_hash;
+    payload.interpreter = PYTHON.into();
+    handed_back.files = vec![StagedFile {
+        arg: "src".into(),
+        blob: file_hash,
+    }];
+    let (result, ran) = agent.run_one(1, handed_back);
+    assert_eq!(ran.path, ExecPath::Fallback, "{ran:?}");
+    assert!(!result.failed(), "{result:?}");
+    assert_eq!(
+        result.0["src_content"], "what copy would copy",
+        "{result:?}"
+    );
+    assert_eq!(result.0["fallback"], "outside the subset", "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(&tally).unwrap(),
+        "run ",
+        "the payload did not run exactly once"
+    );
+}
+
 /// A native that panics hands the task back instead of taking the agent down: the payload runs,
 /// the reason says what happened, and the agent answers the next batch.
 ///
@@ -163,6 +218,46 @@ fn task(module_fqn: &str, args: Value) -> Task {
     }
 }
 
+/// The interpreter the hand-back test runs its module under.
+const PYTHON: &str = "/usr/bin/python3";
+
+/// A stub union whose module is `body`, built as a real zip by the host interpreter, as
+/// `tests/blobs.rs` builds its own.
+fn build_payload(body: &str) -> Vec<u8> {
+    const BUILD: &str = r##"
+import base64, io, sys, zipfile
+
+loader = 'import json, sys\n\n\ndef run_module(json_params, profile, module_fqn, modlib_path, extensions):\n    args = json.loads(json_params)["ANSIBLE_MODULE_ARGS"]' + sys.argv[1]
+buf = io.BytesIO()
+archive = zipfile.ZipFile(buf, "w")
+for name in [
+    "ansible/__init__.py",
+    "ansible/module_utils/__init__.py",
+    "ansible/module_utils/_internal/__init__.py",
+    "ansible/module_utils/_internal/_ansiballz/__init__.py",
+]:
+    archive.writestr(name, "")
+archive.writestr("ansible/module_utils/basic.py", "# stub\n")
+archive.writestr("ansible/module_utils/_internal/_ansiballz/_loader.py", loader)
+archive.close()
+sys.stdout.write(base64.b64encode(buf.getvalue()).decode())
+"##;
+    assert!(
+        Path::new(PYTHON).exists(),
+        "this test runs a real module under {PYTHON}, which this host does not have"
+    );
+    let built = Command::new(PYTHON)
+        .args(["-c", BUILD, body])
+        .output()
+        .expect("the host python builds the payload");
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    b64_decode(&String::from_utf8(built.stdout).unwrap()).unwrap()
+}
+
 struct Agent {
     child: Child,
     stdin: ChildStdin,
@@ -186,6 +281,24 @@ impl Agent {
             stdin,
             stdout,
         }
+    }
+
+    /// Puts `bytes` in the agent's cache, or stages them, and returns their name.
+    fn put(&mut self, bytes: &[u8], staged: bool) -> String {
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        self.send(&ToAgent::PutBlob {
+            hash: hash.clone(),
+            zip_b64: b64_encode(bytes),
+            staged,
+        });
+        assert_eq!(
+            self.recv(),
+            FromAgent::BlobState {
+                hash: hash.clone(),
+                present: true
+            }
+        );
+        hash
     }
 
     fn send(&mut self, msg: &ToAgent) {

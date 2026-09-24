@@ -587,11 +587,7 @@ fn result(frame: &Value) -> TaskResult {
         );
     }
     match serde_json::from_str::<Value>(stdout) {
-        // ansible-core's `TaskExecutor._execute` fills in a missing `changed` and nothing more.
-        Ok(Value::Object(mut result)) => {
-            result.entry("changed").or_insert(Value::Bool(false));
-            TaskResult(result)
-        }
+        Ok(Value::Object(result)) => crate::modules::module_result(result),
         _ => fail(
             format!(
                 "the module wrote something that is not a result (exit status {code}): {}",
@@ -1596,6 +1592,102 @@ mod tests {
         assert!(
             matches!(run, Run::Cancelled),
             "a cancel became something else"
+        );
+    }
+
+    /// A module that leaves a daemon behind the way `module_utils.service.fork_process` does -
+    /// fork without exec, `setsid`, 0-2 on `/dev/null`, every other descriptor kept - and then
+    /// outlives its `timeout:` is timed out, and the next task runs on the same server. The
+    /// daemon still holds whatever pipe the child had open when it forked.
+    ///
+    /// What would make this red: the child keeping its stdout and stderr pipes open under their
+    /// own numbers, or the server reading the timing pipe to its end, or blocking on it. Either
+    /// waits on a daemon that lives a minute, until the agent gives the server up after
+    /// `REAP_TIMEOUT` and the next task starts a new one under another pid.
+    #[test]
+    fn a_daemon_the_module_leaves_behind_does_not_hold_the_server() {
+        let blob = stub_blob(
+            "\n    import os, time\n    if args.get(\"pidfile\"):\n        if os.fork() == 0:\n            null = os.open(os.devnull, os.O_RDWR)\n            for n in range(3):\n                os.dup2(null, n)\n            os.setsid()\n            with open(args[\"pidfile\"], \"w\") as f:\n                f.write(str(os.getpid()))\n            time.sleep(60)\n            os._exit(0)\n        time.sleep(30)\n    print(json.dumps({\"parent\": os.getppid()}))\n",
+        );
+        let dir = tempdir();
+        let pidfile = dir.path().join("daemon.pid");
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let task = |server: &mut Server, args_: Value, context: &Context| {
+            done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(args_),
+                context,
+                &|| false,
+            ))
+        };
+        let first = task(&mut server, json!({}), &Context::default());
+        assert!(!first.failed(), "{:?}", first.0);
+
+        let started = Instant::now();
+        let timed_out = task(
+            &mut server,
+            json!({"pidfile": pidfile}),
+            &Context {
+                timeout: Some(Duration::from_secs(1)),
+                ..Context::default()
+            },
+        );
+        let waited = started.elapsed();
+        let next = task(&mut server, json!({}), &Context::default());
+        if let Ok(pid) = std::fs::read_to_string(&pidfile) {
+            // SAFETY: `kill` takes a pid and a signal and touches no memory of this process.
+            unsafe { libc::kill(pid.trim().parse().unwrap(), libc::SIGKILL) };
+        }
+        assert_eq!(
+            timed_out.0["msg"], "Task failed: Timed out after 1 second(s).",
+            "{:?}",
+            timed_out.0
+        );
+        assert_eq!(
+            next.0.get("parent"),
+            first.0.get("parent"),
+            "the server was given up after {waited:?}: {:?}",
+            next.0
+        );
+    }
+
+    /// A module whose `AnsibleModule(...)` call raises shows the traceback Python itself gives,
+    /// with no frame of the server's timing in it: that traceback is what the task's message
+    /// quotes. Called with an argument `__init__` does not take, Python raises at the call, so
+    /// the last frame is the module's own line.
+    ///
+    /// What would make this red: the timing mark taken by a wrapper around `__init__`, which
+    /// accepts any argument, calls the real one from its own frame, and so puts that frame at the
+    /// end of the traceback, between the module and the error.
+    #[test]
+    fn the_timing_mark_leaves_the_module_s_traceback_alone() {
+        let blob = stub_blob(
+            "\n    from ansible.module_utils.basic import AnsibleModule\n    AnsibleModule(bogus=True)\n",
+        );
+        std::fs::write(
+            blob.path().join("ansible/module_utils/basic.py"),
+            "class AnsibleModule:\n    def __init__(self, argument_spec=None):\n        self.argument_spec = argument_spec\n",
+        )
+        .unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        let msg = result.0["msg"].as_str().unwrap_or_default();
+        let frames: Vec<&str> = msg
+            .lines()
+            .filter(|line| line.trim_start().starts_with("File "))
+            .filter_map(|line| line.rsplit(", in ").next())
+            .collect();
+        assert_eq!(frames, ["run_child", "run_module"], "{msg}");
+        assert!(
+            msg.ends_with(
+                "TypeError: AnsibleModule.__init__() got an unexpected keyword argument 'bogus'"
+            ),
+            "{msg}"
         );
     }
 

@@ -90,7 +90,7 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
                 match natives::run(native, args, &context, cancelled) {
                     NativeRun::Done(result) => {
                         ran.path = ExecPath::Native;
-                        return Run::Done(result);
+                        return Run::Done(module_result(result.0));
                     }
                     NativeRun::Cancelled => return Run::Cancelled,
                     NativeRun::Fallback(reason) => {
@@ -127,6 +127,14 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
         ))),
     };
     (run, ran)
+}
+
+/// A module's own result as the task's: ansible-core's `TaskExecutor._execute` fills in a
+/// missing `changed` and nothing more, whichever code wrote the result, the Python module or
+/// the native standing in for it.
+pub fn module_result(mut result: Map<String, Value>) -> TaskResult {
+    result.entry("changed").or_insert(Value::Bool(false));
+    TaskResult(result)
 }
 
 /// Runs `module` with each of the task's files taken out of the connection's staging directory

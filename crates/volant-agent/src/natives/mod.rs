@@ -124,9 +124,9 @@ mod echo {
         run,
     };
 
-    /// Answers `{"changed": false, "echo": <args>}`, and with `read_src` also the content of the
-    /// file named by `src`. Hands the task back when asked to, with the reason it was given, and
-    /// panics when asked to.
+    /// Answers `{"echo": <args>}`, leaving `changed` to the dispatcher, and with `read_src` also
+    /// the content of the file named by `src`. Hands the task back when asked to, with the reason
+    /// it was given, and panics when asked to.
     fn run(args: &Map<String, Value>, _: &Context, _: &dyn Fn() -> bool) -> NativeRun {
         if let Some(reason) = args.get("fallback").and_then(Value::as_str) {
             return NativeRun::Fallback(reason.to_string());
@@ -136,7 +136,6 @@ mod echo {
             "volant_echo was asked to panic"
         );
         let mut result = Map::new();
-        result.insert("changed".into(), Value::Bool(false));
         result.insert("echo".into(), Value::Object(args.clone()));
         if args.contains_key("read_src") {
             let src = args.get("src").and_then(Value::as_str).unwrap_or_default();

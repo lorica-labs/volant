@@ -28,7 +28,6 @@ import sys
 if sys.path and sys.path[0] in ("", "."):
     del sys.path[0]
 
-import functools
 import json
 import os
 import selectors
@@ -132,19 +131,21 @@ def timed_module_init(basic, marks):
     Timing the import on its own, by importing the module before `run_module`, would compile
     and run the module's body twice, and `runpy` warns on stderr about a module already imported.
     Measured on the development machine, compiling `user` alone takes 28 ms.
+
+    The mark is taken in `__new__`, which has returned before `__init__` starts: a wrapper around
+    `__init__` would add its own frame to the traceback of any exception `__init__` raises, and
+    that traceback is what an operator reads in the task's message.
     """
     cls = getattr(basic, "AnsibleModule", None)
-    if cls is None:
+    if cls is None or "__new__" in vars(cls):
         return
-    init = cls.__init__
 
-    @functools.wraps(init)
-    def timed(self, *args, **kwargs):
+    def timed(klass, *args, **kwargs):
         if not marks:
             marks.append(time.monotonic_ns())
-        return init(self, *args, **kwargs)
+        return object.__new__(klass)
 
-    cls.__init__ = timed
+    cls.__new__ = staticmethod(timed)
 
 
 def child_timing(forked, started, running, marks, ended):
@@ -196,6 +197,10 @@ def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
         os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
         os.dup2(out_w, 1)
         os.dup2(err_w, 2)
+        # The originals go: a daemon the module forks (`fork_process` points 0-2 at /dev/null
+        # and closes nothing else) would otherwise hold them open, and `drain` would wait for it.
+        os.close(out_w)
+        os.close(err_w)
         for key, value in request.get("environment", {}).items():
             os.environ[key] = value
         set_open_file_limit(request.get("rlimit_nofile") or 0)

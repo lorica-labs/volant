@@ -2450,6 +2450,21 @@ mod tests {
         paths.sort();
         paths.dedup();
         assert_eq!(paths.len(), 20, "one master per delegating host");
+
+        // Two inventory aliases of one delegate, reached from one host: two masters, as the
+        // aliases get when they are the hosts themselves.
+        let via = |delegate: &str| match Transport::for_vars(
+            delegate,
+            vars.as_object().expect("an object"),
+            &defaults(),
+        )
+        .expect("an ssh transport")
+        .shared(SHARED.map(Path::new), "web1", Some(delegate))
+        {
+            Transport::Ssh(target) => target.control_path,
+            Transport::Local => panic!("expected ssh"),
+        };
+        assert_ne!(via("lb1"), via("lb1-alias"));
     }
 
     /// `ssh -O exit` reaches the socket the link would use, and returns even though nothing

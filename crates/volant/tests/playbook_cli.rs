@@ -1870,6 +1870,76 @@ fn an_undefined_loop_under_a_false_when_is_skipped() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Measured against ansible-core 2.19.12, local connection: a looped `include_tasks` or
+/// `include_role` whose every item is skipped prints the item lines, then `skipping: [h]` for the
+/// task, and counts the host `skipped=1` - whether the loop is a `with_first_found` under a
+/// block's false `when`, a `loop:` under `when: false`, or a `when` reading `item` that no item
+/// meets. When one item runs, the other's `skipping:` line stands alone and counts nothing: the
+/// recap reads `ok=2 ... skipped=0` for each of those two tasks.
+///
+/// What would make this red: the task's own line left out after its items, or the recap missing
+/// the skipped include (`skipped=0` with no host line, the way it read before); or a summary line
+/// and a count for the loop one item of which was included.
+#[test]
+fn a_looped_include_whose_every_item_is_skipped_counts_once() {
+    let dir = std::env::temp_dir().join(format!("volant-include-skip-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("roles/r/tasks")).unwrap();
+    std::fs::write(dir.join("inc.yml"), "- debug: { msg: in-inc }\n").unwrap();
+    std::fs::write(
+        dir.join("roles/r/tasks/main.yml"),
+        "- debug: { msg: in-role }\n",
+    )
+    .unwrap();
+    let path = dir.join("play.yml");
+    std::fs::write(
+        &path,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: false\n      block:\n        - name: First found\n          include_tasks: \"{{ item }}\"\n          with_first_found: [inc.yml]\n    - name: Tasks false\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: false\n    - name: Tasks item\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: item == 'z'\n    - name: Role false\n      include_role: { name: r }\n      loop: [a, b]\n      when: false\n    - name: Role item\n      include_role: { name: r }\n      loop: [a, b]\n      when: item == 'z'\n    - name: Tasks mixed\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: item == 'a'\n    - name: Role mixed\n      include_role: { name: r }\n      loop: [a, b]\n      when: item == 'a'\n",
+    )
+    .unwrap();
+    let out = volant_within(&["playbook", &path.display().to_string()], PROBE_DEADLINE);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let skips = |task: &str| -> Vec<String> {
+        section(&text, task)
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| line.starts_with("skipping:"))
+            .map(str::to_string)
+            .collect()
+    };
+    let first = skips("First found");
+    assert_eq!(first.len(), 2, "{text}");
+    assert!(
+        first[0].starts_with("skipping: [localhost] => (item=") && first[0].ends_with("inc.yml)"),
+        "{text}"
+    );
+    assert_eq!(first[1], "skipping: [localhost]", "{text}");
+    for task in ["Tasks false", "Tasks item", "Role false", "Role item"] {
+        assert_eq!(
+            skips(task),
+            [
+                "skipping: [localhost] => (item=a)",
+                "skipping: [localhost] => (item=b)",
+                "skipping: [localhost]",
+            ],
+            "{task}: {text}"
+        );
+    }
+    for task in ["Tasks mixed", "Role mixed"] {
+        assert_eq!(
+            skips(task),
+            ["skipping: [localhost] => (item=b)"],
+            "{task}: {text}"
+        );
+    }
+    assert!(
+        text.contains("ok=4    changed=0    unreachable=0    failed=0    skipped=5 "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
 /// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
 /// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on

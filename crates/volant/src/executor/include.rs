@@ -286,9 +286,10 @@ fn include_request(
 /// Measured on ansible-core 2.19.12: a statement that brought something in counts one `ok` per
 /// host per item, and that one is counted by the coordinator when it prints the `included:`
 /// line - so the aggregate a looping statement would otherwise contribute has to count nothing,
-/// or a two-item loop would read three. The two aggregates that do count are the ones with no
-/// `included:` line behind them: a loop over an empty list, which shows `skipping:` and counts
-/// it, and a loop an item failed in, which counts the failure without a line of its own.
+/// or a two-item loop would read three. The aggregates that do count are the ones with no
+/// `included:` line behind them: a loop over an empty list or whose every item was skipped,
+/// which shows `skipping:` and counts it, and a loop an item failed in, which counts the failure
+/// without a line of its own.
 pub(super) async fn report_include(
     tx: &mpsc::Sender<Event>,
     host: &str,
@@ -336,7 +337,12 @@ pub(super) async fn report_include(
     }
     if is_loop {
         let empty = shown.is_empty() && nothing_asked;
-        if empty || any_failed {
+        // Every item skipped, including the case of no item at all. Measured on ansible-core
+        // 2.19.12: the strategy counts a result `is_skipped()` before it looks at what the task
+        // was, and a loop's result is skipped when every item's is, so a looped include whose
+        // items all skip shows `skipping: [h]` after its item lines and counts `skipped=1`.
+        let skipped = nothing_asked && !any_failed;
+        if skipped || any_failed {
             let results: Vec<(Option<Value>, TaskResult)> = shown
                 .iter()
                 .map(|s| (s.element.clone(), s.result.clone()))
@@ -364,7 +370,7 @@ pub(super) async fn report_include(
                     outcome,
                     result: aggregate,
                     dump: Dump::No,
-                    show: empty,
+                    show: skipped,
                     counts: true,
                     censored,
                     delegate: None,

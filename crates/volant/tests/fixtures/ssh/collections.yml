@@ -1,0 +1,18 @@
+- name: Collection modules run from the union
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: sysctl writes its file and leaves the kernel alone
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "{{ sysctl_value }}"
+        sysctl_file: "{{ dest }}/sysctl.conf"
+        sysctl_set: false
+        reload: false
+    - name: ini_file comes from another collection
+      community.general.ini_file:
+        path: "{{ dest }}/test.ini"
+        section: golden
+        option: color
+        value: blue
+        mode: "0644"

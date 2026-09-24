@@ -28,12 +28,19 @@ golden:
 # Everything CI runs, in the same order
 check: fmt lint test
 
+# Before opening a pull request: formatting, clippy, the tests and typos. The rest of `lint`
+# (the doc build, cargo deny, cargo machete, actionlint, zizmor) runs in CI on every pull request.
+check-local: fmt clippy test
+    typos
+
 fmt:
     cargo fmt --all --check
     taplo fmt --check
 
-lint:
+clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+lint: clippy
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
     cargo deny check
     cargo machete
@@ -175,8 +182,9 @@ ssh-test: agent-musl
     # ansible-core in VOLANT_PYTHON, which turns each comparison's skip into a failure. The action
     # plugin one also needs `sudo -n` and systemd, and fails here without them; the collection ones
     # need the pinned collections this job installs. Without this line the two python.rs tests run
-    # in no job at all: the `test` job's ansible-core-less pythons skip them.
-    cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold)'
+    # in no job at all: the `test` job's ansible-core-less pythons skip them. The same holds for
+    # the CLI test of `retries` on an action plugin, which needs ansible-core to run `copy`.
+    cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
 
 # The commit the bench corpus is pinned to, so the thing being timed cannot change under the
 # recipe. Refreshed by hand with `git ls-remote https://github.com/ansible-lockdown/UBUNTU22-CIS

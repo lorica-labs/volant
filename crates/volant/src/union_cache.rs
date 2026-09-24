@@ -86,12 +86,23 @@ pub struct InterpreterId {
     pub mtime_ns: i128,
 }
 
-/// Where a run looks for its union, and under which interpreter the entry must have been built.
+/// Where a run looks for its union, and under which interpreter the entry must have been built:
+/// the candidate `find_python` would start (`interpreter`), which has to be the executable the
+/// helper reports running (`real`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
     pub dir: PathBuf,
     pub key: CacheKey,
     pub interpreter: PathBuf,
+    pub real: PathBuf,
+}
+
+/// What the helper says a union was built from: the interpreter that ran, as
+/// `os.path.realpath(sys.executable)`, and every file it read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Traced {
+    pub interpreter: PathBuf,
+    pub sources: Vec<Source>,
 }
 
 impl Place {
@@ -105,6 +116,7 @@ impl Place {
             dir: cache_dir()?,
             key: key(&interpreter, modules, asked),
             interpreter: interpreter.path,
+            real: interpreter.real,
         })
     }
 }
@@ -119,9 +131,11 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// there is not stored (see `python::union_from`): an entry is only ever filed under the
 /// interpreter that built it.
 ///
-/// `None` for a script (`#!`): a pyenv, asdf or mise shim is the same file whatever version it
-/// runs, chosen by a variable or a file this cannot see, so no key could name the interpreter
-/// behind it and nothing is cached.
+/// `None` for a script (`#!`): a pyenv or asdf shim is the same file whatever version it runs,
+/// chosen by a variable or a file this cannot see, so no key could name the interpreter behind
+/// it and nothing is cached. A shim that is a link to a binary picking the version itself (mise's
+/// are links to `mise`) passes here; `python::union_from` stores nothing unless the helper's own
+/// `realpath(sys.executable)` is this `real`, which such a link never resolves to.
 pub fn interpreter_without_running(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
@@ -181,8 +195,16 @@ fn configs(
 ) -> Vec<(PathBuf, Vec<u8>)> {
     let mut candidates = Vec::new();
     if let Some(explicit) = ansible_config {
-        candidates.push(PathBuf::from(explicit));
-        candidates.push(Path::new(explicit).join("ansible.cfg"));
+        let mut forms = vec![PathBuf::from(explicit)];
+        if let Some(text) = explicit.to_str() {
+            forms.push(PathBuf::from(expanded(text, home, |name| {
+                std::env::var(name).ok()
+            })));
+        }
+        for form in forms {
+            candidates.push(form.join("ansible.cfg"));
+            candidates.push(form);
+        }
     }
     candidates.push(PathBuf::from("ansible.cfg"));
     if let Some(home) = home {
@@ -193,6 +215,42 @@ fn configs(
         .into_iter()
         .filter_map(|path| fs::read(&path).ok().map(|text| (path, text)))
         .collect()
+}
+
+/// `text` as ansible-core's `unfrackpath` reads a path: `$VAR` and `${VAR}` replaced by their
+/// values (an unset one left as written, as `os.path.expandvars` does), then a leading `~` by
+/// `home`. `ANSIBLE_CONFIG='~/proj/ansible.cfg'` is left unexpanded by a Dockerfile `ENV`, a
+/// systemd `Environment=` or a CI variable, and ansible-core still reads the file.
+fn expanded(text: &str, home: Option<&Path>, var: impl Fn(&str) -> Option<String>) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (name, used) = if let Some(braced) = after.strip_prefix('{') {
+            match braced.find('}') {
+                Some(end) => (&braced[..end], end + 2),
+                None => ("", 0),
+            }
+        } else {
+            let end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            (&after[..end], end)
+        };
+        match (!name.is_empty()).then(|| var(name)).flatten() {
+            Some(value) => out.push_str(&value),
+            None => out.push_str(&rest[at..=at + used]),
+        }
+        rest = &after[used..];
+    }
+    out.push_str(rest);
+    match (home, out.strip_prefix('~')) {
+        (Some(home), Some(tail)) if tail.is_empty() || tail.starts_with('/') => {
+            format!("{}{tail}", home.display())
+        }
+        _ => out,
+    }
 }
 
 /// [`key`] with the process's part handed in.
@@ -257,9 +315,58 @@ fn key_from(
 /// does not read or is of another format, a source whose size or mtime moved, or a zip whose
 /// hash is not the manifest's.
 pub fn load(dir: &Path, key: &CacheKey) -> Option<Entry> {
-    check_dir(dir).ok()?;
-    let manifest: Value =
-        serde_json::from_slice(&fs::read(dir.join(format!("{}.json", key.0))).ok()?).ok()?;
+    open(dir, key).ok().flatten()
+}
+
+/// [`load`], telling a directory or a file that cannot be trusted (`Err`, which the run warns
+/// about) from an entry that is merely absent or stale (`Ok(None)`).
+pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
+    match check_dir(dir) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        checked => checked?,
+    }
+    let Some(manifest) = read_own(&dir.join(format!("{}.json", key.0)))? else {
+        return Ok(None);
+    };
+    let Some(zip) = read_own(&dir.join(format!("{}.zip", key.0)))? else {
+        return Ok(None);
+    };
+    Ok(parse(&manifest, zip))
+}
+
+/// The bytes of `path`, or `None` when there is no such file, after checking the file actually
+/// opened: this user's, and writable by nobody else. The directory was checked by its path, and
+/// an account able to rename it (one owning a directory above it) can swap in its own between
+/// that check and this read; the files it brings are its own, and fail here.
+fn read_own(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = file.metadata()?;
+        // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        let mode = meta.mode() & 0o7777;
+        if !meta.is_file() || meta.uid() != euid || mode & 0o022 != 0 {
+            return Err(io::Error::other(format!(
+                "{} is owned by uid {} with mode {mode:o}, and this controller runs as uid                  {euid}; it has to be this user's, and writable by nobody else",
+                path.display(),
+                meta.uid()
+            )));
+        }
+    }
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut file, &mut bytes)?;
+    Ok(Some(bytes))
+}
+
+/// An entry from its manifest and zip, or `None` on any doubt.
+fn parse(manifest: &[u8], zip: Vec<u8>) -> Option<Entry> {
+    let manifest: Value = serde_json::from_slice(manifest).ok()?;
     if manifest.get("format")?.as_u64()? != FORMAT {
         return None;
     }
@@ -271,7 +378,6 @@ pub fn load(dir: &Path, key: &CacheKey) -> Option<Entry> {
         return None;
     }
     let hash = manifest.get("hash")?.as_str()?;
-    let zip = fs::read(dir.join(format!("{}.zip", key.0))).ok()?;
     if blake3::hash(&zip).to_hex().as_str() != hash {
         return None;
     }
@@ -877,6 +983,40 @@ mod tests {
                 .any(|(path, _)| *path == home.join(".ansible.cfg")),
             "{fell_through:?}"
         );
+    }
+
+    /// `ANSIBLE_CONFIG` is expanded as ansible-core's `unfrackpath` expands it before it is looked
+    /// for.
+    ///
+    /// What would make this red: `~/proj/ansible.cfg` read as written, which names no file, so
+    /// editing the one ansible-core does read keeps the key.
+    #[test]
+    fn an_ansible_config_is_expanded_before_it_is_read() {
+        let var = |name: &str| (name == "PROJ").then(|| "/srv/proj".to_string());
+        let home = Some(Path::new("/home/u"));
+        assert_eq!(
+            expanded("~/a/ansible.cfg", home, var),
+            "/home/u/a/ansible.cfg"
+        );
+        assert_eq!(
+            expanded("$PROJ/ansible.cfg", home, var),
+            "/srv/proj/ansible.cfg"
+        );
+        assert_eq!(expanded("${PROJ}/x/~", home, var), "/srv/proj/x/~");
+        assert_eq!(expanded("$NOPE/${NOPE}/$", home, var), "$NOPE/${NOPE}/$");
+        assert_eq!(expanded("~other/a", home, var), "~other/a");
+
+        let root = tempdir();
+        let cfg = root.0.join("proj/ansible.cfg");
+        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        fs::write(
+            &cfg,
+            "[defaults]
+",
+        )
+        .unwrap();
+        let found = configs(Some("~/proj/ansible.cfg".as_ref()), Some(&root.0));
+        assert!(found.iter().any(|(path, _)| *path == cfg), "{found:?}");
     }
 
     /// A cache directory that is a link is neither read nor written, and a `volant` directory

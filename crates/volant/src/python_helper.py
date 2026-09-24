@@ -189,6 +189,9 @@ def union(modules):
         "zip_b64": base64.b64encode(blob).decode(),
         "modules": facts_by_module,
         "sources": sources(time.time_ns()) if mapped else None,
+        # The interpreter that built this, whatever launched it: a shim or a wrapper is
+        # something else, and the controller files the union only under the one that ran.
+        "interpreter": os.path.realpath(sys.executable),
     }
 
 

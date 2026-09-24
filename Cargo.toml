@@ -43,7 +43,7 @@ blake3 = "1.8"
 clap = { version = "4", features = ["derive"] }
 insta = { version = "1", features = ["filters"] }
 libc = "0.2"
-minijinja = { version = "2", features = [
+minijinja = { version = "~2.24", features = [
   "preserve_order",
   "unstable_machinery",
 ] }

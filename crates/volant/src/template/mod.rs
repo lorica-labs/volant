@@ -66,8 +66,8 @@ pub(crate) const TAINT_KEY: &str = "volant::tainted";
 /// the root context, whose every read goes through `get_value` and taints as a bare read does.
 pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
-/// The global every `~` is compiled to call, see [`route_concat`]. Unreachable from a playbook
-/// for the same reason as `TAINT_KEY`, so no template can shadow it.
+/// The global every `~` is compiled to call, see [`route_concat`]. Unwritable in Jinja for the
+/// same reason as `TAINT_KEY`, and `Context` answers nothing for it, so no variable shadows it.
 const CONCAT_KEY: &str = "volant::concat";
 
 #[derive(Debug)]
@@ -158,6 +158,11 @@ struct Context {
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
+        // Not a variable: the VM looks the root up before the globals, so a variable of that
+        // name (`-e '{"volant::concat": 1}'`) would otherwise replace every `~`.
+        if key == CONCAT_KEY {
+            return None;
+        }
         if key == TAINT_KEY {
             return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
                 &self.tainted,
@@ -789,7 +794,9 @@ fn route_concat(instructions: &mut Instructions<'_>) {
 }
 
 /// `env.render_named_str`, with `~` routed through [`concat`]. Compiled once per call, as
-/// `render_named_str` does, with the environment's own whitespace settings.
+/// `render_named_str` does, with the environment's own whitespace settings. The only place
+/// that decides auto-escape and syntax: `Environment` has no getter for either, so a setting
+/// changed on the environment does not reach here and has to be made here.
 fn render_str(
     env: &Environment<'_>,
     name: &str,
@@ -1389,10 +1396,12 @@ mod unit {
     }
 
     /// Measured on ansible-core 2.19.12, each of these fails with `'nope' is undefined`, in a
-    /// task argument, around text, inside a block, in a `when:` and in a `template` file. minijinja 2.24 concatenates by `Display` and
-    /// only checks that neither side is undefined itself, so without [`concat`] the list printed
-    /// as `[1, undefined]`. What the reference answers when nothing is undefined stays as it was,
-    /// and so does `+`, which the reference lets carry the undefined value to `length`.
+    /// task argument, around text, inside a block, at the end of a chain, in a `when:` and in a
+    /// `template` file. minijinja 2.24 concatenates by `Display` and only checks that neither
+    /// side is undefined itself, so without [`concat`] the list printed as `[1, undefined]`.
+    /// What the reference answers when nothing is undefined stays as it was, and so does `+`,
+    /// which the reference lets carry the undefined value to `length`. A variable named like the
+    /// global `~` calls does not replace it.
     #[test]
     fn a_concatenation_with_a_container_holding_an_undefined_fails_the_read() {
         let t = Templar::new(std::env::temp_dir());
@@ -1406,6 +1415,7 @@ mod unit {
             "{% block b %}{{ 'x' ~ [1, nope] }}{% endblock %}",
             "{{ ('x' ~ [1, nope]) | default('d') }}",
             "{{ ('x' ~ nope) | default('d') }}",
+            "{{ 'a' ~ 'b' ~ [1, nope] }}",
         ] {
             let err = t.render(text, &none).expect_err(&format!("leaked: {text}"));
             assert!(err.is_undefined(), "{text}: {err}");
@@ -1420,6 +1430,7 @@ mod unit {
         assert!(err.is_undefined(), "{err}");
         for (text, want) in [
             ("{{ 'a' ~ 'b' }}", json!("ab")),
+            ("{{ 'a' ~ 'b' ~ 'c' }}", json!("abc")),
             ("{{ 1 ~ 2 }}", json!("12")),
             ("{{ 'x' ~ [1, 2] }}", json!("x[1, 2]")),
             ("{{ ([1, nope] + [2]) | length }}", json!(3)),
@@ -1427,6 +1438,9 @@ mod unit {
             assert_eq!(t.render(text, &none), Ok(want), "{text}");
         }
         assert_eq!(t.condition("'a' ~ 'b' == 'ab'", &none), Ok(true));
+        // Variables, not literals: minijinja folds `'a' ~ 'b'` at compile time, with no call.
+        let shadow = vars(json!({ "volant::concat": 1, "a": "a", "b": "b" }));
+        assert_eq!(t.render("{{ a ~ b }}", &shadow), Ok(json!("ab")));
     }
 
     /// The idioms roles write around undefined values, each measured on ansible-core 2.19.12.

@@ -631,6 +631,21 @@ native_modules = maybe
         let c = cfg("[volant]\nbatching = yes\nssh_control_master = no\n", ".");
         assert!(c.batching && !c.ssh_control_master);
         assert!(cfg("[volant]\nssh_control_master = maybe\n", ".").ssh_control_master);
+
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("VOLANT_SSH_CONTROL_MASTER", "0");
+        }
+        assert!(!Config::load().unwrap().ssh_control_master);
+        unsafe { std::env::remove_var("VOLANT_SSH_CONTROL_MASTER") };
+        assert!(Config::load().unwrap().ssh_control_master);
+        unsafe {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+        }
     }
 
     #[test]

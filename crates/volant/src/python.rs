@@ -40,6 +40,50 @@ pub struct ModuleFacts {
     pub rlimit_nofile: u64,
     /// The wrapper's `extensions`; empty on ansible-core 2.19.12.
     pub extensions: Map<String, Value>,
+    /// Whether the file built is ansible-core's own module. A module from a `library` directory
+    /// or a collection is built under the same `ansible.modules.<name>` as the builtin it
+    /// shadows, so an agent's native module of that name would answer in its place. A helper
+    /// that says nothing is read as `false`, which sends the payload.
+    pub core: bool,
+}
+
+/// Where `setup` gets its facts: `--facts`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum Facts {
+    /// The native collector when the plays provably read only the keys it produces; until that
+    /// analysis exists, the Python module.
+    #[default]
+    Auto,
+    Python,
+    Native,
+}
+
+/// Which tasks of a run may be answered by an agent's native module instead of their payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Natives {
+    /// `[volant] native_modules`, or `VOLANT_NATIVE_MODULES`.
+    pub enabled: bool,
+    pub facts: Facts,
+}
+
+impl Default for Natives {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            facts: Facts::Auto,
+        }
+    }
+}
+
+impl Natives {
+    /// Whether the task running `module`, built as `facts`, has to run its payload whatever
+    /// native the agent has enabled.
+    pub fn force_python(&self, module: &str, facts: &ModuleFacts) -> bool {
+        if !self.enabled || !facts.core {
+            return true;
+        }
+        short_name(module) == "setup" && self.facts != Facts::Native
+    }
 }
 
 /// One union zip and the facts of every module merged into it.
@@ -64,6 +108,20 @@ pub struct Union {
     /// reaches it. A union may hold only these, with no zip and no module: nothing is sent then,
     /// since no task has a payload.
     pub refused: BTreeMap<String, String>,
+    /// What the run's configuration lets a native module answer for, read into every payload.
+    pub natives: Natives,
+}
+
+impl Union {
+    /// The module's half of the payload a task naming `module` runs with, when the run built one.
+    pub fn payload(&self, module: &str) -> Option<ModulePayload> {
+        let facts = self.modules.get(payload_key(module))?;
+        Some(ModulePayload {
+            blob: self.hash.clone(),
+            facts: facts.clone(),
+            force_python: self.natives.force_python(module, facts),
+        })
+    }
 }
 
 /// The key a module's facts are filed under in [`Union::modules`], and looked up by.
@@ -489,6 +547,7 @@ fn union_from(
             zip_b64: String::new(),
             modules: BTreeMap::new(),
             refused,
+            natives: Natives::default(),
         }));
     }
     let (mut union, traced) = builder.union(&names)?;
@@ -556,6 +615,8 @@ pub struct ModulePayload {
     /// The union blob that holds this module, by its hash.
     pub blob: String,
     pub facts: ModuleFacts,
+    /// Sent as [`volant_protocol::Task::force_python`].
+    pub force_python: bool,
 }
 
 impl ModulePayload {
@@ -765,6 +826,7 @@ fn exchange<W: Write, R: Read>(
             zip_b64,
             modules: facts,
             refused: BTreeMap::new(),
+            natives: Natives::default(),
         },
         sources,
     ))
@@ -890,6 +952,7 @@ pub(crate) fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFa
             .and_then(Value::as_object)
             .cloned()
             .with_context(|| format!("the python helper reported no extensions for '{name}'"))?,
+        core: value.get("core").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -1096,6 +1159,57 @@ mod tests {
         write(
             "meta/runtime.yml",
             "requires_ansible: '>=2.15'\nplugin_routing:\n  modules:\n    routed:\n      action_plugin: volanttest.coll.act\n    gone:\n      tombstone:\n        removal_version: 1.0.0\n        warning_text: use good instead\n    moved:\n      redirect: absentns.absent.moved\n",
+        );
+    }
+
+    /// Only ansible-core's own module is reported as core. A `stat.py` in a `library` directory
+    /// and a collection's module are built as modules like any other, the first one for a task
+    /// that writes plain `stat`, and neither may be answered by an agent's native `stat`.
+    ///
+    /// What would make this red: `core` read off the name the task wrote, which the `library`
+    /// module shares with the builtin.
+    #[test]
+    fn only_ansible_core_s_own_module_is_core() {
+        let python = match find_python(
+            std::env::var("VOLANT_PYTHON").ok().as_deref(),
+            std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        ) {
+            Ok(python) => python,
+            Err(why) => return skip_or_fail(&format!("{why:#}")),
+        };
+        let root = std::env::temp_dir().join(format!("volant-library-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        fixture_collection(&root);
+        let library = root.join("library");
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::write(
+            library.join("stat.py"),
+            "from ansible.module_utils.basic import AnsibleModule\n\ndef main():\n    AnsibleModule(argument_spec={}).exit_json(changed=False)\n\nif __name__ == '__main__':\n    main()\n",
+        )
+        .unwrap();
+        let collections = root.display().to_string();
+        let library = library.display().to_string();
+        let builder = |env: &[(&str, &str)]| PythonBuilder::under_with(&python, env).unwrap();
+        let union = builder(&[("ANSIBLE_COLLECTIONS_PATH", &collections)])
+            .union(&["stat".to_string(), "volanttest.coll.good".to_string()])
+            .unwrap();
+        assert!(union.modules["stat"].core);
+        assert!(!union.modules["volanttest.coll.good"].core);
+        let union = builder(&[("ANSIBLE_LIBRARY", &library)])
+            .union(&["stat".to_string(), "ping".to_string()])
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        // Measured on ansible-core 2.19.12: the wrapper names it `ansible.legacy.stat`, which
+        // an agent looking natives up by `ansible.modules.<name>` does not match either. `core`
+        // is the controller's own word on it, whatever the wrapper's naming does next.
+        assert_eq!(union.modules["stat"].module_fqn, "ansible.legacy.stat");
+        assert!(!union.modules["stat"].core, "the library's stat.py");
+        assert!(union.modules["ping"].core);
+        assert!(
+            union
+                .payload("stat")
+                .expect("the union holds it")
+                .force_python
         );
     }
 
@@ -1515,6 +1629,7 @@ mod tests {
                 profile: "legacy".to_string(),
                 rlimit_nofile: 0,
                 extensions: Map::new(),
+                core: false,
             }
         );
     }

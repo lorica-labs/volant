@@ -57,6 +57,10 @@ pub struct Config {
     /// engines. `ansible-config validate` is the one exception - it answers `Found unknown
     /// section 'volant'` and exits 1.
     pub batching: bool,
+    /// `[volant] native_modules`, or `VOLANT_NATIVE_MODULES`: whether an agent may answer a task
+    /// with its native module instead of running the task's Python module. On by default; off
+    /// sends every Python task to Python, which is the switch to compare the two.
+    pub native_modules: bool,
 }
 
 impl Default for Config {
@@ -78,6 +82,7 @@ impl Default for Config {
             tags_run: Vec::new(),
             tags_skip: Vec::new(),
             batching: false,
+            native_modules: true,
         }
     }
 }
@@ -215,6 +220,13 @@ impl Config {
         {
             config.batching = on;
         }
+        if let Ok(value) = std::env::var("VOLANT_NATIVE_MODULES") {
+            config.native_modules = boolean(
+                "VOLANT_NATIVE_MODULES",
+                "env: VOLANT_NATIVE_MODULES",
+                &value,
+            )?;
+        }
         // Measured: the environment replaces the file's `roles_path` rather than being appended
         // to it, and a relative entry is read against the working directory.
         let from_env = |name: &str| -> Option<Vec<PathBuf>> {
@@ -314,6 +326,23 @@ fn switch(value: &str) -> Option<bool> {
     }
 }
 
+/// A switch that has to be one, or the refusal the integer settings get, worded for a boolean.
+///
+/// The reference reads every word it does not know as `false`; `native_modules = maybe` read that
+/// way would turn natives off without a word, and a comparison run between the two paths would
+/// compare nothing.
+fn boolean(name: &str, origin: &str, value: &str) -> anyhow::Result<bool> {
+    switch(value).ok_or_else(|| {
+        crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config '{name}' from '{origin}' has an invalid value: Invalid value provided for 'boolean': '{}'",
+                value.trim()
+            ),
+        )
+    })
+}
+
 /// A negative connection timeout is refused where it is read, rather than clamped.
 ///
 /// Measured on ansible-core 2.19.12: `timeout = -1` is passed straight to `ssh`, which answers
@@ -385,10 +414,16 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
         // Volant's own section, which the reference ignores along with every other section it
         // does not know: an `ansible.cfg` shared by the two engines stays valid for both.
         if section == "volant" {
-            if key.trim() == "batching"
-                && let Some(on) = switch(value)
-            {
-                config.batching = on;
+            match key.trim() {
+                "batching" => {
+                    if let Some(on) = switch(value) {
+                        config.batching = on;
+                    }
+                }
+                "native_modules" => {
+                    config.native_modules = boolean("VOLANT_NATIVE_MODULES", origin, value)?;
+                }
+                _ => {}
             }
             continue;
         }
@@ -491,6 +526,85 @@ mod tests {
         );
         assert!(c.batching);
         assert_eq!(c.forks, 9);
+    }
+
+    /// Natives are on unless the section or the environment turns them off, and a value that is
+    /// no switch is refused rather than read as one.
+    ///
+    /// What would make this red: `maybe` read as `false` the way the reference reads an unknown
+    /// word, which turns natives off with nothing said; or the environment arm dropped.
+    #[test]
+    fn the_volant_section_carries_the_native_modules_switch() {
+        assert!(
+            cfg(
+                "[defaults]
+forks = 3
+",
+                "."
+            )
+            .native_modules
+        );
+        assert!(
+            !cfg(
+                "[volant]
+native_modules = false
+",
+                "."
+            )
+            .native_modules
+        );
+        assert!(
+            !cfg(
+                "[volant]
+native_modules = 0
+",
+                "."
+            )
+            .native_modules
+        );
+        assert!(
+            cfg(
+                "[volant]
+native_modules = yes
+",
+                "."
+            )
+            .native_modules
+        );
+        let err = parse(
+            "[volant]
+native_modules = maybe
+",
+            Path::new("."),
+            "/etc/x/ansible.cfg",
+        )
+        .unwrap_err();
+        assert_eq!(crate::stats::error_code(&err), 5, "{err:#}");
+        assert_eq!(
+            format!("{err:#}"),
+            "Config 'VOLANT_NATIVE_MODULES' from '/etc/x/ansible.cfg' has an invalid value: Invalid value provided for 'boolean': 'maybe'"
+        );
+
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("VOLANT_NATIVE_MODULES", "0");
+        }
+        assert!(!Config::load().unwrap().native_modules);
+        unsafe { std::env::set_var("VOLANT_NATIVE_MODULES", "maybe") };
+        let err = Config::load().unwrap_err();
+        assert!(
+            format!("{err:#}").contains("from 'env: VOLANT_NATIVE_MODULES'"),
+            "{err:#}"
+        );
+        unsafe { std::env::remove_var("VOLANT_NATIVE_MODULES") };
+        assert!(Config::load().unwrap().native_modules);
+        unsafe {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+        }
     }
 
     #[test]

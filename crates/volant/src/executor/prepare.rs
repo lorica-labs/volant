@@ -606,17 +606,11 @@ pub(super) fn prepare(
     // A Python module the union does not hold is one nothing could have named when the union was
     // built - a dynamic include resolves its file while the play runs - and it travels with no
     // payload, which the batch refuses by name rather than sending.
-    let payload = plan.python.as_ref().and_then(|union| {
-        union
-            .modules
-            .get(crate::python::payload_key(&task.module))
-            .map(|facts| {
-                Box::new(ModulePayload {
-                    blob: union.hash.clone(),
-                    facts: facts.clone(),
-                })
-            })
-    });
+    let payload = plan
+        .python
+        .as_ref()
+        .and_then(|union| union.payload(&task.module))
+        .map(Box::new);
     Ok(Prepared::Remote(items, escalation, delegate, payload, None))
 }
 
@@ -938,6 +932,7 @@ mod tests {
                 profile: "legacy".into(),
                 rlimit_nofile: 0,
                 extensions: Map::new(),
+                core: true,
             },
         );
         // A collection's module beside one of the same short name: each task gets its own.
@@ -955,6 +950,7 @@ mod tests {
                     profile: "legacy".into(),
                     rlimit_nofile: 0,
                     extensions: Map::new(),
+                    core: true,
                 },
             );
         }
@@ -963,6 +959,7 @@ mod tests {
             zip_b64: "UEsDBA==".into(),
             modules: facts,
             refused: BTreeMap::new(),
+            natives: crate::python::Natives::default(),
         });
         let payload_of = |module: &str| {
             let mut plan = plan();
@@ -1026,6 +1023,92 @@ mod tests {
             payload_of("ansible.builtin.package"),
             (None, Some(Kind::Package))
         );
+    }
+
+    /// The task goes out with `force_python` wherever an agent's native module must not answer
+    /// for it: natives switched off for the run, a module that is not ansible-core's own (a
+    /// `library/stat.py` is built as `ansible.modules.stat` all the same), and `setup` unless
+    /// `--facts native` asked for the native collector.
+    ///
+    /// What would make this red: the flag never set, or set on the payload and dropped on the way
+    /// to the wire.
+    #[test]
+    fn a_task_is_sent_to_python_where_a_native_must_not_answer() {
+        use crate::python::{Facts, ModuleFacts, Natives};
+        let facts = |core: bool| ModuleFacts {
+            module_fqn: "ansible.modules.x".into(),
+            profile: "legacy".into(),
+            rlimit_nofile: 0,
+            extensions: Map::new(),
+            core,
+        };
+        let modules = BTreeMap::from([
+            ("stat".to_string(), facts(true)),
+            ("setup".to_string(), facts(true)),
+            // The module a `library/lineinfile.py` builds.
+            ("lineinfile".to_string(), facts(false)),
+        ]);
+        let forced = |natives: Natives, module: &str| -> bool {
+            let mut plan = plan();
+            plan.python = Some(Arc::new(crate::python::Union {
+                hash: "ab".into(),
+                zip_b64: "UEsDBA==".into(),
+                modules: modules.clone(),
+                refused: BTreeMap::new(),
+                natives,
+            }));
+            let step = step_of(task(module), Origin::default());
+            let prepared = prepare(
+                &step,
+                "h1",
+                &plan,
+                &Progress::default(),
+                &Templar::new(PathBuf::from(".")),
+                &store_at(Path::new(".")),
+                &defaults(),
+                &mut Vec::new(),
+            )
+            .expect("the task renders");
+            let Prepared::Remote(items, _, _, Some(payload), _) = prepared else {
+                panic!("{module} is a python task");
+            };
+            super::super::run::protocol_task(
+                &step.task,
+                &items[0],
+                Some((&payload, "/usr/bin/python3")),
+            )
+            .force_python
+        };
+        let on = Natives::default();
+        let off = Natives {
+            enabled: false,
+            ..on
+        };
+        assert!(!forced(on, "stat"));
+        assert!(!forced(on, "ansible.builtin.stat"));
+        assert!(forced(off, "stat"), "native_modules = false");
+        assert!(
+            forced(on, "lineinfile"),
+            "a module that is not ansible-core's own"
+        );
+        assert!(forced(on, "ansible.builtin.setup"), "--facts auto");
+        let python = Natives {
+            facts: Facts::Python,
+            ..on
+        };
+        assert!(forced(python, "setup"), "--facts python");
+        let native = Natives {
+            facts: Facts::Native,
+            ..on
+        };
+        assert!(!forced(native, "ansible.builtin.setup"), "--facts native");
+        assert!(forced(
+            Natives {
+                enabled: false,
+                ..native
+            },
+            "setup"
+        ));
     }
 
     fn store_at(playbook_dir: &Path) -> Mutex<VarStore> {

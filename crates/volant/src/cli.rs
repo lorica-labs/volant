@@ -14,6 +14,8 @@ use crate::config::Config;
 use crate::executor::{self, Abort, RunOptions, RunState};
 use crate::inventory::{Host, Inventory};
 use crate::listing::{self, Listing};
+use crate::profile::{Phase, Profile, micros};
+use crate::python::{Facts, Natives};
 use crate::render::Renderer;
 use crate::roles::RoleSearch;
 use crate::stats::{Refusal, Stats, error_code, exit_code};
@@ -88,6 +90,14 @@ pub struct PlaybookArgs {
     /// Run handlers even if a task fails.
     #[arg(long = "force-handlers")]
     pub force_handlers: bool,
+
+    /// Print where the run's time went on stderr, after the recap.
+    #[arg(long = "profile")]
+    pub profile: bool,
+    /// Where `setup` gets its facts: `python` forces the Python module, `native` the agent's own
+    /// collector, `auto` picks the native one only when the plays provably read nothing else.
+    #[arg(long = "facts", value_enum, default_value_t = Facts::Auto)]
+    pub facts: Facts,
 }
 
 /// Runs the playbooks and returns the process exit code.
@@ -105,16 +115,34 @@ pub fn run(args: PlaybookArgs) -> i32 {
             return 250;
         }
     };
-    match runtime.block_on(run_all(&args, &mut out)) {
+    let profile = Arc::new(Profile::default());
+    let code = match runtime.block_on(run_all(&args, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("ERROR! {err:#}");
             error_code(&err)
         }
+    };
+    // After everything the run printed, recap included, and never on stdout.
+    if args.profile {
+        eprint!("{}", profile.render());
     }
+    if let Some(path) = std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
+        && let Err(err) = profile.write_json(std::path::Path::new(&path))
+    {
+        eprintln!(
+            "[WARNING]: the profile could not be written to {}: {err}",
+            std::path::Path::new(&path).display()
+        );
+    }
+    code
 }
 
-async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32> {
+async fn run_all(
+    args: &PlaybookArgs,
+    out: &mut Renderer,
+    profile: &Arc<Profile>,
+) -> anyhow::Result<i32> {
     let config = Config::load()?;
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
@@ -132,6 +160,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
     };
+    let compiling = std::time::Instant::now();
     let playbooks = args
         .playbooks
         .iter()
@@ -153,11 +182,13 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     // before the release that runs its modules. What it does not skip is the loader's own
     // refusals above, or the compilation's below: a playbook the reference cannot parse, or a
     // role nobody can find, is still refused here with the reference's own code.
+    let checking = std::time::Instant::now();
     if !mode.wanted() {
         for pb in &playbooks {
             preflight::check(pb)?;
         }
     }
+    let mut preflight_micros = micros(checking);
     // Roles are read and spliced here, before the first `PLAY` banner: a role nobody can find
     // stops the run with nothing printed, which is where the reference stops it too. The whole
     // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
@@ -171,6 +202,11 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         }
         compiled.push(plays);
     }
+    profile.phase(
+        None,
+        Phase::Compile,
+        micros(compiling).saturating_sub(preflight_micros),
+    );
     // The subset the whole run is narrowed to, resolved before anything else looks at a host.
     // The reference resolves it here too, before it reads a play: a `--limit` matching nothing
     // stops a listing as surely as it stops a run, measured, exit 1.
@@ -207,11 +243,15 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     }
     // The second half of the pre-flight: what a role or an imported file brought in is refused
     // by its own name too, and before the first connection like everything else.
+    let checking = std::time::Instant::now();
     for plays in &compiled {
         for play in plays {
             preflight::check_steps(play)?;
         }
     }
+    preflight_micros += micros(checking);
+    profile.phase(None, Phase::Preflight, preflight_micros);
+    let building = std::time::Instant::now();
     // Every Python module the compiled plays name or a dynamic include may read, built into one
     // payload before the first connection. Here rather than per play: one helper start, one
     // union, and a controller that cannot build payloads at all refuses the run now - with the
@@ -230,10 +270,17 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let python = python::union_for(&python_modules, &named, &mut |warning| {
+    let mut python = python::union_for(&python_modules, &named, &mut |warning| {
         out.warning(&warning, false);
     })
     .map_err(|e| Refusal::or(4, e))?;
+    profile.phase(None, Phase::Union, micros(building));
+    if let Some(union) = &mut python {
+        union.natives = Natives {
+            enabled: config.native_modules,
+            facts: args.facts,
+        };
+    }
 
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.
@@ -321,6 +368,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         stop: stop_rx.clone(),
         abort,
         reboots: Arc::default(),
+        profile: Arc::clone(profile),
     };
 
     let playbook_dir = playbook::base_dir(&args.playbooks[0]);
@@ -417,7 +465,9 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
     .await;
     // Closing them here rather than letting the state drop keeps the wait for each agent off a
     // blocking drop inside the runtime.
+    let closing = std::time::Instant::now();
     state.shutdown_links().await;
+    profile.phase(None, Phase::Shutdown, micros(closing));
     plays?;
     if *stop_rx.borrow() {
         eprintln!("[ERROR]: User interrupted execution");
@@ -594,4 +644,28 @@ fn spawn_signal_watcher(stop: Arc<Abort>) {
         }
         stop.interrupt();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--facts` takes one of its three words and nothing else, `auto` when it is not given, and
+    /// `--profile` is a plain flag.
+    ///
+    /// What would make this red: the value read as free text, which would let a typo fall back
+    /// to `auto` and gather facts some other way than the one asked for.
+    #[test]
+    fn facts_takes_one_of_three_words() {
+        let parse = |extra: &[&str]| {
+            PlaybookArgs::try_parse_from(["volant"].iter().chain(extra).chain(&["site.yml"]))
+        };
+        let args = parse(&[]).unwrap();
+        assert_eq!((args.facts, args.profile), (Facts::Auto, false));
+        let args = parse(&["--facts", "python", "--profile"]).unwrap();
+        assert_eq!((args.facts, args.profile), (Facts::Python, true));
+        assert_eq!(parse(&["--facts=native"]).unwrap().facts, Facts::Native);
+        let err = parse(&["--facts", "nope"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue, "{err}");
+    }
 }

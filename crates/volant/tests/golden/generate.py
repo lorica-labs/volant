@@ -693,16 +693,30 @@ NATIVE_USER = "volantshape"
 NATIVE_GROUP = "volantgrp"
 STAT_VOLATILE = [f"stat.{key}" for key in ("atime", "mtime", "ctime", "inode", "dev", "version")]
 # The `systemctl show` properties that move while a unit runs: times, process ids, the invocation,
-# resource counters, and ExecStart, which quotes the main process's pid and start time. Every other
-# `status` value is compared.
+# resource counters. Every other `status` value is compared.
 LIVE_STATUS = re.compile(
     r"Timestamp|^(Main|Control|ExecMain)PID$|^InvocationID$|^ControlGroupId$|^CPUUsageNSec$"
     r"|(Current|Peak)$|^MemoryAvailable$|^IO(Read|Write)(Bytes|Operations)$"
-    r"|^IP(Ingress|Egress)(Bytes|Packets)$|^ExecStart(Ex)?$|^NRestarts$"
+    r"|^IP(Ingress|Egress)(Bytes|Packets)$|^NRestarts$"
+)
+# ExecStart and ExecStartEx hold one `{ path=... ; argv[]=... ; ... }` record per command, whose
+# last fields describe the latest run. Those fields match a regex, the rest stays literal.
+EXEC_STATUS = ("ExecStart", "ExecStartEx")
+EXEC_LIVE_FIELD = re.compile(r"\b(start_time|stop_time)=\[[^\]]*\]|\bpid=-?\d+|\b(code|status)=\S+")
+EXEC_FIELD_REGEX = {"start_time": r"\[[^\]]*\]", "stop_time": r"\[[^\]]*\]", "pid": r"-?\d+"}
+# What the two cron cases keep of `status`. They are compared live, since the full `systemctl show`
+# carries the host's systemd version (its key set), CPU set, memory size, task and file limits,
+# process ids and times: the recording keeps the unit's identity, state and command, which name no
+# machine.
+STATUS_KEEP = (
+    "Id", "Names", "Description", "LoadState", "ActiveState", "SubState", "UnitFileState",
+    "FragmentPath", "Type", "ExecStart", "ExecStartEx", "After", "Before", "Requires", "WantedBy",
+    "Conflicts",
 )
 # The `systemctl show` properties that list units, which systemd prints out of a hash set: the
-# same unit gives `After=a b` on one query and `After=b a` on the next (measured). Compared as sets
-# of space-separated words.
+# same unit gives `After=a b` on one query and `After=b a` on the next (measured). Compared as
+# lists of words split on single spaces, sorted: the order is the only thing excused, a unit
+# missing, extra or repeated still differs.
 SET_STATUS = re.compile(
     r"^(Requires|Requisite|Wants|BindsTo|PartOf|Upholds|RequiredBy|RequisiteOf|WantedBy|BoundBy"
     r"|UpheldBy|ConsistsOf|Conflicts|ConflictedBy|Before|After|OnSuccess|OnSuccessOf|OnFailure"
@@ -719,6 +733,28 @@ LIVE_KEEP = {"packages": ("bash",), "services": ("cron.service", "systemd-journa
 
 TMP_PLACEHOLDER = "<golden-tmp>"
 HOST_PLACEHOLDER = "<golden-generator-host>"
+
+
+def _literal(text):
+    """`text` as a regex matching itself: only the metacharacters escaped, so the result reads the
+    same in Python's `re` and in Rust's `regex`."""
+    return re.sub(r"([\\.+*?()|\[\]{}^$])", r"\\\1", text)
+
+
+def _exec_pattern(value):
+    """An anchored regex for an ExecStart value: literal except the fields of the latest run."""
+    parts, pos = [], 0
+    for field in EXEC_LIVE_FIELD.finditer(value):
+        key = field.group(0).split("=", 1)[0]
+        parts += [_literal(value[pos:field.start()]), key, "=", EXEC_FIELD_REGEX.get(key, r"\S+")]
+        pos = field.end()
+    return "^" + "".join(parts) + _literal(value[pos:]) + "$"
+
+
+def _at(value, path):
+    for key in path.split("."):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
 
 
 def _replace_in_strings(value, replacements):
@@ -769,7 +805,8 @@ def natives():
     values compared too, `live` against a reference run made next to the native one, the recording
     giving only the shape. `volatile` lists the dotted paths whose value is not compared;
     `patterns` maps a path to the regex its value must match instead (a backup's name);
-    `unordered` lists the paths whose value is a space-separated set (systemd's unit lists). `branch`
+    `unordered` lists the paths whose value is a list of units in no fixed order (systemd's unit
+    lists), compared as `sorted(value.split(" "))` on both sides. `branch`
     is what the reference's answer must show for the case to be the one its name claims; the
     generator fails when a recording disagrees.
 
@@ -819,7 +856,7 @@ def natives():
             if backup:
                 tasks.append({"name": f"after-backup-{name}", "slurp": {"src": "{{ last.%s }}" % backup}})
                 masked = _replace_in_strings(target, to_placeholder)
-                patterns[backup] = "^" + masked.replace(".", r"\.") + BACKUP_SUFFIX
+                patterns[backup] = "^" + _literal(masked) + BACKUP_SUFFIX
             read_back[name] = backup
         index[name] = {
             "module": module,
@@ -998,13 +1035,19 @@ def natives():
     case("lineinfile-last-match", "lineinfile", {"path": many, "regexp": "^a=", "line": "a=3"}, replaced)
     case("lineinfile-insertafter-last", "lineinfile", {"path": many, "line": "y=1", "insertafter": "^x="}, added)
 
+    live_status = (
+        "status is the host's own systemctl show: its systemd version sets the key set, and CPU "
+        "set, memory, limits, pids and times are the machine's; compared with a reference run on "
+        "the same host"
+    )
     if cron:
         case(
             "systemd-started-same",
             "systemd",
             {"name": "cron", "state": "started", "enabled": True},
             same,
-            compare="keys",
+            why=live_status,
+            compare="live",
             become=True,
         )
         case(
@@ -1012,7 +1055,8 @@ def natives():
             "systemd_service",
             {"name": "cron.service", "enabled": True},
             same,
-            compare="keys",
+            why=live_status,
+            compare="live",
             become=True,
         )
     case("systemd-daemon-reload", "systemd", {"daemon_reload": True}, same, become=True)
@@ -1150,9 +1194,14 @@ def natives():
         result = _replace_in_strings(_redact_staged_paths(outcomes[name]), to_placeholder)
         result = _mask_account(result, by_key)
         status = result.get("status")
-        if isinstance(status, dict):
+        if isinstance(status, dict) and status:
+            # From the full `status`, before it is cut down: the live comparison meets every key.
             spec["volatile"] += [f"status.{key}" for key in sorted(status) if LIVE_STATUS.search(key)]
             spec["unordered"] = [f"status.{key}" for key in sorted(status) if SET_STATUS.search(key)]
+            spec["patterns"].update(
+                {f"status.{key}": _exec_pattern(status[key]) for key in EXEC_STATUS if key in status}
+            )
+            result["status"] = {key: value for key, value in status.items() if key in STATUS_KEEP}
         facts = result.get("ansible_facts", {})
         for key, keep in LIVE_KEEP.items():
             if isinstance(facts.get(key), dict):
@@ -1173,9 +1222,9 @@ def natives():
             got = result.get(key, False if key == "failed" else None)
             if got != want:
                 wrong.append(f"{name}: {key} is {got!r}, not {want!r}")
-        for key, pattern in spec["patterns"].items():
-            if not re.search(pattern, str(result.get(key))):
-                wrong.append(f"{name}: {key} {result.get(key)!r} does not match {pattern}")
+        for path, pattern in spec["patterns"].items():
+            if not re.search(pattern, str(_at(result, path))):
+                wrong.append(f"{name}: {path} {_at(result, path)!r} does not match {pattern}")
         results[name] = result
     if wrong:
         print("cases that did not land on the branch their name claims:", *wrong, sep="\n  ", file=sys.stderr)

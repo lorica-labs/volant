@@ -1133,10 +1133,13 @@
     "branch": {
       "changed": false
     },
-    "compare": "keys",
+    "compare": "live",
     "expect": "native",
     "module": "systemd_service",
-    "patterns": {},
+    "patterns": {
+      "status.ExecStart": "^\\{ path=/usr/sbin/cron ; argv\\[\\]=/usr/sbin/cron -f -P \\$EXTRA_OPTS ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/usr/sbin/cron ; argv\\[\\]=/usr/sbin/cron -f -P \\$EXTRA_OPTS ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
     "unordered": [
       "status.After",
       "status.Before",
@@ -1163,8 +1166,6 @@
       "status.ExecMainPID",
       "status.ExecMainStartTimestamp",
       "status.ExecMainStartTimestampMonotonic",
-      "status.ExecStart",
-      "status.ExecStartEx",
       "status.IOReadBytes",
       "status.IOReadOperations",
       "status.IOWriteBytes",
@@ -1191,7 +1192,7 @@
       "status.TasksCurrent",
       "status.WatchdogTimestampMonotonic"
     ],
-    "why": ""
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
   },
   "systemd-missing-unit": {
     "args": {
@@ -1222,10 +1223,13 @@
     "branch": {
       "changed": false
     },
-    "compare": "keys",
+    "compare": "live",
     "expect": "native",
     "module": "systemd",
-    "patterns": {},
+    "patterns": {
+      "status.ExecStart": "^\\{ path=/usr/sbin/cron ; argv\\[\\]=/usr/sbin/cron -f -P \\$EXTRA_OPTS ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/usr/sbin/cron ; argv\\[\\]=/usr/sbin/cron -f -P \\$EXTRA_OPTS ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
     "unordered": [
       "status.After",
       "status.Before",
@@ -1252,8 +1256,6 @@
       "status.ExecMainPID",
       "status.ExecMainStartTimestamp",
       "status.ExecMainStartTimestampMonotonic",
-      "status.ExecStart",
-      "status.ExecStartEx",
       "status.IOReadBytes",
       "status.IOReadOperations",
       "status.IOWriteBytes",
@@ -1280,7 +1282,7 @@
       "status.TasksCurrent",
       "status.WatchdogTimestampMonotonic"
     ],
-    "why": ""
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
   },
   "user-absent-missing": {
     "args": {

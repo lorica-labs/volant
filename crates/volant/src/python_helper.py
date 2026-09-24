@@ -224,6 +224,12 @@ def track_core():
     track(os.path.join(root, "executor", "module_common.py"))
     for entry in sys.path:
         track(os.path.join(entry, "ansible"))
+    # The user site joins `sys.path` only once it exists, so it is looked for even when absent:
+    # `pip install --user ansible-core` would otherwise shadow this one unseen.
+    import site
+
+    if site.ENABLE_USER_SITE:
+        track(os.path.join(site.getusersitepackages(), "ansible"))
 
 
 def track_collection(collection):

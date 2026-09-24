@@ -2129,7 +2129,7 @@ mod tests {
         };
         let mut warnings = Vec::new();
         union_from(start, &modules, &[], Some(&place), &mut |w| {
-            warnings.push(w)
+            warnings.push(w);
         })
         .unwrap();
         assert_eq!(starts.get(), 1, "a file others could write was read");

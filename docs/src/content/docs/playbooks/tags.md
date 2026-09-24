@@ -19,6 +19,18 @@ Volant applies Ansible's rules exactly:
 
 Tags written on an `include_tasks` or an `include_role` stop at the statement: `--tags inc` runs the include, not what it brings in. The tags of the play, of the role entry and of the blocks around the statement do reach the included tasks, so `--tags nginx` on a role tagged `nginx` runs the files that role includes. This is how Ansible behaves, not a Volant shortcut.
 
+## `ansible_run_tags` and `ansible_skip_tags`
+
+A task can read its own run's tag selection back as two variables: `ansible_run_tags` holds `--tags` (`["all"]` when it was not given) and `ansible_skip_tags` holds `--skip-tags` (`[]` when it was not given), each after `[tags] run` / `[tags] skip` of `ansible.cfg` and the two `ANSIBLE_RUN_TAGS` / `ANSIBLE_SKIP_TAGS` environment variables are folded in.
+
+```yaml
+- name: Only fetch the kubeconfig once it has been asked for
+  fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ kubeconfig }}"
+  when: "'kubeconfig' in ansible_run_tags"
+```
+
 ## Look before you run
 
 Four options read a playbook and print what a run would do, without connecting to anything:

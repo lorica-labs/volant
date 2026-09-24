@@ -661,6 +661,19 @@ const CONTROL_PERSIST: &str = "30s";
 /// and exit 255, which would report the host unreachable.
 const CONTROL_PATH_MAX: usize = 104 - 1 - 17;
 
+/// The client every connection runs.
+const SSH_PROGRAM: &str = "ssh";
+
+/// The `ssh -G` keywords that only time a connection and say nothing of where it goes. A
+/// socket name must not change with them: `reboot`'s `connect_timeout` changes
+/// `connecttimeout` for its reconnection only.
+const TIMING_ONLY: &[&str] = &[
+    "connecttimeout",
+    "connectionattempts",
+    "serveraliveinterval",
+    "serveralivecountmax",
+];
+
 /// How long `ssh -O exit` may take. It only talks to a local socket, so this is never reached
 /// unless the master itself is wedged.
 const STOP_MASTER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -847,7 +860,7 @@ impl SshTarget {
     /// is the remote command's own argument list, and an option appended there would reach
     /// the remote shell instead.
     pub fn ssh_argv_with(&self, remote_command: &str, compress: bool) -> Vec<String> {
-        let mut argv = vec!["ssh".to_string()];
+        let mut argv = vec![SSH_PROGRAM.to_string()];
         if compress {
             argv.push("-C".into());
         }
@@ -961,10 +974,13 @@ impl SshTarget {
     /// The target a link really runs, as `ssh -G` resolves it from the operator's configuration
     /// files and every option of this host, without connecting. No sharing when that already
     /// has a `ControlMaster`, `ControlPath` or `ControlPersist`, or when `ssh -G` cannot run.
-    /// Otherwise the socket name also hashes the whole resolved configuration, so a `HostName`,
+    /// Otherwise the socket name also hashes the resolved configuration, so a `HostName`,
     /// `User`, `Port`, `ProxyJump` or `IdentityFile` changed in `~/.ssh/config` between two runs
-    /// opens a new master rather than riding the previous run's to the old machine.
-    async fn resolved(&self) -> SshTarget {
+    /// opens a new master rather than riding the previous run's to the old machine. Lines that
+    /// only time the connection ([`TIMING_ONLY`]) are left out: a `reboot` with its own
+    /// `connect_timeout` reconnects through the socket it has just stopped, not a second one
+    /// whose master would still ride the connection the host dropped.
+    pub(crate) async fn resolved(&self) -> SshTarget {
         let bare = SshTarget {
             control_path: None,
             ..self.clone()
@@ -978,6 +994,7 @@ impl SshTarget {
             .args(&argv[1..])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
+            .kill_on_drop(true)
             .output()
             .await
         {
@@ -989,8 +1006,12 @@ impl SshTarget {
         }
         let mut hasher = blake3::Hasher::new();
         hasher.update(path.as_os_str().as_encoded_bytes());
-        hasher.update(b"\0");
-        hasher.update(dump.as_bytes());
+        for line in dump.lines().filter(|line| {
+            !TIMING_ONLY.contains(&line.split_once(' ').map_or(*line, |(key, _)| key))
+        }) {
+            hasher.update(b"\0");
+            hasher.update(line.as_bytes());
+        }
         let name = &hasher.finalize().to_hex()[..16];
         SshTarget {
             control_path: Some(path.with_file_name(name).into_boxed_path()),
@@ -1002,22 +1023,26 @@ impl SshTarget {
     /// next `ssh` opens a new connection. A master whose host went away without closing the
     /// connection would otherwise take every new session and leave it waiting on TCP
     /// retransmissions, which `ConnectTimeout` does not bound. The status is not read: no
-    /// master is the state this asks for. Bounded by [`STOP_MASTER_TIMEOUT`].
+    /// master is the state this asks for. The whole of it, the `ssh -G` that finds the socket
+    /// included, is bounded by [`STOP_MASTER_TIMEOUT`].
     async fn stop_master(&self) {
-        let target = self.resolved().await;
-        let Some(path) = &target.control_path else {
-            return;
+        let stop = async {
+            let target = self.resolved().await;
+            let Some(path) = &target.control_path else {
+                return;
+            };
+            let _ = Command::new(SSH_PROGRAM)
+                .args(["-O", "exit", "-o"])
+                .arg(format!("ControlPath={}", path.display()))
+                .arg(&target.address)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await;
         };
-        let status = Command::new("ssh")
-            .args(["-O", "exit", "-o"])
-            .arg(format!("ControlPath={}", path.display()))
-            .arg(&target.address)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .status();
-        let _ = tokio::time::timeout(STOP_MASTER_TIMEOUT, status).await;
+        let _ = tokio::time::timeout(STOP_MASTER_TIMEOUT, stop).await;
     }
 
     async fn open(
@@ -1057,7 +1082,7 @@ impl SshTarget {
                 escalated_command(escalated, &format!("exec {agent}"))
             ),
         };
-        let child = Command::new("ssh")
+        let child = Command::new(SSH_PROGRAM)
             .args(&self.ssh_argv(&remote)[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -2731,12 +2756,35 @@ mod tests {
             ("pub(super) async fn reuse_or_connect", "\n}\n"),
         ] {
             let body = source.split_once(start).expect(start).1;
-            let body = &body[..body.find(end).expect(end)];
+            let body: String = body[..body.find(end).expect(end)]
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let (stop, reconnect) = if start.contains("Relinker") {
+                ("transport.stop_shared().await", "connect(&transport,")
+            } else {
+                (
+                    "release_wedged_master(&key.transport,wedged).await",
+                    "connect(&key.transport,",
+                )
+            };
             let stop = body
-                .find("transport.stop_shared().await")
+                .find(stop)
                 .unwrap_or_else(|| panic!("{start} stops the master"));
-            let connect = body.find("connect(").expect("a reconnection");
+            let connect = body
+                .find(reconnect)
+                .unwrap_or_else(|| panic!("{start} reconnects through the transport it stopped"));
             assert!(stop < connect, "{start}: the master is stopped first");
+            if !start.contains("Relinker") {
+                let timed_out = body.find("Err(_)=>{").expect("the check's timeout arm");
+                assert!(
+                    body[timed_out..].starts_with(
+                        "Err(_)=>{stale=Some(\"noanswerfromthekeptconnection\".to_string());wedged=true;"
+                    ),
+                    "only the timeout arm marks the master wedged"
+                );
+                assert_eq!(body.matches("wedged=true").count(), 1);
+            }
         }
     }
 }

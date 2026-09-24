@@ -1691,15 +1691,12 @@ impl Relink<AgentLink> for Relinker<'_> {
         self.checked.remove(self.key);
         // The host's shared connection went down with it, perhaps without a word: a master left
         // on a dead TCP connection would take this try's session and hold it past any timeout.
-        self.key.transport.stop_shared().await;
-        let fresh = connect(
-            &with_connect_timeout(&self.key.transport, connect_timeout),
-            self.agents,
-            self.defaults,
-            self.escalation,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        // Stopped and reopened through the one transport, so both name the same socket.
+        let transport = with_connect_timeout(&self.key.transport, connect_timeout);
+        transport.stop_shared().await;
+        let fresh = connect(&transport, self.agents, self.defaults, self.escalation)
+            .await
+            .map_err(|e| e.to_string())?;
         let old = std::mem::replace(link, fresh);
         tokio::spawn(old.shutdown());
         Ok(())
@@ -2202,9 +2199,9 @@ pub(super) async fn reuse_or_connect<'a>(
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
     let mut stale: Option<String> = None;
+    let mut wedged = false;
     let reboots = options.reboots.of(&key.host);
-    let previous = checked.insert(key.clone(), reboots);
-    if previous != Some(reboots)
+    if checked.insert(key.clone(), reboots) != Some(reboots)
         && let Some(mut link) = links.remove(key)
     {
         let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
@@ -2218,15 +2215,12 @@ pub(super) async fn reuse_or_connect<'a>(
             }
             Err(_) => {
                 stale = Some("no answer from the kept connection".to_string());
+                wedged = true;
                 link.shutdown().await;
             }
         }
     }
-    // A kept link that did not survive a reboot of its host rode a connection the host may have
-    // dropped without a word; its master goes too, as it does in `Relinker::relink`.
-    if stale.is_some() && previous.is_some() {
-        key.transport.stop_shared().await;
-    }
+    release_wedged_master(&key.transport, wedged).await;
     if !links.contains_key(key) {
         let link = match connect(&key.transport, agents, &options.defaults, escalation).await {
             Ok(link) => link,
@@ -2327,6 +2321,17 @@ pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<
         live.to_vec()
     } else {
         vec![host.to_string()]
+    }
+}
+
+/// Stops the host's shared connection after a kept link's check, but only one that timed out:
+/// that is a master riding a connection the host dropped without a word, which would take the
+/// reconnection's session too. A link that failed at once rode a master already gone, and the
+/// socket may by now hold a master that another link of this host (the plain and the escalated
+/// one share it) has just reopened; stopping it would kill that link behind its driver's back.
+async fn release_wedged_master(transport: &Transport, wedged: bool) {
+    if wedged {
+        transport.stop_shared().await;
     }
 }
 
@@ -6683,6 +6688,93 @@ mod tests {
         );
         assert!(argv(&kept).contains("ConnectTimeout=10"), "{}", argv(&kept));
         assert_eq!(with_connect_timeout(&kept, None), kept);
+    }
+
+    /// An ssh transport to `h1` sharing its connection under `dir`, with no ssh configuration
+    /// read but the empty one, so the test does not depend on the account it runs under.
+    fn shared_to_h1(dir: &Path) -> Transport {
+        let vars =
+            json!({"ansible_host": "probe-hostname", "ansible_ssh_common_args": "-F /dev/null"});
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
+            .expect("an ssh transport")
+            .shared(Some(dir), "h1", None)
+    }
+
+    async fn socket_of(transport: &Transport) -> Option<Box<Path>> {
+        match transport {
+            Transport::Ssh(target) => target.resolved().await.control_path,
+            Transport::Local => None,
+        }
+    }
+
+    /// `Relinker::relink` stops the host's master and reconnects under the `reboot` task's own
+    /// `connect_timeout`: both must name one socket, or the stop misses the master the
+    /// reconnection then rides.
+    ///
+    /// What would make this red: `connecttimeout` hashed into the socket name again.
+    #[tokio::test]
+    async fn a_reboot_with_its_own_connect_timeout_stops_and_reopens_one_socket() {
+        let kept = shared_to_h1(Path::new("/run/user/1000/volant-cm"));
+        let socket = socket_of(&kept)
+            .await
+            .expect("shared; ssh -G must run here");
+        let fresh = with_connect_timeout(&kept, Some(Duration::from_secs(5)));
+        assert_ne!(fresh, kept, "the reconnection does carry its own timeout");
+        assert_eq!(socket_of(&fresh).await, Some(socket));
+    }
+
+    /// The plain and the escalated link of one host share one master. After a reboot each is
+    /// checked on its first use; the first to fail reconnects and opens a new master on the
+    /// socket, so the second, failing at once in its turn, must leave that socket alone. Only a
+    /// check that timed out, a master wedged on a dropped connection, stops it. A listener on
+    /// the socket stands in for the master and counts the `ssh -O exit` that reach it.
+    ///
+    /// What would make this red: the master stopped after any failed check.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_a_check_that_timed_out_stops_the_hosts_master() {
+        let dir = std::env::temp_dir().join(format!("volant-cm-wedged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let transport = shared_to_h1(&dir);
+        let socket = socket_of(&transport)
+            .await
+            .expect("shared; ssh -G must run here");
+        let listener = std::os::unix::net::UnixListener::bind(&*socket).expect("a socket");
+        listener
+            .set_nonblocking(true)
+            .expect("a non-blocking socket");
+        let reached = || match listener.accept() {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false,
+            Err(e) => panic!("accept: {e}"),
+        };
+
+        // The plain link, then the escalated one, both found dead at once.
+        release_wedged_master(&transport, false).await;
+        release_wedged_master(&transport, false).await;
+        assert!(
+            !reached(),
+            "a link that failed at once stopped the shared master"
+        );
+
+        release_wedged_master(&transport, true).await;
+        assert!(
+            reached(),
+            "a check that timed out left the wedged master in place"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`

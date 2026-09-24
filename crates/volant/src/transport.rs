@@ -772,18 +772,17 @@ fn control_dir_in(runtime: Option<&Path>, tmp: &Path, uid: u32) -> Result<PathBu
         std::fs::symlink_metadata(p)
             .is_ok_and(|m| m.is_dir() && m.uid() == uid && m.mode() & 0o022 == 0)
     };
-    let dir = match runtime.filter(|r| plain(r) && owned(r)) {
-        Some(runtime) => runtime.join("volant-cm"),
-        None => {
-            let parent = std::fs::metadata(tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
-            if parent.mode() & 0o022 != 0 && parent.mode() & 0o1000 == 0 {
-                return Err(format!(
-                    "{} is writable by others and not sticky",
-                    tmp.display()
-                ));
-            }
-            tmp.join(format!("volant-cm-{uid}"))
+    let dir = if let Some(runtime) = runtime.filter(|r| plain(r) && owned(r)) {
+        runtime.join("volant-cm")
+    } else {
+        let parent = std::fs::metadata(tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        if parent.mode() & 0o022 != 0 && parent.mode() & 0o1000 == 0 {
+            return Err(format!(
+                "{} is writable by others and not sticky",
+                tmp.display()
+            ));
         }
+        tmp.join(format!("volant-cm-{uid}"))
     };
     match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
         Ok(()) => {}

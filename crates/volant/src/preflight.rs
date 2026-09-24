@@ -903,10 +903,10 @@ mod tests {
             "{text}"
         );
         let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.reboot: src=a dest=b\n",
+            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.script: src=a dest=b\n",
         );
         assert!(
-            text.contains("module 'ansible.builtin.reboot' needs an action plugin"),
+            text.contains("module 'ansible.builtin.script' needs an action plugin"),
             "{text}"
         );
         let pb = parse("- hosts: all\n  tasks:\n    - debug: msg=hi\n", "x.yml").unwrap();
@@ -930,6 +930,7 @@ mod tests {
             "template",
             "unarchive",
             "fetch",
+            "reboot",
             "ansible.builtin.package",
         ] {
             let pb = parse(
@@ -944,9 +945,9 @@ mod tests {
             assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
         }
         let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      reboot: src=a dest=b\n");
+            refusal("- hosts: all\n  tasks:\n    - name: Later\n      script: src=a dest=b\n");
         assert!(
-            text.contains("module 'reboot' needs an action plugin"),
+            text.contains("module 'script' needs an action plugin"),
             "{text}"
         );
         let pb = parse(

@@ -474,7 +474,6 @@ pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "async_status",
     "gather_facts",
     "group_by",
-    "reboot",
     "script",
     "set_stats",
     "uri",
@@ -498,6 +497,10 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
     (
         "package",
         "Install or remove packages with the host's own package manager.",
+    ),
+    (
+        "reboot",
+        "Reboot the host and wait until it has booted again.",
     ),
     (
         "service",
@@ -606,7 +609,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
         let _ = writeln!(out, "| `{m}` | {how} |");
     }
     out.push_str(
-        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](/reference/action-plugins/) describes each one.\n\n| Module | What it does |\n|---|---|\n",
+        "\n## Through an action plugin\n\nThe controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary modules over the connection the task already has. `reboot` also waits for the host: it reconnects until the host answers with a new boot id. [Action plugins](/reference/action-plugins/) describes each one.\n\n| Module | What it does |\n|---|---|\n",
     );
     for (m, summary) in ACTION_PLUGINS {
         let _ = writeln!(out, "| `{m}` | {summary} |");
@@ -945,7 +948,7 @@ mod tests {
                 assert!(is_builtin(m) && !is_known(m), "{m}");
             }
         }
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 10);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 9);
         assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
         for m in &implemented {
             assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");

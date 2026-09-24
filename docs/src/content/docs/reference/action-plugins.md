@@ -5,9 +5,9 @@ description: How Volant runs copy, package, service, template and unarchive, whi
 
 Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: the reference itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
 
-Volant runs five of these itself: `copy`, `package`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
+Volant runs seven of these itself: `copy`, `dnf`, `fetch`, `package`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
 
-Twelve other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `dnf`, `fetch`, `gather_facts`, `group_by`, `reboot`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
+Ten other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `reboot`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
 
 ## `copy`
 
@@ -52,6 +52,38 @@ Rejected before the host is asked anything:
 The host's package manager names the module that actually runs.
 
 The name comes from `use:`, unless it is `auto`; then from the host's `ansible_package_use` variable; then from `ansible_facts.pkg_mgr` of the host the module runs on; then from a `setup` filtered to that one fact, run again for every task and never kept. Whichever module the name picks is what runs, with `use` taken out of its arguments; a `setup` that fails ends the task with `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`, and a name that resolves to nothing this release can dispatch fails with `Could not find a matching action for the "<name>" package manager.` A name a host reports is never anything but a lookup key into this closed list: `setup`, `apt`, `dnf`, `dnf5`. The union carries all four backends rather than only the one a run turns out to need, because nothing is built after the facts are known: a plugin can only ever pick among what already travelled.
+
+## `dnf`
+
+The host's package manager again, this time picking between two module names instead of four.
+
+The backend name comes from `use:`, or from `use_backend:` when `use` is absent; the two together are rejected: `parameters are mutually exclusive: ('use', 'use_backend')`. `auto` and `yum` read `ansible_facts.pkg_mgr` of the host the module runs on, gathered through a `setup` filtered to that one fact when it is not already known; any other name is taken as given. `yum`, `yum4` and `dnf4` all run the `dnf` module, `dnf5` runs `dnf5`, and a name that is still none of these fails with the reference's own two-line message, closing brace and all:
+
+```text
+Could not detect which major revision of dnf is in use, which is required to determine module backend.
+You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})
+```
+
+A failed `setup` ends the task with its own cause, `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`. When the task is not delegated, its result carries `ansible_facts.pkg_mgr` set to whatever the `setup` answered, the way the reference's own result does; a delegated task's result carries none, since a delegate's answer would otherwise land under the wrong host's facts.
+
+## `fetch`
+
+A file read from a host, written onto the controller under `dest` and nowhere else.
+
+Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes always travel back through `slurp`, decoded strictly, never rendered and never put in a variable. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
+
+Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes the reference write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
+
+- `the fetched path <p> is outside '<dest>'`
+
+This is checked twice: once on the `src` the playbook wrote, and again on the path the host names back, which does not have to match. A `dest` whose render read a managed host is refused before anything is asked, and so is a loop's `inventory_hostname` when a host set it, or one that is not a single path component:
+
+- `the 'dest' of this task was named by a managed host, and a controller path a host chose is never written`
+- `the inventory_hostname '<name>' is not one path component, and fetch files what it fetches under it`
+
+A symbolic link anywhere below `dest` is refused rather than followed, on both the path built from the playbook and the one the host names back.
+
+`fail_on_missing` (on by default, as in the reference) turns a missing source or a directory into an `ok` result carrying the reference's own message; any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task whatever `fail_on_missing` says. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike the reference, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
 
 ## `service`
 

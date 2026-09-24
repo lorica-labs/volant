@@ -256,7 +256,7 @@ impl Config {
 }
 
 /// `ANSIBLE_CONFIG`, then `./ansible.cfg`, `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`.
-fn locate() -> Option<PathBuf> {
+pub(crate) fn locate() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("ANSIBLE_CONFIG") {
         let p = PathBuf::from(explicit);
         return p.is_file().then_some(p);

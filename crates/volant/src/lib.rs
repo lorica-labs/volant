@@ -18,6 +18,7 @@ pub(crate) mod roles;
 pub(crate) mod stats;
 pub mod template;
 pub mod transport;
+pub mod union_cache;
 pub mod vars;
 pub mod yaml;
 

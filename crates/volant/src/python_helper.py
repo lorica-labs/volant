@@ -165,7 +165,10 @@ def build(name):
 
 
 def union(modules):
-    """The union blob and the per-module facts, for every module named."""
+    """The union blob, the per-module facts, and the files they came from, for every module
+    named."""
+    import ansible
+
     entries = {}
     owners = {}
     facts_by_module = {}
@@ -174,10 +177,117 @@ def union(modules):
         merge(entries, owners, name, raw)
         facts_by_module[name] = found
     blob = pack(entries)
+    track_core()
+    for entry in entries:
+        parts = entry.split("/")
+        if parts[0] == "ansible_collections" and len(parts) > 3:
+            track_collection(parts[1] + "." + parts[2])
+    mapped = copies(entries, os.path.dirname(ansible.__path__[0]), collection_dir)
     return {
         "zip_b64": base64.b64encode(blob).decode(),
         "modules": facts_by_module,
+        "sources": sources() if mapped else None,
     }
+
+
+# Every file an answer depended on, by absolute path: (st_size, st_mtime_ns). The controller keeps
+# a union between runs only while each of them still has both. A file is stat-ed before it is read,
+# so one rewritten in between shows a newer mtime than the one kept here, never an older one.
+TRACKED = {}
+
+
+def track(path):
+    """Records `path`, or, when it does not exist, the nearest directory above it that does:
+    creating the path later adds an entry to that directory, which moves its mtime."""
+    path = os.path.abspath(path)
+    while True:
+        try:
+            st = os.stat(path)
+        except OSError:
+            parent = os.path.dirname(path)
+            if parent == path:
+                return
+            path = parent
+            continue
+        TRACKED[path] = (st.st_size, st.st_mtime_ns)
+        return
+
+
+def track_core():
+    """ansible-core itself: an upgrade rewrites `release.py`, the package `__init__.py` files a
+    zip carries without a file of their own come from `module_common.py`, and an `ansible`
+    package appearing earlier on `sys.path` adds an entry to a directory recorded here."""
+    import ansible
+
+    root = ansible.__path__[0]
+    track(os.path.join(root, "release.py"))
+    track(os.path.join(root, "executor", "module_common.py"))
+    for entry in sys.path:
+        track(os.path.join(entry, "ansible"))
+
+
+def track_collection(collection):
+    """Every place `collection` could be installed: installing it, upgrading it, or shadowing
+    it from a path searched earlier rewrites one of these files or the directory above them."""
+    from ansible.utils.collection_loader import AnsibleCollectionConfig
+
+    if collection in ("ansible.builtin", "ansible.legacy"):
+        return
+    for base in AnsibleCollectionConfig.collection_paths:
+        home = os.path.join(base, "ansible_collections", *collection.split("."))
+        for name in ("MANIFEST.json", "FILES.json", os.path.join("meta", "runtime.yml")):
+            track(os.path.join(home, name))
+
+
+def copies(entries, root, home_of):
+    """Whether every zip entry is the copy of a file this can name, recording each file.
+
+    `ansible/...` is read under `root`, the directory `ansible` was imported from, and
+    `ansible_collections/<ns>/<name>/...` under `home_of("<ns>.<name>")`. A package `__init__.py`
+    that no file holds is one `module_common.py` wrote, which `track_core` covers. Anything else
+    - a `module_utils` from a configured directory, a module from a `library` path - answers
+    False, and the union is then rebuilt on every run rather than kept on a guess.
+    """
+    for name, data in entries.items():
+        parts = name.split("/")
+        path = None
+        if parts[0] == "ansible":
+            path = os.path.join(root, *parts)
+        elif parts[0] == "ansible_collections" and len(parts) > 3:
+            home = home_of(parts[1] + "." + parts[2])
+            path = os.path.join(home, *parts[3:]) if home else None
+        if path is not None and copied(path, data):
+            continue
+        if parts[-1] != "__init__.py":
+            return False
+    return True
+
+
+def copied(path, data):
+    """Whether `path` holds `data`, recording it when it does."""
+    try:
+        st = os.stat(path)
+        with open(path, "rb") as source:
+            same = source.read() == data
+    except OSError:
+        return False
+    if same:
+        TRACKED[path] = (st.st_size, st.st_mtime_ns)
+    return same
+
+
+def sources():
+    """What `TRACKED` holds, as the answer carries it, or None when a path is not UTF-8, which
+    the frame's JSON cannot carry."""
+    try:
+        for path in TRACKED:
+            path.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    return [
+        {"path": path, "len": size, "mtime_ns": mtime}
+        for path, (size, mtime) in sorted(TRACKED.items())
+    ]
 
 
 def collection_dir(collection):
@@ -219,6 +329,7 @@ def resolve(names):
     refuses it only if a task names it.
     """
     loaders()
+    track_core()
     answers = {}
     for name in names:
         try:
@@ -238,9 +349,14 @@ def resolve_one(name):
     from ansible.plugins.loader import action_loader, module_loader
 
     collection = collection_of(name)
-    if collection is not None and collection_dir(collection) is None:
-        return {"missing": collection}
+    if collection is not None:
+        track_collection(collection)
+        if collection_dir(collection) is None:
+            return {"missing": collection}
     module = module_loader.find_plugin_with_context(name, mod_type=".py")
+    for hop in module.redirect_list:
+        if collection_of(hop) is not None:
+            track_collection(collection_of(hop))
     if not module.resolved:
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
@@ -293,6 +409,10 @@ def main():
     # collection imported under it - goes to stderr, which the controller passes through.
     frames = sys.stdout.buffer
     sys.stdout = sys.stderr
+    # `python -c` puts the working directory first on the path, which ansible-playbook, a script,
+    # never does: an `ansible` directory where the run starts is not the ansible-core to build
+    # with, and the working directory is no file a kept union should depend on.
+    sys.path[:] = [entry for entry in sys.path if entry]
     while True:
         request = read_frame(sys.stdin.buffer)
         if request is None:
@@ -375,6 +495,57 @@ def self_check():
         assert "profile" in str(twice), twice
     else:
         raise AssertionError("a wrapper naming a field twice was read from its first match")
+    check_sources()
+
+
+def check_sources():
+    """Each zip entry named back to the file it copies, and a union that has one entry this
+    cannot name kept out of the cache."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as root:
+        core = os.path.join(root, "site", "ansible", "module_utils")
+        home = os.path.join(root, "coll", "ns", "c")
+        os.makedirs(core)
+        os.makedirs(os.path.join(home, "plugins", "modules"))
+        with open(os.path.join(core, "basic.py"), "wb") as out:
+            out.write(b"basic")
+        with open(os.path.join(home, "plugins", "modules", "m.py"), "wb") as out:
+            out.write(b"module")
+        homes = {"ns.c": home}.get
+        entries = {
+            "ansible/module_utils/basic.py": b"basic",
+            "ansible_collections/ns/c/plugins/modules/m.py": b"module",
+            # Written by module_common.py, with no file of their own.
+            "ansible/__init__.py": b"from pkgutil import extend_path\n",
+            "ansible_collections/__init__.py": b"",
+            "ansible_collections/ns/c/plugins/__init__.py": b"",
+        }
+        TRACKED.clear()
+        site = os.path.join(root, "site")
+        assert copies(entries, site, homes), TRACKED
+        assert sorted(TRACKED) == [
+            os.path.join(home, "plugins", "modules", "m.py"),
+            os.path.join(core, "basic.py"),
+        ], TRACKED
+        assert TRACKED[os.path.join(core, "basic.py")][0] == 5, TRACKED
+        for odd in (
+            {"ansible/module_utils/basic.py": b"other"},
+            {"ansible/module_utils/custom.py": b"from a module_utils directory"},
+            {"ansible_collections/no/such/plugins/modules/m.py": b"module"},
+            {"elsewhere/x.py": b""},
+        ):
+            assert not copies(odd, site, homes), odd
+        # A path that is not there is recorded as the nearest directory above it that is.
+        TRACKED.clear()
+        track(os.path.join(home, "FILES.json"))
+        track(os.path.join(root, "coll", "absent", "c", "MANIFEST.json"))
+        assert sorted(TRACKED) == [os.path.join(root, "coll"), home], TRACKED
+        assert sources() == [
+            {"path": path, "len": size, "mtime_ns": mtime}
+            for path, (size, mtime) in sorted(TRACKED.items())
+        ]
+        TRACKED.clear()
 
 
 if __name__ == "__main__":

@@ -60,18 +60,22 @@ impl Embedded {
 /// `$XDG_CACHE_HOME/volant/agents/<version>`, or `~/.cache/volant/agents/<version>`. The version
 /// keeps two installed controllers from taking turns rewriting each other's agents.
 fn cache_dir() -> Result<PathBuf, String> {
+    let base = cache_root()
+        .ok_or("neither XDG_CACHE_HOME nor HOME names an absolute directory to extract them to")?;
+    Ok(base.join("agents").join(env!("CARGO_PKG_VERSION")))
+}
+
+/// `$XDG_CACHE_HOME/volant`, or `~/.cache/volant`, when either names an absolute directory: a
+/// relative one would put the cache in whatever directory the run started in.
+pub(crate) fn cache_root() -> Option<PathBuf> {
     let absolute = |var: &str| {
         std::env::var_os(var)
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };
-    let base = absolute("XDG_CACHE_HOME")
+    absolute("XDG_CACHE_HOME")
         .or_else(|| absolute("HOME").map(|home| home.join(".cache")))
-        .ok_or("neither XDG_CACHE_HOME nor HOME names an absolute directory to extract them to")?;
-    Ok(base
-        .join("volant")
-        .join("agents")
-        .join(env!("CARGO_PKG_VERSION")))
+        .map(|base| base.join("volant"))
 }
 
 /// Writes `bytes` to `dir/name` with mode 0755, unless an executable file with exactly those
@@ -145,7 +149,7 @@ fn make_executable(_path: &Path) -> io::Result<()> {
 /// Creates the directory mode 0700, its parents as the umask has them, and says nothing when it
 /// already exists: whether an existing one can be trusted is [`check_private`]'s answer.
 #[cfg(unix)]
-fn create_private(dir: &Path) -> io::Result<()> {
+pub(crate) fn create_private(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
 
     if let Some(parent) = dir.parent() {
@@ -158,7 +162,7 @@ fn create_private(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn create_private(dir: &Path) -> io::Result<()> {
+pub(crate) fn create_private(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)
 }
 
@@ -166,7 +170,7 @@ fn create_private(dir: &Path) -> io::Result<()> {
 /// another account put its own program where this controller looks for an agent, and the agent
 /// runs with this user's rights locally and is uploaded to every host.
 #[cfg(unix)]
-fn check_private(dir: &Path) -> io::Result<()> {
+pub(crate) fn check_private(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
 
     let meta = fs::metadata(dir)?;
@@ -187,7 +191,7 @@ fn check_private(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn check_private(_dir: &Path) -> io::Result<()> {
+pub(crate) fn check_private(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 

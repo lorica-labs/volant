@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
-mod embedded;
+pub(crate) mod embedded;
 
 /// Where agent binaries live, looked up in this order: `VOLANT_AGENT_DIR`, the agents built into
 /// this controller (extracted to a cache directory on first use), then the directory of this

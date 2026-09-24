@@ -1801,6 +1801,59 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
 ///
 /// What would make this red: the task's own line left out after its items, the two item lines
 /// alone.
+/// A loop over an undefined variable under a block whose `when` is false is skipped, not failed.
+/// Measured on ansible-core 2.19.12 with the playbook below (`k3s-ansible`'s `Copy manifests`
+/// under `when: extra_manifests is defined` has this shape): `skipping: [h]`, `ok=0 failed=0
+/// skipped=1`. Its `task_executor.py` keeps the loop's undefined error and raises it only once
+/// the conditional holds, so the same loop under a true `when` fails on the undefined variable.
+///
+/// What would make this red: the loop rendered before the `when` is read, which fails the first
+/// case with `undefined variable`; or the kept error dropped once the `when` holds, which reports
+/// the second case as ok with nothing run.
+#[test]
+fn an_undefined_loop_under_a_false_when_is_skipped() {
+    let dir = std::env::temp_dir().join(format!("volant-loop-when-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let play = |gate: &str, list: &str| {
+        format!(
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: {gate}\n      block:\n        - debug: {{ msg: ran }}\n          loop: {list}\n"
+        )
+    };
+    let run = |name: &str, body: String| {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        let out = volant_within(&["playbook", &path.display().to_string()], PROBE_DEADLINE);
+        let text = String::from_utf8(out.stdout).unwrap();
+        (out.status.code(), text)
+    };
+
+    let (code, text) = run("false.yml", play("nope is defined", "\"{{ nope }}\""));
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains("skipping: [localhost]"), "{text}");
+    assert!(
+        text.contains("ok=0    changed=0    unreachable=0    failed=0    skipped=1"),
+        "{text}"
+    );
+
+    let (code, text) = run("true.yml", play("nope is not defined", "\"{{ nope }}\""));
+    assert_eq!(code, Some(2), "{text}");
+    assert!(
+        text.contains("The task includes an option with an undefined variable."),
+        "{text}"
+    );
+
+    // A loop that renders keeps reading its `when` per item.
+    let (code, text) = run("fine.yml", play("nope is defined", "[a, b]"));
+    assert_eq!(code, Some(0), "{text}");
+    assert!(
+        text.contains("skipping: [localhost] => (item=a)")
+            && text.contains("skipping: [localhost] => (item=b)"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
     let out = volant_within(

@@ -194,6 +194,38 @@ fn a_native_that_panics_hands_the_task_back() {
     assert_eq!(ran.path, ExecPath::Native);
 }
 
+/// The native `setup` through the dispatcher: `min` answered under the payload's interpreter,
+/// with the `changed: false` a module result gets, and the default subset handed to the payload
+/// with the reason.
+///
+/// Runs on the machine's own facts, so it needs what the native needs: Debian or Ubuntu, and
+/// `/usr/bin/python3`. A machine without them fails on the first assertion, naming the reason
+/// the native gave.
+///
+/// What would make this red: the native given no interpreter (the dispatcher's context left
+/// empty), or a subset outside `min` answered.
+#[test]
+fn setup_answers_min_and_hands_the_default_subset_back() {
+    let scratch = Scratch::new("setup");
+    let mut agent = Agent::spawn(&scratch.0);
+    agent.hello();
+    let with_python = |args: Value| {
+        let mut task = task("ansible.modules.setup", args);
+        task.payload.as_mut().unwrap().interpreter = PYTHON.into();
+        task
+    };
+    let (result, ran) = agent.run_one(1, with_python(json!({"gather_subset": ["min"]})));
+    assert_eq!(ran.path, ExecPath::Native, "{:?}", ran.reason);
+    assert_eq!(result.0["changed"], false);
+    assert_eq!(result.0["ansible_facts"]["module_setup"], true);
+    assert_eq!(result.0["ansible_facts"]["ansible_pkg_mgr"], "apt");
+
+    let (result, ran) = agent.run_one(2, with_python(json!({})));
+    assert_eq!(ran.path, ExecPath::Fallback);
+    assert_eq!(ran.reason.as_deref(), Some("gather_subset defaults to all"));
+    assert_python_ran(&result);
+}
+
 /// The Python path's own answer for a payload that is not on the host.
 fn assert_python_ran(result: &TaskResult) {
     assert!(result.failed(), "{result:?}");

@@ -1794,30 +1794,28 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
     );
 }
 
-/// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
-/// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
-/// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
-/// a host that already has git.
-///
-/// What would make this red: the task's own line left out after its items, the two item lines
-/// alone.
 /// A loop over an undefined variable under a block whose `when` is false is skipped, not failed.
-/// Measured on ansible-core 2.19.12 with the playbook below (`k3s-ansible`'s `Copy manifests`
-/// under `when: extra_manifests is defined` has this shape): `skipping: [h]`, `ok=0 failed=0
-/// skipped=1`. Its `task_executor.py` keeps the loop's undefined error and raises it only once
-/// the conditional holds, so the same loop under a true `when` fails on the undefined variable.
+/// Measured on ansible-core 2.19.12 with the first task below alone (`k3s-ansible`'s `Copy
+/// manifests` under `when: extra_manifests is defined` has this shape): `skipping: [h]`, `ok=0
+/// failed=0 skipped=1`. Its `task_executor.py` keeps the loop's undefined error, runs the task
+/// once through `_execute` with no item, and raises the error only once the conditional holds.
+/// So the task is a plain one there: one `skipping:` line, the plain skip registered with no
+/// `results`, an include counted like any skipped task, and the same loop under a true `when`
+/// fails on the undefined variable.
 ///
 /// What would make this red: the loop rendered before the `when` is read, which fails the first
-/// case with `undefined variable`; or the kept error dropped once the `when` holds, which reports
-/// the second case as ok with nothing run.
+/// case with `undefined variable`; the task still reported as a loop, which prints a second
+/// `skipping:` line, registers `msg` and `results`, and counts the include as nothing; or the
+/// kept error dropped once the `when` holds, which runs the task with no items.
 #[test]
 fn an_undefined_loop_under_a_false_when_is_skipped() {
     let dir = std::env::temp_dir().join(format!("volant-loop-when-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("other.yml"), "- debug: { msg: included }\n").unwrap();
     let play = |gate: &str, list: &str| {
         format!(
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: {gate}\n      block:\n        - debug: {{ msg: ran }}\n          loop: {list}\n"
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: {gate}\n      block:\n        - name: Copy\n          debug: {{ msg: ran }}\n          loop: {list}\n          register: r\n        - name: Inc\n          include_tasks: other.yml\n          loop: {list}\n    - name: Show\n      debug: {{ msg: \"{{{{ r | list | sort | join(',') }}}}\" }}\n"
         )
     };
     let run = |name: &str, body: String| {
@@ -1827,33 +1825,58 @@ fn an_undefined_loop_under_a_false_when_is_skipped() {
         let text = String::from_utf8(out.stdout).unwrap();
         (out.status.code(), text)
     };
+    // The first line is what is left of the banner's row of stars.
+    let lines = |text: &str, task: &str| -> Vec<String> {
+        section(text, task)
+            .lines()
+            .skip(1)
+            .map(|line| line.trim_end().to_string())
+            .filter(|line| !line.is_empty())
+            .collect()
+    };
 
     let (code, text) = run("false.yml", play("nope is defined", "\"{{ nope }}\""));
     assert_eq!(code, Some(0), "{text}");
-    assert!(text.contains("skipping: [localhost]"), "{text}");
+    assert_eq!(lines(&text, "Copy"), ["skipping: [localhost]"], "{text}");
+    assert_eq!(lines(&text, "Inc"), ["skipping: [localhost]"], "{text}");
     assert!(
-        text.contains("ok=0    changed=0    unreachable=0    failed=0    skipped=1"),
+        text.contains(r#""msg": "changed,false_condition,skip_reason,skipped""#),
+        "the plain skip is registered: {text}"
+    );
+    assert!(
+        text.contains("ok=1    changed=0    unreachable=0    failed=0    skipped=2"),
         "{text}"
     );
 
     let (code, text) = run("true.yml", play("nope is not defined", "\"{{ nope }}\""));
     assert_eq!(code, Some(2), "{text}");
     assert!(
-        text.contains("The task includes an option with an undefined variable."),
+        section(&text, "Copy").contains("The task includes an option with an undefined variable."),
         "{text}"
     );
 
     // A loop that renders keeps reading its `when` per item.
     let (code, text) = run("fine.yml", play("nope is defined", "[a, b]"));
     assert_eq!(code, Some(0), "{text}");
-    assert!(
-        text.contains("skipping: [localhost] => (item=a)")
-            && text.contains("skipping: [localhost] => (item=b)"),
+    assert_eq!(
+        lines(&text, "Copy"),
+        [
+            "skipping: [localhost] => (item=a)",
+            "skipping: [localhost] => (item=b)",
+            "skipping: [localhost]",
+        ],
         "{text}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
+/// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
+/// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
+/// a host that already has git.
+///
+/// What would make this red: the task's own line left out after its items, the two item lines
+/// alone.
 #[test]
 fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
     let out = volant_within(

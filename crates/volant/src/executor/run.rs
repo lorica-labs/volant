@@ -745,9 +745,17 @@ pub(super) fn empty_loop_result() -> TaskResult {
     TaskResult(r)
 }
 
+/// Whether a task's results are a loop's, given its first item's element. A loop whose list was
+/// an undefined variable and whose `when` left it out has one item with no element, and it is
+/// reported and registered as a plain task: the reference's `items` is `None` there, so the task
+/// goes through `_execute` once, never through `_run_loop`.
+pub(super) fn loops(task: &PlayTask, first: Option<&Option<Value>>) -> bool {
+    task.loop_items.is_some() && !matches!(first, Some(None))
+}
+
 /// What `register` stores: the single result, or Ansible's loop aggregate.
 pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) -> Value {
-    if task.loop_items.is_none() {
+    if !loops(task, results.first().map(|(element, _)| element)) {
         return results
             .first()
             .map_or(Value::Null, |(_, r)| Value::Object(r.0.clone()));

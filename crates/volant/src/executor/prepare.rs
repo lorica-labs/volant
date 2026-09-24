@@ -771,7 +771,7 @@ fn loop_list(
 /// `TaskExecutor._get_loop_items`: a string term is resolved and anything that is not a list
 /// becomes a list of one, and the lookup runs with `wantlist=True`.
 ///
-/// `with_first_found` alone drops, at any depth, a term that renders undefined: its plugin does
+/// `with_first_found` alone drops a term inside the list that renders undefined: its plugin does
 /// that when it is invoked as `with_` (`_recurse_terms(terms, omit_undefined=True)`). This is what
 /// lets the `raspberrypi` role's task, which names `detected_distribution` before any host has
 /// set it, reach its `when` on a host that is not a Pi.
@@ -787,7 +787,10 @@ fn with_lookup_items(
     vars: &HostVars,
 ) -> Result<(Vec<Value>, bool), TemplateError> {
     let mut tainted = false;
-    let terms = render_terms(templar, raw, vars, lookup == "first_found", &mut tainted)?;
+    // A term written as one string is resolved before the lookup sees it (`resolve_to_container`
+    // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`.
+    let omit_undefined = lookup == "first_found" && !raw.is_string();
+    let terms = render_terms(templar, raw, vars, omit_undefined, &mut tainted)?;
     let terms = match terms {
         Some(Value::Array(terms)) => terms,
         Some(term) => vec![term],
@@ -1213,7 +1216,8 @@ mod tests {
         let loops = [
             (json!("{{ nope }}"), false, None),
             (json!("{{ nope }}"), true, None),
-            (json!(["{{ nope }}"]), false, Some("dict")),
+            (json!(["{{ nope }}"]), false, Some("fileglob")),
+            (json!("{{ nope }}"), false, Some("first_found")),
         ];
         for (raw, with_items, with) in loops {
             let mut t = task("debug");

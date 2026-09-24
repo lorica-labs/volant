@@ -1,9 +1,9 @@
 {
   "_ansible_no_log": false,
   "action": "apt",
-  "cache_update_time": 1790276557,
-  "cache_updated": false,
-  "changed": false,
+  "cache_update_time": 1790276713,
+  "cache_updated": true,
+  "changed": true,
   "invocation": {
     "module_args": {
       "allow_change_held_packages": false,
@@ -22,15 +22,12 @@
       "force_apt_get": false,
       "install_recommends": null,
       "lock_timeout": 60,
-      "name": "bash",
       "only_upgrade": false,
-      "package": [
-        "bash"
-      ],
+      "package": null,
       "policy_rc_d": null,
       "purge": false,
       "state": "present",
-      "update_cache": null,
+      "update_cache": true,
       "update_cache_retries": 5,
       "update_cache_retry_max_delay": 12,
       "upgrade": null

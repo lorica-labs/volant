@@ -1,8 +1,8 @@
 {
   "_after": {
-    "content": "a=3\nc=5\nb=2\nd=6\n",
+    "content": "a=1\nx=1\na=3\nx=2\ny=1\nz=0\n",
     "exists": true,
-    "mode": "0600",
+    "mode": "0644",
     "type": "file"
   },
   "_ansible_no_log": false,
@@ -12,13 +12,13 @@
   "diff": [
     {
       "after": "",
-      "after_header": "<golden-tmp>/l.conf (content)",
+      "after_header": "<golden-tmp>/m.conf (content)",
       "before": "",
-      "before_header": "<golden-tmp>/l.conf (content)"
+      "before_header": "<golden-tmp>/m.conf (content)"
     },
     {
-      "after_header": "<golden-tmp>/l.conf (file attributes)",
-      "before_header": "<golden-tmp>/l.conf (file attributes)"
+      "after_header": "<golden-tmp>/m.conf (file attributes)",
+      "before_header": "<golden-tmp>/m.conf (file attributes)"
     }
   ],
   "invocation": {
@@ -29,12 +29,12 @@
       "create": false,
       "firstmatch": false,
       "group": null,
-      "insertafter": null,
+      "insertafter": "^x=",
       "insertbefore": null,
-      "line": "d=6",
+      "line": "y=1",
       "mode": null,
       "owner": null,
-      "path": "<golden-tmp>/l.conf",
+      "path": "<golden-tmp>/m.conf",
       "regexp": null,
       "search_string": null,
       "selevel": null,
@@ -43,7 +43,7 @@
       "seuser": null,
       "state": "present",
       "unsafe_writes": false,
-      "validate": "test -s %s"
+      "validate": null
     }
   },
   "msg": "line added"

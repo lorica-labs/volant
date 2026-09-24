@@ -1,4 +1,10 @@
 {
+  "_after": {
+    "content": "a=3\nc=5\nb=2\nd=6\n",
+    "exists": true,
+    "mode": "0600",
+    "type": "file"
+  },
   "_ansible_no_log": false,
   "action": "lineinfile",
   "changed": false,
@@ -17,7 +23,7 @@
       "line": "e=7",
       "mode": null,
       "owner": null,
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": null,
       "search_string": null,
       "selevel": null,

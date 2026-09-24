@@ -1,11 +1,17 @@
 {
+  "_after": {
+    "content": "hello\n",
+    "exists": true,
+    "mode": "0600",
+    "type": "file"
+  },
   "_ansible_no_log": false,
   "action": "file",
   "changed": false,
   "exception": "(traceback unavailable)",
   "failed": true,
-  "gid": 999999999,
-  "group": "<golden-generator-account>",
+  "gid": "<gid>",
+  "group": "<group>",
   "invocation": {
     "module_args": {
       "_diff_peek": null,
@@ -20,7 +26,7 @@
       "modification_time": null,
       "modification_time_format": "%Y%m%d%H%M.%S",
       "owner": null,
-      "path": "/tmp/volant16b-golden/f.txt",
+      "path": "<golden-tmp>/f.txt",
       "recurse": false,
       "selevel": null,
       "serole": null,
@@ -32,10 +38,10 @@
     }
   },
   "mode": "0600",
-  "msg": "/tmp/volant16b-golden/f.txt already exists as a file",
-  "owner": "<golden-generator-account>",
-  "path": "/tmp/volant16b-golden/f.txt",
+  "msg": "<golden-tmp>/f.txt already exists as a file",
+  "owner": "<user>",
+  "path": "<golden-tmp>/f.txt",
   "size": 6,
   "state": "file",
-  "uid": 999999999
+  "uid": "<uid>"
 }

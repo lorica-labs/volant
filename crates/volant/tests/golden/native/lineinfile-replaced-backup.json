@@ -1,18 +1,25 @@
 {
+  "_after": {
+    "backup_content": "a=1\nb=2\n",
+    "content": "a=3\nb=2\n",
+    "exists": true,
+    "mode": "0644",
+    "type": "file"
+  },
   "_ansible_no_log": false,
   "action": "lineinfile",
-  "backup": "/tmp/volant16b-golden/l.conf.109299.2026-09-24@18:25:24~",
+  "backup": "<golden-tmp>/l.conf.393868.2026-09-24@19:04:47~",
   "changed": true,
   "diff": [
     {
       "after": "",
-      "after_header": "/tmp/volant16b-golden/l.conf (content)",
+      "after_header": "<golden-tmp>/l.conf (content)",
       "before": "",
-      "before_header": "/tmp/volant16b-golden/l.conf (content)"
+      "before_header": "<golden-tmp>/l.conf (content)"
     },
     {
-      "after_header": "/tmp/volant16b-golden/l.conf (file attributes)",
-      "before_header": "/tmp/volant16b-golden/l.conf (file attributes)"
+      "after_header": "<golden-tmp>/l.conf (file attributes)",
+      "before_header": "<golden-tmp>/l.conf (file attributes)"
     }
   ],
   "invocation": {
@@ -28,7 +35,7 @@
       "line": "a=3",
       "mode": null,
       "owner": null,
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^a=",
       "search_string": null,
       "selevel": null,

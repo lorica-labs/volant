@@ -10,13 +10,13 @@
       "gid_max": null,
       "gid_min": null,
       "local": false,
-      "name": "volantshape",
+      "name": "volantgrp",
       "non_unique": false,
       "state": "present",
       "system": false
     }
   },
-  "name": "volantshape",
+  "name": "volantgrp",
   "state": "present",
   "system": false
 }

@@ -5,9 +5,14 @@
       "state": "absent"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -17,9 +22,15 @@
       "state": "present"
     },
     "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "cache_update_time"
     ],
@@ -34,9 +45,15 @@
       "state": "present"
     },
     "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "cache_update_time"
     ],
@@ -48,9 +65,16 @@
       "state": "present"
     },
     "become": true,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "No package matching 'volant-no-such-package' is available"
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "not installed"
   },
@@ -61,13 +85,37 @@
       "update_cache": true
     },
     "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "cache_update_time"
     ],
     "why": ""
+  },
+  "apt-update-always": {
+    "args": {
+      "update_cache": true
+    },
+    "become": true,
+    "branch": {
+      "cache_updated": true
+    },
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "apt",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": "update_cache without cache_valid_time"
   },
   "apt-update-fresh": {
     "args": {
@@ -75,9 +123,15 @@
       "update_cache": true
     },
     "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "apt",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "cache_update_time"
     ],
@@ -86,13 +140,18 @@
   "copy-module-created": {
     "args": {
       "content": "one\n",
-      "dest": "/tmp/volant16b-golden/c.txt",
+      "dest": "<golden-tmp>/c.txt",
       "mode": "0644"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "copy",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "invocation.module_args._original_basename"
     ],
@@ -102,14 +161,20 @@
     "args": {
       "backup": true,
       "content": "two\n",
-      "dest": "/tmp/volant16b-golden/c.txt"
+      "dest": "<golden-tmp>/c.txt"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "copy",
+    "patterns": {
+      "backup_file": "^<golden-tmp>/c\\.txt\\.\\d+\\.\\d{4}-\\d{2}-\\d{2}@\\d{2}:\\d{2}:\\d{2}~$"
+    },
+    "unordered": [],
     "volatile": [
-      "backup_file",
       "invocation.module_args._original_basename"
     ],
     "why": ""
@@ -117,12 +182,19 @@
   "copy-module-no-dir": {
     "args": {
       "content": "x\n",
-      "dest": "/tmp/volant16b-golden/nodir/x.txt"
+      "dest": "<golden-tmp>/nodir/x.txt"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "Destination directory <golden-tmp>/nodir does not exist"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "copy",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "invocation.module_args._original_basename"
     ],
@@ -130,27 +202,39 @@
   },
   "copy-module-remote-src": {
     "args": {
-      "dest": "/tmp/volant16b-golden/r.txt",
+      "dest": "<golden-tmp>/r.txt",
       "remote_src": true,
-      "src": "/tmp/volant16b-golden/f.txt"
+      "src": "<golden-tmp>/f.txt"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "copy",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "remote_src"
   },
   "copy-module-validate-fail": {
     "args": {
       "content": "",
-      "dest": "/tmp/volant16b-golden/v.txt",
+      "dest": "<golden-tmp>/v.txt",
       "validate": "test -s %s"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "failed to validate"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "copy",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "invocation.module_args._original_basename"
     ],
@@ -158,239 +242,362 @@
   },
   "file-absent-missing": {
     "args": {
-      "path": "/tmp/volant16b-golden/gone",
+      "path": "<golden-tmp>/gone",
       "state": "absent"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-absent-present": {
     "args": {
-      "path": "/tmp/volant16b-golden/d0",
+      "path": "<golden-tmp>/d0",
       "state": "absent"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "file-chown-denied": {
+    "args": {
+      "owner": "root",
+      "path": "<golden-tmp>/f.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "chown failed"
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-dest-alias": {
     "args": {
-      "dest": "/tmp/volant16b-golden/a/b",
+      "dest": "<golden-tmp>/a/b",
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-dir-created": {
     "args": {
       "mode": "0755",
-      "path": "/tmp/volant16b-golden/a/b",
+      "path": "<golden-tmp>/a/b",
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-dir-over-file": {
     "args": {
-      "path": "/tmp/volant16b-golden/f.txt",
+      "path": "<golden-tmp>/f.txt",
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "<golden-tmp>/f.txt already exists as a file"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-dir-same": {
     "args": {
       "mode": 493,
-      "path": "/tmp/volant16b-golden/a/b",
+      "path": "<golden-tmp>/a/b",
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-dir-symbolic": {
     "args": {
       "mode": "u=rwx,g=rx,o=",
-      "path": "/tmp/volant16b-golden/a/b",
+      "path": "<golden-tmp>/a/b",
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-link": {
     "args": {
-      "path": "/tmp/volant16b-golden/l2",
-      "src": "/tmp/volant16b-golden/f.txt",
+      "path": "<golden-tmp>/l2",
+      "src": "<golden-tmp>/f.txt",
       "state": "link"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "state link"
   },
   "file-owner-unknown": {
     "args": {
       "owner": "volant-no-such-user",
-      "path": "/tmp/volant16b-golden/f.txt"
+      "path": "<golden-tmp>/f.txt"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "chown failed: failed to look up user volant-no-such-user"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-recurse": {
     "args": {
       "mode": "0755",
-      "path": "/tmp/volant16b-golden/a",
+      "path": "<golden-tmp>/a",
       "recurse": true,
       "state": "directory"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "recurse"
   },
   "file-state-file-missing": {
     "args": {
-      "path": "/tmp/volant16b-golden/missing",
+      "path": "<golden-tmp>/missing",
       "state": "file"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "file (<golden-tmp>/missing) is absent, cannot continue"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-state-file-mode": {
     "args": {
       "mode": "0600",
-      "path": "/tmp/volant16b-golden/f.txt",
+      "path": "<golden-tmp>/f.txt",
       "state": "file"
     },
     "become": false,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "file-state-file-same": {
     "args": {
-      "path": "/tmp/volant16b-golden/f.txt",
+      "path": "<golden-tmp>/f.txt",
       "state": "file"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "file",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "group-created": {
     "args": {
       "gid": 64999,
-      "name": "volantshape"
+      "name": "volantgrp"
     },
     "become": true,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "group",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "group-removed": {
     "args": {
-      "name": "volantshape",
+      "name": "volantgrp",
       "state": "absent"
     },
     "become": true,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "group",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "group-same": {
     "args": {
       "gid": 64999,
-      "name": "volantshape"
+      "name": "volantgrp"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "group",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-absent": {
     "args": {
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^d=",
       "state": "absent"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "1 line(s) removed"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-absent-same": {
     "args": {
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^d=",
       "state": "absent"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "msg": ""
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-appended": {
     "args": {
       "line": "b=2",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^b="
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -398,13 +605,19 @@
     "args": {
       "backrefs": true,
       "line": "\\1=10",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^(a)=.*"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line replaced"
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "backrefs"
   },
@@ -413,24 +626,37 @@
       "create": true,
       "line": "a=1",
       "mode": "0644",
-      "path": "/tmp/volant16b-golden/l.conf"
+      "path": "<golden-tmp>/l.conf"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-dir": {
     "args": {
       "line": "x",
-      "path": "/tmp/volant16b-golden"
+      "path": "<golden-tmp>"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "Path <golden-tmp> is a directory !"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -438,37 +664,94 @@
     "args": {
       "insertafter": "^a=",
       "line": "c=4",
-      "path": "/tmp/volant16b-golden/l.conf"
+      "path": "<golden-tmp>/l.conf"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-insertafter-last": {
+    "args": {
+      "insertafter": "^x=",
+      "line": "y=1",
+      "path": "<golden-tmp>/m.conf"
+    },
+    "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "lineinfile-last-match": {
+    "args": {
+      "line": "a=3",
+      "path": "<golden-tmp>/m.conf",
+      "regexp": "^a="
+    },
+    "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line replaced"
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-lookahead": {
     "args": {
       "line": "a=9",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^(?!#)a="
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line replaced"
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "regex syntax"
   },
   "lineinfile-missing": {
     "args": {
       "line": "a=1",
-      "path": "/tmp/volant16b-golden/l.conf"
+      "path": "<golden-tmp>/l.conf"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "Destination <golden-tmp>/l.conf does not exist !"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -476,13 +759,19 @@
     "args": {
       "line": "a=3",
       "mode": "0600",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^a="
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "ownership, perms or SE linux context changed"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -490,16 +779,22 @@
     "args": {
       "backup": true,
       "line": "a=3",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^a="
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line replaced"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
-    "volatile": [
-      "backup"
-    ],
+    "patterns": {
+      "backup": "^<golden-tmp>/l\\.conf\\.\\d+\\.\\d{4}-\\d{2}-\\d{2}@\\d{2}:\\d{2}:\\d{2}~$"
+    },
+    "unordered": [],
+    "volatile": [],
     "why": ""
   },
   "lineinfile-same": {
@@ -507,51 +802,76 @@
       "create": true,
       "line": "a=1",
       "mode": "0644",
-      "path": "/tmp/volant16b-golden/l.conf"
+      "path": "<golden-tmp>/l.conf"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "msg": ""
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-search-string": {
     "args": {
       "line": "c=5",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "search_string": "c=4"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line replaced"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-validate-fail": {
     "args": {
       "line": "e=7",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "validate": "false %s"
     },
     "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "failed to validate: rc:1 error:"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "lineinfile-validate-ok": {
     "args": {
       "line": "d=6",
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "validate": "test -s %s"
     },
     "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -560,18 +880,28 @@
       "manager": "auto"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "live",
     "expect": "native",
     "module": "package_facts",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "service-facts": {
     "args": {},
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "live",
     "expect": "native",
     "module": "service_facts",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -585,9 +915,14 @@
       ]
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "setup",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -601,9 +936,14 @@
       ]
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "setup",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -612,12 +952,17 @@
       "get_attributes": false,
       "get_checksum": false,
       "get_mime": false,
-      "path": "/tmp/volant16b-golden/f.txt"
+      "path": "<golden-tmp>/f.txt"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -630,12 +975,17 @@
   },
   "stat-dir": {
     "args": {
-      "path": "/tmp/volant16b-golden"
+      "path": "<golden-tmp>"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -648,12 +998,17 @@
   },
   "stat-file": {
     "args": {
-      "path": "/tmp/volant16b-golden/f.txt"
+      "path": "<golden-tmp>/f.txt"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -667,12 +1022,17 @@
   "stat-link-follow": {
     "args": {
       "follow": true,
-      "path": "/tmp/volant16b-golden/l"
+      "path": "<golden-tmp>/l"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -685,12 +1045,17 @@
   },
   "stat-link-nofollow": {
     "args": {
-      "path": "/tmp/volant16b-golden/l"
+      "path": "<golden-tmp>/l"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -703,12 +1068,17 @@
   },
   "stat-missing": {
     "args": {
-      "path": "/tmp/volant16b-golden/nope"
+      "path": "<golden-tmp>/nope"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -717,12 +1087,17 @@
       "checksum_algorithm": "sha1",
       "follow": false,
       "get_checksum": true,
-      "path": "/tmp/volant16b-golden/f.txt"
+      "path": "<golden-tmp>/f.txt"
     },
     "become": false,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "stat",
+    "patterns": {},
+    "unordered": [],
     "volatile": [
       "stat.atime",
       "stat.mtime",
@@ -738,9 +1113,14 @@
       "daemon_reload": true
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "systemd",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -750,11 +1130,66 @@
       "name": "cron.service"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "keys",
     "expect": "native",
     "module": "systemd_service",
+    "patterns": {},
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires",
+      "status.WantedBy"
+    ],
     "volatile": [
-      "status"
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestamp",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.ExecStart",
+      "status.ExecStartEx",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestamp",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
     ],
     "why": ""
   },
@@ -764,9 +1199,16 @@
       "state": "started"
     },
     "become": true,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "Could not find the requested service volant-no-such-unit: host"
+    },
     "compare": "exact",
     "expect": "native",
     "module": "systemd",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -777,11 +1219,66 @@
       "state": "started"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "keys",
     "expect": "native",
     "module": "systemd",
+    "patterns": {},
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires",
+      "status.WantedBy"
+    ],
     "volatile": [
-      "status"
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestamp",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.ExecStart",
+      "status.ExecStartEx",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestamp",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
     ],
     "why": ""
   },
@@ -791,25 +1288,35 @@
       "state": "absent"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "user-created": {
     "args": {
       "create_home": false,
-      "group": "volantshape",
+      "group": "volantgrp",
       "home": "/nonexistent-volantshape",
       "name": "volantshape",
       "shell": "/bin/sh",
       "uid": 64999
     },
     "become": true,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
@@ -819,9 +1326,14 @@
       "password": "!"
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "fallback",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": "password"
   },
@@ -831,41 +1343,56 @@
       "state": "absent"
     },
     "become": true,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "user-same": {
     "args": {
       "create_home": false,
-      "group": "volantshape",
+      "group": "volantgrp",
       "home": "/nonexistent-volantshape",
       "name": "volantshape",
       "shell": "/bin/sh",
       "uid": 64999
     },
     "become": true,
+    "branch": {
+      "changed": false
+    },
     "compare": "exact",
     "expect": "native",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   },
   "user-shell": {
     "args": {
       "create_home": false,
-      "group": "volantshape",
+      "group": "volantgrp",
       "home": "/nonexistent-volantshape",
       "name": "volantshape",
       "shell": "/bin/bash",
       "uid": 64999
     },
     "become": true,
+    "branch": {
+      "changed": true
+    },
     "compare": "exact",
     "expect": "native",
     "module": "user",
+    "patterns": {},
+    "unordered": [],
     "volatile": [],
     "why": ""
   }

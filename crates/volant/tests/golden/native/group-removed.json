@@ -1,7 +1,7 @@
 {
   "_ansible_no_log": false,
   "action": "group",
-  "changed": false,
+  "changed": true,
   "invocation": {
     "module_args": {
       "force": false,
@@ -9,12 +9,12 @@
       "gid_max": null,
       "gid_min": null,
       "local": false,
-      "name": "volantshape",
+      "name": "volantgrp",
       "non_unique": false,
       "state": "absent",
       "system": false
     }
   },
-  "name": "volantshape",
+  "name": "volantgrp",
   "state": "absent"
 }

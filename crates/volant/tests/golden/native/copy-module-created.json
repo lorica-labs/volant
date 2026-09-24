@@ -1,20 +1,26 @@
 {
+  "_after": {
+    "content": "one\n",
+    "exists": true,
+    "mode": "0644",
+    "type": "file"
+  },
   "_ansible_no_log": false,
   "action": "copy",
   "changed": true,
   "checksum": "c7059bb19433cc3cabaa6236c83d56668a843dd2",
-  "dest": "/tmp/volant16b-golden/c.txt",
+  "dest": "<golden-tmp>/c.txt",
   "diff": [],
-  "gid": 999999999,
-  "group": "<golden-generator-account>",
+  "gid": "<gid>",
+  "group": "<group>",
   "invocation": {
     "module_args": {
-      "_original_basename": ".y6d52x8q",
+      "_original_basename": ".qck4x9mj",
       "attributes": null,
       "backup": false,
       "checksum": "c7059bb19433cc3cabaa6236c83d56668a843dd2",
       "content": null,
-      "dest": "/tmp/volant16b-golden/c.txt",
+      "dest": "<golden-tmp>/c.txt",
       "directory_mode": null,
       "follow": false,
       "force": true,
@@ -34,9 +40,9 @@
   },
   "md5sum": "5bbf5a52328e7439ae6e719dfe712200",
   "mode": "0644",
-  "owner": "<golden-generator-account>",
+  "owner": "<user>",
   "size": 4,
   "src": "<golden-staged-path>",
   "state": "file",
-  "uid": 999999999
+  "uid": "<uid>"
 }

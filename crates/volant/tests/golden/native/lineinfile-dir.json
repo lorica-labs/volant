@@ -1,4 +1,9 @@
 {
+  "_after": {
+    "exists": true,
+    "mode": "0755",
+    "type": "directory"
+  },
   "_ansible_no_log": false,
   "action": "lineinfile",
   "changed": false,
@@ -17,7 +22,7 @@
       "line": "x",
       "mode": null,
       "owner": null,
-      "path": "/tmp/volant16b-golden",
+      "path": "<golden-tmp>",
       "regexp": null,
       "search_string": null,
       "selevel": null,
@@ -29,6 +34,6 @@
       "validate": null
     }
   },
-  "msg": "Path /tmp/volant16b-golden is a directory !",
+  "msg": "Path <golden-tmp> is a directory !",
   "rc": 256
 }

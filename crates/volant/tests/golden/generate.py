@@ -3,10 +3,13 @@
 
 The interpreter comes from the ansible-core tool environment, so PyYAML is available.
 """
+import base64
 import gzip
+import grp
 import io
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
@@ -678,34 +681,74 @@ def collection_modules():
     return 0
 
 
-# A fixed, non-temporary path, cleared at the top of every run: most of these cases measure
-# idempotence (`file-dir-same`, `lineinfile-same`), which anything left over from a previous pass
-# would turn from "changed" into "no change".
-NATIVE_TMP = "/tmp/volant16b-golden"
-NATIVE_ACCOUNT = "volantshape"
+# A fixed path, cleared at the top of every run: most of these cases measure idempotence
+# (`file-dir-same`, `lineinfile-same`), which anything left over from a previous pass would turn
+# from "changed" into "no change". Under /var/tmp rather than /tmp: /tmp is often tmpfs, where
+# `lsattr` fails (stat's `attributes` come back empty) and a directory's size counts its entries;
+# /var/tmp sits on the root filesystem, ext4 on the development machine and on the CI runners.
+NATIVE_TMP = "/var/tmp/volant-golden-native"
+NATIVE_USER = "volantshape"
+# A group of its own, not the user's name: `userdel` deletes a primary group named after the user,
+# which would leave `group-removed` nothing to remove.
+NATIVE_GROUP = "volantgrp"
 STAT_VOLATILE = [f"stat.{key}" for key in ("atime", "mtime", "ctime", "inode", "dev", "version")]
-# Modules whose owner/group/uid/gid name the account that ran the generator. `user` and `group`
-# are left alone: theirs name the synthetic account the cases create.
-ACCOUNT_KEYED = ("stat", "file", "copy", "lineinfile")
+# The `systemctl show` properties that move while a unit runs: times, process ids, the invocation,
+# resource counters, and ExecStart, which quotes the main process's pid and start time. Every other
+# `status` value is compared.
+LIVE_STATUS = re.compile(
+    r"Timestamp|^(Main|Control|ExecMain)PID$|^InvocationID$|^ControlGroupId$|^CPUUsageNSec$"
+    r"|(Current|Peak)$|^MemoryAvailable$|^IO(Read|Write)(Bytes|Operations)$"
+    r"|^IP(Ingress|Egress)(Bytes|Packets)$|^ExecStart(Ex)?$|^NRestarts$"
+)
+# The `systemctl show` properties that list units, which systemd prints out of a hash set: the
+# same unit gives `After=a b` on one query and `After=b a` on the next (measured). Compared as sets
+# of space-separated words.
+SET_STATUS = re.compile(
+    r"^(Requires|Requisite|Wants|BindsTo|PartOf|Upholds|RequiredBy|RequisiteOf|WantedBy|BoundBy"
+    r"|UpheldBy|ConsistsOf|Conflicts|ConflictedBy|Before|After|OnSuccess|OnSuccessOf|OnFailure"
+    r"|OnFailureOf|Triggers|TriggeredBy|PropagatesReloadTo|ReloadPropagatedFrom|PropagatesStopTo"
+    r"|StopPropagatedFrom|JoinsNamespaceOf|RequiresMountsFor|WantsMountsFor|Names|DropInPaths)$"
+)
+# What the reference appends to a file's name for its backup: `.<pid>.<YYYY-MM-DD@HH:MM:SS>~`.
+BACKUP_SUFFIX = r"\.\d+\.\d{4}-\d{2}-\d{2}@\d{2}:\d{2}:\d{2}~$"
 # What `package_facts` and `service_facts` keep of the machine's full inventory. Both are compared
 # live, against a reference run next to the native one, so the recording only has to show the
 # shape of an entry; the full lists would also name every package and unit of the machine that
 # ran the generator.
 LIVE_KEEP = {"packages": ("bash",), "services": ("cron.service", "systemd-journald.service")}
 
-
+TMP_PLACEHOLDER = "<golden-tmp>"
 HOST_PLACEHOLDER = "<golden-generator-host>"
 
 
-def _redact_host(value, host):
-    """The generating machine's name, wherever a string carries it: `user`'s invocation holds
-    `ssh_key_comment: "ansible-generated on <hostname>"` even when no key is generated."""
+def _replace_in_strings(value, replacements):
+    """NATIVE_TMP and the generating machine's name, wherever a string carries them: `user`'s
+    invocation holds `ssh_key_comment: "ansible-generated on <hostname>"` even when no key is
+    generated."""
     if isinstance(value, str):
-        return value.replace(host, HOST_PLACEHOLDER)
+        for old, new in replacements:
+            value = value.replace(old, new)
+        return value
     if isinstance(value, list):
-        return [_redact_host(v, host) for v in value]
+        return [_replace_in_strings(v, replacements) for v in value]
     if isinstance(value, dict):
-        return {k: _redact_host(v, host) for k, v in value.items()}
+        return {k: _replace_in_strings(v, replacements) for k, v in value.items()}
+    return value
+
+
+def _mask_account(value, by_key):
+    """Replace an ownership value only where it is the generating account's own: `root`, `0`, the
+    synthetic account and anything else stay literal, so a native answering the wrong account, or
+    `pw_name` where `gr_name` belongs, still differs once both sides are masked."""
+    if isinstance(value, list):
+        return [_mask_account(v, by_key) for v in value]
+    if isinstance(value, dict):
+        out = {}
+        for key, v in value.items():
+            real, placeholder = by_key.get(key, (None, None))
+            mine = real is not None and not isinstance(v, bool) and v == real
+            out[key] = placeholder if mine else _mask_account(v, by_key)
+        return out
     return value
 
 
@@ -718,11 +761,20 @@ def natives():
     and, in native/index.json, the path an enabled native has to take for each one.
 
     The cases run in one play, in the order below, each one meeting the state the previous ones
-    left. `invocation` is kept: a native produces it too. The index says, per case, how a result
-    is compared: `exact` key by key, `keys` the same key set with values compared too, and `live`
-    against a reference run made next to the native one, the recording giving only the shape.
-    `volatile` lists the dotted paths whose value is never compared (`status` keeps its keys, its
-    values are replaced by a placeholder); a backup path is `<dest>.<pid>.<date>~`.
+    left. `invocation` is kept: a native produces it too. NATIVE_TMP reads `<golden-tmp>`
+    everywhere, the index's `args` included; the generating account reads `<user>`, `<group>`,
+    `<uid>`, `<gid>` under the ownership keys, every other value is literal.
+
+    An index entry says how a result is compared: `exact` key by key, `keys` the same key set with
+    values compared too, `live` against a reference run made next to the native one, the recording
+    giving only the shape. `volatile` lists the dotted paths whose value is not compared;
+    `patterns` maps a path to the regex its value must match instead (a backup's name);
+    `unordered` lists the paths whose value is a space-separated set (systemd's unit lists). `branch`
+    is what the reference's answer must show for the case to be the one its name claims; the
+    generator fails when a recording disagrees.
+
+    A `file`, `copy` or `lineinfile` case also records `_after`, read back once the task is done:
+    whether its path exists, its type and mode, a regular file's content, and a backup's content.
 
     The cases with `become` need `sudo -n` and are left out without it; so are the two `cron`
     ones on a machine where cron is not both active and enabled, as `systemd-enabled-only` would
@@ -736,27 +788,50 @@ def natives():
         print("sudo -n true failed: the become cases are not recorded", file=sys.stderr)
     elif not cron:
         print("cron is not active and enabled: the two cron cases are not recorded", file=sys.stderr)
+    to_placeholder = [(t, TMP_PLACEHOLDER), (socket.gethostname(), HOST_PLACEHOLDER)]
 
     tasks = []
     index = {}
+    # Case name -> the result key naming its backup, or None, for every case recording `_after`.
+    read_back = {}
 
-    def case(name, module, args, expect="native", why="", compare="exact", volatile=(), become=False, ignore=False):
+    def case(name, module, args, branch, expect="native", why="", compare="exact", volatile=(), become=False):
         if become and not sudo:
             return
-        task = {"name": name, module: args}
+        task = {"name": name, module: args, "register": "last"}
         if become:
             task["become"] = True
-        if ignore:
+        # Exactly the cases meant to fail: `ignore_errors` anywhere else would hide a case that
+        # left its branch.
+        if branch.get("failed"):
             task["ignore_errors"] = True
         tasks.append(task)
+        patterns = {}
+        if module in ("file", "copy", "lineinfile"):
+            target = args.get("path") or args.get("dest")
+            backup = ("backup_file" if module == "copy" else "backup") if args.get("backup") else None
+            tasks.append({
+                "name": f"after-stat-{name}",
+                "stat": {"path": target, "get_checksum": False, "get_mime": False, "get_attributes": False},
+                "register": "after",
+            })
+            tasks.append({"name": f"after-content-{name}", "slurp": {"src": target}, "when": "after.stat.isreg | default(false)"})
+            if backup:
+                tasks.append({"name": f"after-backup-{name}", "slurp": {"src": "{{ last.%s }}" % backup}})
+                masked = _replace_in_strings(target, to_placeholder)
+                patterns[backup] = "^" + masked.replace(".", r"\.") + BACKUP_SUFFIX
+            read_back[name] = backup
         index[name] = {
             "module": module,
-            "args": args,
+            "args": _replace_in_strings(args, to_placeholder),
             "become": become,
             "expect": expect,
             "why": why,
             "compare": compare,
             "volatile": list(volatile),
+            "patterns": patterns,
+            "unordered": [],
+            "branch": branch,
         }
 
     def setup(module, args, become=False):
@@ -767,6 +842,12 @@ def natives():
             task["become"] = True
         tasks.append(task)
 
+    same = {"changed": False}
+    changed = {"changed": True}
+
+    def failed(msg):
+        return {"changed": False, "failed": True, "msg": msg}
+
     for name, args in [
         ("stat-file", {"path": f"{t}/f.txt"}),
         ("stat-dir", {"path": t}),
@@ -776,25 +857,48 @@ def natives():
         ("stat-plugin", {"path": f"{t}/f.txt", "follow": False, "get_checksum": True, "checksum_algorithm": "sha1"}),
         ("stat-bare", {"path": f"{t}/f.txt", "get_checksum": False, "get_mime": False, "get_attributes": False}),
     ]:
-        case(name, "stat", args, volatile=() if name == "stat-missing" else STAT_VOLATILE)
+        case(name, "stat", args, same, volatile=() if name == "stat-missing" else STAT_VOLATILE)
 
-    case("file-absent-missing", "file", {"path": f"{t}/gone", "state": "absent"})
+    case("file-absent-missing", "file", {"path": f"{t}/gone", "state": "absent"}, same)
     setup("file", {"path": f"{t}/d0", "state": "directory"})
-    case("file-absent-present", "file", {"path": f"{t}/d0", "state": "absent"})
-    case("file-dir-created", "file", {"path": f"{t}/a/b", "state": "directory", "mode": "0755"})
-    case("file-dir-same", "file", {"path": f"{t}/a/b", "state": "directory", "mode": 493})
-    case("file-dir-symbolic", "file", {"path": f"{t}/a/b", "state": "directory", "mode": "u=rwx,g=rx,o="})
-    case("file-dest-alias", "file", {"dest": f"{t}/a/b", "state": "directory"})
-    case("file-state-file-missing", "file", {"path": f"{t}/missing", "state": "file"}, ignore=True)
-    case("file-state-file-same", "file", {"path": f"{t}/f.txt", "state": "file"})
-    case("file-state-file-mode", "file", {"path": f"{t}/f.txt", "state": "file", "mode": "0600"})
-    case("file-dir-over-file", "file", {"path": f"{t}/f.txt", "state": "directory"}, ignore=True)
-    case("file-owner-unknown", "file", {"path": f"{t}/f.txt", "owner": "volant-no-such-user"}, ignore=True)
-    case("file-link", "file", {"path": f"{t}/l2", "src": f"{t}/f.txt", "state": "link"}, "fallback", "state link")
+    case("file-absent-present", "file", {"path": f"{t}/d0", "state": "absent"}, changed)
+    case("file-dir-created", "file", {"path": f"{t}/a/b", "state": "directory", "mode": "0755"}, changed)
+    case("file-dir-same", "file", {"path": f"{t}/a/b", "state": "directory", "mode": 493}, same)
+    case("file-dir-symbolic", "file", {"path": f"{t}/a/b", "state": "directory", "mode": "u=rwx,g=rx,o="}, changed)
+    case("file-dest-alias", "file", {"dest": f"{t}/a/b", "state": "directory"}, same)
+    case(
+        "file-state-file-missing",
+        "file",
+        {"path": f"{t}/missing", "state": "file"},
+        failed(f"file ({TMP_PLACEHOLDER}/missing) is absent, cannot continue"),
+    )
+    case("file-state-file-same", "file", {"path": f"{t}/f.txt", "state": "file"}, same)
+    case("file-state-file-mode", "file", {"path": f"{t}/f.txt", "state": "file", "mode": "0600"}, changed)
+    case(
+        "file-dir-over-file",
+        "file",
+        {"path": f"{t}/f.txt", "state": "directory"},
+        failed(f"{TMP_PLACEHOLDER}/f.txt already exists as a file"),
+    )
+    case(
+        "file-owner-unknown",
+        "file",
+        {"path": f"{t}/f.txt", "owner": "volant-no-such-user"},
+        failed("chown failed: failed to look up user volant-no-such-user"),
+    )
+    # Without become: the kernel refuses to give the generating account's file to root.
+    case(
+        "file-chown-denied",
+        "file",
+        {"path": f"{t}/f.txt", "owner": "root"},
+        failed("chown failed"),
+    )
+    case("file-link", "file", {"path": f"{t}/l2", "src": f"{t}/f.txt", "state": "link"}, changed, "fallback", "state link")
     case(
         "file-recurse",
         "file",
         {"path": f"{t}/a", "state": "directory", "recurse": True, "mode": "0755"},
+        changed,
         "fallback",
         "recurse",
     )
@@ -802,52 +906,79 @@ def natives():
     # `content` reaches the module as a file the reference writes on the controller under a random
     # name, which the invocation quotes.
     staged = ["invocation.module_args._original_basename"]
-    case("copy-module-created", "copy", {"content": "one\n", "dest": f"{t}/c.txt", "mode": "0644"}, volatile=staged)
+    case("copy-module-created", "copy", {"content": "one\n", "dest": f"{t}/c.txt", "mode": "0644"}, changed, volatile=staged)
     case(
         "copy-module-modified-backup",
         "copy",
         {"content": "two\n", "dest": f"{t}/c.txt", "backup": True},
-        volatile=["backup_file", *staged],
+        changed,
+        volatile=staged,
     )
     case(
         "copy-module-validate-fail",
         "copy",
         {"content": "", "dest": f"{t}/v.txt", "validate": "test -s %s"},
+        failed("failed to validate"),
         volatile=staged,
-        ignore=True,
     )
-    case("copy-module-no-dir", "copy", {"content": "x\n", "dest": f"{t}/nodir/x.txt"}, volatile=staged, ignore=True)
+    case(
+        "copy-module-no-dir",
+        "copy",
+        {"content": "x\n", "dest": f"{t}/nodir/x.txt"},
+        failed(f"Destination directory {TMP_PLACEHOLDER}/nodir does not exist"),
+        volatile=staged,
+    )
     case(
         "copy-module-remote-src",
         "copy",
         {"src": f"{t}/f.txt", "dest": f"{t}/r.txt", "remote_src": True},
+        changed,
         "fallback",
         "remote_src",
     )
 
     conf = f"{t}/l.conf"
-    case("lineinfile-missing", "lineinfile", {"path": conf, "line": "a=1"}, ignore=True)
-    case("lineinfile-created", "lineinfile", {"path": conf, "line": "a=1", "create": True, "mode": "0644"})
-    case("lineinfile-same", "lineinfile", {"path": conf, "line": "a=1", "create": True, "mode": "0644"})
-    case("lineinfile-appended", "lineinfile", {"path": conf, "regexp": "^b=", "line": "b=2"})
+    added = {"changed": True, "msg": "line added"}
+    replaced = {"changed": True, "msg": "line replaced"}
+    unchanged = {"changed": False, "msg": ""}
+    case(
+        "lineinfile-missing",
+        "lineinfile",
+        {"path": conf, "line": "a=1"},
+        failed(f"Destination {TMP_PLACEHOLDER}/l.conf does not exist !"),
+    )
+    case("lineinfile-created", "lineinfile", {"path": conf, "line": "a=1", "create": True, "mode": "0644"}, added)
+    case("lineinfile-same", "lineinfile", {"path": conf, "line": "a=1", "create": True, "mode": "0644"}, unchanged)
+    case("lineinfile-appended", "lineinfile", {"path": conf, "regexp": "^b=", "line": "b=2"}, added)
     case(
         "lineinfile-replaced-backup",
         "lineinfile",
         {"path": conf, "regexp": "^a=", "line": "a=3", "backup": True},
-        volatile=["backup"],
+        replaced,
     )
-    case("lineinfile-mode", "lineinfile", {"path": conf, "regexp": "^a=", "line": "a=3", "mode": "0600"})
-    case("lineinfile-insertafter", "lineinfile", {"path": conf, "line": "c=4", "insertafter": "^a="})
-    case("lineinfile-search-string", "lineinfile", {"path": conf, "search_string": "c=4", "line": "c=5"})
-    case("lineinfile-validate-ok", "lineinfile", {"path": conf, "line": "d=6", "validate": "test -s %s"})
-    case("lineinfile-validate-fail", "lineinfile", {"path": conf, "line": "e=7", "validate": "false %s"}, ignore=True)
-    case("lineinfile-absent", "lineinfile", {"path": conf, "regexp": "^d=", "state": "absent"})
-    case("lineinfile-absent-same", "lineinfile", {"path": conf, "regexp": "^d=", "state": "absent"})
-    case("lineinfile-dir", "lineinfile", {"path": t, "line": "x"}, ignore=True)
+    case(
+        "lineinfile-mode",
+        "lineinfile",
+        {"path": conf, "regexp": "^a=", "line": "a=3", "mode": "0600"},
+        {"changed": True, "msg": "ownership, perms or SE linux context changed"},
+    )
+    case("lineinfile-insertafter", "lineinfile", {"path": conf, "line": "c=4", "insertafter": "^a="}, added)
+    case("lineinfile-search-string", "lineinfile", {"path": conf, "search_string": "c=4", "line": "c=5"}, replaced)
+    case("lineinfile-validate-ok", "lineinfile", {"path": conf, "line": "d=6", "validate": "test -s %s"}, added)
+    case(
+        "lineinfile-validate-fail",
+        "lineinfile",
+        {"path": conf, "line": "e=7", "validate": "false %s"},
+        failed("failed to validate: rc:1 error:"),
+    )
+    case("lineinfile-absent", "lineinfile", {"path": conf, "regexp": "^d=", "state": "absent"}, {"changed": True, "msg": "1 line(s) removed"})
+    case("lineinfile-absent-same", "lineinfile", {"path": conf, "regexp": "^d=", "state": "absent"}, unchanged)
+    case("lineinfile-dir", "lineinfile", {"path": t, "line": "x"}, failed(f"Path {TMP_PLACEHOLDER} is a directory !"))
     case(
         "lineinfile-lookahead",
         "lineinfile",
         {"path": conf, "regexp": "^(?!#)a=", "line": "a=9"},
+        replaced,
         "fallback",
         "regex syntax",
     )
@@ -855,40 +986,65 @@ def natives():
         "lineinfile-backrefs",
         "lineinfile",
         {"path": conf, "regexp": "^(a)=.*", "line": "\\1=10", "backrefs": True},
+        replaced,
         "fallback",
         "backrefs",
     )
+    # Two matches of each expression, neither of them on the last line: the reference replaces the
+    # last `^a=` and inserts after the last `^x=`, which a native acting on the first match, or
+    # appending at the end, would not reproduce in `_after`.
+    many = f"{t}/m.conf"
+    setup("copy", {"content": "a=1\nx=1\na=2\nx=2\nz=0\n", "dest": many, "mode": "0644"})
+    case("lineinfile-last-match", "lineinfile", {"path": many, "regexp": "^a=", "line": "a=3"}, replaced)
+    case("lineinfile-insertafter-last", "lineinfile", {"path": many, "line": "y=1", "insertafter": "^x="}, added)
 
     if cron:
         case(
             "systemd-started-same",
             "systemd",
             {"name": "cron", "state": "started", "enabled": True},
+            same,
             compare="keys",
-            volatile=["status"],
             become=True,
         )
         case(
             "systemd-enabled-only",
             "systemd_service",
             {"name": "cron.service", "enabled": True},
+            same,
             compare="keys",
-            volatile=["status"],
             become=True,
         )
-    case("systemd-daemon-reload", "systemd", {"daemon_reload": True}, become=True)
-    case("systemd-missing-unit", "systemd", {"name": "volant-no-such-unit", "state": "started"}, become=True, ignore=True)
+    case("systemd-daemon-reload", "systemd", {"daemon_reload": True}, same, become=True)
+    case(
+        "systemd-missing-unit",
+        "systemd",
+        {"name": "volant-no-such-unit", "state": "started"},
+        failed("Could not find the requested service volant-no-such-unit: host"),
+        become=True,
+    )
 
     cache_time = ["cache_update_time"]
-    case("apt-present-installed", "apt", {"name": "bash", "state": "present"}, volatile=cache_time, become=True)
-    case("apt-present-list", "apt", {"name": ["bash", "coreutils"], "state": "present"}, volatile=cache_time, become=True)
-    case("apt-absent-missing", "apt", {"name": "volant-no-such-package", "state": "absent"}, become=True)
-    setup("apt", {"update_cache": True}, become=True)
-    case("apt-update-fresh", "apt", {"update_cache": True, "cache_valid_time": 86400}, volatile=cache_time, become=True)
+    fresh = {"changed": False, "cache_updated": False}
+    case("apt-present-installed", "apt", {"name": "bash", "state": "present"}, fresh, volatile=cache_time, become=True)
+    case("apt-present-list", "apt", {"name": ["bash", "coreutils"], "state": "present"}, fresh, volatile=cache_time, become=True)
+    case("apt-absent-missing", "apt", {"name": "volant-no-such-package", "state": "absent"}, same, become=True)
+    case(
+        "apt-update-always",
+        "apt",
+        {"update_cache": True},
+        {"cache_updated": True},
+        "fallback",
+        "update_cache without cache_valid_time",
+        volatile=cache_time,
+        become=True,
+    )
+    case("apt-update-fresh", "apt", {"update_cache": True, "cache_valid_time": 86400}, fresh, volatile=cache_time, become=True)
     case(
         "apt-present-update-fresh",
         "apt",
         {"name": "bash", "update_cache": True, "cache_valid_time": 86400},
+        fresh,
         volatile=cache_time,
         become=True,
     )
@@ -896,42 +1052,43 @@ def natives():
         "apt-present-unknown",
         "apt",
         {"name": "volant-no-such-package", "state": "present"},
+        failed("No package matching 'volant-no-such-package' is available"),
         "fallback",
         "not installed",
         become=True,
-        ignore=True,
     )
-    case("package-facts", "package_facts", {"manager": "auto"}, compare="live", become=True)
-    case("service-facts", "service_facts", {}, compare="live", become=True)
-    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]})
-    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]})
+    case("package-facts", "package_facts", {"manager": "auto"}, same, compare="live", become=True)
+    case("service-facts", "service_facts", {}, same, compare="live", become=True)
+    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same)
+    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same)
 
-    # The account and group are removed before the first case, in case an interrupted run left
-    # them behind (`group-created` would record "no change"), and again in `always`, which runs
-    # even when a case fails.
+    # The account and group are removed before the first case that creates them, in case an
+    # interrupted run left them behind (`group-created` would record "no change"), and again in
+    # `always`, which runs even when a case fails.
     removal = [
-        {"name": f"cleanup-{module}", module: {"name": NATIVE_ACCOUNT, "state": "absent"}, "become": True}
-        for module in ("user", "group")
+        {"name": f"cleanup-{module}", module: {"name": who, "state": "absent"}, "become": True}
+        for module, who in (("user", NATIVE_USER), ("group", NATIVE_GROUP))
     ]
     if sudo:
         tasks.extend(dict(task, name=f"{task['name']}-before") for task in removal)
     account = {
-        "name": NATIVE_ACCOUNT,
+        "name": NATIVE_USER,
         "uid": 64999,
-        "group": NATIVE_ACCOUNT,
+        "group": NATIVE_GROUP,
         "shell": "/bin/sh",
         "create_home": False,
         "home": "/nonexistent-volantshape",
     }
-    case("group-created", "group", {"name": NATIVE_ACCOUNT, "gid": 64999}, become=True)
-    case("group-same", "group", {"name": NATIVE_ACCOUNT, "gid": 64999}, become=True)
-    case("user-created", "user", account, become=True)
-    case("user-same", "user", account, become=True)
-    case("user-shell", "user", dict(account, shell="/bin/bash"), become=True)
-    case("user-password", "user", {"name": NATIVE_ACCOUNT, "password": "!"}, "fallback", "password", become=True)
-    case("user-removed", "user", {"name": NATIVE_ACCOUNT, "state": "absent"}, become=True)
-    case("user-absent-missing", "user", {"name": NATIVE_ACCOUNT, "state": "absent"}, become=True)
-    case("group-removed", "group", {"name": NATIVE_ACCOUNT, "state": "absent"}, become=True)
+    case("group-created", "group", {"name": NATIVE_GROUP, "gid": 64999}, changed, become=True)
+    case("group-same", "group", {"name": NATIVE_GROUP, "gid": 64999}, same, become=True)
+    case("user-created", "user", account, changed, become=True)
+    case("user-same", "user", account, same, become=True)
+    case("user-shell", "user", dict(account, shell="/bin/bash"), changed, become=True)
+    # `!` is already what `useradd` left in shadow: no change, which the path check still catches.
+    case("user-password", "user", {"name": NATIVE_USER, "password": "!"}, same, "fallback", "password", become=True)
+    case("user-removed", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
+    case("user-absent-missing", "user", {"name": NATIVE_USER, "state": "absent"}, same, become=True)
+    case("group-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
 
     block = {"block": tasks}
     if sudo:
@@ -955,8 +1112,8 @@ def natives():
     os.symlink("f.txt", f"{t}/l")
     umask = os.umask(0o022)
     try:
-        # The playbook lives outside NATIVE_TMP: `stat-dir` reports that directory's size and link
-        # count, which should depend on the fixture alone.
+        # The playbook lives outside NATIVE_TMP: `stat-dir` reports that directory's link count,
+        # which should depend on the fixture alone.
         with tempfile.TemporaryDirectory() as tmp:
             playbook = os.path.join(tmp, "natives.yml")
             # JSON, which is YAML: safe_dump would write an argument dict two cases share as an
@@ -967,9 +1124,9 @@ def natives():
     finally:
         os.umask(umask)
     if sudo:
-        left = [db for db in ("passwd", "group") if _succeeds("getent", db, NATIVE_ACCOUNT)]
+        left = [f"{db} {who}" for db, who in (("passwd", NATIVE_USER), ("group", NATIVE_GROUP)) if _succeeds("getent", db, who)]
         if left:
-            print(f"{NATIVE_ACCOUNT} is still in {' and '.join(left)}; remove it by hand", file=sys.stderr)
+            print(f"still on this machine: {', '.join(left)}; remove by hand", file=sys.stderr)
             return 1
     if run.returncode:
         print(f"ansible-playbook exited {run.returncode} while recording the native cases", file=sys.stderr)
@@ -978,20 +1135,55 @@ def natives():
 
     report = json.loads(run.stdout)
     outcomes = {task["task"]["name"]: task["hosts"]["localhost"] for task in report["plays"][0]["tasks"]}
-    destination = os.path.join(HERE, "native")
-    os.makedirs(destination, exist_ok=True)
+    me = pwd.getpwuid(os.getuid())
+    by_key = {
+        "owner": (me.pw_name, "<user>"),
+        "pw_name": (me.pw_name, "<user>"),
+        "group": (grp.getgrgid(os.getgid()).gr_name, "<group>"),
+        "gr_name": (grp.getgrgid(os.getgid()).gr_name, "<group>"),
+        "uid": (os.getuid(), "<uid>"),
+        "gid": (os.getgid(), "<gid>"),
+    }
+    results = {}
+    wrong = []
     for name, spec in index.items():
-        result = _redact_host(_redact_staged_paths(outcomes[name]), socket.gethostname())
-        if spec["module"] in ACCOUNT_KEYED:
-            _redact_account(result, ("owner", "group"), ("uid", "gid"))
-            if isinstance(result.get("stat"), dict):
-                _redact_account(result["stat"], ("pw_name", "gr_name"), ("uid", "gid"))
-        if "status" in spec["volatile"]:
-            _redact_service_status(result)
+        result = _replace_in_strings(_redact_staged_paths(outcomes[name]), to_placeholder)
+        result = _mask_account(result, by_key)
+        status = result.get("status")
+        if isinstance(status, dict):
+            spec["volatile"] += [f"status.{key}" for key in sorted(status) if LIVE_STATUS.search(key)]
+            spec["unordered"] = [f"status.{key}" for key in sorted(status) if SET_STATUS.search(key)]
         facts = result.get("ansible_facts", {})
         for key, keep in LIVE_KEEP.items():
             if isinstance(facts.get(key), dict):
                 facts[key] = {k: v for k, v in facts[key].items() if k in keep}
+        if name in read_back:
+            stat_info = outcomes[f"after-stat-{name}"]["stat"]
+            after = {"exists": stat_info["exists"]}
+            if stat_info["exists"]:
+                after["type"] = "directory" if stat_info["isdir"] else "link" if stat_info["islnk"] else "file"
+                after["mode"] = stat_info["mode"]
+            content = outcomes[f"after-content-{name}"]
+            if not content.get("skipped"):
+                after["content"] = base64.b64decode(content["content"]).decode()
+            if read_back[name]:
+                after["backup_content"] = base64.b64decode(outcomes[f"after-backup-{name}"]["content"]).decode()
+            result["_after"] = after
+        for key, want in dict({"failed": False}, **spec["branch"]).items():
+            got = result.get(key, False if key == "failed" else None)
+            if got != want:
+                wrong.append(f"{name}: {key} is {got!r}, not {want!r}")
+        for key, pattern in spec["patterns"].items():
+            if not re.search(pattern, str(result.get(key))):
+                wrong.append(f"{name}: {key} {result.get(key)!r} does not match {pattern}")
+        results[name] = result
+    if wrong:
+        print("cases that did not land on the branch their name claims:", *wrong, sep="\n  ", file=sys.stderr)
+        return 1
+
+    destination = os.path.join(HERE, "native")
+    os.makedirs(destination, exist_ok=True)
+    for name, result in results.items():
         with open(os.path.join(destination, f"{name}.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False, sort_keys=True)
             f.write("\n")

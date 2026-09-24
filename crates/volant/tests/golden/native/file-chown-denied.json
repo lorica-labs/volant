@@ -1,12 +1,15 @@
 {
   "_after": {
+    "content": "hello\n",
     "exists": true,
-    "mode": "0750",
-    "type": "directory"
+    "mode": "0600",
+    "type": "file"
   },
   "_ansible_no_log": false,
   "action": "file",
   "changed": false,
+  "exception": "(traceback unavailable)",
+  "failed": true,
   "gid": "<gid>",
   "group": "<group>",
   "invocation": {
@@ -16,29 +19,29 @@
       "access_time": null,
       "access_time_format": "%Y%m%d%H%M.%S",
       "attributes": null,
-      "dest": "<golden-tmp>/a/b",
       "follow": true,
       "force": false,
       "group": null,
       "mode": null,
       "modification_time": null,
       "modification_time_format": "%Y%m%d%H%M.%S",
-      "owner": null,
-      "path": "<golden-tmp>/a/b",
+      "owner": "root",
+      "path": "<golden-tmp>/f.txt",
       "recurse": false,
       "selevel": null,
       "serole": null,
       "setype": null,
       "seuser": null,
       "src": null,
-      "state": "directory",
+      "state": "file",
       "unsafe_writes": false
     }
   },
-  "mode": "0750",
+  "mode": "0600",
+  "msg": "chown failed",
   "owner": "<user>",
-  "path": "<golden-tmp>/a/b",
-  "size": 4096,
-  "state": "directory",
+  "path": "<golden-tmp>/f.txt",
+  "size": 6,
+  "state": "file",
   "uid": "<uid>"
 }

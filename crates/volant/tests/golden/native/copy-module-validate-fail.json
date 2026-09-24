@@ -1,4 +1,7 @@
 {
+  "_after": {
+    "exists": false
+  },
   "_ansible_no_log": false,
   "action": "copy",
   "changed": false,
@@ -9,12 +12,12 @@
   "failed": true,
   "invocation": {
     "module_args": {
-      "_original_basename": ".9w595szt",
+      "_original_basename": ".lz7kv6xg",
       "attributes": null,
       "backup": false,
       "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
       "content": null,
-      "dest": "/tmp/volant16b-golden/v.txt",
+      "dest": "<golden-tmp>/v.txt",
       "directory_mode": null,
       "follow": false,
       "force": true,

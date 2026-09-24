@@ -1,4 +1,10 @@
 {
+  "_after": {
+    "content": "a=10\nc=5\nb=2\n",
+    "exists": true,
+    "mode": "0600",
+    "type": "file"
+  },
   "_ansible_no_log": false,
   "action": "lineinfile",
   "backup": "",
@@ -6,13 +12,13 @@
   "diff": [
     {
       "after": "",
-      "after_header": "/tmp/volant16b-golden/l.conf (content)",
+      "after_header": "<golden-tmp>/l.conf (content)",
       "before": "",
-      "before_header": "/tmp/volant16b-golden/l.conf (content)"
+      "before_header": "<golden-tmp>/l.conf (content)"
     },
     {
-      "after_header": "/tmp/volant16b-golden/l.conf (file attributes)",
-      "before_header": "/tmp/volant16b-golden/l.conf (file attributes)"
+      "after_header": "<golden-tmp>/l.conf (file attributes)",
+      "before_header": "<golden-tmp>/l.conf (file attributes)"
     }
   ],
   "invocation": {
@@ -28,7 +34,7 @@
       "line": "\\1=10",
       "mode": null,
       "owner": null,
-      "path": "/tmp/volant16b-golden/l.conf",
+      "path": "<golden-tmp>/l.conf",
       "regexp": "^(a)=.*",
       "search_string": null,
       "selevel": null,

@@ -1,9 +1,14 @@
 {
+  "_after": {
+    "exists": true,
+    "mode": "0755",
+    "type": "directory"
+  },
   "_ansible_no_log": false,
   "action": "file",
   "changed": true,
-  "gid": 999999999,
-  "group": "<golden-generator-account>",
+  "gid": "<gid>",
+  "group": "<group>",
   "invocation": {
     "module_args": {
       "_diff_peek": null,
@@ -18,7 +23,7 @@
       "modification_time": null,
       "modification_time_format": "%Y%m%d%H%M.%S",
       "owner": null,
-      "path": "/tmp/volant16b-golden/a/b",
+      "path": "<golden-tmp>/a/b",
       "recurse": false,
       "selevel": null,
       "serole": null,
@@ -30,9 +35,9 @@
     }
   },
   "mode": "0755",
-  "owner": "<golden-generator-account>",
-  "path": "/tmp/volant16b-golden/a/b",
-  "size": 40,
+  "owner": "<user>",
+  "path": "<golden-tmp>/a/b",
+  "size": 4096,
   "state": "directory",
-  "uid": 999999999
+  "uid": "<uid>"
 }

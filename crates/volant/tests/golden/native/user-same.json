@@ -15,7 +15,7 @@
       "expires": null,
       "force": false,
       "generate_ssh_key": null,
-      "group": "volantshape",
+      "group": "volantgrp",
       "groups": null,
       "hidden": null,
       "home": "/nonexistent-volantshape",

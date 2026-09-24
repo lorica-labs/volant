@@ -419,7 +419,7 @@ bench runs="3":
 
     ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
     ansible_core_version="$("$ansible_playbook" --version | head -1)"
-    volant_version="$(git describe --always --dirty)"
+    volant_version="$(git describe --always --dirty 2>/dev/null || echo unknown)"
     stamp="$(date -u +%Y-%m-%dT%H%MZ)"
     mkdir -p target/bench
 
@@ -785,7 +785,7 @@ bench-k3s runs="3":
 
     ansible_playbook="$(uv tool dir)/ansible-core/bin/ansible-playbook"
     ansible_core_version="$("$ansible_playbook" --version | head -1)"
-    volant_version="$(git describe --always --dirty)"
+    volant_version="$(git describe --always --dirty 2>/dev/null || echo unknown)"
     stamp="$(date -u +%Y-%m-%dT%H%MZ)"
     mkdir -p target/bench
 

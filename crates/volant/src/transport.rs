@@ -674,12 +674,14 @@ impl SshTarget {
         format!("{}/volant-agent", self.cache_dir())
     }
 
-    /// Prints the cached agent's version, or the machine architecture followed by exit 42. A
-    /// cached agent that cannot run exits 45 and `uname` failing exits 46, so neither hands
-    /// its own status back to `ssh`, where 255 would read as a connection failure.
+    /// Prints the machine architecture, then the cached agent's version and the hash of its own
+    /// file, or exits 42 when no agent is cached. The architecture names the binary this
+    /// controller would upload, whose hash decides whether the cached one is reused. A cached
+    /// agent that cannot run exits 45 and `uname` failing exits 46, so neither hands its own
+    /// status back to `ssh`, where 255 would read as a connection failure.
     pub fn probe_command(&self) -> String {
         format!(
-            "a={agent}; if [ -x \"$a\" ]; then \"$a\" --version || {{ echo \"exit status $?\" >&2; exit {EXIT_AGENT_UNRUNNABLE}; }}; else uname -m || exit {EXIT_UNAME_FAILED}; exit {EXIT_AGENT_MISSING}; fi",
+            "uname -m || exit {EXIT_UNAME_FAILED}; a={agent}; if [ -x \"$a\" ]; then \"$a\" --version --build-id || {{ echo \"exit status $?\" >&2; exit {EXIT_AGENT_UNRUNNABLE}; }}; else exit {EXIT_AGENT_MISSING}; fi",
             agent = shell_word(&self.agent_path())
         )
     }
@@ -814,9 +816,9 @@ impl SshTarget {
             .await
     }
 
-    /// Makes sure the host has this exact agent version cached for the link's target user,
+    /// Makes sure the host has this exact agent binary cached for the link's target user,
     /// uploading it if it does not. Every way out other than `Ok(())` is a `ConnectError`, so
-    /// no caller can go on to run a missing, stale or wrong-architecture agent.
+    /// no caller can go on to run a missing, stale, foreign or wrong-architecture agent.
     /// `probed` is that first probe already run, which is what the escalation check runs to
     /// settle the `sudo` form.
     async fn bootstrap(
@@ -825,7 +827,6 @@ impl SshTarget {
         escalated: Escalated<'_>,
         probed: Option<Captured>,
     ) -> Result<(), ConnectError> {
-        let expected = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
         let probe = match probed {
             Some(probe) => probe,
             None => {
@@ -833,20 +834,19 @@ impl SshTarget {
                     .await?
             }
         };
-        if probe.code == Some(0) && probe.stdout.trim() == expected {
-            return Ok(());
-        }
-        // Exit 42 means the probe itself read the architecture off the machine. A cached agent
-        // that cannot run (45) takes the same fallback path as a wrong version: this
-        // controller wrote that file with a verified byte count and an atomic rename, but a
-        // truncated or `ENOEXEC` file it left behind before that check existed, or after a
-        // hard-killed run, wears the same symptom, and it used to heal on the next run. So
-        // exit 45 gets one more upload before it is reported; the post-upload re-probe is what
-        // errors if a fresh copy still cannot run. Anything else is a remote shell that failed
-        // outright, so its stdout cannot be read as a version string. Ask the machine again,
-        // separately.
+        // Exits 0, 42 and 45 all come after the probe printed the architecture on its first
+        // line. A cached agent that cannot run (45) takes the same path as a cached build other
+        // than this controller's: this controller wrote that file with a verified byte count
+        // and an atomic rename, but a truncated or `ENOEXEC` file it left behind before that
+        // check existed, or after a hard-killed run, wears the same symptom, and it used to heal
+        // on the next run. So exit 45 gets one more upload before it is reported; the
+        // post-upload re-probe is what errors if a fresh copy still cannot run. Anything else
+        // is a remote shell that failed outright, so its stdout cannot be read as an
+        // architecture. Ask the machine again, separately.
         let arch = match probe.code {
-            Some(EXIT_AGENT_MISSING) => probe.stdout.trim().to_string(),
+            Some(0 | EXIT_AGENT_MISSING | EXIT_AGENT_UNRUNNABLE) => {
+                probe.stdout.lines().next().unwrap_or("").trim().to_string()
+            }
             Some(EXIT_UNAME_FAILED) => {
                 return Err(ConnectError::Unreachable(format!(
                     "the remote shell failed: {}",
@@ -888,6 +888,9 @@ impl SshTarget {
         })?;
         let bytes = std::fs::read(&local)
             .map_err(|e| ConnectError::Unreachable(format!("reading {}: {e}", local.display())))?;
+        if is_this_agent(&probe, &bytes) {
+            return Ok(());
+        }
         let size = bytes.len() as u64;
         let upload = self
             .run_bootstrap(escalated, &self.upload_command(size), Some(&bytes))
@@ -929,7 +932,7 @@ impl SshTarget {
                 first_words(&check.stderr, "it failed without a message")
             )));
         }
-        if check.code != Some(0) || check.stdout.trim() != expected {
+        if !is_this_agent(&check, &bytes) {
             return Err(ConnectError::Unreachable(
                 "agent version mismatch after upload".to_string(),
             ));
@@ -1010,6 +1013,18 @@ fn first_words(text: &str, fallback: &str) -> String {
 }
 
 /// `uname -m` to the agent build we ship for it.
+/// Whether the probe ran exactly `bytes` from the cache: the agent it found printed this
+/// version and a hash of its own file equal to the hash of the binary this controller would
+/// upload. The version alone proves nothing, since any build of this source reports it.
+fn is_this_agent(probe: &Captured, bytes: &[u8]) -> bool {
+    let expected = format!(
+        "volant-agent {} {}",
+        env!("CARGO_PKG_VERSION"),
+        blake3::hash(bytes).to_hex()
+    );
+    probe.code == Some(0) && probe.stdout.lines().nth(1).map(str::trim) == Some(expected.as_str())
+}
+
 pub fn triple_for(arch: &str) -> Option<&'static str> {
     match arch {
         "x86_64" | "amd64" => Some("x86_64-unknown-linux-musl"),
@@ -1748,6 +1763,89 @@ mod tests {
             Some(EXIT_AGENT_UNRUNNABLE),
             "a cached agent exiting 255 must not look like a connection failure: {}",
             String::from_utf8_lossy(&probe.stderr)
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// A cached agent is reused only when it is the very binary this controller would upload.
+    /// Its version string proves nothing: a build carrying extra instrumentation reports the
+    /// same one, and a host whose cache held such a build had it run as the agent, silently.
+    /// Each payload goes through the real upload and the real probe under `sh`, and the
+    /// probe's answer through the same check `bootstrap` makes.
+    ///
+    /// What would make this red: the reuse check comparing the version alone, which reads the
+    /// planted build, and the script printing this version, as this controller's agent.
+    #[cfg(unix)]
+    #[test]
+    fn a_cached_agent_of_this_version_but_other_bytes_is_not_reused() {
+        use std::io::Write;
+        use std::process::{Command as SyncCommand, Stdio};
+
+        let exe = std::env::current_exe().expect("this test's own binary path");
+        let local = exe
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("deps/ has a parent")
+            .join("volant-agent");
+        let ours = std::fs::read(&local).expect("the agent is built beside the tests");
+        let base = std::env::temp_dir().join(format!("volant-cache-hash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let Transport::Ssh(target) = Transport::for_host(
+            &host(json!({ "ansible_remote_tmp": base.to_str().unwrap() })),
+            &defaults(),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let cache_then_probe = |payload: &[u8]| {
+            let mut child = SyncCommand::new("sh")
+                .arg("-c")
+                .arg(target.upload_command(payload.len() as u64))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(payload).unwrap();
+            let upload = child.wait_with_output().unwrap();
+            assert!(upload.status.success(), "{upload:?}");
+            let probe = SyncCommand::new("sh")
+                .arg("-c")
+                .arg(target.probe_command())
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            Captured {
+                code: probe.status.code(),
+                stdout: String::from_utf8_lossy(&probe.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&probe.stderr).into_owned(),
+            }
+        };
+
+        let mut instrumented = ours.clone();
+        instrumented.extend_from_slice(b"one more section");
+        let probe = cache_then_probe(&instrumented);
+        assert_eq!(probe.code, Some(0), "the other build runs: {probe:?}");
+        assert!(
+            !is_this_agent(&probe, &ours),
+            "a build of this version with other bytes is not this agent: {probe:?}"
+        );
+
+        let script = format!(
+            "#!/bin/sh\necho volant-agent {}\n",
+            env!("CARGO_PKG_VERSION")
+        );
+        let probe = cache_then_probe(script.as_bytes());
+        assert!(
+            !is_this_agent(&probe, &ours),
+            "a script printing this version is not this agent: {probe:?}"
+        );
+
+        let probe = cache_then_probe(&ours);
+        assert!(
+            is_this_agent(&probe, &ours),
+            "the controller's own agent is reused: {probe:?}"
         );
         std::fs::remove_dir_all(&base).unwrap();
     }

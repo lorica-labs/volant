@@ -139,18 +139,27 @@ fn ssh_playbook_runs_and_the_agent_is_cached() {
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_an_outdated_cached_agent_is_replaced() {
-    let dir = tmp("outdated");
-    let inv = inventory(&dir, &[("box", "")]);
-    let agent = cache_dir(&dir).join("volant-agent");
-    write_executable(&agent, "#!/bin/sh\necho volant-agent 0.0.0-stale\n");
-    let out = volant(&["playbook", "-i", &inv, &fixture("ssh/e2e.yml")]);
-    assert_eq!(out.status.code(), Some(0), "{}", both(&out));
-    let replaced = std::fs::read(&agent).unwrap();
-    assert!(
-        !replaced.starts_with(b"#!/bin/sh"),
-        "the stale script must have been replaced by the real agent"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
+    // The second script prints exactly this controller's version: a cached file is reused only
+    // when it is the binary the controller would upload, so a build reporting the same version
+    // is replaced like any other. A reuse check on the version alone runs that script as the
+    // agent, and the play fails on an agent that never answers.
+    for (name, version) in [
+        ("outdated", "0.0.0-stale"),
+        ("same-version", env!("CARGO_PKG_VERSION")),
+    ] {
+        let dir = tmp(name);
+        let inv = inventory(&dir, &[("box", "")]);
+        let agent = cache_dir(&dir).join("volant-agent");
+        write_executable(&agent, &format!("#!/bin/sh\necho volant-agent {version}\n"));
+        let out = volant(&["playbook", "-i", &inv, &fixture("ssh/e2e.yml")]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", both(&out));
+        let replaced = std::fs::read(&agent).unwrap();
+        assert!(
+            !replaced.starts_with(b"#!/bin/sh"),
+            "{name}: the script must have been replaced by the real agent"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]

@@ -17,7 +17,17 @@ use volant_protocol::{FromAgent, LogLevel, PROTOCOL_VERSION, ToAgent};
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("volant-agent {}", env!("CARGO_PKG_VERSION"));
+        if std::env::args().nth(2).as_deref() != Some("--build-id") {
+            println!("volant-agent {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        match own_hash() {
+            Ok(hash) => println!("volant-agent {} {hash}", env!("CARGO_PKG_VERSION")),
+            Err(err) => {
+                eprintln!("volant-agent: reading its own file: {err}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     let remote_tmp = blobs::remote_tmp();
@@ -30,6 +40,16 @@ fn main() {
         eprintln!("volant-agent: {err}");
         std::process::exit(1);
     }
+}
+
+/// The blake3 hash of the file this process runs from, which the controller compares with the
+/// agent it would upload before reusing a cached one. `/proc/self/exe` is the running file even
+/// when another upload has renamed a new one over its path since; elsewhere the path is all
+/// there is.
+fn own_hash() -> io::Result<String> {
+    let bytes = std::fs::read("/proc/self/exe")
+        .or_else(|_| std::env::current_exe().and_then(std::fs::read))?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 fn serve(remote_tmp: &str) -> io::Result<()> {

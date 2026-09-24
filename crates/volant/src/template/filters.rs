@@ -16,6 +16,103 @@ use super::truthy;
 use super::{add_filter, add_test};
 
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
+    // minijinja's own filters and tests, registered again so that an undefined input stays
+    // undefined through them as well (see `add_filter`), and so that they answer under
+    // `ansible.builtin.` the way the reference's Jinja builtins do (`[1] | ansible.builtin.length`
+    // is 1, measured on ansible-core 2.19.12). Those this engine replaces are registered below.
+    {
+        use minijinja::filters as f;
+        add_filter(env, "safe", f::safe);
+        add_filter(env, "escape", f::escape);
+        add_filter(env, "e", f::escape);
+        add_filter(env, "lower", f::lower);
+        add_filter(env, "upper", f::upper);
+        add_filter(env, "title", f::title);
+        add_filter(env, "capitalize", f::capitalize);
+        add_filter(env, "replace", f::replace);
+        add_filter(env, "length", f::length);
+        add_filter(env, "count", f::length);
+        add_filter(env, "dictsort", f::dictsort);
+        add_filter(env, "items", f::items);
+        add_filter(env, "reverse", f::reverse);
+        add_filter(env, "trim", f::trim);
+        add_filter(env, "join", f::join);
+        add_filter(env, "lines", f::lines);
+        add_filter(env, "round", f::round);
+        add_filter(env, "abs", f::abs);
+        add_filter(env, "attr", f::attr);
+        add_filter(env, "first", f::first);
+        add_filter(env, "last", f::last);
+        add_filter(env, "min", f::min);
+        add_filter(env, "max", f::max);
+        add_filter(env, "sort", f::sort);
+        add_filter(env, "list", f::list);
+        add_filter(env, "string", f::string);
+        add_filter(env, "batch", f::batch);
+        add_filter(env, "slice", f::slice);
+        add_filter(env, "sum", f::sum);
+        add_filter(env, "indent", f::indent);
+        add_filter(env, "select", f::select);
+        add_filter(env, "reject", f::reject);
+        add_filter(env, "selectattr", f::selectattr);
+        add_filter(env, "rejectattr", f::rejectattr);
+        add_filter(env, "map", f::map);
+        add_filter(env, "groupby", f::groupby);
+        add_filter(env, "unique", f::unique);
+        add_filter(env, "chain", f::chain);
+        add_filter(env, "zip", f::zip);
+        add_filter(env, "pprint", f::pprint);
+        add_filter(env, "format", f::format);
+    }
+    {
+        use minijinja::tests as t;
+        add_test(env, "undefined", t::is_undefined);
+        add_test(env, "defined", t::is_defined);
+        add_test(env, "none", t::is_none);
+        add_test(env, "safe", t::is_safe);
+        add_test(env, "escaped", t::is_safe);
+        add_test(env, "boolean", t::is_boolean);
+        add_test(env, "odd", t::is_odd);
+        add_test(env, "even", t::is_even);
+        add_test(env, "divisibleby", t::is_divisibleby);
+        add_test(env, "number", t::is_number);
+        add_test(env, "integer", t::is_integer);
+        add_test(env, "int", t::is_integer);
+        add_test(env, "float", t::is_float);
+        add_test(env, "string", t::is_string);
+        add_test(env, "sequence", t::is_sequence);
+        add_test(env, "iterable", t::is_iterable);
+        add_test(env, "mapping", t::is_mapping);
+        add_test(env, "startingwith", t::is_startingwith);
+        add_test(env, "endingwith", t::is_endingwith);
+        add_test(env, "lower", t::is_lower);
+        add_test(env, "upper", t::is_upper);
+        add_test(env, "sameas", t::is_sameas);
+        for name in ["eq", "equalto", "=="] {
+            add_test(env, name, t::is_eq);
+        }
+        for name in ["ne", "!="] {
+            add_test(env, name, t::is_ne);
+        }
+        for name in ["lt", "lessthan", "<"] {
+            add_test(env, name, t::is_lt);
+        }
+        for name in ["le", "<="] {
+            add_test(env, name, t::is_le);
+        }
+        for name in ["gt", "greaterthan", ">"] {
+            add_test(env, name, t::is_gt);
+        }
+        for name in ["ge", ">="] {
+            add_test(env, name, t::is_ge);
+        }
+        add_test(env, "in", t::is_in);
+        add_test(env, "true", t::is_true);
+        add_test(env, "false", t::is_false);
+        add_test(env, "filter", t::is_filter);
+        add_test(env, "test", t::is_test);
+    }
+
     add_filter(env, "default", default);
     add_filter(env, "d", default);
     add_filter(env, "bool", to_bool);
@@ -50,13 +147,23 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     add_filter(env, "flatten", flatten);
     add_filter(env, "from_yaml", from_yaml);
     add_filter(env, "to_uuid", to_uuid);
-    add_filter(env, "type_debug", |v: Value| super::type_name(&json(&v)));
+    // Measured on ansible-core 2.19.12: `nope | type_debug` is `UndefinedMarker`.
+    add_filter(env, "type_debug", |v: Value| {
+        if v.is_undefined() {
+            "UndefinedMarker"
+        } else {
+            super::type_name(&json(&v))
+        }
+    });
     add_filter(env, "quote", quote);
     add_filter(env, "regex_escape", regex_escape);
     add_filter(env, "extract", extract);
     // Not through `add_filter`: `ansible.utils.ipwrap` is a collection filter, and the reference
     // never exposes it as `ansible.builtin.ipwrap`.
-    env.add_filter("ansible.utils.ipwrap", ipwrap);
+    env.add_filter(
+        "ansible.utils.ipwrap",
+        super::undefined_through("ipwrap", ipwrap),
+    );
     super::yaml_dump::register(env);
 
     super::tests::register(env);
@@ -101,6 +208,16 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
 
 fn json(v: &Value) -> serde_json::Value {
     serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
+}
+
+/// `json`, for a filter whose result carries the value on. An undefined value inside it would
+/// come out as `null`; measured on ansible-core 2.19.12, `{'k': nope} | dict2items`,
+/// `[[nope]] | flatten` and `{'a': 1} | combine({'k': nope})` are undefined reads.
+fn data(v: &Value) -> Result<serde_json::Value, Error> {
+    if super::holds_undefined(v) {
+        return Err(Error::from(ErrorKind::UndefinedError));
+    }
+    Ok(json(v))
 }
 
 fn from_json_value(v: serde_json::Value) -> Value {
@@ -203,11 +320,11 @@ fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<Value, Err
         .get::<Option<String>>("list_merge")?
         .unwrap_or_else(|| "replace".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Object(mut out) = json(&first) else {
+    let serde_json::Value::Object(mut out) = data(&first)? else {
         return Err(invalid("|combine expects dictionaries"));
     };
     for other in rest.iter() {
-        let serde_json::Value::Object(other) = json(other) else {
+        let serde_json::Value::Object(other) = data(other)? else {
             return Err(invalid("|combine expects dictionaries"));
         };
         merge_into(&mut out, other, recursive, &list_merge);
@@ -252,7 +369,7 @@ fn dict2items(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         .get::<Option<String>>("value_name")?
         .unwrap_or_else(|| "value".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Object(map) = json(&value) else {
+    let serde_json::Value::Object(map) = data(&value)? else {
         return Err(invalid("dict2items requires a dictionary"));
     };
     let items: Vec<serde_json::Value> = map
@@ -270,7 +387,7 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         .get::<Option<String>>("value_name")?
         .unwrap_or_else(|| "value".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Array(items) = json(&value) else {
+    let serde_json::Value::Array(items) = data(&value)? else {
         return Err(invalid("items2dict requires a list"));
     };
     let mut out = serde_json::Map::new();
@@ -299,7 +416,7 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 /// `{"b": 1, "a": 2, "c": 3}`, so `to_json` keeps the order the mapping was written in.
 fn to_json(value: Value) -> Result<Value, Error> {
     Ok(Value::from(python_json(
-        &json(&value),
+        &data(&value)?,
         None,
         false,
         false,
@@ -313,7 +430,7 @@ fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let indent: usize = kwargs.get::<Option<usize>>("indent")?.unwrap_or(4);
     kwargs.assert_all_used()?;
     Ok(Value::from(python_json(
-        &json(&value),
+        &data(&value)?,
         Some(indent),
         true,
         false,
@@ -719,7 +836,7 @@ fn flatten(value: Value, levels: Option<i64>, kwargs: Kwargs) -> Result<Value, E
     let levels = kwargs.get::<Option<i64>>("levels")?.or(levels);
     let skip_nulls = kwargs.get::<Option<bool>>("skip_nulls")?.unwrap_or(true);
     kwargs.assert_all_used()?;
-    let serde_json::Value::Array(items) = json(&value) else {
+    let serde_json::Value::Array(items) = data(&value)? else {
         return Err(invalid("flatten expects a list"));
     };
     Ok(from_json_value(serde_json::Value::Array(flatten_items(

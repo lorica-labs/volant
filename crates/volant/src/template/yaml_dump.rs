@@ -38,7 +38,7 @@ fn dump(
     default_indent: usize,
     default_flow: Option<bool>,
 ) -> Result<String, Error> {
-    if value.is_undefined() {
+    if super::holds_undefined(value) {
         return Err(Error::from(ErrorKind::UndefinedError));
     }
     let indent = kwargs

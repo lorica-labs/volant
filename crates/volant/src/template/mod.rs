@@ -1288,6 +1288,7 @@ mod unit {
             "{{ [1, nope] | join(',') }}",
             "{{ [1, nope] | string }}",
             "{{ [1, nope] | map('quote') | join(' ') }}",
+            "{{ [1, nope] | quote }}",
             "{{ [1, nope] | sum }}",
             "{{ hs | map('extract', hv, 'ip') | map('regex_replace', '^(.*)$', 'https://\\1:6443') | join(',') }}",
         ] {

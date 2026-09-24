@@ -16,7 +16,26 @@ mod group;
 mod lineinfile;
 mod package_facts;
 mod service_facts;
-mod setup;
+#[cfg(unix)]
+pub mod setup;
+/// The agent is only ever uploaded to Linux hosts; elsewhere it builds for the workspace's own
+/// checks, and `setup` goes to the Python module.
+#[cfg(not(unix))]
+pub mod setup {
+    use crate::natives::{Native, NativeRun};
+
+    pub const NATIVE: Native = Native {
+        name: "setup",
+        aliases: &[],
+        enabled: false,
+        run: |_, _, _| NativeRun::Fallback("the native setup reads a Linux host".into()),
+    };
+
+    pub fn print(_: &str, _: &str) -> i32 {
+        eprintln!("volant-agent: the native setup reads a Linux host");
+        2
+    }
+}
 mod stat;
 mod systemd;
 mod user;
@@ -31,8 +50,8 @@ use crate::modules::Context;
 /// What a native did with a task.
 pub enum NativeRun {
     #[cfg_attr(
-        not(feature = "test-natives"),
-        expect(dead_code, reason = "returned by the first native that is written")
+        not(any(unix, feature = "test-natives")),
+        expect(dead_code, reason = "returned by the natives of a Linux build")
     )]
     Done(TaskResult),
     /// This case is outside the native subset. Returned before anything on the host changed;

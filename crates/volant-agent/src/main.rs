@@ -17,6 +17,23 @@ use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{FromAgent, LogLevel, PROTOCOL_VERSION, ToAgent};
 
 fn main() {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        // What the live comparison of facts reads: the keys the native `setup` can produce.
+        Some("--native-fact-keys") => {
+            for key in volant_protocol::facts::NATIVE_FACT_KEYS {
+                println!("{key}");
+            }
+            return;
+        }
+        // The native `setup` alone, outside any conversation: its result, or why it hands back.
+        Some("--native-facts") => {
+            let subset = args.next().unwrap_or_else(|| "min".into());
+            let interpreter = args.next().unwrap_or_else(|| "python3".into());
+            std::process::exit(natives::setup::print(&subset, &interpreter));
+        }
+        _ => {}
+    }
     if std::env::args().nth(1).as_deref() == Some("--version") {
         if std::env::args().nth(2).as_deref() != Some("--build-id") {
             println!("volant-agent {}", env!("CARGO_PKG_VERSION"));

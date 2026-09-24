@@ -881,6 +881,88 @@ mod unit {
         assert_eq!(names, ["groups", "own"]);
     }
 
+    /// The `loop:` of k3s-ansible's `prereq` task "If firewalld enabled, allow node CIDRs",
+    /// copied as it stands. Measured on ansible-core 2.19.12, local connection, `h1` in the
+    /// server group and `h2`, `h3` in the agent group, with `default_ipv4` among the facts of
+    /// `h1` and `h3` only: `["192.0.2.1", "192.0.2.3"]`, and `["192.0.2.3"]` once the server
+    /// group is named `nosuch`, which the inventory lacks.
+    ///
+    /// What would make this red: no `extract` filter (the loop fails `unknown filter`, which is
+    /// how the whole playbook stopped), or an `extract` that does not read `hostvars` by host
+    /// name.
+    #[test]
+    fn the_k3s_node_cidr_loop_extracts_each_host_s_address() {
+        let t = Templar::new(std::env::temp_dir());
+        let loop_text = r"{{
+          (
+            groups[server_group] | default([])
+            + groups[agent_group] | default([])
+          )
+          | map('extract', hostvars)
+          | selectattr('ansible_facts.default_ipv4', 'defined')
+          | map(attribute='ansible_facts.default_ipv4.address')
+          | flatten | unique | list
+        }}";
+        let view = Arc::new(vars(json!({
+            "h1": {"ansible_facts": {"default_ipv4": {"address": "192.0.2.1"}}},
+            "h2": {"ansible_facts": {}},
+            "h3": {"ansible_facts": {"default_ipv4": {"address": "192.0.2.3"}}},
+        })));
+        let shared = Arc::new(vars(
+            json!({"groups": {"server": ["h1"], "agent": ["h2", "h3"]}}),
+        ));
+        for (server_group, want) in [
+            ("server", json!(["192.0.2.1", "192.0.2.3"])),
+            ("nosuch", json!(["192.0.2.3"])),
+        ] {
+            let map = vars(json!({"server_group": server_group, "agent_group": "agent"}));
+            let v = Vars {
+                map: &map,
+                hostvars: Some(&view),
+                shared: Some(&shared),
+                untrusted: None,
+                untrusted_hosts: None,
+            };
+            assert_eq!(t.render(loop_text, v).unwrap(), want, "{server_group}");
+        }
+    }
+
+    /// `extract` reads `hostvars` through the same object a bare `hostvars[h]` goes through, so
+    /// a host holding a value that came from a managed host makes the render data either way:
+    /// its `{{ 1 + 1 }}` comes back as text, never evaluated. The same value from an author, on
+    /// a host with nothing untrusted, is rendered again as it would be read bare.
+    ///
+    /// What would make this red: `extract` reading the hosts' map behind the view's back, which
+    /// would skip the taint and evaluate a host's string here.
+    #[test]
+    fn extract_on_hostvars_taints_like_a_bare_read() {
+        let t = Templar::new(std::env::temp_dir());
+        let view = Arc::new(vars(json!({"h2": {"x": "{{ 1 + 1 }}"}})));
+        let empty = Map::new();
+        let hosts = BTreeSet::from(["h2".to_string()]);
+        let mut wrong = Vec::new();
+        for (untrusted_hosts, want) in [(Some(&hosts), json!("{{ 1 + 1 }}")), (None, json!(2))] {
+            let v = Vars {
+                map: &empty,
+                hostvars: Some(&view),
+                shared: None,
+                untrusted: None,
+                untrusted_hosts,
+            };
+            for text in [
+                "{{ hostvars['h2'].x }}",
+                "{{ 'h2' | extract(hostvars, 'x') }}",
+                "{{ ['h2'] | map('extract', hostvars, ['x']) | first }}",
+            ] {
+                let got = t.render(text, v);
+                if got.as_ref() != Ok(&want) {
+                    wrong.push(format!("{text} -> {got:?}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     /// A map that carries a `hostvars` key of its own, with no view beside it, still reads from
     /// the map: the fixtures above and every caller that passes a bare `&Map` depend on it.
     #[test]

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What every native shares with the reference's module machinery.
+// Module-wide: which of these items rustc reports as dead differs between the MSRV and the
+// pinned toolchain, so one expectation covers the file.
+#![cfg_attr(not(test), expect(dead_code, reason = "used by the first native"))]
 
 use serde_json::{Map, Value};
 
 /// One entry of a module's `argument_spec`, copied from ansible-core 2.19.12.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the first native"))]
 pub struct ArgSpec {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
@@ -22,7 +24,6 @@ pub struct ArgSpec {
 ///
 /// Arguments outside the spec are left as given: refusing them is the native's decision, made
 /// before it answers at all.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the first native"))]
 pub fn invocation(spec: &[ArgSpec], args: &Map<String, Value>) -> Value {
     let mut module_args = args.clone();
     for arg in spec {

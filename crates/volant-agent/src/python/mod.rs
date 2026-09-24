@@ -1683,10 +1683,12 @@ mod tests {
             .filter_map(|line| line.rsplit(", in ").next())
             .collect();
         assert_eq!(frames, ["run_child", "run_module"], "{msg}");
+        // The class name in the message depends on the Python version: the Linux machines write
+        // `AnsibleModule.__init__()`, the macOS CI runner's interpreter writes `__init__()`.
+        let last = msg.lines().last().unwrap_or_default();
         assert!(
-            msg.ends_with(
-                "TypeError: AnsibleModule.__init__() got an unexpected keyword argument 'bogus'"
-            ),
+            last.starts_with("TypeError: ")
+                && last.ends_with("__init__() got an unexpected keyword argument 'bogus'"),
             "{msg}"
         );
     }

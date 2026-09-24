@@ -41,11 +41,11 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Area | Runs today | Not yet |
 |---|---|---|
 | Plays | `pre_tasks`, roles, `tasks`, `post_tasks`, handlers, `serial`, `strategy: linear` | `any_errors_fatal`, `max_fail_percentage`, `order`, `throttle` |
-| Tasks | `when`, `loop`, `with_items`, `register`, `until`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, `timeout`, `tags` | `async`, other `with_*` lookups, `check_mode: true`, `diff` |
+| Tasks | `when`, `loop`, `with_items`, `with_first_found`, `with_fileglob`, `register`, `until`, `retries`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, `timeout`, `tags` | `async`, other `with_*` lookups, `check_mode: true`, `diff` |
 | Blocks | `block`, `rescue`, `always` | |
 | Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | `include_vars: dir` |
 | Delegation | `delegate_to`, `delegate_facts`, `run_once` | `local_action` |
-| Modules | `command`, `shell`, `raw`, controller modules, `copy`, `package`, `service`, `template`, `unarchive`, most ansible-core Python modules, modules from installed collections | a few modules backed by an action plugin: `fetch`, `reboot`, `uri`, `script` and others, and a collection's own action plugins |
+| Modules | `command`, `shell`, `raw`, controller modules, `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template`, `unarchive`, most ansible-core Python modules, modules from installed collections | a few modules backed by an action plugin: `uri`, `script` and others, and a collection's own action plugins |
 | Inventories | static INI files, `group_vars`, `host_vars` | YAML inventories, inventory directories, dynamic inventories |
 | Connections | `ssh` with keys or an ssh-agent, `local` | SSH passwords, Windows, network devices |
 | Escalation | `become` through `sudo`, with or without a password | `su`, `doas` and other methods |
@@ -56,11 +56,11 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 
 | Not supported yet | Why | What you can do today |
 |---|---|---|
-| `fetch`, `reboot`, `uri`, `script` | These modules rely on an action plugin that runs on the controller first, and Volant does not have theirs yet. | Use a module without an action plugin, such as `get_url` or `lineinfile`, or `command` and `shell`. |
+| `uri`, `script` | These modules rely on an action plugin that runs on the controller first, and Volant does not have theirs yet. | Use a module without an action plugin, such as `get_url` or `lineinfile`, or `command` and `shell`. |
 | A collection module its collection runs through an action plugin, such as `ansible.posix.synchronize` | Volant runs a collection's modules, not its action plugins. | Keep the play under `ansible-playbook` for now. |
 | A collection that is not installed | Volant never installs one. It asks the controller's ansible-core what is installed, before the first connection. | Run the `ansible-galaxy collection install` command the error names. See [Modules from collections](/internals/python/#modules-from-collections). |
 | `local_action` | It is not supported yet. | Write `delegate_to: localhost`, which does the same job and runs. |
-| `with_dict`, `with_fileglob` and the other `with_*` | Only `with_items` has a loop. | Rewrite with `loop` and a filter, such as `loop: "{{ users \| dict2items }}"`. |
+| `with_dict` and the other `with_*` forms | Only `with_items`, `with_first_found` and `with_fileglob` have a loop. | Rewrite with `loop` and a filter, such as `loop: "{{ users \| dict2items }}"`. |
 | `check_mode: true` or `--check` | There is no check mode yet. | Run against a test host. |
 | An inventory in YAML | Only INI inventories are read. | Convert it to INI, or keep it under Ansible for now. |
 | `gather_subset` | Not supported yet. | Remove it: the play gets every fact. |

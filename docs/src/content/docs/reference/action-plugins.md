@@ -5,9 +5,11 @@ description: How Volant runs copy, package, service, template and unarchive, whi
 
 Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: the reference itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
 
-Volant runs five of these itself: `copy`, `package`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
+Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
 
-Twelve other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `dnf`, `fetch`, `gather_facts`, `group_by`, `reboot`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
+A task's own `timeout:` keyword bounds the whole item this way, on any of the eight: every sub-task and every wait for the host to come back, `reboot`'s reconnecting included. Running out of it ends the task there with `Task failed: Timed out after <seconds> second(s).`, never whatever the plugin would have made of the time it had left.
+
+Nine other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
 
 ## `copy`
 
@@ -53,6 +55,38 @@ The host's package manager names the module that actually runs.
 
 The name comes from `use:`, unless it is `auto`; then from the host's `ansible_package_use` variable; then from `ansible_facts.pkg_mgr` of the host the module runs on; then from a `setup` filtered to that one fact, run again for every task and never kept. Whichever module the name picks is what runs, with `use` taken out of its arguments; a `setup` that fails ends the task with `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`, and a name that resolves to nothing this release can dispatch fails with `Could not find a matching action for the "<name>" package manager.` A name a host reports is never anything but a lookup key into this closed list: `setup`, `apt`, `dnf`, `dnf5`. The union carries all four backends rather than only the one a run turns out to need, because nothing is built after the facts are known: a plugin can only ever pick among what already travelled.
 
+## `dnf`
+
+The host's package manager again, this time picking between two module names instead of four.
+
+The backend name comes from `use:`, or from `use_backend:` when `use` is absent; the two together are rejected: `parameters are mutually exclusive: ('use', 'use_backend')`. `auto` and `yum` read `ansible_facts.pkg_mgr` of the host the module runs on, gathered through a `setup` filtered to that one fact when it is not already known; any other name is taken as given. `yum`, `yum4` and `dnf4` all run the `dnf` module, `dnf5` runs `dnf5`, and a name that is still none of these fails with the reference's own two-line message, closing brace and all:
+
+```text
+Could not detect which major revision of dnf is in use, which is required to determine module backend.
+You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})
+```
+
+A failed `setup` ends the task with its own cause, `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`. When the task is not delegated, its result carries `ansible_facts.pkg_mgr` set to whatever the `setup` answered, the way the reference's own result does; a delegated task's result carries none, since a delegate's answer would otherwise land under the wrong host's facts.
+
+## `fetch`
+
+A file read from a host, written onto the controller under `dest` and nowhere else.
+
+Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes always travel back through `slurp`, decoded strictly, never rendered and never put in a variable. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
+
+Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes the reference write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
+
+- `the fetched path <p> is outside '<dest>'`
+
+This is checked twice: once on the `src` the playbook wrote, and again on the path the host names back, which does not have to match. A `dest` whose render read a managed host is refused before anything is asked, and so is a loop's `inventory_hostname` when a host set it, or one that is not a single path component:
+
+- `the 'dest' of this task was named by a managed host, and a controller path a host chose is never written`
+- `the inventory_hostname '<name>' is not one path component, and fetch files what it fetches under it`
+
+A symbolic link anywhere below `dest` is refused rather than followed, on both the path built from the playbook and the one the host names back.
+
+`fail_on_missing`, on by default as in the reference, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying the reference's own message instead. Either way, any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike the reference, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
+
 ## `service`
 
 The host's init system names the module, the same way `package`'s manager does: `use:` in lower case unless `auto`, then `ansible_facts.service_mgr`, then a filtered `setup` on `ansible_service_mgr`. Unlike `package`, a name none of `systemd`, `systemd_service`, `sysvinit` carries falls back to `service` rather than failing the task, and so does a `setup` that failed. Naming `systemd` itself drops the arguments that module does not take: `pattern`, `runlevel`, `sleep`, `arguments`, `args`, each with its own warning, `Ignoring "<name>" as it is not used in "systemd"`; a task spelling it out as `ansible.builtin.systemd` keeps them.
@@ -72,6 +106,20 @@ Rejected before the host is asked anything:
 - A `src` that names nothing on the controller: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, for a `src` found as a directory on the controller.
 - A source larger than one frame is rejected by its size, before it is read.
+
+## `reboot`
+
+Restart the host, then wait for it to answer with a new boot id and its test command to succeed, before the task ends.
+
+Read off `plugins/action/reboot.py` of ansible-core 2.19.12 and measured against it, under `become`, on a host that came back on its own: a `setup` filtered to the distribution, `cat /proc/sys/kernel/random/boot_id` run as a bare command, a `find` across five search paths for the shutdown program, the shutdown command itself, then the boot id read again until it changes, and finally the test command. All of these run over the host's existing connection, through `raw`, the same way the reference's low-level command runs over its own.
+
+Run against `local`, the connection the controller itself uses, the task is rejected before anything else: `Running reboot with local connection would reboot the control node.`
+
+Once the shutdown command has gone out, this release drops the connection and opens a fresh one to check on the host, rather than holding the old one open across the reboot. `post_reboot_delay` is how long it waits before the first check, and `reboot_timeout` (600 seconds by default) bounds the whole wait unless the task's own `timeout:` cuts it short first. `connect_timeout`, when the task gives one, only sets each reconnection's own SSH `ConnectTimeout`; it no longer bounds the try itself. An empty boot id answer is not read as a new boot: a host can answer nothing in the moment just before it goes down. Once the boot id has changed, `test_command` (`whoami` by default) still has to succeed before the task is done; either wait running out fails the task with the reference's own message, `Timed out waiting for <what> (timeout=<reboot_timeout>)`. A link another host of the same run kept open to the one just rebooted gets one extra liveness check before its next use, and is replaced if the reboot killed it: this driver only drops its own links, not a delegate's.
+
+The shutdown line follows the reference's own table: `shutdown -r <minutes> "<msg>"` on most distributions, bare `reboot` on Alpine, `shutdown -r +<minutes> "<msg>"` on Void, or `reboot_command` split at its first space when the task gives one. `search_paths` (five directories by default) is where the shutdown program is found when `reboot_command` does not already name an absolute path; not finding it there fails the task, naming every path searched.
+
+Rejected before the host is asked anything: an argument outside the reference's own nine (`boot_time_command`, `connect_timeout`, `msg`, `post_reboot_delay`, `pre_reboot_delay`, `reboot_command`, `reboot_timeout`, `search_paths`, `test_command`) fails the task, sorted and named: `Invalid options for reboot: <name>[,<name>...]`.
 
 ## A source file a managed host named
 

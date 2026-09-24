@@ -92,11 +92,11 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 | **Plays** | `pre_tasks`, roles with dependencies and argument specs, `tasks`, `post_tasks`, handlers with `listen` and `flush_handlers`, `serial` |
 | **Tasks** | `when`, `loop`, `register`, `until`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, tags, `run_once`, `delegate_to` |
 | **Structure** | blocks with `rescue` and `always`, `import_*` and `include_*` for tasks, roles and playbooks |
-| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, and `copy`, `package`, `service`, `template` and `unarchive` as [action plugins](https://volant.sh/reference/action-plugins/) |
+| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, modules from installed collections, and `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` as [action plugins](https://volant.sh/reference/action-plugins/) |
 | **Hosts** | static INI inventories, `group_vars` and `host_vars`, the full host-pattern grammar, SSH with keys, `become` through `sudo`, fact gathering |
 | **Listings** | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`, byte for byte like Ansible |
 
-Not there yet: a few modules backed by an action plugin (`fetch`, `reboot`, `uri`), collections, vault, check mode, YAML inventories. See [Will my playbook run?](https://volant.sh/start/compatibility/) and the [roadmap](https://volant.sh/project/roadmap/).
+Not there yet: a few modules backed by an action plugin (`uri`, `script`), a collection's own action plugins, vault, check mode, YAML inventories. See [Will my playbook run?](https://volant.sh/start/compatibility/) and the [roadmap](https://volant.sh/project/roadmap/).
 
 ## Promises
 

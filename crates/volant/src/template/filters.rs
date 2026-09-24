@@ -871,8 +871,8 @@ fn extract(item: Value, container: Value, morekeys: Option<Value>) -> Result<Val
     let mut keys = vec![item];
     match morekeys {
         Some(more) if more.kind() == ValueKind::Seq => keys.extend(more.try_iter()?),
-        Some(more) if !more.is_none() => keys.push(more),
-        _ => {}
+        Some(more) => keys.push(more),
+        None => {}
     }
     let mut value = container;
     for key in &keys {

@@ -940,6 +940,7 @@ mod unit {
         let view = Arc::new(vars(json!({"h2": {"x": "{{ 1 + 1 }}"}})));
         let empty = Map::new();
         let hosts = BTreeSet::from(["h2".to_string()]);
+        let mut wrong = Vec::new();
         for (untrusted_hosts, want) in [(Some(&hosts), json!("{{ 1 + 1 }}")), (None, json!(2))] {
             let v = Vars {
                 map: &empty,
@@ -953,9 +954,13 @@ mod unit {
                 "{{ 'h2' | extract(hostvars, 'x') }}",
                 "{{ ['h2'] | map('extract', hostvars, ['x']) | first }}",
             ] {
-                assert_eq!(t.render(text, v).unwrap(), want, "{text}");
+                let got = t.render(text, v);
+                if got.as_ref() != Ok(&want) {
+                    wrong.push(format!("{text} -> {got:?}"));
+                }
             }
         }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     /// A map that carries a `hostvars` key of its own, with no view beside it, still reads from

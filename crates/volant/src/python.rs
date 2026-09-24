@@ -2069,6 +2069,22 @@ mod tests {
         ] {
             assert!(paths.iter().any(|p| p.ends_with(end)), "{end}: {paths:#?}");
         }
+        // Where a collection could still appear: the interpreter's own site-packages, which holds
+        // no `ansible_collections` on the machine this was measured on, is itself recorded.
+        assert!(
+            paths.iter().any(|p| p.ends_with("/site-packages")),
+            "{paths:#?}"
+        );
+        // Where a module could be dropped to shadow a builtin: `~/.ansible/plugins/modules`, or
+        // the nearest directory above it that exists.
+        let home = std::env::var("HOME").unwrap();
+        let shadow = std::path::Path::new(&home).join(".ansible/plugins/modules");
+        assert!(
+            sources
+                .iter()
+                .any(|s| shadow.starts_with(&s.path) && s.path.starts_with(&home)),
+            "{shadow:?}: {paths:#?}"
+        );
         for source in &sources {
             assert_eq!(
                 crate::union_cache::Source::now(&source.path).unwrap(),

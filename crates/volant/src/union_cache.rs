@@ -24,7 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::agent::embedded::{check_private, create_private};
+use crate::agent::embedded::create_private;
 use crate::python::{Resolved, Union};
 
 /// The manifest's own version. An entry written in another format is rebuilt, never read.
@@ -75,9 +75,12 @@ pub struct Entry {
 /// The interpreter a build would run under, found without running anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterpreterId {
-    /// The candidate as found, not its real path: a virtualenv's `python` is a link to the
-    /// system one, and the two import different ansible-cores.
+    /// The candidate as found: a virtualenv's `python` is a link to the system one, and the two
+    /// import different ansible-cores.
     pub path: PathBuf,
+    /// Where the links lead: a Nix profile's `python3` keeps its path and its wrapper's size
+    /// across generations, and only the store path it resolves to moves.
+    pub real: PathBuf,
     /// The size and mtime of the binary the link leads to, which an upgrade changes.
     pub len: u64,
     pub mtime_ns: i128,
@@ -115,6 +118,10 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// ansible-core. When it has not, `find_python` moves on to the next one, and the union built
 /// there is not stored (see `python::union_from`): an entry is only ever filed under the
 /// interpreter that built it.
+///
+/// `None` for a script (`#!`): a pyenv, asdf or mise shim is the same file whatever version it
+/// runs, chosen by a variable or a file this cannot see, so no key could name the interpreter
+/// behind it and nothing is cached.
 pub fn interpreter_without_running(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
@@ -122,9 +129,16 @@ pub fn interpreter_without_running(
     let path = crate::python::candidates(explicit, virtual_env)
         .iter()
         .find_map(|candidate| located(candidate))?;
-    let found = Source::now(&path).ok()?;
+    let mut head = [0u8; 2];
+    let mut file = fs::File::open(&path).ok()?;
+    if io::Read::read_exact(&mut file, &mut head).is_err() || head == *b"#!" {
+        return None;
+    }
+    let real = fs::canonicalize(&path).ok()?;
+    let found = Source::now(&real).ok()?;
     Some(InterpreterId {
         path,
+        real,
         len: found.len,
         mtime_ns: found.mtime_ns,
     })
@@ -143,16 +157,42 @@ pub fn located(candidate: &str) -> Option<PathBuf> {
 }
 
 /// The key of this run's union, read from the process: its environment, its working directory,
-/// and the `ansible.cfg` ansible-core would read (`ANSIBLE_CONFIG`, `./ansible.cfg`,
-/// `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`, the first that exists).
+/// and every `ansible.cfg` ansible-core might read ([`configs`]).
 pub fn key(interpreter: &InterpreterId, modules: &BTreeSet<String>, asked: &[String]) -> CacheKey {
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    let cfg = crate::config::locate().map(|path| {
-        let text = fs::read(&path).unwrap_or_default();
-        (path, text)
-    });
+    let cfg = configs(
+        std::env::var_os("ANSIBLE_CONFIG").as_deref(),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    );
     let cwd = std::env::current_dir().unwrap_or_default();
-    key_from(interpreter, modules, asked, &env, cfg.as_ref(), &cwd)
+    key_from(interpreter, modules, asked, &env, &cfg, &cwd)
+}
+
+/// Every configuration file ansible-core's `find_ini_config_file` may pick, with its contents:
+/// `$ANSIBLE_CONFIG` as a file, or as a directory holding `ansible.cfg`, then `./ansible.cfg`,
+/// `~/.ansible.cfg` and `/etc/ansible/ansible.cfg`.
+///
+/// All of those that exist, not the one it picks: which one wins depends on rules (a missing
+/// `ANSIBLE_CONFIG` falls through, a world-writable working directory is skipped) that a copy
+/// here could get wrong, and a file hashed for nothing costs a rebuild, never a stale union.
+fn configs(
+    ansible_config: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut candidates = Vec::new();
+    if let Some(explicit) = ansible_config {
+        candidates.push(PathBuf::from(explicit));
+        candidates.push(Path::new(explicit).join("ansible.cfg"));
+    }
+    candidates.push(PathBuf::from("ansible.cfg"));
+    if let Some(home) = home {
+        candidates.push(home.join(".ansible.cfg"));
+    }
+    candidates.push(PathBuf::from("/etc/ansible/ansible.cfg"));
+    candidates
+        .into_iter()
+        .filter_map(|path| fs::read(&path).ok().map(|text| (path, text)))
+        .collect()
 }
 
 /// [`key`] with the process's part handed in.
@@ -166,7 +206,7 @@ fn key_from(
     modules: &BTreeSet<String>,
     asked: &[String],
     env: &[(OsString, OsString)],
-    cfg: Option<&(PathBuf, Vec<u8>)>,
+    cfg: &[(PathBuf, Vec<u8>)],
     cwd: &Path,
 ) -> CacheKey {
     let mut hasher = blake3::Hasher::new();
@@ -179,6 +219,7 @@ fn key_from(
     field(env!("CARGO_PKG_VERSION").as_bytes());
     field(crate::python::HELPER.as_bytes());
     field(interpreter.path.as_os_str().as_encoded_bytes());
+    field(interpreter.real.as_os_str().as_encoded_bytes());
     field(&interpreter.len.to_le_bytes());
     field(&interpreter.mtime_ns.to_le_bytes());
     field(b"modules");
@@ -203,7 +244,7 @@ fn key_from(
         field(value.as_encoded_bytes());
     }
     field(b"cfg");
-    if let Some((path, text)) = cfg {
+    for (path, text) in cfg {
         field(path.as_os_str().as_encoded_bytes());
         field(text);
     }
@@ -216,7 +257,7 @@ fn key_from(
 /// does not read or is of another format, a source whose size or mtime moved, or a zip whose
 /// hash is not the manifest's.
 pub fn load(dir: &Path, key: &CacheKey) -> Option<Entry> {
-    check_private(dir).ok()?;
+    check_dir(dir).ok()?;
     let manifest: Value =
         serde_json::from_slice(&fs::read(dir.join(format!("{}.json", key.0))).ok()?).ok()?;
     if manifest.get("format")?.as_u64()? != FORMAT {
@@ -282,7 +323,7 @@ pub fn sources_from(value: &Value) -> Option<Vec<Source>> {
 /// first, and a manifest paired with the other run's zip fails the hash check and is rebuilt.
 pub fn store(dir: &Path, key: &CacheKey, entry: &Entry) -> io::Result<()> {
     create_private(dir)?;
-    check_private(dir)?;
+    check_dir(dir)?;
     let zip =
         volant_protocol::encoding::b64_decode(&entry.union.zip_b64).map_err(io::Error::other)?;
     let modules: Map<String, Value> = entry
@@ -358,9 +399,70 @@ fn write_new(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
     written
 }
 
-/// Removes every file in `dir` nothing has written for [`STALE`]: entries of module sets no run
-/// asks for any more, and temporary files a run that died left behind. An entry still in use
-/// but older than that is rebuilt once.
+/// Refuses the cache directory, or the `volant` directory holding it, when either is a symbolic
+/// link or is not this user's, when the cache directory can be written by anyone else, or when
+/// the one above it can be written by everyone. Both are checked where they are, without
+/// following a link: a `unions` planted as a link to `~/.ssh` in a `volant` directory another
+/// account created under a shared `XDG_CACHE_HOME` would otherwise pass as private.
+///
+/// The `volant` directory may be group-writable: it is created under the umask, and a umask of
+/// 002 with a group of one's own is the default for accounts on several distributions.
+fn check_dir(dir: &Path) -> io::Result<()> {
+    for (dir, forbidden) in [(Some(dir), 0o022), (dir.parent(), 0o002)] {
+        let Some(dir) = dir else {
+            continue;
+        };
+        let meta = fs::symlink_metadata(dir)?;
+        if !meta.is_dir() {
+            return Err(io::Error::other(format!(
+                "{} is not a directory of its own",
+                dir.display()
+            )));
+        }
+        #[cfg(not(unix))]
+        let _ = forbidden;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
+            let euid = unsafe { libc::geteuid() };
+            let mode = meta.mode() & 0o7777;
+            if meta.uid() != euid || mode & forbidden != 0 {
+                return Err(io::Error::other(format!(
+                    "{} is owned by uid {} with mode {mode:o}, and this controller runs as uid \
+                     {euid}; it has to be this user's, and writable by nobody else",
+                    dir.display(),
+                    meta.uid()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `name` is one this cache writes: `<key>.zip`, `<key>.json`, or a temporary file of
+/// either. Nothing else in the directory is the sweep's to remove.
+fn written_here(name: &str) -> bool {
+    let (Some(key), Some(rest)) = (name.get(..64), name.get(64..)) else {
+        return false;
+    };
+    let tmp = |rest: &str| {
+        let mut parts = rest.split('.');
+        parts.next() == Some("tmp")
+            && parts.clone().count() == 2
+            && parts.all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && [".zip", ".json"].iter().any(|ext| {
+            rest.strip_prefix(ext)
+                .is_some_and(|after| after.is_empty() || after.strip_prefix('.').is_some_and(tmp))
+        })
+}
+
+/// Removes every file of this cache in `dir` nothing has written for [`STALE`]: entries of module
+/// sets no run asks for any more, and temporary files a run that died left behind. An entry
+/// still in use but older than that is rebuilt once. A link is never followed, and a file this
+/// cache did not name is never touched.
 fn sweep(dir: &Path, now: SystemTime) {
     let Some(limit) = now.checked_sub(STALE) else {
         return;
@@ -369,10 +471,13 @@ fn sweep(dir: &Path, now: SystemTime) {
         return;
     };
     for file in files.flatten() {
-        let old = file
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .is_ok_and(|modified| modified < limit);
+        if !file.file_name().to_str().is_some_and(written_here) {
+            continue;
+        }
+        // `DirEntry::metadata` does not follow a link, and a link is not a file.
+        let old = file.metadata().is_ok_and(|meta| {
+            meta.is_file() && meta.modified().is_ok_and(|modified| modified < limit)
+        });
         if old {
             let _ = fs::remove_file(file.path());
         }
@@ -470,6 +575,7 @@ mod tests {
     fn interpreter() -> InterpreterId {
         InterpreterId {
             path: "/venv/bin/python".into(),
+            real: "/usr/bin/python3.12".into(),
             len: 1,
             mtime_ns: 2,
         }
@@ -481,7 +587,7 @@ mod tests {
             &BTreeSet::from(["ns.c.m".to_string()]),
             &["ns.c.m".to_string()],
             &[],
-            None,
+            &[],
             Path::new("/work"),
         )
     }
@@ -543,29 +649,29 @@ mod tests {
     #[test]
     fn an_ansible_environment_change_is_another_key() {
         let modules = BTreeSet::from(["ping".to_string()]);
-        let with = |env: &[(&str, &str)], cfg: Option<&(PathBuf, Vec<u8>)>, cwd: &str| {
+        let with = |env: &[(&str, &str)], cfg: &[(PathBuf, Vec<u8>)], cwd: &str| {
             let env: Vec<(OsString, OsString)> = env
                 .iter()
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect();
             key_from(&interpreter(), &modules, &[], &env, cfg, Path::new(cwd))
         };
-        let base = with(&[("TERM", "xterm")], None, "/work");
-        assert_eq!(base, with(&[("TERM", "dumb")], None, "/work"));
+        let base = with(&[("TERM", "xterm")], &[], "/work");
+        assert_eq!(base, with(&[("TERM", "dumb")], &[], "/work"));
         for other in [
             with(
                 &[("ANSIBLE_MODULE_COMPRESSION", "ZIP_STORED")],
-                None,
+                &[],
                 "/work",
             ),
-            with(&[("ANSIBLE_COLLECTIONS_PATH", "/c")], None, "/work"),
-            with(&[("PYTHONPATH", "/p")], None, "/work"),
+            with(&[("ANSIBLE_COLLECTIONS_PATH", "/c")], &[], "/work"),
+            with(&[("PYTHONPATH", "/p")], &[], "/work"),
             with(
                 &[],
-                Some(&("ansible.cfg".into(), b"[defaults]\n".to_vec())),
+                &[("ansible.cfg".into(), b"[defaults]\n".to_vec())],
                 "/work",
             ),
-            with(&[], None, "/elsewhere"),
+            with(&[], &[], "/elsewhere"),
             key_from(
                 &InterpreterId {
                     mtime_ns: 3,
@@ -574,7 +680,19 @@ mod tests {
                 &modules,
                 &[],
                 &[],
-                None,
+                &[],
+                Path::new("/work"),
+            ),
+            // A Nix profile's `python3`: the same path and size, another store path behind it.
+            key_from(
+                &InterpreterId {
+                    real: "/nix/store/other-python3/bin/python3".into(),
+                    ..interpreter()
+                },
+                &modules,
+                &[],
+                &[],
+                &[],
                 Path::new("/work"),
             ),
             key_from(
@@ -582,7 +700,7 @@ mod tests {
                 &BTreeSet::from(["ping".to_string(), "stat".to_string()]),
                 &[],
                 &[],
-                None,
+                &[],
                 Path::new("/work"),
             ),
         ] {
@@ -684,6 +802,150 @@ mod tests {
         assert_eq!(
             interpreter_without_running(Some("/nowhere/python"), None),
             None
+        );
+    }
+
+    /// A `#!` shim caches nothing.
+    ///
+    /// What would make this red: the shim taken for the interpreter. pyenv's `python3` is one
+    /// script for every version, so `pyenv global` from a 3.11 with ansible-core 2.17 to a 3.12
+    /// with 2.19.12 keeps the key, every 3.11 source is still on disk unchanged, and the 2.17
+    /// union is served.
+    #[test]
+    fn a_shim_interpreter_is_never_a_key() {
+        let root = tempdir();
+        let shim = root.0.join("shims/python3");
+        fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        fs::write(
+            &shim,
+            "#!/usr/bin/env bash\nexec pyenv exec python3 \"$@\"\n",
+        )
+        .unwrap();
+        let explicit = shim.display().to_string();
+        assert_eq!(interpreter_without_running(Some(&explicit), None), None);
+    }
+
+    /// The interpreter is named by its path and by where its links lead.
+    #[cfg(unix)]
+    #[test]
+    fn the_interpreter_names_where_its_link_leads() {
+        let root = tempdir();
+        let real = root.0.join("store/python3");
+        let link = root.0.join("profile/python3");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        fs::write(&real, "ELF").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let found = interpreter_without_running(Some(&link.display().to_string()), None).unwrap();
+        assert_eq!(found.path, link);
+        assert_eq!(found.real, fs::canonicalize(&real).unwrap());
+    }
+
+    /// `ANSIBLE_CONFIG` naming a directory is read as ansible-core reads it, `<dir>/ansible.cfg`.
+    ///
+    /// What would make this red: the directory form left out, which keeps the key when its
+    /// `ansible.cfg` moves `collections_path` to a directory with a newer collection, while every
+    /// tracked file stays where it was.
+    #[test]
+    fn an_ansible_config_directory_is_read_for_the_key() {
+        let root = tempdir();
+        let cfg = root.0.join("ansible.cfg");
+        let key_now = || {
+            let found = configs(Some(root.0.as_os_str()), None);
+            key_from(
+                &interpreter(),
+                &BTreeSet::new(),
+                &[],
+                &[],
+                &found,
+                Path::new("/work"),
+            )
+        };
+        fs::write(&cfg, "[defaults]\ncollections_path = ./colls\n").unwrap();
+        let before = key_now();
+        fs::write(&cfg, "[defaults]\ncollections_path = ./colls-next\n").unwrap();
+        assert_ne!(key_now(), before);
+        // A file named directly, and one that is not there, are both what they are.
+        assert_eq!(configs(Some(cfg.as_os_str()), None)[0].0, cfg);
+        let home = root.0.join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join(".ansible.cfg"), "[defaults]\n").unwrap();
+        let fell_through = configs(Some(root.0.join("absent.cfg").as_os_str()), Some(&home));
+        assert!(
+            fell_through
+                .iter()
+                .any(|(path, _)| *path == home.join(".ansible.cfg")),
+            "{fell_through:?}"
+        );
+    }
+
+    /// A cache directory that is a link is neither read nor written, and a `volant` directory
+    /// everyone can write is refused with it.
+    ///
+    /// What would make this red: the link followed, which on a shared `XDG_CACHE_HOME` lets
+    /// another account point `unions` at `~/.ssh`, where the store writes and the sweep deletes.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_or_shared_cache_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempdir();
+        let target = root.0.join("dot-ssh");
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+        let volant = root.0.join("volant");
+        fs::create_dir_all(&volant).unwrap();
+        let dir = volant.join("unions");
+        std::os::unix::fs::symlink(&target, &dir).unwrap();
+        let key = some_key();
+        assert!(store(&dir, &key, &entry(&root.0, b"PK")).is_err());
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+        assert_eq!(load(&dir, &key), None);
+
+        fs::remove_file(&dir).unwrap();
+        store(&dir, &key, &entry(&root.0, b"PK")).unwrap();
+        fs::set_permissions(&volant, fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(load(&dir, &key), None);
+        fs::set_permissions(&volant, fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(
+            load(&dir, &key).is_some(),
+            "a group-writable volant/ is the 002 umask"
+        );
+    }
+
+    /// The sweep removes only what this cache wrote, never through a link.
+    ///
+    /// What would make this red: every old file removed, which clears whatever else sits in the
+    /// directory, and whatever a link in it leads to.
+    #[test]
+    fn the_sweep_removes_only_its_own_files() {
+        let root = tempdir();
+        let dir = root.0.join("unions");
+        let key = some_key();
+        store(&dir, &key, &entry(&root.0, b"PK")).unwrap();
+        let hex = "a".repeat(64);
+        for name in [
+            "id_ed25519".to_string(),
+            format!("{hex}.zip.bak"),
+            format!("{hex}.json.tmp.x.1"),
+            format!("{}.zip", "A".repeat(64)),
+        ] {
+            fs::write(dir.join(name), "not the cache's").unwrap();
+        }
+        fs::write(dir.join(format!("{hex}.json.tmp.12.3")), "a dead run's").unwrap();
+        sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|f| f.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                format!("{}.zip", "A".repeat(64)),
+                format!("{hex}.json.tmp.x.1"),
+                format!("{hex}.zip.bak"),
+                "id_ed25519".to_string(),
+            ]
         );
     }
 }

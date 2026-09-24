@@ -34,10 +34,9 @@ RLIMIT_NOFILE = re.compile(r"rlimit_nofile=(\d+)")
 EXTENSIONS = re.compile(r"extensions=(\{.*?\})")
 
 
-def facts(text, core):
+def facts(text):
     """The per-module facts a task needs alongside the shared blob."""
     return {
-        "core": core,
         "module_fqn": group(MODULE_FQN, text, "module_fqn"),
         "profile": group(PROFILE, text, "profile"),
         "rlimit_nofile": int(group(RLIMIT_NOFILE, text, "rlimit_nofile")),
@@ -170,7 +169,9 @@ def build(name):
     core = os.path.dirname(os.path.realpath(path)) == os.path.dirname(
         os.path.realpath(ansible.modules.__file__)
     )
-    return base64.b64decode(zip_data, validate=True), facts(built.b_module_data.decode(), core)
+    found = facts(built.b_module_data.decode())
+    found["core"] = core
+    return base64.b64decode(zip_data, validate=True), found
 
 
 def union(modules):

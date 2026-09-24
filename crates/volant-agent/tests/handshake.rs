@@ -16,6 +16,7 @@ fn hello_gets_ready_and_eof_ends_the_agent() {
             version,
             arch,
             interpreters,
+            ..
         }) => {
             assert_eq!(protocol, PROTOCOL_VERSION);
             assert_eq!(version, env!("CARGO_PKG_VERSION"));

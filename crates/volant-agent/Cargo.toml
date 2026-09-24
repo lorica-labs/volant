@@ -21,3 +21,16 @@ libc.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
 volant-protocol.workspace = true
+
+[features]
+# A native that echoes its arguments, for the agent's own tests. Never in a published binary: only
+# the dev-dependency below turns it on, and dev-dependencies do not reach `cargo build` or
+# `cargo publish`.
+test-natives = []
+
+[dev-dependencies]
+volant-agent = { path = ".", features = ["test-natives"] }
+
+[package.metadata.cargo-machete]
+# The dev-dependency on this very package exists for the feature it turns on, not for code.
+ignored = ["volant-agent"]

@@ -214,6 +214,25 @@ pub const SHELL: ModuleSpec = ModuleSpec {
 /// Every module the agent implements natively, sorted by name.
 pub const NATIVE_MODULES: &[ModuleSpec] = &[COMMAND, RAW, SHELL];
 
+/// The Python modules the agent may run natively instead, by the reference's name. The agent
+/// decides per task: a native answers only inside the subset of arguments it implements and
+/// hands anything else back to the Python payload before it touches the host. Which of these an
+/// agent actually runs is what it reports in `Ready.natives`.
+pub const NATIVE_CANDIDATES: &[&str] = &[
+    "setup",
+    "stat",
+    "file",
+    "copy",
+    "lineinfile",
+    "systemd",
+    "systemd_service",
+    "apt",
+    "user",
+    "group",
+    "package_facts",
+    "service_facts",
+];
+
 const fn honoured(name: &'static str) -> ModuleArg {
     ModuleArg {
         name,

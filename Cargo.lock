@@ -697,6 +697,7 @@ dependencies = [
  "libc",
  "serde_json",
  "shlex",
+ "volant-agent",
  "volant-protocol",
 ]
 

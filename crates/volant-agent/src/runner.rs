@@ -4,6 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::io;
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::Instant;
 
 use volant_protocol::{BatchOutcome, FromAgent, LogLevel, Task, ToAgent};
 
@@ -33,15 +34,19 @@ where
         if cancelled() {
             return stop(id, index, &broken, &send);
         }
-        let result = match modules::run(task, &cancelled) {
+        let started = Instant::now();
+        let (run, mut ran) = modules::run(task, &cancelled);
+        let result = match run {
             Run::Done(result) => result,
             Run::Cancelled => return stop(id, index, &broken, &send),
         };
+        ran.micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let failed = result.failed();
         (send.borrow_mut())(&FromAgent::TaskResult {
             batch: id,
             index,
             result,
+            ran: Some(ran),
         })?;
         if failed && !task.ignore_errors {
             return (send.borrow_mut())(&FromAgent::BatchDone {

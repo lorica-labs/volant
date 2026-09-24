@@ -77,11 +77,19 @@ pub enum FromAgent {
         /// which is not quite "this host has none" - a refusal has to be worded as the former.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         interpreters: Vec<String>,
+        /// The native modules this agent runs in place of their Python payload, by the name the
+        /// reference gives them. Additive like `interpreters`: an older agent reports none, and
+        /// the controller then expects every Python task to run as Python.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        natives: Vec<String>,
     },
     TaskResult {
         batch: u64,
         index: usize,
         result: TaskResult,
+        /// How the agent ran the task and how long it took. Absent from an older agent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ran: Option<Ran>,
     },
     BatchDone {
         batch: u64,
@@ -124,7 +132,7 @@ pub enum BatchOutcome {
 }
 
 /// One task, fully resolved by the controller: no templates left.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     /// Module name as written in the playbook, short or fully qualified.
     pub module: String,
@@ -146,6 +154,43 @@ pub struct Task {
     /// Files the agent stages before running the module. Each is consumed by this task.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<StagedFile>,
+    /// Run the Python payload even when the agent has an enabled native module of this name.
+    /// The controller sets it for `[volant] native_modules = false` and for a `setup` whose
+    /// facts it could not prove the play reads only from the native collector's keys.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_python: bool,
+}
+
+/// Which code ran a task that carries a Python payload. A task without one (`command`, `shell`,
+/// `raw`) always runs in the agent and reports `Native`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecPath {
+    /// The agent's own implementation of the module.
+    Native,
+    /// The Python payload, because no enabled native exists or the task forced Python.
+    Python,
+    /// A native was tried, handed the task back before touching the host, and the Python
+    /// payload ran instead.
+    Fallback,
+}
+
+/// What the agent reports about how it ran one task, next to the task's result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ran {
+    pub path: ExecPath,
+    /// Why a native handed the task back, for `Fallback`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Wall time of the task in the agent.
+    pub micros: u64,
+    /// Python only: fork, import of the module, and the module's own run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_micros: Option<u64>,
 }
 
 /// A file the agent takes out of its cache and hands to the module under `args[arg]`.
@@ -343,6 +388,65 @@ mod tests {
         );
     }
 
+    /// Additive in both directions, like `Ready.interpreters`: a controller that does not know
+    /// `ran` or `natives` reads today's frames, and an agent that does not know `force_python`
+    /// runs the payload, which is what the flag asks for anyway.
+    ///
+    /// What would make this red: one of the three fields serialised when empty, which puts a
+    /// key on every task and every result; or one of them required on the way in, which makes a
+    /// frame from the other side's older build unreadable.
+    #[test]
+    fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in() {
+        let old = r#"{"type":"task_result","batch":1,"index":0,"result":{"changed":false}}"#;
+        let FromAgent::TaskResult { ran, .. } = serde_json::from_str(old).unwrap() else {
+            panic!("a task result")
+        };
+        assert_eq!(ran, None);
+        let old = r#"{"type":"ready","protocol":5,"version":"0.0.0","arch":"x86_64"}"#;
+        let FromAgent::Ready { natives, .. } = serde_json::from_str(old).unwrap() else {
+            panic!("a ready")
+        };
+        assert!(natives.is_empty());
+        let task: Task = serde_json::from_str(r#"{"module":"stat"}"#).unwrap();
+        assert!(!task.force_python);
+        let task = Task {
+            module: "stat".into(),
+            ..Default::default()
+        };
+        assert!(
+            !serde_json::to_string(&task)
+                .unwrap()
+                .contains("force_python")
+        );
+        let forced = Task {
+            force_python: true,
+            ..task
+        };
+        assert!(
+            serde_json::to_string(&forced)
+                .unwrap()
+                .contains(r#""force_python":true"#)
+        );
+        let ran = Ran {
+            path: ExecPath::Fallback,
+            reason: Some("not implemented".into()),
+            micros: 12,
+            fork_micros: None,
+            import_micros: None,
+            module_micros: None,
+        };
+        let text = serde_json::to_string(&ran).unwrap();
+        assert_eq!(
+            text,
+            r#"{"path":"fallback","reason":"not implemented","micros":12}"#
+        );
+        assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
+        assert_eq!(
+            PROTOCOL_VERSION, 5,
+            "additive fields do not move the version"
+        );
+    }
+
     #[test]
     fn hello_has_a_snake_case_type_tag() {
         let text = serde_json::to_string(&ToAgent::Hello {
@@ -369,6 +473,7 @@ mod tests {
             version: "0.0.0".into(),
             arch: "x86_64".into(),
             interpreters,
+            natives: Vec::new(),
         };
         let empty = serde_json::to_string(&ready(Vec::new())).unwrap();
         assert!(!empty.contains("interpreters"));
@@ -423,6 +528,7 @@ mod tests {
                 environment,
                 payload: None,
                 files: Vec::new(),
+                force_python: false,
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();

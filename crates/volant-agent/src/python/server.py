@@ -13,7 +13,8 @@ every other module would fail to import.
 
 Frames on stdin and stdout are the agent's own: four bytes of big-endian length, then JSON. One
 request in, two frames out - the child's pid as soon as it exists, so the agent can kill it on a
-deadline or a cancel, then its result.
+deadline or a cancel, then its result. The result frame carries the child's own timing, which it
+writes on a third pipe just before it exits.
 """
 
 import sys
@@ -27,10 +28,12 @@ import sys
 if sys.path and sys.path[0] in ("", "."):
     del sys.path[0]
 
+import functools
 import json
 import os
 import selectors
 import struct
+import time
 
 
 # What one child may put in one frame, per stream. The agent refuses a frame over 64 MiB and JSON
@@ -122,8 +125,62 @@ def drain(pipes):
     )
 
 
-def run_child(request, blob, loader, out_w, err_w):
+def timed_module_init(basic, marks):
+    """Notes when the module builds its `AnsibleModule`: the end of its import and the start of
+    its own work.
+
+    Timing the import on its own, by importing the module before `run_module`, would compile
+    and run the module's body twice, and `runpy` warns on stderr about a module already imported.
+    Measured on the development machine, compiling `user` alone takes 28 ms.
+    """
+    cls = getattr(basic, "AnsibleModule", None)
+    if cls is None:
+        return
+    init = cls.__init__
+
+    @functools.wraps(init)
+    def timed(self, *args, **kwargs):
+        if not marks:
+            marks.append(time.monotonic_ns())
+        return init(self, *args, **kwargs)
+
+    cls.__init__ = timed
+
+
+def child_timing(forked, started, running, marks, ended):
+    """Microseconds for the fork, the import and the module; `None` for what was not reached."""
+
+    def us(start, end):
+        return None if start is None or end is None else max(0, (end - start) // 1000)
+
+    built = marks[0] if marks else None
+    return {
+        "fork_us": us(forked, started),
+        "import_us": us(running, built),
+        "module_us": us(built if built is not None else running, ended),
+    }
+
+
+def read_timing(fd):
+    """What the child wrote on its timing pipe, read once it has exited.
+
+    Non-blocking, and never to the end of the pipe: a process the module left behind can hold
+    the write end open for as long as it lives, and waiting for it would hang the task.
+    """
+    try:
+        os.set_blocking(fd, False)
+        return json.loads(os.read(fd, 4096))
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
+
+
+def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
     """The forked half. Never returns: it exits the process."""
+    started = time.monotonic_ns()
+    running = None
+    marks = []
     code = 0
     try:
         # Its own process group, so the agent can kill the module and everything it started
@@ -142,6 +199,8 @@ def run_child(request, blob, loader, out_w, err_w):
         for key, value in request.get("environment", {}).items():
             os.environ[key] = value
         set_open_file_limit(request.get("rlimit_nofile") or 0)
+        timed_module_init(basic, marks)
+        running = time.monotonic_ns()
         loader.run_module(
             json_params=json.dumps({"ANSIBLE_MODULE_ARGS": request["args"]}).encode(),
             profile=request["profile"],
@@ -166,6 +225,7 @@ def run_child(request, blob, loader, out_w, err_w):
         traceback.print_exc(file=sys.stderr)
         code = 99
     finally:
+        ended = time.monotonic_ns()
         # Without this the module's own result is discarded: os._exit skips the buffer, so a
         # module that printed its result and exited emits nothing at all.
         for stream in (sys.stdout, sys.stderr):
@@ -173,6 +233,14 @@ def run_child(request, blob, loader, out_w, err_w):
                 stream.flush()
             except Exception:
                 pass
+        # A few dozen bytes into an empty pipe: never blocks, and a timing lost is only that.
+        try:
+            os.write(
+                timing_w,
+                json.dumps(child_timing(forked, started, running, marks, ended)).encode(),
+            )
+        except Exception:
+            pass
         os._exit(code)
 
 
@@ -181,9 +249,9 @@ def main():
     sys.path.insert(0, blob)
     from ansible.module_utils._internal._ansiballz import _loader
 
-    # Imported for its cost, not for its name: this is the import every module pays for, and
-    # paying it here is what takes a task from 266 ms to 13 ms.
-    import ansible.module_utils.basic  # noqa: F401
+    # Imported for its cost: this is the import every module pays for, and paying it here is what
+    # takes a task from 266 ms to 13 ms. The child also times the module's import against it.
+    import ansible.module_utils.basic as basic
 
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
@@ -195,17 +263,21 @@ def main():
             return 0
         out_r, out_w = os.pipe()
         err_r, err_w = os.pipe()
+        timing_r, timing_w = os.pipe()
         # Flush before forking: measured, a child inherits the parent's unflushed buffer and
         # re-emits it, so the parent's bytes would arrive prefixed to the module's result.
         sys.stdout.flush()
         sys.stderr.flush()
+        forked = time.monotonic_ns()
         pid = os.fork()
         if pid == 0:
             os.close(out_r)
             os.close(err_r)
-            run_child(request, blob, _loader, out_w, err_w)
+            os.close(timing_r)
+            run_child(request, blob, _loader, basic, out_w, err_w, timing_w, forked)
         os.close(out_w)
         os.close(err_w)
+        os.close(timing_w)
         try:
             os.setpgid(pid, pid)
         except OSError:
@@ -216,6 +288,7 @@ def main():
         write_frame(stdout, {"started": pid})
         streams = drain({"stdout": out_r, "stderr": err_r})
         _, status = os.waitpid(pid, 0)
+        timing = read_timing(timing_r)
         write_frame(
             stdout,
             {
@@ -228,6 +301,7 @@ def main():
                 or streams["stderr"]["truncated"],
                 # Sent so the agent's sentence quotes the bound applied here, not a copy of it.
                 "limit": STREAM_LIMIT,
+                "timing": timing,
             },
         )
 

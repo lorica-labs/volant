@@ -544,7 +544,11 @@ proof-k3s engine="volant" *args:
     kubeconfig="$PWD/target/k3s-kubeconfig"
     if [ "{{engine}}" = "volant" ]; then
       just agent-musl
-      cargo build --release -p volant
+      # `k3s_server` runs tasks on the controller (`delegate_to: 127.0.0.1`), and those need the
+      # local agent under its plain name next to the cross-built one: a development build of
+      # `volant` carries no agent inside it.
+      cargo build --release -p volant -p volant-agent
+      cp target/release/volant-agent target/agents/volant-agent
     fi
     just _k3s-deadman-arm
     trap 'just _k3s-deadman-disarm' EXIT

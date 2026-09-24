@@ -118,7 +118,7 @@ A collection module's arguments written as a string (`ansible.posix.sysctl: name
 
 Some ansible-core modules only work together with an action plugin that runs on the controller first. `package` picks the host's package manager, `service` picks its init system, and `template` renders the file on the controller before anything is sent. Sending those modules without their plugin would do something different from what the playbook asked.
 
-Volant has its own version of seven of these plugins: `copy`, `dnf`, `fetch`, `package`, `service`, `template` and `unarchive` run on the controller as a short sequence of sub-tasks, each an ordinary Python module sent over the host's existing connection. [Action plugins](/reference/action-plugins/) describes each one. The modules whose plugin Volant does not have yet, such as `reboot` and `uri`, are not supported yet: Volant names them before the first connection.
+Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` run on the controller as a short sequence of sub-tasks, each an ordinary Python module or a bare command sent over the host's existing connection. [Action plugins](/reference/action-plugins/) describes each one. The modules whose plugin Volant does not have yet, such as `uri` and `script`, are not supported yet: Volant names them before the first connection.
 
 `assert`, `fail` and `pause` have action plugins too, but none of them calls a module, so Volant runs them on the controller. `setup` runs as an ordinary module, so fact gathering works.
 

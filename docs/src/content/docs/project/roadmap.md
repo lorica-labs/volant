@@ -7,7 +7,7 @@ Volant is in pre-alpha. This page lists what comes next, roughly in order. It de
 
 ## Next: the modules real roles use
 
-- The remaining modules backed by an action plugin: `reboot`, `uri`, `script` and their relatives. `copy`, `dnf`, `fetch`, `package`, `service`, `template` and `unarchive` already run, and so do modules from installed collections.
+- The remaining modules backed by an action plugin: `uri`, `script` and their relatives. `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` already run, and so do modules from installed collections.
 - The Jinja2 filters, tests and lookups that popular Galaxy roles still miss.
 
 The goal is to run well-known Galaxy roles end to end and produce the same recap as `ansible-playbook`. Four already do, as published: [decision record 0007](/decisions/0007-action-plugins/#results) has the runs.

@@ -5,9 +5,9 @@ description: How Volant runs copy, package, service, template and unarchive, whi
 
 Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: the reference itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
 
-Volant runs seven of these itself: `copy`, `dnf`, `fetch`, `package`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
+Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
 
-Ten other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `reboot`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
+Nine other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
 
 ## `copy`
 
@@ -104,6 +104,20 @@ Rejected before the host is asked anything:
 - A `src` that names nothing on the controller: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, for a `src` found as a directory on the controller.
 - A source larger than one frame is rejected by its size, before it is read.
+
+## `reboot`
+
+Restart the host, then wait for it to answer with a new boot id and its test command to succeed, before the task ends.
+
+Read off `plugins/action/reboot.py` of ansible-core 2.19.12 and measured against it, under `become`, on a host that came back on its own: a `setup` filtered to the distribution, `cat /proc/sys/kernel/random/boot_id` run as a bare command, a `find` across five search paths for the shutdown program, the shutdown command itself, then the boot id read again until it changes, and finally the test command. All of these run over the host's existing connection, through `raw`, the same way the reference's low-level command runs over its own.
+
+Run against `local`, the connection the controller itself uses, the task is rejected before anything else: `Running reboot with local connection would reboot the control node.`
+
+Once the shutdown command has gone out, this release drops the connection and opens a fresh one to check on the host, rather than holding the old one open across the reboot. `post_reboot_delay` is how long it waits before the first check, `reboot_timeout` (600 seconds by default) bounds the whole wait, and `connect_timeout` bounds each individual connection attempt when the task gives one. An empty boot id answer is not read as a new boot: a host can answer nothing in the moment just before it goes down. Once the boot id has changed, `test_command` (`whoami` by default) still has to succeed before the task is done; either wait running out fails the task with the reference's own message, `Timed out waiting for <what> (timeout=<reboot_timeout>)`.
+
+The shutdown line follows the reference's own table: `shutdown -r <minutes> "<msg>"` on most distributions, bare `reboot` on Alpine, `shutdown -r +<minutes> "<msg>"` on Void, or `reboot_command` split at its first space when the task gives one. `search_paths` (five directories by default) is where the shutdown program is found when `reboot_command` does not already name an absolute path; not finding it there fails the task, naming every path searched.
+
+Rejected before the host is asked anything: an argument outside the reference's own nine (`boot_time_command`, `connect_timeout`, `msg`, `post_reboot_delay`, `pre_reboot_delay`, `reboot_command`, `reboot_timeout`, `search_paths`, `test_command`) fails the task, sorted and named: `Invalid options for reboot: <name>[,<name>...]`.
 
 ## A source file a managed host named
 

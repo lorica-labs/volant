@@ -6847,6 +6847,7 @@ mod tests {
             forks: 1,
             force_handlers: false,
             batching: false,
+            control_dir: None,
             stop,
             abort: Arc::new(super::super::Abort::new(stop_tx)),
             reboots: Arc::default(),

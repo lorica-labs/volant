@@ -61,6 +61,9 @@ pub struct Config {
     /// with its native module instead of running the task's Python module. On by default; off
     /// sends every Python task to Python, which is the switch to compare the two.
     pub native_modules: bool,
+    /// `[volant] ssh_control_master`, or `VOLANT_SSH_CONTROL_MASTER`: whether the `ssh` runs
+    /// of one inventory host share one connection. On by default.
+    pub ssh_control_master: bool,
 }
 
 impl Default for Config {
@@ -83,6 +86,7 @@ impl Default for Config {
             tags_skip: Vec::new(),
             batching: false,
             native_modules: true,
+            ssh_control_master: true,
         }
     }
 }
@@ -226,6 +230,11 @@ impl Config {
                 "env: VOLANT_NATIVE_MODULES",
                 &value,
             )?;
+        }
+        if let Ok(value) = std::env::var("VOLANT_SSH_CONTROL_MASTER")
+            && let Some(on) = switch(&value)
+        {
+            config.ssh_control_master = on;
         }
         // Measured: the environment replaces the file's `roles_path` rather than being appended
         // to it, and a relative entry is read against the working directory.
@@ -423,6 +432,11 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                 "native_modules" => {
                     config.native_modules = boolean("VOLANT_NATIVE_MODULES", origin, value)?;
                 }
+                "ssh_control_master" => {
+                    if let Some(on) = switch(value) {
+                        config.ssh_control_master = on;
+                    }
+                }
                 _ => {}
             }
             continue;
@@ -605,6 +619,18 @@ native_modules = maybe
                 None => std::env::remove_var("ANSIBLE_CONFIG"),
             }
         }
+    }
+
+    /// Connection sharing is on unless the section turns it off; the two keys of the section
+    /// are read independently of each other.
+    #[test]
+    fn the_volant_section_can_turn_connection_sharing_off() {
+        assert!(cfg("[defaults]\nforks = 3\n", ".").ssh_control_master);
+        assert!(!cfg("[volant]\nssh_control_master = 0\n", ".").ssh_control_master);
+        assert!(!cfg("[volant]\nssh_control_master = false\n", ".").ssh_control_master);
+        let c = cfg("[volant]\nbatching = yes\nssh_control_master = no\n", ".");
+        assert!(c.batching && !c.ssh_control_master);
+        assert!(cfg("[volant]\nssh_control_master = maybe\n", ".").ssh_control_master);
     }
 
     #[test]

@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A cached agent on a host is reused only if it is the exact binary the controller would upload. A different build that reported the same version used to be run as the agent. Reusing a cached agent now needs an agent for the host's architecture on the controller; the release controller embeds both.
 - A controller started through a symbolic link finds its agents next to the file the link points at. On macOS it used to look in the directory of the link.
 - A file staged for a module belongs to the connection that sent it. Two links to one host no longer consume each other's files, and a staged file left by a cancelled batch, a lost link or a killed agent is cleaned up. ([#191](https://github.com/lorica-labs/volant/pull/191))
 - A vars file holding only `---` and a comment loads as an empty mapping, a templated `ignore_errors` is rendered when the task runs, `ansible_search_path` is set for every task and `role_path` for a role's, and Python module results get `stdout_lines` and `stderr_lines`. ([#196](https://github.com/lorica-labs/volant/pull/196))

@@ -886,14 +886,22 @@ impl SshTarget {
                 "no agent binary for {arch} (looked for volant-agent-{triple} in {looked})"
             ))
         })?;
-        let bytes = std::fs::read(&local)
-            .map_err(|e| ConnectError::Unreachable(format!("reading {}: {e}", local.display())))?;
-        if is_this_agent(&probe, &bytes) {
+        // Read and hashed once per run, off the async workers: the file is several megabytes.
+        let file = {
+            let (agents, path) = (agents.clone(), local.clone());
+            tokio::task::spawn_blocking(move || agents.read(&path))
+                .await
+                .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+                .map_err(|e| {
+                    ConnectError::Unreachable(format!("reading {}: {e}", local.display()))
+                })?
+        };
+        if is_this_agent(&probe, &file.hash) {
             return Ok(());
         }
-        let size = bytes.len() as u64;
+        let size = file.bytes.len() as u64;
         let upload = self
-            .run_bootstrap(escalated, &self.upload_command(size), Some(&bytes))
+            .run_bootstrap(escalated, &self.upload_command(size), Some(&file.bytes))
             .await?;
         match upload.code {
             Some(0) => {}
@@ -932,10 +940,11 @@ impl SshTarget {
                 first_words(&check.stderr, "it failed without a message")
             )));
         }
-        if !is_this_agent(&check, &bytes) {
-            return Err(ConnectError::Unreachable(
-                "agent version mismatch after upload".to_string(),
-            ));
+        if !is_this_agent(&check, &file.hash) {
+            return Err(ConnectError::Unreachable(format!(
+                "the uploaded agent is not the binary this controller sent: the host's copy answered '{}'",
+                check.stdout.lines().nth(1).unwrap_or("").trim()
+            )));
         }
         Ok(())
     }
@@ -1012,19 +1021,16 @@ fn first_words(text: &str, fallback: &str) -> String {
     }
 }
 
-/// `uname -m` to the agent build we ship for it.
-/// Whether the probe ran exactly `bytes` from the cache: the agent it found printed this
-/// version and a hash of its own file equal to the hash of the binary this controller would
-/// upload. The version alone proves nothing, since any build of this source reports it.
-fn is_this_agent(probe: &Captured, bytes: &[u8]) -> bool {
-    let expected = format!(
-        "volant-agent {} {}",
-        env!("CARGO_PKG_VERSION"),
-        blake3::hash(bytes).to_hex()
-    );
+/// Whether the probe ran exactly the binary hashed as `hash` from the cache: the agent it found
+/// printed this version and a hash of its own file equal to the blake3 hash of the binary this
+/// controller would upload. The version alone proves nothing, since any build of this source
+/// reports it.
+fn is_this_agent(probe: &Captured, hash: &str) -> bool {
+    let expected = format!("volant-agent {} {hash}", env!("CARGO_PKG_VERSION"));
     probe.code == Some(0) && probe.stdout.lines().nth(1).map(str::trim) == Some(expected.as_str())
 }
 
+/// `uname -m` to the agent build we ship for it.
 pub fn triple_for(arch: &str) -> Option<&'static str> {
     match arch {
         "x86_64" | "amd64" => Some("x86_64-unknown-linux-musl"),
@@ -1788,6 +1794,7 @@ mod tests {
             .expect("deps/ has a parent")
             .join("volant-agent");
         let ours = std::fs::read(&local).expect("the agent is built beside the tests");
+        let ours_hash = blake3::hash(&ours).to_hex().to_string();
         let base = std::env::temp_dir().join(format!("volant-cache-hash-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
@@ -1828,7 +1835,7 @@ mod tests {
         let probe = cache_then_probe(&instrumented);
         assert_eq!(probe.code, Some(0), "the other build runs: {probe:?}");
         assert!(
-            !is_this_agent(&probe, &ours),
+            !is_this_agent(&probe, &ours_hash),
             "a build of this version with other bytes is not this agent: {probe:?}"
         );
 
@@ -1838,13 +1845,13 @@ mod tests {
         );
         let probe = cache_then_probe(script.as_bytes());
         assert!(
-            !is_this_agent(&probe, &ours),
+            !is_this_agent(&probe, &ours_hash),
             "a script printing this version is not this agent: {probe:?}"
         );
 
         let probe = cache_then_probe(&ours);
         assert!(
-            is_this_agent(&probe, &ours),
+            is_this_agent(&probe, &ours_hash),
             "the controller's own agent is reused: {probe:?}"
         );
         std::fs::remove_dir_all(&base).unwrap();

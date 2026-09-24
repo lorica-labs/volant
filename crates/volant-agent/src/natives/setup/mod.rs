@@ -235,15 +235,37 @@ fn collect(
         .interpreter
         .as_deref()
         .ok_or("no interpreter to read the python facts from")?;
-    let probe = python::probe(interpreter)?;
+    // `lsb_release` needs the module's environment, not the interpreter: it runs beside the
+    // probe in the environment the module has when its interpreter adds nothing to the agent's,
+    // and again after the probe when it did (Python sets `LC_CTYPE` in a C locale).
+    let guess: Option<BTreeMap<String, String>> = std::env::vars_os()
+        .map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect::<Option<BTreeMap<_, _>>>()
+        .map(|mut env| {
+            env.extend(context.environment.clone());
+            env
+        });
+    let (probe, early) = std::thread::scope(|scope| {
+        let early = guess
+            .as_ref()
+            .map(|env| scope.spawn(|| LsbRelease::run(root, env)));
+        (
+            python::probe(interpreter),
+            early.and_then(|thread| thread.join().ok()),
+        )
+    });
+    let probe = probe?;
     let mut env = probe.env.clone();
     env.extend(context.environment.clone());
+    let lsb_release = match early {
+        Some(early) if guess.as_ref() == Some(&env) => early?,
+        _ => LsbRelease::run(root, &env)?,
+    };
     let host = Host {
         root,
         env,
         probe: &probe,
     };
-    let lsb_release = LsbRelease::run(&host)?;
     let collected = [
         distribution::collect(&host, &lsb_release)?,
         apparmor::collect(&host),
@@ -330,56 +352,61 @@ pub struct Host<'a> {
 }
 
 impl Host<'_> {
-    /// `module.get_bin_path(name)`: the first executable file of that name along `PATH`, with
-    /// `/sbin`, `/usr/sbin` and `/usr/local/sbin` added when missing.
     pub fn bin_path(&self, name: &str) -> Option<PathBuf> {
-        let mut dirs: Vec<String> = self
-            .env
-            .get("PATH")
-            .map(String::as_str)
-            .unwrap_or_default()
-            .split(':')
-            .map(str::to_string)
-            .collect();
-        for sbin in ["/sbin", "/usr/sbin", "/usr/local/sbin"] {
-            if !dirs.iter().any(|dir| dir == sbin) && self.root.exists(sbin) {
-                dirs.push(sbin.to_string());
-            }
-        }
-        dirs.iter()
-            .filter(|dir| !dir.is_empty())
-            .map(|dir| self.root.path(&join(dir, name)))
-            .find(|path| is_executable_file(path))
+        bin_path(self.root, &self.env, name)
     }
 
-    /// Where `subprocess` finds `name` when it is given without a directory: `PATH`, or
-    /// `/bin:/usr/bin` without one, and no extra directory.
-    pub fn exec_path(&self, name: &str) -> Option<PathBuf> {
-        self.env
-            .get("PATH")
-            .map_or("/bin:/usr/bin", String::as_str)
-            .split(':')
-            .map(|dir| self.root.path(&join(dir, name)))
-            .find(|path| is_executable_file(path))
-    }
-
-    /// `module.run_command([program, args...])`: the exit code and standard output, decoded
-    /// lossily; `None` when the program cannot be started, which the module reports rather than
-    /// answering.
     pub fn run(&self, program: &Path, args: &[&str]) -> Option<(i32, String)> {
-        let out = Command::new(program)
-            .args(args)
-            .env_clear()
-            .envs(&self.env)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        Some((
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-        ))
+        run(&self.env, program, args)
     }
+}
+
+/// `module.get_bin_path(name)`: the first executable file of that name along `PATH`, with
+/// `/sbin`, `/usr/sbin` and `/usr/local/sbin` added when missing.
+fn bin_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
+    let mut dirs: Vec<String> = env
+        .get("PATH")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .split(':')
+        .map(str::to_string)
+        .collect();
+    for sbin in ["/sbin", "/usr/sbin", "/usr/local/sbin"] {
+        if !dirs.iter().any(|dir| dir == sbin) && root.exists(sbin) {
+            dirs.push(sbin.to_string());
+        }
+    }
+    dirs.iter()
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| root.path(&join(dir, name)))
+        .find(|path| is_executable_file(path))
+}
+
+/// Where `subprocess` finds `name` when it is given without a directory: `PATH`, or
+/// `/bin:/usr/bin` without one, and no extra directory.
+fn exec_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
+    env.get("PATH")
+        .map_or("/bin:/usr/bin", String::as_str)
+        .split(':')
+        .map(|dir| root.path(&join(dir, name)))
+        .find(|path| is_executable_file(path))
+}
+
+/// `module.run_command([program, args...])`: the exit code and standard output, decoded lossily;
+/// `None` when the program cannot be started, which the module reports rather than answering.
+fn run(env: &BTreeMap<String, String>, program: &Path, args: &[&str]) -> Option<(i32, String)> {
+    let out = Command::new(program)
+        .args(args)
+        .env_clear()
+        .envs(env)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    Some((
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    ))
 }
 
 /// `lsb_release -a`, run once for the two readers the reference runs it for: the `distro`
@@ -393,19 +420,19 @@ pub struct LsbRelease {
 }
 
 impl LsbRelease {
-    fn run(host: &Host) -> Result<LsbRelease, String> {
-        let collector_path = host.bin_path("lsb_release");
-        let distro_path = host.exec_path("lsb_release");
+    fn run(root: &Root, env: &BTreeMap<String, String>) -> Result<LsbRelease, String> {
+        let collector_path = bin_path(root, env, "lsb_release");
+        let distro_path = exec_path(root, env, "lsb_release");
         let started = "lsb_release was found and could not be started";
         let collector = match &collector_path {
-            Some(path) => Some(host.run(path, &["-a"]).ok_or(started)?),
+            Some(path) => Some(run(env, path, &["-a"]).ok_or(started)?),
             None => None,
         };
         let distro_run = if distro_path == collector_path {
             collector.clone()
         } else {
             match &distro_path {
-                Some(path) => Some(host.run(path, &["-a"]).ok_or(started)?),
+                Some(path) => Some(run(env, path, &["-a"]).ok_or(started)?),
                 None => None,
             }
         };
@@ -654,7 +681,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         let root = fake.root();
         let probe = probe();
         let host = fake.host(&root, &probe);
-        let lsb = LsbRelease::run(&host).unwrap();
+        let lsb = LsbRelease::run(host.root, &host.env).unwrap();
         let collected = [
             distribution::collect(&host, &lsb).unwrap(),
             apparmor::collect(&host),
@@ -774,19 +801,30 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// The module's answer around the facts: `ansible_facts`, and an `invocation` whose
     /// `gather_subset` is the list the reference made of a string.
     ///
+    /// `lsb_release` runs beside the probe in the agent's environment; the interpreter here
+    /// starts with another one, so the answer must come from a second run in the module's.
+    ///
     /// What would make this red: the string left as given in `module_args`, which the reference
-    /// never prints; or a default missing from `module_args`.
+    /// never prints; a default missing from `module_args`; or the early `lsb_release` kept when
+    /// the module's environment differs from the one it ran in.
     #[test]
     fn the_answer_carries_the_facts_and_the_reference_s_invocation() {
         let fake = debian_root("answer");
         fake.write(
             "/etc/hosts",
-            &format!(
-                "127.0.1.1 {}
-",
-                platform::uname().node
-            ),
+            &format!("127.0.1.1 {}\n", platform::uname().node),
+        )
+        .write(
+            "/usr/bin/lsb_release",
+            "#!/bin/sh\necho \"Distributor ID:\t$LOGNAME\"\n",
         );
+        std::fs::set_permissions(
+            fake.0.join("usr/bin/lsb_release"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        // Safety: set before any thread of this test process reads the environment.
+        unsafe { std::env::set_var("LOGNAME", "the-agent-s-own") };
         let root = fake.root();
         let interpreter = python::tests::fake_interpreter(&fake, &probe());
         let context = Context {
@@ -813,6 +851,11 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         assert_eq!(
             result["ansible_facts"]["ansible_distribution"],
             json!("Debian")
+        );
+        assert_eq!(
+            result["ansible_facts"]["ansible_lsb"]["id"],
+            json!("user"),
+            "the module's LOGNAME, not the agent's"
         );
     }
 

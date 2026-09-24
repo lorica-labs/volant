@@ -374,7 +374,7 @@ mod tests {
     fn distribution(fake: &FakeRoot) -> Result<Value, String> {
         let (root, probe) = (fake.root(), probe());
         let host = fake.host(&root, &probe);
-        let lsb = LsbRelease::run(&host).unwrap();
+        let lsb = LsbRelease::run(host.root, &host.env).unwrap();
         collect(&host, &lsb).map(Value::Object)
     }
 

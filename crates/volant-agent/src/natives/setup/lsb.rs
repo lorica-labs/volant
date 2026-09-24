@@ -87,7 +87,7 @@ mod tests {
     fn lsb(fake: &FakeRoot) -> Result<Value, String> {
         let (root, probe) = (fake.root(), probe());
         let host = fake.host(&root, &probe);
-        let run = LsbRelease::run(&host).unwrap();
+        let run = LsbRelease::run(host.root, &host.env).unwrap();
         collect(&host, &run).map(|facts| facts["lsb"].clone())
     }
 

@@ -12,19 +12,30 @@ use serde_json::{Map, Value};
 
 use super::Host;
 
-/// Run as `<interpreter> -c`. Each value is computed the way the reference computes it: the
-/// `python` fact line for line from `PythonFactCollector`, libselinux loaded as
-/// `module_utils.compat.selinux` loads it, the locale set as `AnsibleModule._check_locale` sets
-/// it. The environment is read before anything else can touch it.
-const PROBE: &str = r"
+/// Run as `<interpreter> -c`. Each value is the reference's own: the `python` fact line for line
+/// from `PythonFactCollector`, libselinux loaded as `module_utils.compat.selinux` loads it, the
+/// locale set as `AnsibleModule._check_locale` sets it, and the environment read before anything
+/// else can touch it.
+///
+/// It avoids the imports that cost most of a start (measured on the dev machine, Python 3.14:
+/// `json` 11 ms, `platform` 11 ms, `ssl` 16 ms, `platform.architecture()` 26 ms more), each
+/// replaced by what it computes here:
+/// - `ssl` imports `_ssl` and takes the two names from it, so `_ssl` loading is the answer;
+/// - `platform.python_version()` is the leading `[\w.+]+` of `sys.version`, padded to three
+///   parts;
+/// - `platform.architecture()` asks `file` about the interpreter's ELF class, which is its
+///   pointer size;
+/// - `locale.setlocale` hands a string straight to `_locale.setlocale`;
+/// - the answer is written as ASCII JSON by hand.
+const PROBE: &str = r#"
 import sys
 if sys.path and sys.path[0] in ('', '.'):
     del sys.path[0]
 import os
 env = dict(os.environ)
-import json, locale, platform
+import _locale, struct
 try:
-    from ssl import create_default_context, SSLContext
+    import _ssl
     has_sslcontext = True
 except ImportError:
     has_sslcontext = False
@@ -47,10 +58,17 @@ except AttributeError:
         python['type'] = sys.implementation.name
     except AttributeError:
         python['type'] = None
+version = ''
+for c in sys.version:
+    if not ((c.isascii() and c.isalnum()) or c in '_.+'):
+        break
+    version += c
+if version.count('.') == 1:
+    version += '.0'
 try:
-    locale.setlocale(locale.LC_ALL, '')
-    lc_time = locale.setlocale(locale.LC_TIME)
-except locale.Error:
+    _locale.setlocale(_locale.LC_ALL, '')
+    lc_time = _locale.setlocale(_locale.LC_TIME)
+except _locale.Error:
     lc_time = None
 selinux = None
 try:
@@ -64,15 +82,40 @@ try:
     selinux = bool(lib.is_selinux_enabled())
 except (ImportError, OSError):
     pass
-print(json.dumps({
+def text(value):
+    out = []
+    for c in value:
+        o = ord(c)
+        if c in '"\\' or o < 32 or o > 126:
+            if o > 0xffff:
+                o -= 0x10000
+                out.append('\\u%04x\\u%04x' % (0xd800 + (o >> 10), 0xdc00 + (o & 0x3ff)))
+            else:
+                out.append('\\u%04x' % o)
+        else:
+            out.append(c)
+    return '"' + ''.join(out) + '"'
+def dump(value):
+    if value is None:
+        return 'null'
+    if value is True or value is False:
+        return 'true' if value else 'false'
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return text(value)
+    if isinstance(value, list):
+        return '[' + ','.join(dump(item) for item in value) + ']'
+    return '{' + ','.join(text(k) + ':' + dump(v) for k, v in value.items()) + '}'
+sys.stdout.write(dump({
     'python': python,
-    'python_version': platform.python_version(),
-    'bits': platform.architecture()[0],
+    'python_version': version,
+    'bits': str(struct.calcsize('P') * 8) + 'bit',
     'env': env,
     'lc_time': lc_time,
     'selinux': selinux,
 }))
-";
+"#;
 
 /// What the module's interpreter says about itself and its host.
 #[derive(Clone, Debug)]
@@ -169,29 +212,45 @@ pub mod tests {
             .into_owned()
     }
 
-    /// The probe run by a real interpreter reads what the reference's collectors read. Checked
-    /// against `python3` on the machine running the test, whose answers are its own.
+    /// The probe run by a real interpreter answers what the reference's own calls answer on the
+    /// same interpreter: `platform.python_version()`, `platform.architecture()[0]`, the `ssl`
+    /// import, `sys.executable`, `locale.setlocale`. And its hand-written JSON carries any text
+    /// an environment can hold.
     ///
-    /// What would make this red: the snippet failing under a real interpreter, the environment
-    /// read after the locale was set, or `executable` read from anything but `sys.executable`.
+    /// What would make this red: a shortcut that stops agreeing with the call it replaces, or an
+    /// environment value with a quote, a backslash, a newline or a character outside ASCII
+    /// coming back different, or not at all.
     #[test]
-    fn a_real_interpreter_answers_the_probe() {
+    fn a_real_interpreter_answers_the_probe_as_the_reference_s_calls_do() {
+        let tricky = "a\"b\\c\nd\té 😀 \u{7f}";
+        // Safety: set before any thread of this test process reads the environment.
+        unsafe { std::env::set_var("VOLANT_PROBE_TEXT", tricky) };
         let probe = probe("python3").expect("python3 answers the probe");
-        let executable = Command::new("python3")
-            .args(["-c", "import sys; print(sys.executable)"])
+        assert_eq!(probe.env["VOLANT_PROBE_TEXT"], tricky);
+        let reference = Command::new("python3")
+            .args([
+                "-c",
+                "import json, locale, platform, sys\n\
+                 try:\n    from ssl import create_default_context, SSLContext\n    ssl = True\n\
+                 except ImportError:\n    ssl = False\n\
+                 locale.setlocale(locale.LC_ALL, '')\n\
+                 print(json.dumps([platform.python_version(), platform.architecture()[0],\n\
+                 sys.executable, ssl, locale.setlocale(locale.LC_TIME)]))",
+            ])
             .output()
             .unwrap();
+        let reference: Value = serde_json::from_slice(&reference.stdout).unwrap();
         assert_eq!(
-            probe.python["executable"].as_str().unwrap(),
-            String::from_utf8_lossy(&executable.stdout).trim()
+            json!([
+                probe.python_version,
+                probe.bits,
+                probe.python["executable"],
+                probe.python["has_sslcontext"],
+                probe.lc_time,
+            ]),
+            reference
         );
-        assert!(probe.python["version"]["major"].as_u64() == Some(3));
-        assert_eq!(probe.env.get("PATH"), std::env::var("PATH").ok().as_ref());
-        assert!(
-            matches!(probe.bits.as_str(), "64bit" | "32bit"),
-            "{}",
-            probe.bits
-        );
+        assert_eq!(probe.python["version"]["major"], 3);
     }
 
     /// The probe is run again when the interpreter file changes, and not otherwise.

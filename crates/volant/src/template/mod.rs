@@ -639,6 +639,27 @@ where
     env.add_filter(name.to_string(), filter);
 }
 
+/// [`add_filter`] for a filter that turns a container into text or a number (`join`, `string`,
+/// `quote`, `sum`): an undefined value anywhere inside an argument fails as an undefined read.
+/// Measured on ansible-core 2.19.12, `[1, nope] | join(',')` fails where `[nope] | length` and
+/// `[1, nope] | first` answer `1`, so the filters that only count or pick keep [`add_filter`].
+pub(crate) fn add_text_filter<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
+where
+    F: Function<Rv, Args>,
+    Rv: FunctionResult,
+    Args: for<'a> FunctionArgs<'a>,
+{
+    let f = undefined_through(name, f);
+    let filter = move |state: &State, args: Rest<minijinja::Value>| {
+        if args.iter().any(|v| !v.is_undefined() && holds_undefined(v)) {
+            return Err(minijinja::Error::from(ErrorKind::UndefinedError));
+        }
+        f(state, args)
+    };
+    env.add_filter(format!("ansible.builtin.{name}"), filter.clone());
+    env.add_filter(name.to_string(), filter);
+}
+
 /// `f`, answering undefined when an argument it is given is undefined; see [`add_filter`].
 /// Measured on ansible-core 2.19.12: any argument counts, keyword ones included
 /// (`'%s' | format(nope | lower)`, `regex_replace('a', 'b', ignorecase=nope | bool)` are
@@ -1254,6 +1275,41 @@ mod unit {
             let err = t.render(text, &vars).expect_err(&format!("leaked: {text}"));
             assert!(err.is_undefined(), "{text}: {err}");
         }
+    }
+
+    /// Measured on ansible-core 2.19.12: each of these fails as an undefined read, and each
+    /// rendered a value here before - the last one, the shape of a k3s role building its server
+    /// URLs, wrote a partial list and reported the task green.
+    #[test]
+    fn a_text_filter_over_a_container_holding_an_undefined_fails_the_read() {
+        let t = Templar::new(std::env::temp_dir());
+        let vars = vars(json!({"hs": ["a", "b"], "hv": {"a": {"ip": "10.0.0.1"}, "b": {}}}));
+        for text in [
+            "{{ [1, nope] | join(',') }}",
+            "{{ [1, nope] | string }}",
+            "{{ [1, nope] | map('quote') | join(' ') }}",
+            "{{ [1, nope] | sum }}",
+            "{{ hs | map('extract', hv, 'ip') | map('regex_replace', '^(.*)$', 'https://\\1:6443') | join(',') }}",
+        ] {
+            let err = t.render(text, &vars).expect_err(&format!("leaked: {text}"));
+            assert!(err.is_undefined(), "{text}: {err}");
+        }
+        // The two the reference answers, unchanged.
+        assert_eq!(t.render("{{ [nope] | length }}", &vars), Ok(json!(1)));
+        assert_eq!(t.render("{{ [1, nope] | first }}", &vars), Ok(json!(1)));
+    }
+
+    /// Measured on ansible-core 2.19.12: `'x' ~ [1, nope]` is an undefined read. minijinja 2.24
+    /// concatenates by `Display` inside its VM and only checks that neither side is undefined
+    /// itself, so the list prints as `[1, undefined]`; no environment hook reaches it.
+    #[test]
+    #[ignore = "minijinja 2.24 offers no hook on the ~ operator for a list holding undefined"]
+    fn a_concatenation_with_a_container_holding_an_undefined_fails_the_read() {
+        let t = Templar::new(std::env::temp_dir());
+        let err = t
+            .render("{{ 'x' ~ [1, nope] }}", &Map::new())
+            .expect_err("leaked: {{ 'x' ~ [1, nope] }}");
+        assert!(err.is_undefined(), "{err}");
     }
 
     /// The idioms roles write around undefined values, each measured on ansible-core 2.19.12.

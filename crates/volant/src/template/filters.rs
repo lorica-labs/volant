@@ -13,7 +13,7 @@ use minijinja::{Environment, Error, ErrorKind, Value};
 use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 
 use super::truthy;
-use super::{add_filter, add_test};
+use super::{add_filter, add_test, add_text_filter};
 
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     // minijinja's own filters and tests, registered again so that an undefined input stays
@@ -36,7 +36,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
         add_filter(env, "items", f::items);
         add_filter(env, "reverse", f::reverse);
         add_filter(env, "trim", f::trim);
-        add_filter(env, "join", f::join);
+        add_text_filter(env, "join", f::join);
         add_filter(env, "lines", f::lines);
         add_filter(env, "round", f::round);
         add_filter(env, "abs", f::abs);
@@ -47,10 +47,10 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
         add_filter(env, "max", f::max);
         add_filter(env, "sort", f::sort);
         add_filter(env, "list", f::list);
-        add_filter(env, "string", f::string);
+        add_text_filter(env, "string", f::string);
         add_filter(env, "batch", f::batch);
         add_filter(env, "slice", f::slice);
-        add_filter(env, "sum", f::sum);
+        add_text_filter(env, "sum", f::sum);
         add_filter(env, "indent", f::indent);
         add_filter(env, "select", f::select);
         add_filter(env, "reject", f::reject);
@@ -155,7 +155,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
             super::type_name(&json(&v))
         }
     });
-    add_filter(env, "quote", quote);
+    add_text_filter(env, "quote", quote);
     add_filter(env, "regex_escape", regex_escape);
     add_filter(env, "extract", extract);
     // Not through `add_filter`: `ansible.utils.ipwrap` is a collection filter, and the reference

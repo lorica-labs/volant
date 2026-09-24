@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! One host's run through a play, from its first step to the moment it leaves the batch.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -117,9 +117,9 @@ pub(super) async fn drive_host(
     // for each `become_user` the play escalates to. Connections this play never uses itself
     // stay in here untouched and go straight back with `Finished`.
     let mut links: HashMap<LinkKey, AgentLink> = existing.into_iter().collect();
-    // Which of them this play has already proved alive: one liveness check per connection per
-    // play, and never again.
-    let mut checked: HashSet<LinkKey> = HashSet::new();
+    // Which of them this play has already proved alive, with the host's reboot count when it
+    // did: one liveness check per connection per play, and one more after each reboot.
+    let mut checked: HashMap<LinkKey, u64> = HashMap::new();
     // Ansible's `forks`: one permit per host, held from the connection to the results of a
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
@@ -1056,6 +1056,7 @@ pub(super) async fn drive_host(
                 let mut relink = Relinker {
                     links: &mut links,
                     checked: &mut checked,
+                    reboots: &options.reboots,
                     key: &key,
                     escalation: batch_escalation.as_ref(),
                     agents: &agents,

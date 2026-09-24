@@ -317,6 +317,7 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         batching: config.batching,
         stop: stop_rx.clone(),
         abort,
+        reboots: Arc::default(),
     };
 
     let playbook_dir = playbook::base_dir(&args.playbooks[0]);

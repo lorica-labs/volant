@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Running one task and judging its result, on the controller as well as on the agent.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::io::IsTerminal as _;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,7 +22,7 @@ use crate::transport::{ConnectError, ConnectionDefaults, Escalation, Transport};
 use crate::vars::{HostVars, VarStore, load_vars_file};
 
 use super::prepare::{Item, display};
-use super::{CANCEL_GRACE, LinkKey, RunOptions, as_bool_value, python_type};
+use super::{CANCEL_GRACE, LinkKey, Reboots, RunOptions, as_bool_value, python_type};
 
 /// What a `debug: var:` naming a value that came from a managed host reports. The reference's
 /// own sentence, measured on ansible-core 2.19.12 against `var: "{{ r.stdout }}"` and against
@@ -1289,12 +1289,36 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
     logs: &mut Vec<String>,
 ) -> Result<TaskResult, Result<BatchOutcome, String>> {
     use crate::action_plugins::{Step, gone};
+    use tokio::time::Instant;
+    // The `timeout` keyword bounds the whole item, as the reference's alarm bounds the whole
+    // action: every sub-task, every wait for the host to come back. Past it, the item's result is
+    // the timeout's, never whatever the plugin would have made of the time it had left.
+    let limit = task.timeout.filter(|t| *t > 0);
+    let ends = limit.map(|t| Instant::now() + Duration::from_secs(t));
+    let expired = || ends.is_some_and(|e| Instant::now() >= e);
+    let capped =
+        |d: Duration| ends.map_or(d, |e| d.min(e.saturating_duration_since(Instant::now())));
+    // A sub-task gets what is left of the item's time, in the whole seconds the agent counts in.
+    let bounded = |mut built: Task| {
+        if let Some(e) = ends {
+            let left = e
+                .saturating_duration_since(Instant::now())
+                .as_secs_f64()
+                .ceil();
+            built.timeout = Some((left as u64).max(1));
+        }
+        built
+    };
+    let timeout_result = || TaskResult::timed_out(limit.unwrap_or(0));
     let mut last = None;
     // Tries in the reconnection in hand, which the pause before the next one grows with: the
     // plugin asks again after a try that failed and after a probe it was not satisfied with, and
     // the reference's loop counts both as failures.
     let mut tries: Option<u32> = None;
     loop {
+        if expired() {
+            return Ok(timeout_result());
+        }
         let (sub, dropping) = match plugin.next(last.take()) {
             Step::Done(result) => return Ok(result),
             Step::Run(sub) => (sub, false),
@@ -1305,24 +1329,30 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 timeout,
                 attempt,
             } => {
-                if wait_or_stop(wait, stop, stop_broken).await.is_none() {
+                if wait_or_stop(capped(wait), stop, stop_broken)
+                    .await
+                    .is_none()
+                {
                     return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
                 }
-                let deadline = tokio::time::Instant::now() + timeout;
+                let deadline = Instant::now() + capped(timeout);
                 let failed = tries.map_or(0, |t| t + 1);
                 tries = Some(failed);
                 if failed > 0
-                    && wait_or_stop(relink.pause(failed).min(timeout), stop, stop_broken)
+                    && wait_or_stop(capped(relink.pause(failed).min(timeout)), stop, stop_broken)
                         .await
                         .is_none()
                 {
                     return Err(Ok(BatchOutcome::Cancelled { at: 0 }));
                 }
+                if expired() {
+                    return Ok(timeout_result());
+                }
                 let built = match sub_task(task, item, &probe, union, interpreters, asked) {
-                    Ok(built) => built,
+                    Ok(built) => bounded(built),
                     Err(failure) => return Ok(failure),
                 };
-                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
                     // Nothing here awaits, so a plugin asking again with no time left would hold
                     // the runtime's thread for as long as it kept asking.
@@ -1330,8 +1360,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     last = Some(gone("the host did not come back in time"));
                     continue;
                 }
-                let bound = attempt.map_or(left, |a| a.min(left));
-                // Watched on the side as well, since a try can take as long as `bound` and an
+                // Watched on the side as well, since a try can take as long as `left` and an
                 // interruption is not made to wait for it.
                 let mut watcher = stop.clone();
                 let stopped = async move {
@@ -1340,7 +1369,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     }
                 };
                 let once = async {
-                    relink.relink(link).await?;
+                    relink.relink(link, attempt).await?;
                     *batch_id += 1;
                     let (mut flat, ended) =
                         send_batch(link, host, *batch_id, vec![built], stop, stop_broken, logs)
@@ -1355,21 +1384,21 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     answer
                 };
                 let tried = tokio::select! {
-                    tried = tokio::time::timeout(bound, once) => tried,
+                    tried = tokio::time::timeout(left, once) => tried,
                     () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
                 };
                 last = Some(match tried {
                     Ok(Ok(Some(result))) => result,
                     Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
                     Ok(Err(why)) => gone(&why),
-                    Err(_) => gone(&format!("no answer after {} seconds", bound.as_secs_f64())),
+                    Err(_) => gone(&format!("no answer after {} seconds", left.as_secs_f64())),
                 });
                 continue;
             }
         };
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
-            Ok(built) => built,
+            Ok(built) => bounded(built),
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
@@ -1387,9 +1416,10 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         match ended {
             Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }) => {}
             // The link went, which a sub-task that may take it down reports to the plugin
-            // instead of ending the host's run.
-            Err(err) if dropping && result.is_none() => {
-                last = Some(gone(&err));
+            // instead of ending the host's run - with the sub-task's own result when it arrived
+            // before the link went.
+            Err(err) if dropping => {
+                last = Some(result.unwrap_or_else(|| gone(&err)));
                 continue;
             }
             _ => return Err(ended),
@@ -1407,7 +1437,11 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         // the action there: the item's result is the timeout, never something the plugin made of
         // it.
         if timed_out(&result) {
-            return Ok(result);
+            return Ok(if limit.is_some() {
+                timeout_result()
+            } else {
+                result
+            });
         }
         last = Some(result);
     }
@@ -1593,8 +1627,13 @@ pub(super) trait AgentChannel {
 pub(super) trait Relink<C> {
     /// Replaces `link` with a fresh one to the same host, under the same user, after dropping
     /// every other link kept for that host: a link the host outlived is of no use to anybody.
-    /// `link` is left as it was when no fresh one could be opened.
-    async fn relink(&mut self, link: &mut C) -> Result<(), String>;
+    /// `link` is left as it was when no fresh one could be opened. `connect_timeout` bounds the
+    /// connection's own setup, as the reference's `connect_timeout` sets the connection plugin's.
+    async fn relink(
+        &mut self,
+        link: &mut C,
+        connect_timeout: Option<Duration>,
+    ) -> Result<(), String>;
 
     /// How long to wait before the next try, after `failed` of them: the reference's doubling
     /// from one second, capped at twelve (`reboot.py`, which adds up to a second at random).
@@ -1607,7 +1646,9 @@ pub(super) trait Relink<C> {
 /// while the plugin holds it.
 pub(super) struct Relinker<'a> {
     pub(super) links: &'a mut HashMap<LinkKey, AgentLink>,
-    pub(super) checked: &'a mut HashSet<LinkKey>,
+    /// Each link's key, with the host's reboot count when the link was last proved alive.
+    pub(super) checked: &'a mut HashMap<LinkKey, u64>,
+    pub(super) reboots: &'a Reboots,
     pub(super) key: &'a LinkKey,
     pub(super) escalation: Option<&'a Escalation>,
     pub(super) agents: &'a AgentSource,
@@ -1615,7 +1656,14 @@ pub(super) struct Relinker<'a> {
 }
 
 impl Relink<AgentLink> for Relinker<'_> {
-    async fn relink(&mut self, link: &mut AgentLink) -> Result<(), String> {
+    async fn relink(
+        &mut self,
+        link: &mut AgentLink,
+        connect_timeout: Option<Duration>,
+    ) -> Result<(), String> {
+        // Before anything else, so that every other driver checks its own link to this host
+        // again whether or not this try comes up.
+        self.reboots.bump(&self.key.host);
         // Closed off-task, as a replaced escalated link is: their agents died with the host.
         let stale: Vec<LinkKey> = self
             .links
@@ -1633,7 +1681,7 @@ impl Relink<AgentLink> for Relinker<'_> {
         // the one the host outlived.
         self.checked.remove(self.key);
         let fresh = connect(
-            &self.key.transport,
+            &with_connect_timeout(&self.key.transport, connect_timeout),
             self.agents,
             self.defaults,
             self.escalation,
@@ -1644,6 +1692,16 @@ impl Relink<AgentLink> for Relinker<'_> {
         tokio::spawn(old.shutdown());
         Ok(())
     }
+}
+
+/// `transport` with ssh's `ConnectTimeout` set to `timeout`, in the whole seconds it takes and at
+/// least one; a local transport has no connection to set up.
+fn with_connect_timeout(transport: &Transport, timeout: Option<Duration>) -> Transport {
+    let mut transport = transport.clone();
+    if let (Some(timeout), Transport::Ssh(target)) = (timeout, &mut transport) {
+        target.connect_timeout = Duration::from_secs((timeout.as_secs_f64().ceil() as u64).max(1));
+    }
+    transport
 }
 
 impl AgentChannel for AgentLink {
@@ -2087,15 +2145,17 @@ pub(super) fn classify(result: &TaskResult, ignore_errors: bool, rescuable: bool
 
 /// The connection for the next batch, under `key`'s target user and over `key`'s transport: the
 /// one kept from an earlier play if its agent still answers, a fresh one otherwise. A kept
-/// connection gets exactly one liveness check per play, and a failed check exactly one
-/// reconnection; a failed reconnection is the host's `UNREACHABLE`.
+/// connection gets exactly one liveness check per play, and one more each time a task of this
+/// run rebooted its host ([`Reboots`]) - the driver that rebooted it dropped only its own links,
+/// and another host delegating to it would otherwise reuse one the reboot killed. A failed check
+/// gets exactly one reconnection; a failed reconnection is the host's `UNREACHABLE`.
 ///
 /// The transport comes in on the key rather than being resolved here, so the connection a batch
 /// opens and the identity it is filed under can never be built from two different views of the
 /// host's variables.
 pub(super) async fn reuse_or_connect<'a>(
     links: &'a mut HashMap<LinkKey, AgentLink>,
-    checked: &mut HashSet<LinkKey>,
+    checked: &mut HashMap<LinkKey, u64>,
     key: &LinkKey,
     escalation: Option<&Escalation>,
     agents: &AgentSource,
@@ -2105,7 +2165,8 @@ pub(super) async fn reuse_or_connect<'a>(
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
     let mut stale: Option<String> = None;
-    if checked.insert(key.clone())
+    let reboots = options.reboots.of(&key.host);
+    if checked.insert(key.clone(), reboots) != Some(reboots)
         && let Some(mut link) = links.remove(key)
     {
         let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
@@ -3076,7 +3137,7 @@ mod tests {
     struct NoRelink;
 
     impl<C> Relink<C> for NoRelink {
-        async fn relink(&mut self, _link: &mut C) -> Result<(), String> {
+        async fn relink(&mut self, _link: &mut C, _: Option<Duration>) -> Result<(), String> {
             Err("this test opens no connection".into())
         }
     }
@@ -3525,6 +3586,7 @@ mod tests {
             agent,
             &mut NoRelink,
             false,
+            None,
             interpreters,
             stop,
         )
@@ -3543,6 +3605,7 @@ mod tests {
         agent: &mut FakeAgent,
         relink: &mut R,
         local: bool,
+        timeout: Option<u64>,
         interpreters: &[String],
         stop: &mut watch::Receiver<bool>,
     ) -> (
@@ -3559,6 +3622,7 @@ mod tests {
             crate::action_plugins::Kind::Template => "template",
             crate::action_plugins::Kind::Unarchive => "unarchive",
         });
+        let t = PlayTask { timeout, ..t };
         let item = Item {
             args: vars(args),
             ..bare_item()
@@ -5929,6 +5993,8 @@ mod tests {
         tries: std::collections::VecDeque<Try>,
         after: Option<fn() -> FakeAgent>,
         attempts: usize,
+        /// The `connect_timeout` each try was given.
+        connect_timeouts: Vec<Option<Duration>>,
         retired: Vec<FakeAgent>,
         /// Raised a tenth of a second after the first try starts, for a test of the run being
         /// interrupted while it waits.
@@ -5945,6 +6011,7 @@ mod tests {
                 tries: tries.into(),
                 after: None,
                 attempts: 0,
+                connect_timeouts: Vec::new(),
                 retired: Vec::new(),
                 stop: None,
                 pause: Duration::from_millis(1),
@@ -5953,8 +6020,13 @@ mod tests {
     }
 
     impl Relink<FakeAgent> for Scripted {
-        async fn relink(&mut self, link: &mut FakeAgent) -> Result<(), String> {
+        async fn relink(
+            &mut self,
+            link: &mut FakeAgent,
+            connect_timeout: Option<Duration>,
+        ) -> Result<(), String> {
             self.attempts += 1;
+            self.connect_timeouts.push(connect_timeout);
             if let Some(stop) = self.stop.take() {
                 // A moment later, so that it lands inside whatever wait follows this try.
                 tokio::spawn(async move {
@@ -6036,6 +6108,18 @@ mod tests {
         local: bool,
         stop: &mut watch::Receiver<bool>,
     ) -> Result<TaskResult, Result<BatchOutcome, String>> {
+        reboot_item_under(None, args, agent, relink, local, stop).await
+    }
+
+    /// [`reboot_item`] for a task with the `timeout` keyword.
+    async fn reboot_item_under(
+        timeout: Option<u64>,
+        args: Value,
+        agent: &mut FakeAgent,
+        relink: &mut Scripted,
+        local: bool,
+        stop: &mut watch::Receiver<bool>,
+    ) -> Result<TaskResult, Result<BatchOutcome, String>> {
         // A broken wait is a wait that never ends: bounded here, so it fails rather than hangs.
         let (ran, _) = tokio::time::timeout(
             Duration::from_secs(30),
@@ -6046,6 +6130,7 @@ mod tests {
                 agent,
                 relink,
                 local,
+                timeout,
                 &python3(),
                 stop,
             ),
@@ -6279,27 +6364,24 @@ mod tests {
         assert_eq!(relink.attempts, 1);
     }
 
-    /// `connect_timeout` bounds each try: one that hangs is given up after it, and the next one
-    /// runs.
+    /// `connect_timeout` reaches each try as the connection's own setup timeout, and nothing else
+    /// is bounded by it: the reference sets it on the connection plugin, so a slow `sudo` or a
+    /// slow probe on a connection that did come up is not cut short by it.
     ///
-    /// What would make this red: the bound dropped, which leaves the wait on the hung try until
-    /// `reboot_timeout` - here five seconds - and times the task out.
+    /// What would make this red: the option read and dropped on its way to the connection.
     #[tokio::test]
-    async fn connect_timeout_gives_up_on_a_try_that_hangs() {
+    async fn connect_timeout_reaches_the_connection() {
         let mut stop = watch::channel(false).1;
         let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(vec![
-            Try::Hangs,
-            Try::Up(FakeAgent::answering(
-                [
-                    raw_answer(5, 0, "new-boot-id\n").to_vec(),
-                    raw_answer(6, 0, "root\n").to_vec(),
-                ]
-                .concat(),
-            )),
-        ]);
+        let mut relink = Scripted::new(vec![Try::Up(FakeAgent::answering(
+            [
+                raw_answer(5, 0, "new-boot-id\n").to_vec(),
+                raw_answer(6, 0, "root\n").to_vec(),
+            ]
+            .concat(),
+        ))]);
         let result = reboot_item(
-            json!({"connect_timeout": 1, "reboot_timeout": 5}),
+            json!({"connect_timeout": 3}),
             &mut agent,
             &mut relink,
             false,
@@ -6308,38 +6390,19 @@ mod tests {
         .await
         .expect("the item ran to its end");
         assert!(!result.failed(), "{result:?}");
-        assert_eq!(relink.attempts, 2);
+        assert_eq!(relink.connect_timeouts, [Some(Duration::from_secs(3))]);
     }
 
-    /// The reference's schedule between two tries: 1, 2, 4, 8, then 12 seconds for good.
-    #[test]
-    fn the_pause_doubles_from_one_second_up_to_twelve() {
-        let pauses: Vec<u64> = (1..=7)
-            .map(|n| Relink::<FakeAgent>::pause(&NoRelink, n).as_secs())
-            .collect();
-        assert_eq!(pauses, [1, 2, 4, 8, 12, 12, 12]);
-    }
-
-    /// Reconnecting drops every link kept for the host - its own and the escalated one - and
-    /// no other host's, and puts a fresh link in place of the one the plugin holds. Run against
-    /// real agents on the local connection.
+    /// On ssh the timeout becomes `ConnectTimeout`, in the whole seconds ssh takes; the kept
+    /// transport, which names the link, is left alone.
     ///
-    /// What would make this red: the escalated link left in the map, which the next escalated
-    /// task reuses unchecked - it was checked once this play - and fails on as a dead host.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn reconnecting_drops_the_host_s_links_and_no_other() {
-        let exe = std::env::current_exe().expect("this test's own binary path");
-        let agent_dir = exe
-            .parent()
-            .and_then(Path::parent)
-            .expect("deps/ has a parent")
-            .to_path_buf();
-        // SAFETY: nextest gives every test its own process, and nothing else here reads it.
-        unsafe {
-            std::env::set_var("VOLANT_AGENT_DIR", &agent_dir);
-        }
-        let source = AgentSource::discover();
+    /// What would make this red: the fresh connection opened with the play's own timeout.
+    #[test]
+    fn a_connect_timeout_becomes_ssh_s_connecttimeout() {
+        let host = crate::inventory::Host {
+            name: "h1".to_string(),
+            vars: BTreeMap::from([("ansible_host".to_string(), json!("probe-hostname"))]),
+        };
         let defaults = ConnectionDefaults {
             remote_user: None,
             private_key: None,
@@ -6351,41 +6414,246 @@ mod tests {
             become_method: "sudo".to_string(),
             become_password: None,
         };
-        let key = |host: &str, user: Option<&str>| LinkKey {
+        let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
+        let argv = |t: &Transport| match t {
+            Transport::Ssh(target) => target.ssh_argv("true").join(" "),
+            Transport::Local => panic!("an ssh transport"),
+        };
+        let fresh = with_connect_timeout(&kept, Some(Duration::from_millis(2500)));
+        assert!(
+            argv(&fresh).contains("ConnectTimeout=3"),
+            "{}",
+            argv(&fresh)
+        );
+        assert!(argv(&kept).contains("ConnectTimeout=10"), "{}", argv(&kept));
+        assert_eq!(with_connect_timeout(&kept, None), kept);
+    }
+
+    /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`
+    /// under `timeout: 1` whose host never comes back ends at one second with the timeout's own
+    /// result, not after `reboot_timeout`. Read from ansible-core 2.19.12 `task_executor.py`: the
+    /// alarm wraps the action's whole run and raises out of it.
+    ///
+    /// What would make this red: the keyword left to each sub-task, which the waits between them
+    /// never see, so the item runs to `reboot_timeout` and reports the plugin's own failure.
+    #[tokio::test]
+    async fn the_timeout_keyword_bounds_a_plugin_s_whole_item() {
+        let mut stop = watch::channel(false).1;
+        let mut agent = before_the_reboot(None);
+        let mut relink = Scripted::new(Vec::new());
+        relink.after = Some(|| FakeAgent::answering(raw_answer(9, 0, "old-boot-id\n").to_vec()));
+        let result = reboot_item_under(
+            Some(1),
+            json!({}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await
+        .expect("the item ran to its end");
+        assert_eq!(result, TaskResult::timed_out(1));
+        let first = batches_sent(&relink.retired[0]);
+        assert!(
+            first.iter().all(|b| b[0].timeout == Some(1)),
+            "each sub-task carries what is left of the item's time: {first:?}"
+        );
+    }
+
+    /// A `shutdown` that answered and then took the link down reports its answer: a refusal
+    /// written just before the connection closed is still a refusal.
+    ///
+    /// What would make this red: the answer thrown away because the link went, which reports
+    /// the host unreachable when the shutdown was refused.
+    #[tokio::test]
+    async fn a_shutdown_answer_before_the_link_went_is_kept() {
+        let mut stop = watch::channel(false).1;
+        let answered = vec![FromAgent::TaskResult {
+            batch: 4,
+            index: 0,
+            result: TaskResult(vars(
+                json!({"rc": 1, "stdout": "", "stderr": "shutdown: Permission denied\n"}),
+            )),
+        }];
+        let mut agent = before_the_reboot(Some(answered));
+        let mut relink = Scripted::new(Vec::new());
+        let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+            .await
+            .expect("the item ran to its end");
+        assert_eq!(
+            msg(&result),
+            "Reboot command failed. Error was: ', shutdown: Permission denied'"
+        );
+        assert_eq!(relink.attempts, 0);
+    }
+
+    /// The reference's schedule between two tries: 1, 2, 4, 8, then 12 seconds for good.
+    #[test]
+    fn the_pause_doubles_from_one_second_up_to_twelve() {
+        let pauses: Vec<u64> = (1..=7)
+            .map(|n| Relink::<FakeAgent>::pause(&NoRelink, n).as_secs())
+            .collect();
+        assert_eq!(pauses, [1, 2, 4, 8, 12, 12, 12]);
+    }
+
+    /// Real agents on the local connection, found the way the other real-link test finds them.
+    #[cfg(unix)]
+    fn local_agents() -> (AgentSource, ConnectionDefaults) {
+        let exe = std::env::current_exe().expect("this test's own binary path");
+        let agent_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .expect("deps/ has a parent")
+            .to_path_buf();
+        // SAFETY: nextest gives every test its own process, and nothing else here reads it.
+        unsafe {
+            std::env::set_var("VOLANT_AGENT_DIR", &agent_dir);
+        }
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        (AgentSource::discover(), defaults)
+    }
+
+    #[cfg(unix)]
+    fn local_key(host: &str, user: Option<&str>) -> LinkKey {
+        LinkKey {
             host: host.to_string(),
             become_user: user.map(str::to_string),
             transport: Transport::Local,
-        };
+        }
+    }
+
+    /// Reconnecting drops every link kept for the host - its own and the escalated one - and
+    /// no other host's, and puts a fresh link in place of the one the plugin holds. Run against
+    /// real agents on the local connection.
+    ///
+    /// What would make this red: the escalated link left in the map, which the next escalated
+    /// task reuses unchecked - it was checked once this play - and fails on as a dead host.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnecting_drops_the_host_s_links_and_no_other() {
+        let (source, defaults) = local_agents();
+        let key = local_key;
+        let reboots = Reboots::default();
         let mut links = HashMap::new();
-        let mut checked = HashSet::new();
+        let mut checked = HashMap::new();
         for k in [key("h1", Some("root")), key("h2", None)] {
             let link = connect(&Transport::Local, &source, &defaults, None)
                 .await
                 .expect("a real agent");
-            checked.insert(k.clone());
+            checked.insert(k.clone(), 0);
             links.insert(k, link);
         }
         let mine = key("h1", None);
-        checked.insert(mine.clone());
+        checked.insert(mine.clone(), 0);
         let mut held = connect(&Transport::Local, &source, &defaults, None)
             .await
             .expect("a real agent");
         let mut relink = Relinker {
             links: &mut links,
             checked: &mut checked,
+            reboots: &reboots,
             key: &mine,
             escalation: None,
             agents: &source,
             defaults: &defaults,
         };
-        relink.relink(&mut held).await.expect("a fresh link");
+        relink.relink(&mut held, None).await.expect("a fresh link");
         let left: Vec<&LinkKey> = links.keys().collect();
         assert_eq!(left, [&key("h2", None)]);
-        assert_eq!(checked, HashSet::from([key("h2", None)]));
+        assert_eq!(checked, HashMap::from([(key("h2", None), 0)]));
+        assert_eq!((reboots.of("h1"), reboots.of("h2")), (1, 0));
         held.handshake().await.expect("the fresh link answers");
         held.shutdown().await;
         for (_, link) in links.drain() {
             link.shutdown().await;
         }
+    }
+
+    /// A link another host's driver keeps to a host this one rebooted is checked again before
+    /// it is reused, and replaced when the reboot killed it. Two drivers' maps, one run's count:
+    /// `h2`'s driver delegated to `h1` and kept the link; `h1`'s driver rebooted `h1`; `h2`
+    /// delegates to `h1` again. In the k3s proof the agents delegate to the first server like
+    /// this.
+    ///
+    /// What would make this red: the reboot count left out of the check, which hands `h2` the
+    /// dead link it checked earlier in the play, and reports it unreachable.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {
+        let (source, defaults) = local_agents();
+        let (stop_tx, stop) = watch::channel(false);
+        let options = RunOptions {
+            defaults: defaults.clone(),
+            forks: 1,
+            force_handlers: false,
+            batching: false,
+            stop,
+            abort: Arc::new(super::super::Abort::new(stop_tx)),
+            reboots: Arc::default(),
+        };
+        let to_h1 = local_key("h1", None);
+        // `h2`'s driver: its link to `h1`, proved alive once this play.
+        let mut h2_links = HashMap::new();
+        let mut h2_checked = HashMap::new();
+        reuse_or_connect(
+            &mut h2_links,
+            &mut h2_checked,
+            &to_h1,
+            None,
+            &source,
+            &options,
+        )
+        .await
+        .expect("h2 reaches h1");
+        // `h1`'s driver reboots `h1`, which kills every agent on it, `h2`'s included.
+        h2_links
+            .get_mut(&to_h1)
+            .expect("h2 kept its link")
+            .kill()
+            .await;
+        let mut h1_links = HashMap::new();
+        let mut h1_checked = HashMap::new();
+        let mut held = connect(&Transport::Local, &source, &defaults, None)
+            .await
+            .expect("a real agent");
+        Relinker {
+            links: &mut h1_links,
+            checked: &mut h1_checked,
+            reboots: &options.reboots,
+            key: &to_h1,
+            escalation: None,
+            agents: &source,
+            defaults: &defaults,
+        }
+        .relink(&mut held, None)
+        .await
+        .expect("h1 is back");
+        // `h2` delegates to `h1` again.
+        let link = reuse_or_connect(
+            &mut h2_links,
+            &mut h2_checked,
+            &to_h1,
+            None,
+            &source,
+            &options,
+        )
+        .await
+        .expect("h2 reaches h1 again");
+        let answered = link.handshake().await;
+        held.shutdown().await;
+        for (_, link) in h2_links.drain() {
+            link.shutdown().await;
+        }
+        answered.expect("the link h2 got is alive, not the one the reboot killed");
     }
 }

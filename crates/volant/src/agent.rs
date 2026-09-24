@@ -295,6 +295,14 @@ impl AgentLink {
             .unwrap_or(false)
     }
 
+    /// Kills the agent and waits for it, leaving the link in place: what a host that rebooted
+    /// leaves a controller holding.
+    #[cfg(all(test, unix))]
+    pub(crate) async fn kill(&mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+    }
+
     /// Kills the agent process if it is still running.
     pub async fn shutdown(mut self) {
         drop(self.stdin.take());

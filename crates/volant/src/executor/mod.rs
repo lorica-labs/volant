@@ -57,6 +57,35 @@ pub struct RunOptions {
     pub stop: watch::Receiver<bool>,
     /// The sending half of `stop`, and the reason a host ended the run, if one did.
     pub abort: Arc<Abort>,
+    /// Which hosts a task of this run rebooted, shared by every host's driver.
+    pub reboots: Arc<Reboots>,
+}
+
+/// How many times a task of this run has sent each host away, by the name its links are filed
+/// under. A driver's kept link to a host belongs to that driver alone, so the one that reboots
+/// the host can drop only its own; every other driver reads this before reusing a link, and
+/// checks again one it checked before the count moved.
+#[derive(Debug, Default)]
+pub struct Reboots(Mutex<HashMap<String, u64>>);
+
+impl Reboots {
+    pub(crate) fn of(&self, host: &str) -> u64 {
+        self.0
+            .lock()
+            .expect("reboots lock")
+            .get(host)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn bump(&self, host: &str) {
+        *self
+            .0
+            .lock()
+            .expect("reboots lock")
+            .entry(host.to_string())
+            .or_default() += 1;
+    }
 }
 
 /// Ends the whole run from inside a play, the way a pre-flight refusal ends it before one: exit

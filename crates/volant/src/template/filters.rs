@@ -867,12 +867,19 @@ fn regex_escape(value: Value, re_type: Option<String>, kwargs: Kwargs) -> Result
 /// and `is defined` see it, and anything else fails as an undefined variable. A `hostvars`
 /// container is read through its own object, so a host's untrusted values taint the render
 /// here exactly as a bare `hostvars[h]` does.
-fn extract(item: Value, container: Value, morekeys: Option<Value>) -> Result<Value, Error> {
+///
+/// `morekeys` is taken as it arrives rather than as an `Option`, which minijinja fills with
+/// `None` for an undefined argument as well as for an omitted one: an undefined `morekeys` is a
+/// key that cannot be read, so the result is undefined, as the reference's is.
+fn extract(item: Value, container: Value, Rest(morekeys): Rest<Value>) -> Result<Value, Error> {
+    if morekeys.len() > 1 {
+        return Err(Error::from(ErrorKind::TooManyArguments));
+    }
     let mut keys = vec![item];
-    match morekeys {
+    match morekeys.into_iter().next() {
         Some(more) if more.kind() == ValueKind::Seq => keys.extend(more.try_iter()?),
-        Some(more) => keys.push(more),
-        None => {}
+        Some(more) if !more.is_none() => keys.push(more),
+        _ => {}
     }
     let mut value = container;
     for key in &keys {
@@ -1377,6 +1384,17 @@ mod tests {
         // The reference: `object of type 'dict' has no attribute 'z'`, as an undefined variable.
         let err = r("{{ 'z' | extract({'a': 1}) }}").unwrap_err();
         assert!(err.starts_with(super::super::UNDEFINED), "{err}");
+        // An undefined `morekeys` is a key that cannot be read, not an omitted argument: the
+        // reference fails `'missing' is undefined` bare, and `default` catches it.
+        let err = r("{{ 'a' | extract({'a': 1}, missing) }}").unwrap_err();
+        assert!(err.starts_with(super::super::UNDEFINED), "{err}");
+        assert_eq!(
+            r("{{ 'a' | extract({'a': 1}, missing) | default('d') }}"),
+            Ok(json!("d"))
+        );
+        // The reference: `extract() takes from 3 to 4 positional arguments but 5 were given`.
+        let err = r("{{ 'a' | extract({'a': 1}, 'x', 'y') }}").unwrap_err();
+        assert!(err.contains("too many arguments"), "{err}");
         assert_eq!(
             r("{{ 'a' | ansible.builtin.extract({'a': 3}) }}"),
             Ok(json!(3))

@@ -17,7 +17,17 @@ use volant_protocol::{FromAgent, LogLevel, PROTOCOL_VERSION, ToAgent};
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("volant-agent {}", env!("CARGO_PKG_VERSION"));
+        if std::env::args().nth(2).as_deref() != Some("--build-id") {
+            println!("volant-agent {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        match own_hash() {
+            Ok(hash) => println!("volant-agent {} {hash}", env!("CARGO_PKG_VERSION")),
+            Err(err) => {
+                eprintln!("volant-agent: reading its own file: {err}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     let remote_tmp = blobs::remote_tmp();
@@ -30,6 +40,33 @@ fn main() {
         eprintln!("volant-agent: {err}");
         std::process::exit(1);
     }
+}
+
+/// The blake3 hash of the file this process runs from, which the controller compares with the
+/// agent it would upload before reusing a cached one.
+fn own_hash() -> io::Result<String> {
+    hash_of_self(
+        std::path::Path::new("/proc/self/exe"),
+        std::env::args_os().next(),
+    )
+}
+
+/// `proc_exe` is the running file even when another upload has renamed a new one over its path
+/// since. A host without procfs (an sshd `ChrootDirectory`, a container that does not mount
+/// `/proc`) has none, and on Linux `current_exe` reads that same link, so the absolute path the
+/// controller's probe always starts the agent by comes next. `current_exe` is last, for the
+/// platforms where it does not go through `/proc`.
+fn hash_of_self(
+    proc_exe: &std::path::Path,
+    argv0: Option<std::ffi::OsString>,
+) -> io::Result<String> {
+    let absolute = argv0
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute());
+    let bytes = std::fs::read(proc_exe)
+        .or_else(|err| absolute.map_or(Err(err), std::fs::read))
+        .or_else(|_| std::env::current_exe().and_then(std::fs::read))?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 fn serve(remote_tmp: &str) -> io::Result<()> {
@@ -100,4 +137,28 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host without procfs still answers the probe with the hash of the file it was started
+    /// from, rather than failing it and leaving the host unreachable over an agent that runs.
+    ///
+    /// What would make this red: the absolute `argv[0]` fallback removed, which reads this test
+    /// binary through `current_exe` instead of the file named.
+    #[test]
+    fn without_procfs_the_hash_is_of_the_absolute_path_the_agent_was_started_by() {
+        let dir = std::env::temp_dir().join(format!("volant-self-hash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("volant-agent");
+        std::fs::write(&file, b"the agent's own bytes").unwrap();
+        let hash = hash_of_self(&dir.join("no-proc-exe"), Some(file.into_os_string()));
+        assert_eq!(
+            hash.unwrap(),
+            blake3::hash(b"the agent's own bytes").to_hex().to_string()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

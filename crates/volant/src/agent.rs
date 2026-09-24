@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Finding the agent binary and talking to a running agent.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -19,6 +21,15 @@ mod embedded;
 #[derive(Debug, Clone)]
 pub struct AgentSource {
     places: Vec<Place>,
+    read: Arc<Mutex<HashMap<PathBuf, Arc<AgentFile>>>>,
+}
+
+/// An agent binary as read off disk once, with its blake3 hash in hex: the bytes a link uploads
+/// and the hash it compares a cached agent with are always the same bytes.
+#[derive(Debug)]
+pub struct AgentFile {
+    pub bytes: Vec<u8>,
+    pub hash: String,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +60,32 @@ impl AgentSource {
             .chain(embedded.map(Place::Embedded))
             .chain(exe_dir.map(Place::Dir))
             .collect();
-        Self { places }
+        Self {
+            places,
+            read: Arc::default(),
+        }
+    }
+
+    /// The agent file at `path`, read and hashed on the first call and shared by every link of
+    /// the run after that, clones of this source included. A file rebuilt during a run is not
+    /// read again.
+    pub fn read(&self, path: &Path) -> std::io::Result<Arc<AgentFile>> {
+        if let Some(file) = self.lock().get(path) {
+            return Ok(Arc::clone(file));
+        }
+        let bytes = std::fs::read(path)?;
+        let hash = blake3::hash(&bytes).to_hex().to_string();
+        Ok(Arc::clone(
+            self.lock()
+                .entry(path.to_path_buf())
+                .or_insert_with(|| Arc::new(AgentFile { bytes, hash })),
+        ))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Arc<AgentFile>>> {
+        self.read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub fn local(&self) -> anyhow::Result<PathBuf> {
@@ -98,20 +134,20 @@ impl AgentSource {
 /// the directory of the link.
 fn beside_executable(exe: PathBuf) -> Option<PathBuf> {
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    exe.parent().map(std::path::Path::to_path_buf)
+    exe.parent().map(Path::to_path_buf)
 }
 
 /// A file that carries an execute bit. A stray artifact with the right name is not an agent:
 /// the local one would fail to spawn, and a cross-built one would be uploaded, made
 /// executable on the host and then refuse to run there.
 #[cfg(unix)]
-fn runnable(path: &std::path::Path) -> bool {
+fn runnable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
-fn runnable(path: &std::path::Path) -> bool {
+fn runnable(path: &Path) -> bool {
     path.is_file()
 }
 
@@ -144,7 +180,7 @@ pub struct AgentLink {
 /// kept per host, or per run, would send a batch that needs a payload to an agent that never
 /// received one.
 #[derive(Debug, Default)]
-pub struct BlobMemory(std::collections::HashMap<String, Result<(), String>>);
+pub struct BlobMemory(HashMap<String, Result<(), String>>);
 
 impl BlobMemory {
     /// What this link was told about `hash`, if it has been told anything.
@@ -382,6 +418,24 @@ mod tests {
         std::fs::write(&path, b"on disk").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// Every link of a run compares against, and uploads, the bytes the first one read.
+    ///
+    /// What would make this red: `read` going back to the disk each time, which the rewritten
+    /// file below would show through the clone.
+    #[test]
+    fn an_agent_file_is_read_and_hashed_once_per_source() {
+        let dir = std::env::temp_dir().join(format!("volant-agent-read-{}", std::process::id()));
+        let path = agent_in(&dir, "volant-agent-x");
+        let source = AgentSource::ordered(Some(dir.clone()), None, None);
+        let first = source.read(&path).unwrap();
+        assert_eq!(first.bytes, b"on disk");
+        assert_eq!(first.hash, blake3::hash(b"on disk").to_hex().to_string());
+        std::fs::write(&path, b"rebuilt").unwrap();
+        let again = source.clone().read(&path).unwrap();
+        assert!(Arc::ptr_eq(&first, &again), "{:?}", again.bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// `VOLANT_AGENT_DIR` comes first, then the agents built into the controller, then the

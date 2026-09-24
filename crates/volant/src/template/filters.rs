@@ -53,6 +53,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     add_filter(env, "type_debug", |v: Value| super::type_name(&json(&v)));
     add_filter(env, "quote", quote);
     add_filter(env, "regex_escape", regex_escape);
+    add_filter(env, "extract", extract);
     // Not through `add_filter`: `ansible.utils.ipwrap` is a collection filter, and the reference
     // never exposes it as `ansible.builtin.ipwrap`.
     env.add_filter("ansible.utils.ipwrap", ipwrap);
@@ -860,6 +861,29 @@ fn regex_escape(value: Value, re_type: Option<String>, kwargs: Kwargs) -> Result
     Ok(out)
 }
 
+/// `extract(item, container, morekeys=None)`, `core.py`'s: `container[item]`, then each of
+/// `morekeys` (a list, or one key) in turn. A key that is not there gives an undefined value,
+/// and the keys after it are not read, as the reference hands its undefined marker on: `default`
+/// and `is defined` see it, and anything else fails as an undefined variable. A `hostvars`
+/// container is read through its own object, so a host's untrusted values taint the render
+/// here exactly as a bare `hostvars[h]` does.
+fn extract(item: Value, container: Value, morekeys: Option<Value>) -> Result<Value, Error> {
+    let mut keys = vec![item];
+    match morekeys {
+        Some(more) if more.kind() == ValueKind::Seq => keys.extend(more.try_iter()?),
+        Some(more) if !more.is_none() => keys.push(more),
+        _ => {}
+    }
+    let mut value = container;
+    for key in &keys {
+        if value.is_undefined() {
+            break;
+        }
+        value = value.get_item(key)?;
+    }
+    Ok(value)
+}
+
 /// `ansible.utils.ipwrap`, ported from the collection's own filter (`plugins/filter/ipwrap.py`,
 /// read on the dev machine): every IPv6 address, with or without a valid prefix (0 to 128), is
 /// bracketed; a string that is not one - a hostname, an IPv4 address or subnet, an out-of-range
@@ -1220,6 +1244,143 @@ mod tests {
     fn ipwrap_is_not_aliased_under_ansible_builtin() {
         let err = render("{{ 'x' | ansible.builtin.ipwrap }}", serde_json::json!({})).unwrap_err();
         assert!(err.contains("unknown filter"), "{err}");
+    }
+
+    /// One expression per filter, test and method the `k3s-io/k3s-ansible` roles and playbooks
+    /// call (commit `1a600b6`, every Jinja expression walked with Jinja2's own parser), each
+    /// answer printed by ansible-core 2.19.12 on localhost. What would make a row red: the name
+    /// missing (`unknown filter`, `unknown test`, `method ... is not available yet`) or its rule
+    /// ported differently from the reference's.
+    #[test]
+    fn every_name_k3s_ansible_calls_answers_what_the_reference_answered() {
+        use serde_json::json;
+        let rows = [
+            (
+                "{{ '2001:db8::1' | ansible.utils.ipwrap }}",
+                json!("[2001:db8::1]"),
+            ),
+            ("{{ 'YWJj' | b64decode }}", json!("abc")),
+            ("{{ '/a/b/c.tar' | basename }}", json!("c.tar")),
+            ("{{ 'yes' | bool }}", json!(true)),
+            (
+                "{{ {'a': 1} | combine({'b': 2}) }}",
+                json!({"a": 1, "b": 2}),
+            ),
+            ("{{ missing | default('d') }}", json!("d")),
+            ("{{ ['x', 'y'] | first }}", json!("x")),
+            ("{{ [[1], [1, 2]] | flatten }}", json!([1, 1, 2])),
+            ("{{ 'a: 1' | from_yaml }}", json!({"a": 1})),
+            ("{{ [1, 2] | length }}", json!(2)),
+            ("{{ 'ab' | list }}", json!(["a", "b"])),
+            ("{{ [{'a': 1}] | map(attribute='a') | list }}", json!([1])),
+            ("{{ '10.0.0.1' | regex_escape }}", json!(r"10\.0\.0\.1")),
+            ("{{ 'abc' | regex_replace('b', '') }}", json!("ac")),
+            (
+                "{{ 'k3s version v1.2.3' | regex_search('v[0-9.]+') }}",
+                json!("v1.2.3"),
+            ),
+            (
+                "{{ [{'s': {'e': true}, 'i': 1}, {'s': {'e': false}, 'i': 2}] | selectattr('s.e') | map(attribute='i') | list }}",
+                json!([1]),
+            ),
+            (
+                "{{ [{'d': 1}, {}] | selectattr('d', 'defined') | map(attribute='d') | list }}",
+                json!([1]),
+            ),
+            ("{{ 'a,b' | split(',') }}", json!(["a", "b"])),
+            ("{{ 1 | string }}", json!("1")),
+            ("{{ true | ternary('t', 'f') }}", json!("t")),
+            ("{{ {'a': 1} | to_nice_yaml }}", json!("a: 1\n")),
+            ("{{ ' x ' | trim }}", json!("x")),
+            ("{{ [1, 1, 2] | unique | list }}", json!([1, 2])),
+            (
+                "{{ ['a', 'b'] | map('extract', {'a': 1, 'b': 2}) | list }}",
+                json!([1, 2]),
+            ),
+            (
+                "{{ 'k3s version v1.30.2+k3s1 (abc)'.split(' ')[2] }}",
+                json!("v1.30.2+k3s1"),
+            ),
+            ("{{ 'a b  c'.split() | length }}", json!(3)),
+            ("{{ missing is defined }}", json!(false)),
+            ("{{ false is false }}", json!(true)),
+            ("{{ 'Archlinux' is match('Arch') }}", json!(true)),
+            ("{{ 'aarch64' is search('arch') }}", json!(true)),
+            ("{{ missing is undefined }}", json!(true)),
+            ("{{ '2.19.12' is version('2.15', '>=') }}", json!(true)),
+            (
+                "{{ '2.19.12' is version_compare('2.15', '>=') }}",
+                json!(true),
+            ),
+            (
+                "{{ 'v1.30.2+k3s1' is version('v1.31.0+k3s1', '<') }}",
+                json!(true),
+            ),
+            (
+                "{{ 'v1.31.0+k3s1' is version('v1.31.0+k3s1', '<=') }}",
+                json!(true),
+            ),
+            (
+                "{{ '6.8.0-45-generic' is version('6.18', '>=') }}",
+                json!(false),
+            ),
+            ("{{ '1.8.7' is version('1.8.5', '<') }}", json!(false)),
+        ];
+        let failed: Vec<String> = rows
+            .iter()
+            .filter_map(|(expr, want)| match render(expr, json!({})) {
+                Ok(got) if &got == want => None,
+                other => Some(format!("{expr} -> {other:?}")),
+            })
+            .collect();
+        assert!(failed.is_empty(), "{failed:#?}");
+    }
+
+    /// `extract`'s vectors, each produced by ansible-core 2.19.12 on localhost. What would make
+    /// a row red: `morekeys` not walked in order (the list) or iterated when it is one string
+    /// key (`'xy'` read as `'xy'` itself, not as `'x'` then `'y'`), a list container not indexed by
+    /// position, or a missing key answered with something other than an undefined value, which
+    /// `default` and `is defined` see and a bare render refuses.
+    #[test]
+    fn extract_reads_container_item_then_each_more_key() {
+        use serde_json::json;
+        let r = |t: &str| render(t, json!({}));
+        assert_eq!(
+            r("{{ 'a' | extract({'a': {'x': {'y': 5} } }, ['x', 'y']) }}"),
+            Ok(json!(5))
+        );
+        assert_eq!(
+            r("{{ 'a' | extract({'a': {'xy': 7} }, 'xy') }}"),
+            Ok(json!(7))
+        );
+        assert_eq!(r("{{ 'a' | extract({'a': 7}, none) }}"), Ok(json!(7)));
+        assert_eq!(
+            r("{{ [0, 2] | map('extract', ['p', 'q', 'r']) | list }}"),
+            Ok(json!(["p", "r"]))
+        );
+        assert_eq!(
+            r("{{ 'z' | extract({'a': 1}) | default('none') }}"),
+            Ok(json!("none"))
+        );
+        assert_eq!(
+            r("{{ 'z' | extract({'a': 1}, ['x', 'y']) | default('none') }}"),
+            Ok(json!("none"))
+        );
+        assert_eq!(
+            r("{{ 'a' | extract({'a': {'x': 1} }, ['nope', 'y']) | default('none') }}"),
+            Ok(json!("none"))
+        );
+        assert_eq!(
+            r("{{ 'z' | extract({'a': 1}) is defined }}"),
+            Ok(json!(false))
+        );
+        // The reference: `object of type 'dict' has no attribute 'z'`, as an undefined variable.
+        let err = r("{{ 'z' | extract({'a': 1}) }}").unwrap_err();
+        assert!(err.starts_with(super::super::UNDEFINED), "{err}");
+        assert_eq!(
+            r("{{ 'a' | ansible.builtin.extract({'a': 3}) }}"),
+            Ok(json!(3))
+        );
     }
 
     /// A filter and a registered test still answer under `ansible.builtin.<name>`. Guard: remove

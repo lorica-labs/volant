@@ -2763,10 +2763,8 @@ mod tests {
             let (stop, reconnect) = if start.contains("Relinker") {
                 ("transport.stop_shared().await", "connect(&transport,")
             } else {
-                (
-                    "release_wedged_master(&key.transport,wedged).await",
-                    "connect(&key.transport,",
-                )
+                // `check_kept` stops the master on a failed check; its own test proves how.
+                ("check_kept(", "connect(&key.transport,")
             };
             let stop = body
                 .find(stop)
@@ -2775,16 +2773,6 @@ mod tests {
                 .find(reconnect)
                 .unwrap_or_else(|| panic!("{start} reconnects through the transport it stopped"));
             assert!(stop < connect, "{start}: the master is stopped first");
-            if !start.contains("Relinker") {
-                let timed_out = body.find("Err(_)=>{").expect("the check's timeout arm");
-                assert!(
-                    body[timed_out..].starts_with(
-                        "Err(_)=>{stale=Some(\"noanswerfromthekeptconnection\".to_string());wedged=true;"
-                    ),
-                    "only the timeout arm marks the master wedged"
-                );
-                assert_eq!(body.matches("wedged=true").count(), 1);
-            }
         }
     }
 }

@@ -1674,17 +1674,8 @@ impl Relink<AgentLink> for Relinker<'_> {
         // again whether or not this try comes up.
         self.reboots.bump(&self.key.host);
         // Closed off-task, as a replaced escalated link is: their agents died with the host.
-        let stale: Vec<LinkKey> = self
-            .links
-            .keys()
-            .filter(|k| k.host == self.key.host)
-            .cloned()
-            .collect();
-        for key in stale {
-            self.checked.remove(&key);
-            if let Some(old) = self.links.remove(&key) {
-                tokio::spawn(old.shutdown());
-            }
+        for old in retire_host_links(self.links, self.checked, &self.key.host) {
+            tokio::spawn(old.shutdown());
         }
         // Checked again by the next batch if this never comes back up: the link left in place is
         // the one the host outlived.
@@ -2198,29 +2189,19 @@ pub(super) async fn reuse_or_connect<'a>(
     // Why the kept connection was not reused, kept only in case the reconnection below fails
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
-    let mut stale: Option<String> = None;
-    let mut wedged = false;
     let reboots = options.reboots.of(&key.host);
-    if checked.insert(key.clone(), reboots) != Some(reboots)
-        && let Some(mut link) = links.remove(key)
-    {
-        let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
-        match alive {
-            Ok(Ok(())) => {
-                links.insert(key.clone(), link);
-            }
-            Ok(Err(err)) => {
-                stale = Some(format!("{err:#}"));
-                link.shutdown().await;
-            }
-            Err(_) => {
-                stale = Some("no answer from the kept connection".to_string());
-                wedged = true;
-                link.shutdown().await;
-            }
-        }
+    let (stale, retired) = check_kept(
+        links,
+        checked,
+        key,
+        reboots,
+        options.defaults.connect_timeout,
+    )
+    .await;
+    // Closed off-task, as `Relinker::relink` closes them.
+    for old in retired {
+        tokio::spawn(old.shutdown());
     }
-    release_wedged_master(&key.transport, wedged).await;
     if !links.contains_key(key) {
         let link = match connect(&key.transport, agents, &options.defaults, escalation).await {
             Ok(link) => link,
@@ -2324,15 +2305,77 @@ pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<
     }
 }
 
-/// Stops the host's shared connection after a kept link's check, but only one that timed out:
-/// that is a master riding a connection the host dropped without a word, which would take the
-/// reconnection's session too. A link that failed at once rode a master already gone, and the
-/// socket may by now hold a master that another link of this host (the plain and the escalated
-/// one share it) has just reopened; stopping it would kill that link behind its driver's back.
-async fn release_wedged_master(transport: &Transport, wedged: bool) {
-    if wedged {
-        transport.stop_shared().await;
+/// What checking a kept link needs of it, so the check can be driven by a fake in tests.
+pub(super) trait KeptLink {
+    async fn handshake(&mut self) -> anyhow::Result<()>;
+    async fn shutdown(self);
+}
+
+impl KeptLink for AgentLink {
+    async fn handshake(&mut self) -> anyhow::Result<()> {
+        AgentLink::handshake(self).await
     }
+
+    async fn shutdown(self) {
+        AgentLink::shutdown(self).await;
+    }
+}
+
+/// Takes every link kept for `host` out of `links`, and forgets that they were checked, for the
+/// caller to close.
+fn retire_host_links<L>(
+    links: &mut HashMap<LinkKey, L>,
+    checked: &mut HashMap<LinkKey, u64>,
+    host: &str,
+) -> Vec<L> {
+    let keys: Vec<LinkKey> = links.keys().filter(|k| k.host == host).cloned().collect();
+    keys.iter()
+        .filter_map(|k| {
+            checked.remove(k);
+            links.remove(k)
+        })
+        .collect()
+}
+
+/// Checks the link kept for `key` if the host rebooted since it was last proved alive (or it
+/// never was). A link that answers stays in `links`. One that fails, at once or by timing out,
+/// is closed, and then the host's shared connection is stopped and every other link kept for the
+/// host is retired, as `Relinker::relink` does.
+///
+/// Both halves matter. The host's plain and escalated links ride one master, and each is
+/// checked only when it is next used, so the link that was idle through a reboot may still point
+/// at a master long gone while the socket holds a newer one on a connection the host dropped
+/// without a word; failing at once on the old one says nothing about the new one, so the socket
+/// is stopped on every failure. And a sibling left in `links` would be checked in its turn, fail,
+/// and stop the master this reconnection is about to open; retired, it reconnects through that
+/// master instead, unchecked.
+///
+/// Returns why the kept link was not reused, if it failed, and the retired links.
+async fn check_kept<L: KeptLink>(
+    links: &mut HashMap<LinkKey, L>,
+    checked: &mut HashMap<LinkKey, u64>,
+    key: &LinkKey,
+    reboots: u64,
+    timeout: Duration,
+) -> (Option<String>, Vec<L>) {
+    if checked.insert(key.clone(), reboots) == Some(reboots) {
+        return (None, Vec::new());
+    }
+    let Some(mut link) = links.remove(key) else {
+        return (None, Vec::new());
+    };
+    let stale = match tokio::time::timeout(timeout, link.handshake()).await {
+        Ok(Ok(())) => {
+            links.insert(key.clone(), link);
+            return (None, Vec::new());
+        }
+        Ok(Err(err)) => format!("{err:#}"),
+        Err(_) => "no answer from the kept connection".to_string(),
+    };
+    link.shutdown().await;
+    let retired = retire_host_links(links, checked, &key.host);
+    key.transport.stop_shared().await;
+    (Some(stale), retired)
 }
 
 /// Opens one link, escalated when `escalation` is given. Every way this can fail is a host the
@@ -6734,45 +6777,122 @@ mod tests {
         assert_eq!(socket_of(&fresh).await, Some(socket));
     }
 
-    /// The plain and the escalated link of one host share one master. After a reboot each is
-    /// checked on its first use; the first to fail reconnects and opens a new master on the
-    /// socket, so the second, failing at once in its turn, must leave that socket alone. Only a
-    /// check that timed out, a master wedged on a dropped connection, stops it. A listener on
-    /// the socket stands in for the master and counts the `ssh -O exit` that reach it.
+    /// A kept link in a test: how it answers its check, and a record of whether it was asked.
+    #[cfg(unix)]
+    struct FakeKept {
+        answer: FakeAnswer,
+        asked: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[cfg(unix)]
+    enum FakeAnswer {
+        Alive,
+        /// Its master is gone: end of file at once.
+        Gone,
+        /// Its master rides a connection the host dropped: no answer, ever.
+        Wedged,
+    }
+
+    #[cfg(unix)]
+    impl FakeKept {
+        fn new(answer: FakeAnswer) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+            let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let link = FakeKept {
+                answer,
+                asked: Arc::clone(&asked),
+            };
+            (link, asked)
+        }
+    }
+
+    #[cfg(unix)]
+    impl KeptLink for FakeKept {
+        async fn handshake(&mut self) -> anyhow::Result<()> {
+            self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            match self.answer {
+                FakeAnswer::Alive => Ok(()),
+                FakeAnswer::Gone => anyhow::bail!("the agent closed the connection"),
+                FakeAnswer::Wedged => std::future::pending().await,
+            }
+        }
+
+        async fn shutdown(self) {}
+    }
+
+    /// A listener on the host's socket stands in for its master and counts the `ssh -O exit`
+    /// that reach it, closing each at once so the stop returns.
+    #[cfg(unix)]
+    fn fake_master(socket: &Path) -> Arc<std::sync::atomic::AtomicUsize> {
+        let listener = std::os::unix::net::UnixListener::bind(socket).expect("a socket");
+        let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&stops);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        stops
+    }
+
+    /// The delegate `h1` rebooted twice while its delegating host kept two links to it, which
+    /// share one socket. The escalated link sat idle on the first master (M1, gone); the plain
+    /// one reconnected after the first reboot and rides M2, which the second reboot left on a
+    /// dropped connection. The escalated link is used first: its check fails at once, on M1, and
+    /// M2 must still be stopped, or the reconnection attaches to it and waits on a dead
+    /// connection. And the plain link, retired with it, must reconnect unchecked through the new
+    /// master, not be checked, fail, and stop that master in its turn.
     ///
-    /// What would make this red: the master stopped after any failed check.
+    /// What would make this red: the master stopped only after a check that timed out, or the
+    /// host's other links left in place.
     #[cfg(unix)]
     #[tokio::test]
-    async fn only_a_check_that_timed_out_stops_the_hosts_master() {
-        let dir = std::env::temp_dir().join(format!("volant-cm-wedged-{}", std::process::id()));
+    async fn a_failed_check_stops_the_master_and_retires_the_hosts_other_links() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = std::env::temp_dir().join(format!("volant-cm-kept-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let transport = shared_to_h1(&dir);
         let socket = socket_of(&transport)
             .await
             .expect("shared; ssh -G must run here");
-        let listener = std::os::unix::net::UnixListener::bind(&*socket).expect("a socket");
-        listener
-            .set_nonblocking(true)
-            .expect("a non-blocking socket");
-        let reached = || match listener.accept() {
-            Ok(_) => true,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false,
-            Err(e) => panic!("accept: {e}"),
+        let stops = fake_master(&socket);
+        let key = |become_user: Option<&str>| LinkKey {
+            host: "h1".to_string(),
+            become_user: become_user.map(str::to_string),
+            transport: transport.clone(),
         };
+        let (escalated, plain) = (key(Some("root")), key(None));
+        let (on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let (on_m2, plain_asked) = FakeKept::new(FakeAnswer::Wedged);
+        let mut links = HashMap::from([(escalated.clone(), on_m1), (plain.clone(), on_m2)]);
+        let mut checked = HashMap::from([(escalated.clone(), 1), (plain.clone(), 1)]);
+        let timeout = Duration::from_millis(200);
 
-        // The plain link, then the escalated one, both found dead at once.
-        release_wedged_master(&transport, false).await;
-        release_wedged_master(&transport, false).await;
-        assert!(
-            !reached(),
-            "a link that failed at once stopped the shared master"
+        let (stale, retired) = check_kept(&mut links, &mut checked, &escalated, 2, timeout).await;
+        assert!(stale.is_some(), "the escalated link rode M1, gone");
+        assert_eq!(
+            stops.load(SeqCst),
+            1,
+            "M2 is stopped although M1 failed at once"
         );
+        assert_eq!(retired.len(), 1, "the plain link is retired with it");
+        assert!(!links.contains_key(&plain) && !checked.contains_key(&plain));
 
-        release_wedged_master(&transport, true).await;
+        // Both reconnect through the one new master: the escalated link now, the plain one on its
+        // next use, with nothing left to check and nothing stopped.
+        let (fresh, _) = FakeKept::new(FakeAnswer::Alive);
+        links.insert(escalated.clone(), fresh);
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 2, timeout).await;
+        assert!(stale.is_none() && retired.is_empty());
         assert!(
-            reached(),
-            "a check that timed out left the wedged master in place"
+            !plain_asked.load(SeqCst),
+            "the retired plain link was never checked"
+        );
+        assert_eq!(stops.load(SeqCst), 1, "the new master was left alone");
+        assert!(
+            links.contains_key(&escalated),
+            "the reopened escalated link is kept"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

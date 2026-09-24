@@ -14,6 +14,14 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
     env.add_function(
         "lookup",
         move |state: &State, name: String, terms: Rest<Value>, kwargs: Kwargs| {
+            // Measured on ansible-core 2.19.12: an undefined term or option is an undefined
+            // read (`lookup('env', nope | lower)`, `lookup('vars', 'x', default=nope | lower)`).
+            let undefined_option = kwargs
+                .args()
+                .any(|k| kwargs.peek::<Value>(k).is_ok_and(|v| v.is_undefined()));
+            if undefined_option || terms.iter().any(super::holds_undefined) {
+                return Err(Error::from(ErrorKind::UndefinedError));
+            }
             lookup(state, &name, &terms, kwargs, &base_dir)
         },
     );

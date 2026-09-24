@@ -13,7 +13,7 @@
 use std::sync::LazyLock;
 
 use minijinja::value::{Kwargs, ValueKind};
-use minijinja::{Environment, Error, Value};
+use minijinja::{Environment, Error, ErrorKind, Value};
 
 use super::add_filter;
 use crate::yaml::{PYYAML_FALSE, PYYAML_TRUE};
@@ -38,6 +38,9 @@ fn dump(
     default_indent: usize,
     default_flow: Option<bool>,
 ) -> Result<String, Error> {
+    if super::holds_undefined(value) {
+        return Err(Error::from(ErrorKind::UndefinedError));
+    }
     let indent = kwargs
         .get::<Option<usize>>("indent")?
         .or(indent)

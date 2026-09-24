@@ -210,6 +210,16 @@ fn json(v: &Value) -> serde_json::Value {
     serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
 }
 
+/// `json`, for a filter whose result carries the value on. An undefined value inside it would
+/// come out as `null`; measured on ansible-core 2.19.12, `{'k': nope} | dict2items`,
+/// `[[nope]] | flatten` and `{'a': 1} | combine({'k': nope})` are undefined reads.
+fn data(v: &Value) -> Result<serde_json::Value, Error> {
+    if super::holds_undefined(v) {
+        return Err(Error::from(ErrorKind::UndefinedError));
+    }
+    Ok(json(v))
+}
+
 fn from_json_value(v: serde_json::Value) -> Value {
     Value::from_serialize(&v)
 }
@@ -310,11 +320,11 @@ fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<Value, Err
         .get::<Option<String>>("list_merge")?
         .unwrap_or_else(|| "replace".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Object(mut out) = json(&first) else {
+    let serde_json::Value::Object(mut out) = data(&first)? else {
         return Err(invalid("|combine expects dictionaries"));
     };
     for other in rest.iter() {
-        let serde_json::Value::Object(other) = json(other) else {
+        let serde_json::Value::Object(other) = data(other)? else {
             return Err(invalid("|combine expects dictionaries"));
         };
         merge_into(&mut out, other, recursive, &list_merge);
@@ -359,7 +369,7 @@ fn dict2items(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         .get::<Option<String>>("value_name")?
         .unwrap_or_else(|| "value".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Object(map) = json(&value) else {
+    let serde_json::Value::Object(map) = data(&value)? else {
         return Err(invalid("dict2items requires a dictionary"));
     };
     let items: Vec<serde_json::Value> = map
@@ -377,7 +387,7 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         .get::<Option<String>>("value_name")?
         .unwrap_or_else(|| "value".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Array(items) = json(&value) else {
+    let serde_json::Value::Array(items) = data(&value)? else {
         return Err(invalid("items2dict requires a list"));
     };
     let mut out = serde_json::Map::new();
@@ -406,7 +416,7 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 /// `{"b": 1, "a": 2, "c": 3}`, so `to_json` keeps the order the mapping was written in.
 fn to_json(value: Value) -> Result<Value, Error> {
     Ok(Value::from(python_json(
-        &json(&value),
+        &data(&value)?,
         None,
         false,
         false,
@@ -420,7 +430,7 @@ fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let indent: usize = kwargs.get::<Option<usize>>("indent")?.unwrap_or(4);
     kwargs.assert_all_used()?;
     Ok(Value::from(python_json(
-        &json(&value),
+        &data(&value)?,
         Some(indent),
         true,
         false,
@@ -826,7 +836,7 @@ fn flatten(value: Value, levels: Option<i64>, kwargs: Kwargs) -> Result<Value, E
     let levels = kwargs.get::<Option<i64>>("levels")?.or(levels);
     let skip_nulls = kwargs.get::<Option<bool>>("skip_nulls")?.unwrap_or(true);
     kwargs.assert_all_used()?;
-    let serde_json::Value::Array(items) = json(&value) else {
+    let serde_json::Value::Array(items) = data(&value)? else {
         return Err(invalid("flatten expects a list"));
     };
     Ok(from_json_value(serde_json::Value::Array(flatten_items(

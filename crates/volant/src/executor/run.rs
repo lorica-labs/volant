@@ -1689,6 +1689,9 @@ impl Relink<AgentLink> for Relinker<'_> {
         // Checked again by the next batch if this never comes back up: the link left in place is
         // the one the host outlived.
         self.checked.remove(self.key);
+        // The host's shared connection went down with it, perhaps without a word: a master left
+        // on a dead TCP connection would take this try's session and hold it past any timeout.
+        self.key.transport.stop_shared().await;
         let fresh = connect(
             &with_connect_timeout(&self.key.transport, connect_timeout),
             self.agents,
@@ -2200,7 +2203,8 @@ pub(super) async fn reuse_or_connect<'a>(
     // discarding it silently would leave a reconnect failure reporting only its own cause.
     let mut stale: Option<String> = None;
     let reboots = options.reboots.of(&key.host);
-    if checked.insert(key.clone(), reboots) != Some(reboots)
+    let previous = checked.insert(key.clone(), reboots);
+    if previous != Some(reboots)
         && let Some(mut link) = links.remove(key)
     {
         let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
@@ -2217,6 +2221,11 @@ pub(super) async fn reuse_or_connect<'a>(
                 link.shutdown().await;
             }
         }
+    }
+    // A kept link that did not survive a reboot of its host rode a connection the host may have
+    // dropped without a word; its master goes too, as it does in `Relinker::relink`.
+    if stale.is_some() && previous.is_some() {
+        key.transport.stop_shared().await;
     }
     if !links.contains_key(key) {
         let link = match connect(&key.transport, agents, &options.defaults, escalation).await {

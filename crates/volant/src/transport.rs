@@ -225,20 +225,32 @@ impl Transport {
     }
 
     /// This transport with its `ssh` runs sharing one connection per inventory host, the
-    /// socket under `dir` (from [`control_dir`]; `None` shares nothing). `inventory_name` is
-    /// the host the link is filed under, the delegate for a delegated task. Options the
-    /// operator wrote win: a second `ControlPath` would only fight theirs.
-    pub fn shared(self, dir: Option<&Path>, inventory_name: &str) -> Transport {
+    /// socket under `dir` (from [`control_dir`]; `None` shares nothing). `host` is the host
+    /// whose driver holds the link, and `delegate` the host it reaches for a delegated task:
+    /// a delegated link is kept by its driver for the rest of the play, so twenty hosts
+    /// delegating to one would put twenty sessions on one master, past sshd's `MaxSessions`
+    /// of 10, if they shared the delegate's own. Options the operator wrote win: a second
+    /// `ControlPath` would only fight theirs.
+    pub fn shared(self, dir: Option<&Path>, host: &str, delegate: Option<&str>) -> Transport {
         match self {
             Transport::Ssh(mut target) => {
                 target.control_path = None;
                 if !user_sets_control(&target.common_args, &target.extra_args) {
                     target.control_path =
-                        dir.and_then(|dir| control_path_for(dir, inventory_name, &target));
+                        dir.and_then(|dir| control_path_for(dir, host, delegate, &target));
                 }
                 Transport::Ssh(target)
             }
             local => local,
+        }
+    }
+
+    /// Makes the master of this host's shared connection exit, if there is one, so the next
+    /// `ssh` opens a fresh connection instead of riding one the host may have dropped without a
+    /// word. Used before reconnecting to a host that went away.
+    pub async fn stop_shared(&self) {
+        if let Transport::Ssh(target) = self {
+            target.stop_master().await;
         }
     }
 
@@ -649,9 +661,18 @@ const CONTROL_PERSIST: &str = "30s";
 /// and exit 255, which would report the host unreachable.
 const CONTROL_PATH_MAX: usize = 104 - 1 - 17;
 
-/// Whether the operator's own `ssh` arguments already say something about connection sharing,
-/// by option name (in any case, as `ssh` reads them) or by the `-S` and `-M` flags that set
-/// the same two options.
+/// How long `ssh -O exit` may take. It only talks to a local socket, so this is never reached
+/// unless the master itself is wedged.
+const STOP_MASTER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Whether the operator's own `ssh` arguments rule connection sharing out: they already say
+/// something about it, by option name (in any case, as `ssh` reads them) or by the `-S` and
+/// `-M` flags that set the same two options, or they ask for debug output with `-v`.
+///
+/// Under `-v` a backgrounded master keeps the standard error of the `ssh` that started it
+/// (OpenSSH's `control_persist_detach` leaves it open when debugging to stderr), so the first
+/// bootstrap `ssh` of the host would only return once the master exits, `ControlPersist` after
+/// its last client, and the link's master would hold Volant's own standard error past its exit.
 fn user_sets_control(common: &[String], extra: &[String]) -> bool {
     common.iter().chain(extra).any(|word| {
         let lower = word.to_ascii_lowercase();
@@ -660,18 +681,48 @@ fn user_sets_control(common: &[String], extra: &[String]) -> bool {
             .any(|name| lower.contains(name))
             || word.starts_with("-S")
             || word == "-M"
+            || asks_for_debug(word)
     })
 }
 
+/// Whether one word is a cluster of `ssh` flags holding `-v`. The letter of an option that
+/// takes a value ends the cluster, since the rest of the word is that value: `-lvolant` is a
+/// user name, not a `-v`.
+fn asks_for_debug(word: &str) -> bool {
+    let Some(flags) = word.strip_prefix('-').filter(|f| !f.starts_with('-')) else {
+        return false;
+    };
+    for c in flags.chars() {
+        if c == 'v' {
+            return true;
+        }
+        if "BbcDEeFIiJLlmOoPpQRSWw".contains(c) {
+            return false;
+        }
+    }
+    false
+}
+
 /// The socket of one inventory host's shared connection: `dir` and the first 16 hex characters
-/// of a blake3 over the inventory name and every `ssh` option the host connects with. The
-/// inventory name is in it because `ssh`'s own `%C` is not enough: fifty inventory aliases of
-/// one machine would share one master and run past the server's `MaxSessions`. The options are
-/// in it so a connection opened with one key, user or proxy never serves a host asking for
-/// another. `None` when the path would be too long to bind.
-fn control_path_for(dir: &Path, inventory_name: &str, target: &SshTarget) -> Option<Box<Path>> {
+/// of a blake3 over the inventory name, the delegate if the link is a delegated one, and every
+/// `ssh` option the host connects with. The inventory name is in it because `ssh`'s own `%C`
+/// is not enough: fifty inventory aliases of one machine would share one master and run past
+/// the server's `MaxSessions`. The options are in it so a connection opened with one key, user
+/// or proxy never serves a host asking for another; what `ssh` itself resolves from its
+/// configuration is added when the link opens (see [`SshTarget::resolved`]). `None` when the
+/// path would be too long to bind.
+fn control_path_for(
+    dir: &Path,
+    host: &str,
+    delegate: Option<&str>,
+    target: &SshTarget,
+) -> Option<Box<Path>> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(inventory_name.as_bytes());
+    hasher.update(host.as_bytes());
+    if let Some(delegate) = delegate {
+        hasher.update(b"\0delegate\0");
+        hasher.update(delegate.as_bytes());
+    }
     for word in target.ssh_argv("") {
         hasher.update(b"\0");
         hasher.update(word.as_bytes());
@@ -698,10 +749,12 @@ pub fn control_dir() -> Option<PathBuf> {
     None
 }
 
-/// `<runtime>/volant-cm` when `runtime` is a directory `uid` owns, `<tmp>/volant-cm-<uid>`
-/// otherwise, created at mode 0700. Anybody who can create a socket in it can hand the next
-/// `ssh` a connection of their own, so an existing directory is used only if it is a real
-/// directory, owned by `uid`, at mode 0700; anything else is refused with the reason.
+/// `<runtime>/volant-cm` when `runtime` is a directory `uid` owns and nobody else can write to,
+/// `<tmp>/volant-cm-<uid>` otherwise, created at mode 0700. Anybody who can create a socket in
+/// it can hand the next `ssh` a connection of their own, so an existing directory is used only
+/// if it is a real directory, owned by `uid`, at mode 0700; anything else is refused with the
+/// reason. Its parent must not let anybody else rename it away and plant their own: not
+/// writable by group or others, unless it is sticky as `/tmp` is.
 ///
 /// A runtime directory whose path holds anything but letters, digits and `/._-` is passed
 /// over too: `ssh` reads `-o ControlPath=...` as a configuration line, where a space ends the
@@ -715,10 +768,22 @@ fn control_dir_in(runtime: Option<&Path>, tmp: &Path, uid: u32) -> Result<PathBu
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
         })
     };
-    let owned = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && m.uid() == uid);
+    let owned = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .is_ok_and(|m| m.is_dir() && m.uid() == uid && m.mode() & 0o022 == 0)
+    };
     let dir = match runtime.filter(|r| plain(r) && owned(r)) {
         Some(runtime) => runtime.join("volant-cm"),
-        None => tmp.join(format!("volant-cm-{uid}")),
+        None => {
+            let parent = std::fs::metadata(tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+            if parent.mode() & 0o022 != 0 && parent.mode() & 0o1000 == 0 {
+                return Err(format!(
+                    "{} is writable by others and not sticky",
+                    tmp.display()
+                ));
+            }
+            tmp.join(format!("volant-cm-{uid}"))
+        }
     };
     match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
         Ok(()) => {}
@@ -759,6 +824,18 @@ pub fn raise_open_file_limit() {
 
 #[cfg(not(unix))]
 pub fn raise_open_file_limit() {}
+
+/// Whether an `ssh -G` dump shows connection sharing already set up. Measured with OpenSSH
+/// 10.2: nothing configured prints `controlmaster false` and `controlpersist no` and no
+/// `controlpath` line at all.
+fn config_sets_control(dump: &str) -> bool {
+    dump.lines().any(|line| match line.split_once(' ') {
+        Some(("controlpath", _)) => true,
+        Some(("controlmaster", value)) => value != "false",
+        Some(("controlpersist", value)) => value != "no",
+        _ => false,
+    })
+}
 
 impl SshTarget {
     /// The `ssh` command line for one remote command. Options first, then the host, then `--`.
@@ -879,48 +956,69 @@ impl SshTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
-        if self.control_path.is_some() && self.config_sets_control().await {
-            let own = SshTarget {
-                control_path: None,
-                ..self.clone()
-            };
-            return own.open(agents, escalation).await;
-        }
-        self.open(agents, escalation).await
+        self.resolved().await.open(agents, escalation).await
     }
 
-    /// Whether `ssh` itself, reading the operator's configuration files and every option of
-    /// this host, already has a `ControlMaster`, `ControlPath` or `ControlPersist` for it.
-    /// `ssh -G` evaluates the `Host` and `Match` blocks and prints the result without
-    /// connecting. Measured with OpenSSH 10.2: nothing configured prints `controlmaster false`
-    /// and `controlpersist no` and no `controlpath` line at all. An `ssh -G` that cannot run
-    /// answers yes, so the connection goes ahead as the operator's configuration has it.
-    async fn config_sets_control(&self) -> bool {
+    /// The target a link really runs, as `ssh -G` resolves it from the operator's configuration
+    /// files and every option of this host, without connecting. No sharing when that already
+    /// has a `ControlMaster`, `ControlPath` or `ControlPersist`, or when `ssh -G` cannot run.
+    /// Otherwise the socket name also hashes the whole resolved configuration, so a `HostName`,
+    /// `User`, `Port`, `ProxyJump` or `IdentityFile` changed in `~/.ssh/config` between two runs
+    /// opens a new master rather than riding the previous run's to the old machine.
+    async fn resolved(&self) -> SshTarget {
         let bare = SshTarget {
             control_path: None,
             ..self.clone()
         };
+        let Some(path) = &self.control_path else {
+            return bare;
+        };
         let mut argv = bare.ssh_argv(":");
         argv.insert(1, "-G".into());
-        match Command::new(&argv[0])
+        let dump = match Command::new(&argv[0])
             .args(&argv[1..])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
             .await
         {
-            Ok(out) if out.status.success() => {
-                String::from_utf8_lossy(&out.stdout).lines().any(|line| {
-                    match line.split_once(' ') {
-                        Some(("controlpath", _)) => true,
-                        Some(("controlmaster", value)) => value != "false",
-                        Some(("controlpersist", value)) => value != "no",
-                        _ => false,
-                    }
-                })
-            }
-            _ => true,
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+            _ => return bare,
+        };
+        if config_sets_control(&dump) {
+            return bare;
         }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(path.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        hasher.update(dump.as_bytes());
+        let name = &hasher.finalize().to_hex()[..16];
+        SshTarget {
+            control_path: Some(path.with_file_name(name).into_boxed_path()),
+            ..bare
+        }
+    }
+
+    /// `ssh -O exit` on this host's shared connection, if it has one: the master exits and the
+    /// next `ssh` opens a new connection. A master whose host went away without closing the
+    /// connection would otherwise take every new session and leave it waiting on TCP
+    /// retransmissions, which `ConnectTimeout` does not bound. The status is not read: no
+    /// master is the state this asks for. Bounded by [`STOP_MASTER_TIMEOUT`].
+    async fn stop_master(&self) {
+        let target = self.resolved().await;
+        let Some(path) = &target.control_path else {
+            return;
+        };
+        let status = Command::new("ssh")
+            .args(["-O", "exit", "-o"])
+            .arg(format!("ControlPath={}", path.display()))
+            .arg(&target.address)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .status();
+        let _ = tokio::time::timeout(STOP_MASTER_TIMEOUT, status).await;
     }
 
     async fn open(
@@ -2173,7 +2271,7 @@ mod tests {
 
     fn ssh_target(name: &str, vars: Value, dir: Option<&str>) -> SshTarget {
         match Transport::for_vars(name, vars.as_object().expect("an object"), &defaults())
-            .map(|t| t.shared(dir.map(Path::new), name))
+            .map(|t| t.shared(dir.map(Path::new), name, None))
         {
             Ok(Transport::Ssh(target)) => target,
             other => panic!("expected an ssh transport, got {other:?}"),
@@ -2234,6 +2332,8 @@ mod tests {
             ("ansible_ssh_common_args", "-ocontrolmaster=no"),
             ("ansible_ssh_common_args", "-S /x"),
             ("ansible_ssh_extra_args", "-M"),
+            ("ansible_ssh_extra_args", "-vvv"),
+            ("ansible_ssh_common_args", "-4v"),
         ] {
             let target = ssh_target("web1", json!({ key: words }), SHARED);
             assert_eq!(target.control_path, None, "{key}={words}");
@@ -2245,6 +2345,9 @@ mod tests {
         }
         let plain = ssh_target("web1", json!({}), SHARED);
         assert!(plain.control_path.is_some(), "nothing set, so shared");
+        for word in ["-lvolant", "-o", "LogLevel=DEBUG3", "-ivault.pem", "--"] {
+            assert!(!asks_for_debug(word), "{word}");
+        }
     }
 
     /// The same review focus, for the operator's ssh configuration file: `ssh -G` reads it the
@@ -2265,7 +2368,7 @@ mod tests {
         assert!(target.control_path.is_some());
         std::fs::write(&file, "").expect("the configuration file");
         assert!(
-            !target.config_sets_control().await,
+            target.resolved().await.control_path.is_some(),
             "an empty configuration shares nothing; ssh -G must be able to run here"
         );
         for text in [
@@ -2274,8 +2377,117 @@ mod tests {
             "ControlPersist 10m\n",
         ] {
             std::fs::write(&file, text).expect("the configuration file");
-            assert!(target.config_sets_control().await, "{text:?}");
+            assert_eq!(target.resolved().await.control_path, None, "{text:?}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What `ssh` resolves from its configuration is not on Volant's command line, so it goes
+    /// into the socket name when the link opens: a `HostName` changed between two runs must not
+    /// send the second run down the first one's master, still alive for `ControlPersist`.
+    ///
+    /// What would make this red: the resolved name hashing Volant's options alone.
+    #[tokio::test]
+    async fn a_host_moved_in_the_ssh_configuration_gets_a_new_socket() {
+        let dir = scratch("resolved");
+        let file = dir.join("config");
+        let target = ssh_target(
+            "web1",
+            json!({"ansible_ssh_common_args": format!("-F {}", file.display())}),
+            SHARED,
+        );
+        let mut paths = Vec::new();
+        for text in [
+            "Host web1\n  HostName 10.0.0.1\n",
+            "Host web1\n  HostName 10.0.0.2\n",
+            "Host web1\n  HostName 10.0.0.2\n  User ops\n",
+            "Host web1\n  HostName 10.0.0.2\n  User ops\n  ProxyJump bastion\n",
+            "Host web1\n  HostName 10.0.0.2\n  User ops\n  IdentityFile /k\n",
+        ] {
+            std::fs::write(&file, text).expect("the configuration file");
+            let path = target.resolved().await.control_path.expect("shared");
+            assert_eq!(path.parent(), Some(Path::new("/run/user/1000/volant-cm")));
+            assert_eq!(
+                path.as_os_str().len(),
+                "/run/user/1000/volant-cm/".len() + 16
+            );
+            assert_eq!(
+                target.resolved().await.control_path.as_deref(),
+                Some(&*path),
+                "one configuration, one socket: {text:?}"
+            );
+            paths.push(path);
+        }
+        let mut unique = paths.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), paths.len(), "{paths:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A delegated link is kept by the delegating host's driver until the end of the play, so
+    /// the delegate's own master would carry one session per delegating host, and sshd refuses
+    /// the eleventh (`MaxSessions` 10). Each (host, delegate) pair gets its own master instead.
+    ///
+    /// What would make this red: the key built from the delegate's name alone.
+    #[test]
+    fn delegating_hosts_do_not_pile_onto_one_master() {
+        let vars = json!({"ansible_host": "10.0.0.9"});
+        let own = ssh_target("lb1", vars.clone(), SHARED).control_path;
+        let mut paths: Vec<_> = (1..=20)
+            .map(|n| {
+                let transport =
+                    Transport::for_vars("lb1", vars.as_object().expect("an object"), &defaults())
+                        .expect("an ssh transport")
+                        .shared(SHARED.map(Path::new), &format!("web{n}"), Some("lb1"));
+                match transport {
+                    Transport::Ssh(target) => target.control_path.expect("shared"),
+                    Transport::Local => panic!("expected ssh"),
+                }
+            })
+            .collect();
+        assert!(paths.iter().all(|p| Some(p) != own.as_ref()));
+        paths.sort();
+        paths.dedup();
+        assert_eq!(paths.len(), 20, "one master per delegating host");
+    }
+
+    /// `ssh -O exit` reaches the socket the link would use, and returns even though nothing
+    /// answers there the way a master would.
+    ///
+    /// What would make this red: the command sent to another path, or not bounded.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_a_shared_connection_speaks_to_its_socket() {
+        let dir = scratch("stop");
+        let mut target = ssh_target(
+            "web1",
+            json!({"ansible_ssh_common_args": "-F /dev/null"}),
+            None,
+        );
+        target.control_path = Some(dir.join("0123456789abcdef").into_boxed_path());
+        let socket = target.resolved().await.control_path.expect("shared");
+        let listener = std::os::unix::net::UnixListener::bind(&*socket).expect("a socket");
+        listener
+            .set_nonblocking(true)
+            .expect("a non-blocking socket");
+        let transport = Transport::Ssh(target);
+        let (_, accepted) = tokio::join!(
+            tokio::time::timeout(STOP_MASTER_TIMEOUT * 2, transport.stop_shared()),
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    // Accepted and dropped at once: `ssh -O` then reads end of file and gives up.
+                    match listener.accept() {
+                        Ok(_) => return true,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                        Err(_) => return false,
+                    }
+                }
+            }),
+        );
+        assert_eq!(accepted, Ok(true), "ssh -O exit never came to {socket:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2333,6 +2545,8 @@ mod tests {
         // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
         let uid = unsafe { libc::geteuid() };
         let tmp = scratch("dir");
+        // Whatever the umask made of it: a parent the group can write to is refused below.
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
         let made = control_dir_in(None, &tmp, uid).expect("a fresh directory");
         assert_eq!(made, tmp.join(format!("volant-cm-{uid}")));
@@ -2361,6 +2575,13 @@ mod tests {
 
         let runtime = tmp.join("runtime");
         std::fs::create_dir(&runtime).expect("a runtime directory");
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o775)).expect("chmod");
+        assert_eq!(
+            control_dir_in(Some(&runtime), &tmp, uid),
+            Ok(made.clone()),
+            "a runtime directory the group can write to is passed over"
+        );
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).expect("chmod");
         assert_eq!(
             control_dir_in(Some(&runtime), &tmp, uid),
             Ok(runtime.join("volant-cm"))
@@ -2371,6 +2592,18 @@ mod tests {
             control_dir_in(Some(&spaced), &tmp, uid),
             Ok(made),
             "a path ssh would split is passed over"
+        );
+
+        let open = tmp.join("open");
+        std::fs::create_dir(&open).expect("a shared parent");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).expect("chmod");
+        let err = control_dir_in(None, &open, uid).expect_err("a parent anybody can write to");
+        assert!(err.contains("not sticky"), "{err}");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o1777)).expect("chmod");
+        assert_eq!(
+            control_dir_in(None, &open, uid),
+            Ok(open.join(format!("volant-cm-{uid}"))),
+            "a sticky parent, as /tmp is"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2452,11 +2685,44 @@ mod tests {
         let calls: Vec<&str> = source.split("Transport::for_vars(").skip(1).collect();
         assert!(!calls.is_empty(), "the driver resolves its connections");
         for call in calls {
-            let arm = call.split("Err(").next().unwrap_or(call);
+            let arm: String = call
+                .split("Err(")
+                .next()
+                .unwrap_or(call)
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             assert!(
-                arm.contains(".shared(options.control_dir.as_deref()"),
-                "a resolution without sharing: {arm}"
+                arm.contains(
+                    ".shared(options.control_dir.as_deref(),&name,delegate_name.as_deref()"
+                ),
+                "a resolution without sharing, or shared under the delegate's name: {arm}"
             );
+        }
+    }
+
+    /// A reconnection to a host that went away first stops the host's master, in the two
+    /// places one happens: the plugin that rebooted it, and a kept link found dead after a
+    /// reboot.
+    ///
+    /// What would make this red: the master stopped after the connection, or not at all.
+    #[test]
+    fn a_reconnection_after_a_reboot_starts_from_a_fresh_connection() {
+        let source = include_str!("executor/run.rs");
+        for (start, end) in [
+            (
+                "impl Relink<AgentLink> for Relinker",
+                "fn with_connect_timeout",
+            ),
+            ("pub(super) async fn reuse_or_connect", "\n}\n"),
+        ] {
+            let body = source.split_once(start).expect(start).1;
+            let body = &body[..body.find(end).expect(end)];
+            let stop = body
+                .find("transport.stop_shared().await")
+                .unwrap_or_else(|| panic!("{start} stops the master"));
+            let connect = body.find("connect(").expect("a reconnection");
+            assert!(stop < connect, "{start}: the master is stopped first");
         }
     }
 }

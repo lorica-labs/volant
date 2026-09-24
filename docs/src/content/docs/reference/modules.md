@@ -79,7 +79,6 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `package_facts` | Python module |
 | `ping` | Python module |
 | `pip` | Python module |
-| `reboot` | not supported yet: needs the `reboot` action plugin |
 | `replace` | Python module |
 | `rpm_key` | Python module |
 | `script` | not supported yet: needs the `script` action plugin |
@@ -101,7 +100,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 
 ## Through an action plugin
 
-The controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary Python modules over the connection the task already has. [Action plugins](/reference/action-plugins/) describes each one.
+The controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary modules over the connection the task already has. `reboot` also waits for the host: it reconnects until the host answers with a new boot id. [Action plugins](/reference/action-plugins/) describes each one.
 
 | Module | What it does |
 |---|---|
@@ -109,6 +108,7 @@ The controller runs these as the reference's action plugins do: it picks or rend
 | `dnf` | Install or remove packages with `dnf` or `dnf5`, whichever the host runs. |
 | `fetch` | Copy a file from the host to the controller, under `dest` and nowhere else. |
 | `package` | Install or remove packages with the host's own package manager. |
+| `reboot` | Reboot the host and wait until it has booted again. |
 | `service` | Manage a service with the host's own init system. |
 | `template` | Render a template on the controller and copy the result to the host. |
 | `unarchive` | Extract an archive read on the controller, or one already on the host. |

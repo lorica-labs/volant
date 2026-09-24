@@ -3189,6 +3189,7 @@ mod tests {
         /// Whether a fake that has run out of answers holds the line open instead of closing it,
         /// which is what a real agent busy with a batch does.
         hangs_when_empty: bool,
+        ledger: crate::profile::Ledger,
     }
 
     impl FakeAgent {
@@ -3198,6 +3199,7 @@ mod tests {
                 answers: answers.into(),
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
+                ledger: crate::profile::Ledger::default(),
             }
         }
 
@@ -3230,6 +3232,10 @@ mod tests {
         async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
             self.sent.push(ToAgent::Cancel { id });
             true
+        }
+
+        fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
+            Some(&mut self.ledger)
         }
     }
 
@@ -3497,6 +3503,65 @@ mod tests {
                 assert!(!result.contains_key("exception"), "{result:?}");
             }
         }
+    }
+
+    /// What the agent says about how it ran each task is kept with the module that was asked
+    /// for, by the task's position in the batch, for the driver to file in the profile.
+    ///
+    /// What would make this red: `ran` dropped where the result is read, or filed under another
+    /// task's module.
+    #[tokio::test]
+    async fn a_batch_keeps_how_the_agent_ran_each_task() {
+        let ran = volant_protocol::Ran {
+            path: volant_protocol::ExecPath::Fallback,
+            reason: Some("validate".into()),
+            micros: 40,
+            fork_micros: None,
+            import_micros: None,
+            module_micros: None,
+        };
+        let mut agent = FakeAgent::answering(vec![
+            FromAgent::TaskResult {
+                batch: 4,
+                index: 1,
+                result: TaskResult(vars(json!({"changed": false}))),
+                ran: Some(ran.clone()),
+            },
+            FromAgent::TaskResult {
+                batch: 4,
+                index: 0,
+                result: TaskResult(vars(json!({"changed": false}))),
+                ran: None,
+            },
+            FromAgent::BatchDone {
+                batch: 4,
+                outcome: BatchOutcome::Completed,
+            },
+        ]);
+        let tasks = vec![
+            protocol_task(&task("command"), &bare_item(), None),
+            protocol_task(&task("stat"), &bare_item(), None),
+        ];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            4,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(received.iter().all(Option::is_some));
+        assert_eq!(
+            agent.ledger.ran,
+            [
+                (1, "stat".to_string(), Some(ran)),
+                (0, "command".to_string(), None)
+            ]
+        );
     }
 
     /// A result carrying `stdout` or `stderr` comes back with the `_lines` of each, split the way

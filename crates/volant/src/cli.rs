@@ -230,7 +230,10 @@ async fn run_all(args: &PlaybookArgs, out: &mut Renderer) -> anyhow::Result<i32>
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let python = python::union_for(&python_modules, &named).map_err(|e| Refusal::or(4, e))?;
+    let python = python::union_for(&python_modules, &named, &mut |warning| {
+        out.warning(&warning, false);
+    })
+    .map_err(|e| Refusal::or(4, e))?;
 
     let agents = agent::AgentSource::discover();
     // Refused by name before a single host is reached, wherever the method came from.

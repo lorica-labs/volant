@@ -26,7 +26,7 @@ use volant_protocol::modules::short_name;
 /// The helper itself, shipped in the binary and handed to the interpreter on its command line.
 /// Nothing is written to disk for it, so no temporary file can be left behind by a run that
 /// dies.
-const HELPER: &str = include_str!("python_helper.py");
+pub(crate) const HELPER: &str = include_str!("python_helper.py");
 
 /// The per-module facts a task needs alongside the shared blob, as the wrapper ansible-core
 /// built for that module reports them.
@@ -378,23 +378,68 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 /// name themselves: one of those that is missing, or served by an action plugin, is refused here
 /// by `preflight::check_resolved`. A collection's module found only in a role file is
 /// dropped instead, because a file for another platform is no reason to refuse the run.
+///
+/// The union is kept between runs ([`crate::union_cache`]): a run whose entry is still valid
+/// starts no helper at all. `warn` is told, once, when the cache cannot be written.
 pub fn union_for(
     modules: &std::collections::BTreeSet<String>,
     named: &[(String, String)],
+    warn: &mut dyn FnMut(String),
 ) -> anyhow::Result<Option<Union>> {
     if modules.is_empty() {
         return Ok(None);
     }
-    union_from(PythonBuilder::start, modules, named)
+    let place = crate::union_cache::Place::here(modules, &collection_names(modules));
+    union_from(PythonBuilder::start, modules, named, place.as_ref(), warn)
 }
 
-/// [`union_for`] with the helper's start handed in, so what happens when there is none is
-/// testable without touching the process environment.
+/// The names only an installed collection can answer to, which the helper resolves first.
+fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String> {
+    modules
+        .iter()
+        .filter(|m| is_collection_name(m))
+        .cloned()
+        .collect()
+}
+
+/// [`union_for`] with the helper's start and the cache's place handed in, so what happens when
+/// there is no helper, or a cache entry, is testable without touching the process environment.
 fn union_from(
     start: impl FnOnce() -> anyhow::Result<PythonBuilder>,
     modules: &std::collections::BTreeSet<String>,
     named: &[(String, String)],
+    cache: Option<&crate::union_cache::Place>,
+    warn: &mut dyn FnMut(String),
 ) -> anyhow::Result<Option<Union>> {
+    let unusable = |place: &crate::union_cache::Place, err: &dyn std::fmt::Display| {
+        format!(
+            "the module cache at {} is not usable: {err}; payloads are rebuilt on every run",
+            place.dir.display()
+        )
+    };
+    let mut cache = cache;
+    if let Some(place) = cache {
+        match crate::union_cache::open(&place.dir, &place.key) {
+            Ok(Some(entry)) => {
+                // The tasks of this run are checked against the answers kept, as they would have
+                // been against fresh ones: the key holds the module set, not which of them a
+                // task names.
+                for (task, module) in named {
+                    if let Some(answer) = entry.resolved.get(module) {
+                        crate::preflight::check_resolved(task, module, answer)?;
+                    }
+                }
+                return Ok(Some(entry.union));
+            }
+            Ok(None) => {}
+            // Said once, and nothing is written this run: what is there is not to be trusted,
+            // and the operator is the one to look at it.
+            Err(err) => {
+                warn(unusable(place, &err));
+                cache = None;
+            }
+        }
+    }
     let mut names: Vec<String> = modules.iter().cloned().collect();
     let mut builder = match start() {
         Ok(builder) => builder,
@@ -417,14 +462,11 @@ fn union_from(
             return Err(no_builder(&err, &names));
         }
     };
-    let asked: Vec<String> = names
-        .iter()
-        .filter(|m| is_collection_name(m))
-        .cloned()
-        .collect();
+    let asked = collection_names(modules);
     let mut refused = BTreeMap::new();
+    let mut resolved = BTreeMap::new();
     if !asked.is_empty() {
-        let resolved = builder.resolve(&asked)?;
+        resolved = builder.resolve(&asked)?;
         for (task, module) in named {
             if let Some(answer) = resolved.get(module) {
                 crate::preflight::check_resolved(task, module, answer)?;
@@ -449,9 +491,30 @@ fn union_from(
             refused,
         }));
     }
-    let mut union = builder.union(&names)?;
+    let (mut union, traced) = builder.union(&names)?;
     union.refused = refused;
-    Ok(Some(union))
+    let (Some(place), Some(traced)) = (cache, traced) else {
+        return Ok(Some(union));
+    };
+    // Filed only under the interpreter that built it. When the first candidate has no
+    // ansible-core, `find_python` built under another one, which the key does not name. And a
+    // candidate that is a link to something other than Python - mise's shims are links to the
+    // `mise` binary, which picks the version it runs - keeps its key whatever it runs: the
+    // interpreter that answered has to be the one the key's real path names.
+    if crate::union_cache::located(&builder.python).as_ref() != Some(&place.interpreter)
+        || traced.interpreter != place.real
+    {
+        return Ok(Some(union));
+    }
+    let entry = crate::union_cache::Entry {
+        union,
+        sources: traced.sources,
+        resolved,
+    };
+    if let Err(err) = crate::union_cache::store(&place.dir, &place.key, &entry) {
+        warn(unusable(place, &err));
+    }
+    Ok(Some(entry.union))
 }
 
 /// The sentence a run that gathers facts and nothing else gets on top of [`refusal_for`].
@@ -514,7 +577,7 @@ impl ModulePayload {
 /// An explicit `VOLANT_PYTHON` is the only candidate when it is set: falling back from it to
 /// `python3` would answer a path that does not exist, or has no ansible-core, by quietly
 /// running something else.
-fn candidates(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<String> {
+pub(crate) fn candidates(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<String> {
     if let Some(python) = explicit {
         return vec![python.to_string()];
     }
@@ -540,6 +603,8 @@ pub struct PythonBuilder {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    /// The interpreter it runs under, as it was started.
+    python: String,
 }
 
 impl PythonBuilder {
@@ -560,8 +625,12 @@ impl PythonBuilder {
     /// [`PythonBuilder::under`] with variables set for the helper alone, which is how a test
     /// points ansible-core at a collection it wrote without touching this process's environment.
     fn under_with(python: &str, env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
+        PythonBuilder::spawn(python, &["-c", HELPER], env)
+    }
+
+    fn spawn(python: &str, args: &[&str], env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
         let mut child = Command::new(python)
-            .args(["-c", HELPER])
+            .args(args)
             .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -574,14 +643,19 @@ impl PythonBuilder {
             child,
             stdin,
             stdout,
+            python: python.to_string(),
         })
     }
 
-    /// The union blob for every module named, and the facts each of them needs.
+    /// The union blob for every module named, the facts each of them needs, and the files it was
+    /// built from when the helper could name them all.
     ///
     /// An error here fails the run: a union that was not built whole is never sent, so no host
     /// can receive a blob missing the `module_utils` one of its tasks imports.
-    pub fn union(&mut self, modules: &[String]) -> anyhow::Result<Union> {
+    pub fn union(
+        &mut self,
+        modules: &[String],
+    ) -> anyhow::Result<(Union, Option<crate::union_cache::Traced>)> {
         exchange(&mut self.stdin, &mut self.stdout, modules)
     }
 
@@ -630,7 +704,14 @@ fn find_python(explicit: Option<&str>, virtual_env: Option<&str>) -> anyhow::Res
 /// Split out from [`PythonBuilder::union`] so the two ways an answer goes wrong - the helper
 /// dying without writing, and the helper reporting a module it could not build - are testable
 /// without an ansible-core on the machine running the tests.
-fn exchange<W: Write, R: Read>(to: W, from: R, modules: &[String]) -> anyhow::Result<Union> {
+///
+/// The files the helper reports building from, and the interpreter it ran under, come back beside
+/// the union, `None` when it could not name them all, which keeps the union out of the cache.
+fn exchange<W: Write, R: Read>(
+    to: W,
+    from: R,
+    modules: &[String],
+) -> anyhow::Result<(Union, Option<crate::union_cache::Traced>)> {
     let answer = ask(
         to,
         from,
@@ -670,12 +751,23 @@ fn exchange<W: Write, R: Read>(to: W, from: R, modules: &[String]) -> anyhow::Re
             bail!("the python helper built no payload for '{asked}'");
         }
     }
-    Ok(Union {
-        hash,
-        zip_b64,
-        modules: facts,
-        refused: BTreeMap::new(),
-    })
+    let sources = answer
+        .get("sources")
+        .and_then(crate::union_cache::sources_from)
+        .zip(answer.get("interpreter").and_then(Value::as_str))
+        .map(|(sources, interpreter)| crate::union_cache::Traced {
+            interpreter: interpreter.into(),
+            sources,
+        });
+    Ok((
+        Union {
+            hash,
+            zip_b64,
+            modules: facts,
+            refused: BTreeMap::new(),
+        },
+        sources,
+    ))
 }
 
 /// One request to the helper and its answer, refusing a dead helper, an answer that is not JSON
@@ -720,48 +812,65 @@ fn resolve_exchange<W: Write, R: Read>(
         .get("resolved")
         .and_then(Value::as_object)
         .context("the python helper's answer carries no resolution")?;
-    let text =
-        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
     let mut out = BTreeMap::new();
     for asked in modules {
         let value = answers
             .get(asked)
             .with_context(|| format!("the python helper did not resolve '{asked}'"))?;
-        let resolved = if let Some(fqcn) = text(value, "module") {
-            let collection = match value.get("collection").unwrap_or(&Value::Null) {
-                Value::Null => None,
-                Value::Array(pair) => match pair.as_slice() {
-                    [Value::String(name), Value::String(version)] => {
-                        Some((name.clone(), version.clone()))
-                    }
-                    _ => bail!(
-                        "the python helper named the collection of '{asked}' as {pair:?}, not as a name and a version"
-                    ),
-                },
-                other => bail!(
-                    "the python helper named the collection of '{asked}' as {other}, not as a name and a version"
-                ),
-            };
-            Resolved::Module { fqcn, collection }
-        } else if let Some(fqcn) = text(value, "action_plugin") {
-            Resolved::ActionPlugin { fqcn }
-        } else if let Some(reason) = text(value, "unusable") {
-            Resolved::Unusable { reason }
-        } else if let Some(missing) = value.get("missing") {
-            Resolved::Missing {
-                collection: missing.as_str().map(str::to_string),
-            }
-        } else {
-            bail!(
-                "the python helper resolved '{asked}' to something this release cannot read: {value}"
-            );
-        };
-        out.insert(asked.clone(), resolved);
+        out.insert(asked.clone(), resolved_from(asked, value)?);
     }
     Ok(out)
 }
 
-fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFacts> {
+/// One name's answer, as the helper gives it and the union cache keeps it.
+pub(crate) fn resolved_from(asked: &str, value: &Value) -> anyhow::Result<Resolved> {
+    let text =
+        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+    Ok(if let Some(fqcn) = text(value, "module") {
+        let collection = match value.get("collection").unwrap_or(&Value::Null) {
+            Value::Null => None,
+            Value::Array(pair) => match pair.as_slice() {
+                [Value::String(name), Value::String(version)] => {
+                    Some((name.clone(), version.clone()))
+                }
+                _ => bail!(
+                    "the python helper named the collection of '{asked}' as {pair:?}, not as a name and a version"
+                ),
+            },
+            other => bail!(
+                "the python helper named the collection of '{asked}' as {other}, not as a name and a version"
+            ),
+        };
+        Resolved::Module { fqcn, collection }
+    } else if let Some(fqcn) = text(value, "action_plugin") {
+        Resolved::ActionPlugin { fqcn }
+    } else if let Some(reason) = text(value, "unusable") {
+        Resolved::Unusable { reason }
+    } else if let Some(missing) = value.get("missing") {
+        Resolved::Missing {
+            collection: missing.as_str().map(str::to_string),
+        }
+    } else {
+        bail!(
+            "the python helper resolved '{asked}' to something this release cannot read: {value}"
+        );
+    })
+}
+
+/// [`resolved_from`] the other way.
+pub(crate) fn resolved_json(resolved: &Resolved) -> Value {
+    match resolved {
+        Resolved::Module { fqcn, collection } => serde_json::json!({
+            "module": fqcn,
+            "collection": collection.as_ref().map(|(name, version)| [name, version]),
+        }),
+        Resolved::ActionPlugin { fqcn } => serde_json::json!({ "action_plugin": fqcn }),
+        Resolved::Unusable { reason } => serde_json::json!({ "unusable": reason }),
+        Resolved::Missing { collection } => serde_json::json!({ "missing": collection }),
+    }
+}
+
+pub(crate) fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFacts> {
     let field = |key: &str| {
         value
             .get(key)
@@ -813,7 +922,7 @@ mod tests {
                 "profile": "legacy", "rlimit_nofile": 0, "extensions": {}}}}"#;
         let asked =
             ["sysctl", "ansible.posix.sysctl", "community.general.sysctl"].map(str::to_string);
-        let union = exchange(Vec::new(), framed(answer), &asked).unwrap();
+        let union = exchange(Vec::new(), framed(answer), &asked).unwrap().0;
         assert_eq!(union.modules.len(), 3, "{:?}", union.modules.keys());
         assert_eq!(
             union.modules[payload_key("ansible.posix.sysctl")].module_fqn,
@@ -922,15 +1031,22 @@ mod tests {
     fn a_role_file_alone_never_demands_ansible_core() {
         let none = || Err(anyhow::anyhow!("{}", refusal_for("python3")));
         let modules = std::collections::BTreeSet::from(["community.general.zypper".to_string()]);
-        assert_eq!(union_from(none, &modules, &[]).unwrap(), None);
+        assert_eq!(
+            union_from(none, &modules, &[], None, &mut |_| {}).unwrap(),
+            None
+        );
         let named = [("Z".to_string(), "community.general.zypper".to_string())];
-        let err = union_from(none, &modules, &named).unwrap_err().to_string();
+        let err = union_from(none, &modules, &named, None, &mut |_| {})
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("VOLANT_PYTHON"), "{err}");
         let modules = std::collections::BTreeSet::from([
             "community.general.zypper".to_string(),
             "ping".to_string(),
         ]);
-        let err = union_from(none, &modules, &[]).unwrap_err().to_string();
+        let err = union_from(none, &modules, &[], None, &mut |_| {})
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("VOLANT_PYTHON"), "{err}");
 
         // A dotted typo a task gives is the reference's misspelling first, then why nothing could
@@ -938,7 +1054,7 @@ mod tests {
         // alone, which sends the operator to install ansible-core to fix a typo.
         let modules = std::collections::BTreeSet::from(["ansible.builtins.debug".to_string()]);
         let named = [("D".to_string(), "ansible.builtins.debug".to_string())];
-        let err = union_from(none, &modules, &named).unwrap_err();
+        let err = union_from(none, &modules, &named, None, &mut |_| {}).unwrap_err();
         assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
         let err = format!("{err:#}");
         assert!(
@@ -1045,7 +1161,7 @@ mod tests {
 
         // Found only by the role scan, the unusable names stay out and the run builds the rest.
         let modules = std::collections::BTreeSet::from(names.clone());
-        let built = union_from(start, &modules, &[])
+        let built = union_from(start, &modules, &[], None, &mut |_| {})
             .unwrap()
             .expect("good is built");
         assert_eq!(
@@ -1059,7 +1175,7 @@ mod tests {
         let set_aside = std::collections::BTreeSet::from(
             ["volanttest.coll.moved", "volanttest.coll.gone"].map(str::to_string),
         );
-        let kept = union_from(start, &set_aside, &[])
+        let kept = union_from(start, &set_aside, &[], None, &mut |_| {})
             .unwrap()
             .expect("the reasons are kept");
         assert!(kept.modules.is_empty(), "{:?}", kept.modules);
@@ -1101,7 +1217,7 @@ mod tests {
             ),
         ] {
             let named = [("T".to_string(), module.to_string())];
-            let err = union_from(start, &modules, &named).unwrap_err();
+            let err = union_from(start, &modules, &named, None, &mut |_| {}).unwrap_err();
             assert!(format!("{err:#}").contains(says), "{module}: {err:#}");
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -1210,7 +1326,7 @@ mod tests {
             let modules = std::collections::BTreeSet::from(
                 ["community.general.atomic_host", "ping"].map(str::to_string),
             );
-            let built = union_from(PythonBuilder::start, &modules, &[])
+            let built = union_from(PythonBuilder::start, &modules, &[], None, &mut |_| {})
                 .unwrap()
                 .expect("ping is built");
             let included = crate::playbook::parse(
@@ -1242,7 +1358,8 @@ mod tests {
         }
         let union = helper
             .union(&["ansible.posix.sysctl".to_string(), "ping".to_string()])
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(
             union.modules["ansible.posix.sysctl"].module_fqn,
             "ansible_collections.ansible.posix.plugins.modules.sysctl"
@@ -1252,12 +1369,13 @@ mod tests {
         let modules = std::collections::BTreeSet::from(
             ["ansible.posix.synchronize", "nosuch.coll.mod", "ping"].map(str::to_string),
         );
-        let built = union_from(PythonBuilder::start, &modules, &[])
+        let built = union_from(PythonBuilder::start, &modules, &[], None, &mut |_| {})
             .unwrap()
             .expect("ping is built");
         assert_eq!(built.modules.keys().collect::<Vec<_>>(), ["ping"]);
         let named = [("Sync".to_string(), "ansible.posix.synchronize".to_string())];
-        let err = union_from(PythonBuilder::start, &modules, &named).unwrap_err();
+        let err =
+            union_from(PythonBuilder::start, &modules, &named, None, &mut |_| {}).unwrap_err();
         assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
         assert!(
             format!("{err:#}")
@@ -1382,7 +1500,9 @@ mod tests {
             "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
             "extensions": {}}}}"#;
         let mut sent = Vec::new();
-        let union = exchange(&mut sent, framed(answer), &["ping".to_string()]).unwrap();
+        let union = exchange(&mut sent, framed(answer), &["ping".to_string()])
+            .unwrap()
+            .0;
         assert!(
             String::from_utf8_lossy(&sent).contains(r#"{"modules":["ping"]}"#),
             "{sent:?}"
@@ -1424,7 +1544,7 @@ mod tests {
             "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
             "extensions": {}}}}"#;
         let asked = ["ansible.builtin.ping".to_string()];
-        let union = exchange(Vec::new(), framed(answer), &asked).unwrap();
+        let union = exchange(Vec::new(), framed(answer), &asked).unwrap().0;
         assert_eq!(union.modules.keys().collect::<Vec<_>>(), ["ping"]);
     }
 
@@ -1604,7 +1724,8 @@ mod tests {
     /// playbook on a machine that has no ansible-core - including the ones that never needed it.
     #[test]
     fn a_run_with_no_python_module_builds_nothing() {
-        let none = union_for(&std::collections::BTreeSet::new(), &[]).expect("nothing to build");
+        let none = union_for(&std::collections::BTreeSet::new(), &[], &mut |_| {})
+            .expect("nothing to build");
         assert!(none.is_none());
     }
 
@@ -1621,7 +1742,9 @@ mod tests {
         let answer = br#"{"zip_b64": "UEsDBA==", "modules": {"ping": {"module_fqn":
             "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
             "extensions": {}}}}"#;
-        let union = exchange(Vec::new(), framed(answer), &["ping".to_string()]).unwrap();
+        let union = exchange(Vec::new(), framed(answer), &["ping".to_string()])
+            .unwrap()
+            .0;
         assert_eq!(union.hash, blake3::hash(b"PK\x03\x04").to_hex().to_string());
         assert_ne!(union.hash, blake3::hash(b"UEsDBA==").to_hex().to_string());
         // The shape the agent refuses a name by before it will look for a file under it.
@@ -1737,11 +1860,346 @@ mod tests {
     fn the_helper_answers_one_frame_over_its_own_pipes() {
         let mut builder = PythonBuilder::under("python3").expect("python3 is on PATH");
         match builder.union(&["ping".to_string()]) {
-            Ok(union) => assert!(!union.zip_b64.is_empty(), "an empty blob was accepted"),
+            Ok((union, _)) => assert!(!union.zip_b64.is_empty(), "an empty blob was accepted"),
             Err(refused) => assert!(
                 refused.to_string().contains("could not build the modules"),
                 "{refused}"
             ),
+        }
+    }
+
+    /// A helper that answers every request with its first argument, whatever it asks.
+    const CANNED: &str = "import struct, sys\nwhile True:\n    head = sys.stdin.buffer.read(4)\n    if len(head) < 4:\n        break\n    sys.stdin.buffer.read(struct.unpack('>I', head)[0])\n    answer = sys.argv[1].encode()\n    sys.stdout.buffer.write(struct.pack('>I', len(answer)) + answer)\n    sys.stdout.buffer.flush()\n";
+
+    /// A place in `root`, for the `python3` on `PATH`, which is what the canned helper runs under.
+    fn fresh_place(root: &std::path::Path) -> crate::union_cache::Place {
+        let interpreter =
+            crate::union_cache::interpreter_without_running(Some("python3"), None).unwrap();
+        crate::union_cache::Place {
+            dir: root.join("unions"),
+            key: crate::union_cache::key(
+                &interpreter,
+                &std::collections::BTreeSet::from(["ping".into()]),
+                &[],
+            ),
+            interpreter: interpreter.path,
+            real: interpreter.real,
+        }
+    }
+
+    /// Where the `python3` on `PATH` leads, which is what a helper started under it reports.
+    fn python3_real() -> std::path::PathBuf {
+        crate::union_cache::interpreter_without_running(Some("python3"), None)
+            .unwrap()
+            .real
+    }
+
+    /// The answer of a helper that built `ping` into `zip` from the file `source`.
+    fn canned(zip: &[u8], source: Option<&std::path::Path>) -> String {
+        canned_under(zip, source, &python3_real())
+    }
+
+    /// [`canned`] from a helper reporting `interpreter` as the one it ran under.
+    fn canned_under(
+        zip: &[u8],
+        source: Option<&std::path::Path>,
+        interpreter: &std::path::Path,
+    ) -> String {
+        let sources = source.map_or(Value::Null, |path| {
+            let now = crate::union_cache::Source::now(path).unwrap();
+            serde_json::json!([{
+                "path": path.to_str().unwrap(),
+                "len": now.len,
+                "mtime_ns": i64::try_from(now.mtime_ns).unwrap(),
+            }])
+        });
+        serde_json::json!({
+            "zip_b64": volant_protocol::encoding::b64_encode(zip),
+            "modules": {"ping": {"module_fqn": "ansible.modules.ping", "profile": "legacy",
+                "rlimit_nofile": 0, "extensions": {}}},
+            "sources": sources,
+            "interpreter": interpreter.to_str().unwrap(),
+        })
+        .to_string()
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A valid entry starts no helper, not even the `import ansible` probe; a stale one starts
+    /// one and is written again.
+    ///
+    /// What would make this red: the helper started, or `find_python` run, before the cache is
+    /// looked at, which pays the Python start the cache exists to save; or a rebuilt union left
+    /// unwritten, which rebuilds on every run after the first change.
+    #[test]
+    fn a_valid_cache_starts_nothing_and_a_stale_one_is_rebuilt_once() {
+        let root = scratch("union-cached");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        let place = fresh_place(&root);
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let starts = std::cell::Cell::new(0);
+        let run = |answer: &str| {
+            let start = || {
+                starts.set(starts.get() + 1);
+                PythonBuilder::spawn("python3", &["-c", CANNED, answer], &[])
+            };
+            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap()
+        };
+
+        let first = run(&canned(b"PK first", Some(&source))).unwrap();
+        assert_eq!(starts.get(), 1);
+        let second = run(&canned(b"PK other", Some(&source))).unwrap();
+        assert_eq!(starts.get(), 1, "a valid entry started the helper");
+        assert_eq!(second, first);
+
+        std::fs::write(&source, "pong").unwrap();
+        let file = std::fs::File::options().write(true).open(&source).unwrap();
+        let mtime = file.metadata().unwrap().modified().unwrap();
+        file.set_modified(mtime + std::time::Duration::from_secs(1))
+            .unwrap();
+        let third = run(&canned(b"PK third", Some(&source))).unwrap();
+        assert_eq!(starts.get(), 2);
+        assert_eq!(third.hash, blake3::hash(b"PK third").to_hex().to_string());
+        let kept = crate::union_cache::load(&place.dir, &place.key).expect("written again");
+        assert_eq!(kept.union, third);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A union the helper could not trace back to its files is never kept.
+    ///
+    /// What would make this red: `"sources": null` stored as an entry with no sources, which is
+    /// valid forever and serves the same zip through every upgrade.
+    #[test]
+    fn a_union_without_its_sources_is_not_kept() {
+        let root = scratch("union-untraced");
+        let place = fresh_place(&root);
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let answer = canned(b"PK untraced", None);
+        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
+        assert!(
+            !std::fs::read_dir(&place.dir).is_ok_and(|mut files| files.next().is_some()),
+            "an entry was written"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cache directory that cannot be written costs one warning and nothing else.
+    #[test]
+    fn an_unwritable_cache_warns_and_the_run_goes_on() {
+        let root = scratch("union-unwritable");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        std::fs::write(root.join("unions"), "a file where the directory goes").unwrap();
+        let place = fresh_place(&root);
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let answer = canned(b"PK", Some(&source));
+        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+        let mut warnings = Vec::new();
+        let union = union_from(start, &modules, &[], Some(&place), &mut |w| {
+            warnings.push(w);
+        });
+        assert!(union.unwrap().is_some());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].starts_with(&format!(
+                "the module cache at {} is not usable: ",
+                place.dir.display()
+            )) && warnings[0].ends_with("; payloads are rebuilt on every run"),
+            "{}",
+            warnings[0]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A kept answer refuses a task of this run as a fresh one would.
+    ///
+    /// What would make this red: the cache hit returned without the pre-flight, which lets a task
+    /// naming a module its collection serves through an action plugin reach its host, because an
+    /// earlier run found that name only in a role file.
+    #[test]
+    fn a_cache_hit_still_refuses_what_a_task_cannot_run() {
+        let root = scratch("union-refuses");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        let place = fresh_place(&root);
+        let entry = crate::union_cache::Entry {
+            union: Union {
+                hash: blake3::hash(b"PK").to_hex().to_string(),
+                zip_b64: volant_protocol::encoding::b64_encode(b"PK"),
+                modules: BTreeMap::new(),
+                refused: BTreeMap::new(),
+            },
+            sources: vec![crate::union_cache::Source::now(&source).unwrap()],
+            resolved: BTreeMap::from([(
+                "ns.c.sync".to_string(),
+                Resolved::ActionPlugin {
+                    fqcn: "ns.c.sync".into(),
+                },
+            )]),
+        };
+        crate::union_cache::store(&place.dir, &place.key, &entry).unwrap();
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let unstarted = || -> anyhow::Result<PythonBuilder> { panic!("the helper was started") };
+        let named = [("Sync".to_string(), "ns.c.sync".to_string())];
+        let err = union_from(unstarted, &modules, &named, Some(&place), &mut |_| {}).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("needs an action plugin"),
+            "{err:#}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A union built under another interpreter than the one the key names is not kept.
+    ///
+    /// What would make this red: storing whatever `find_python` fell back to under the first
+    /// candidate's key. Installing ansible-core into that first candidate changes none of the
+    /// files the entry lists, and the next run would serve the other interpreter's union.
+    #[test]
+    fn an_entry_is_filed_only_under_the_interpreter_that_built_it() {
+        let root = scratch("union-other-python");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        let place = crate::union_cache::Place {
+            interpreter: root.join("venv/bin/python"),
+            ..fresh_place(&root)
+        };
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let answer = canned(b"PK", Some(&source));
+        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A union is not kept when the executable that answered is not the one the key's real path
+    /// names.
+    ///
+    /// What would make this red: the candidate's real path trusted as the interpreter. mise's
+    /// shims are links to the `mise` binary, so `mise use -g python@3.12` over a 3.11 keeps the
+    /// key, every 3.11 source is still on disk unchanged, and the old union is served.
+    #[test]
+    fn an_entry_is_filed_only_under_the_executable_that_answered() {
+        let root = scratch("union-multiplexer");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        let place = fresh_place(&root);
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let answer = canned_under(b"PK", Some(&source), &root.join("python3.12"));
+        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cache file someone else could have written is warned about and never read.
+    ///
+    /// What would make this red: the files read by path after the directory check, which an
+    /// account owning a directory above the cache can swap between the two, with a manifest and
+    /// a zip of its own - Python that then runs on every managed host.
+    #[cfg(unix)]
+    #[test]
+    fn a_cache_file_others_could_write_is_warned_about_and_not_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("union-foreign-file");
+        let source = root.join("ping.py");
+        std::fs::write(&source, "ping").unwrap();
+        let place = fresh_place(&root);
+        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+        let answer = canned(b"PK kept", Some(&source));
+        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+        for file in std::fs::read_dir(&place.dir).unwrap() {
+            let path = file.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o620)).unwrap();
+            }
+        }
+        let starts = std::cell::Cell::new(0);
+        let start = || {
+            starts.set(starts.get() + 1);
+            PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[])
+        };
+        let mut warnings = Vec::new();
+        union_from(start, &modules, &[], Some(&place), &mut |w| {
+            warnings.push(w);
+        })
+        .unwrap();
+        assert_eq!(starts.get(), 1, "a file others could write was read");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("writable by nobody else"),
+            "{}",
+            warnings[0]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The helper names the files a union came from: each module and `module_utils` it copied,
+    /// ansible-core's own version, and the manifests of each collection it read.
+    ///
+    /// Measured on ansible-core 2.19.12 with `ansible.posix` 2.2.2: every entry of the `ping`
+    /// and `ansible.posix.sysctl` zips is a byte copy of a file under the directory `ansible` was
+    /// imported from or under the collection's, except the package `__init__.py` files
+    /// `module_common.py` writes itself.
+    ///
+    /// What would make this red: a collection's `FILES.json` left out, which serves the old
+    /// collection's zip after `ansible-galaxy collection install --upgrade` (Review Focus 2); or a
+    /// zip entry the helper cannot name, which answers `null` and never caches anything.
+    #[test]
+    fn the_helper_names_the_files_a_union_came_from() {
+        let Some(mut helper) = helper_or_skip() else {
+            return;
+        };
+        let names = ["ansible.posix.sysctl".to_string(), "ping".to_string()];
+        let (_, traced) = helper.union(&names).unwrap();
+        let traced = traced.expect("every entry is named");
+        let python = std::env::var("VOLANT_PYTHON").unwrap();
+        assert_eq!(traced.interpreter, std::fs::canonicalize(python).unwrap());
+        let sources = traced.sources;
+        let paths: Vec<String> = sources
+            .iter()
+            .map(|s| s.path.display().to_string())
+            .collect();
+        for end in [
+            "/ansible/release.py",
+            "/ansible/executor/module_common.py",
+            "/ansible/modules/ping.py",
+            "/ansible/module_utils/basic.py",
+            "/ansible_collections/ansible/posix/plugins/modules/sysctl.py",
+            "/ansible_collections/ansible/posix/MANIFEST.json",
+            "/ansible_collections/ansible/posix/FILES.json",
+        ] {
+            assert!(paths.iter().any(|p| p.ends_with(end)), "{end}: {paths:#?}");
+        }
+        // Where a collection could still appear: the interpreter's own site-packages, which holds
+        // no `ansible_collections` on the machine this was measured on, is itself recorded.
+        assert!(
+            paths.iter().any(|p| p.ends_with("/site-packages")),
+            "{paths:#?}"
+        );
+        // Where a module could be dropped to shadow a builtin: `~/.ansible/plugins/modules`, or
+        // the nearest directory above it that exists.
+        let home = std::env::var("HOME").unwrap();
+        let shadow = std::path::Path::new(&home).join(".ansible/plugins/modules");
+        assert!(
+            sources
+                .iter()
+                .any(|s| shadow.starts_with(&s.path) && s.path.starts_with(&home)),
+            "{shadow:?}: {paths:#?}"
+        );
+        for source in &sources {
+            assert_eq!(
+                crate::union_cache::Source::now(&source.path).unwrap(),
+                *source
+            );
         }
     }
 

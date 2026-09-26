@@ -5,6 +5,7 @@ mod blobs;
 mod clock;
 mod interpreter;
 mod modules;
+mod natives;
 mod python;
 mod runner;
 
@@ -124,6 +125,7 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     arch: std::env::consts::ARCH.to_string(),
                     interpreters: interpreter::discover(),
+                    natives: natives::enabled_names(),
                 })?;
             }
             ToAgent::RunBatch { id, tasks } => runner::run_batch(id, &tasks, &rx, &mut send)?,

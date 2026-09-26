@@ -50,6 +50,16 @@ const LAST_WORDS_WAIT: Duration = Duration::from_millis(500);
 /// What an operator is shown of a module's own output when it is not a result.
 const EXCERPT: usize = 2048;
 
+/// Where a Python task's time went, as the server measured it: the fork, the module's import up
+/// to the moment it builds its `AnsibleModule`, and the rest of its run. Each is `None` when the
+/// server did not report it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    pub fork: Option<u64>,
+    pub import: Option<u64>,
+    pub module: Option<u64>,
+}
+
 #[derive(Debug)]
 pub struct Server {
     child: Child,
@@ -64,6 +74,8 @@ pub struct Server {
     /// message rather than racing the reader thread for the last few bytes.
     stderr_ended: Receiver<()>,
     interpreter: String,
+    /// What the last result frame said about the task's time.
+    timing: Timing,
 }
 
 impl Server {
@@ -135,6 +147,7 @@ impl Server {
             stderr,
             stderr_ended,
             interpreter: interpreter.to_string(),
+            timing: Timing::default(),
         };
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
@@ -193,6 +206,7 @@ impl Server {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> io::Result<Run> {
+        self.timing = Timing::default();
         let request = json!({
             "args": args,
             "profile": payload.profile,
@@ -220,7 +234,9 @@ impl Server {
             }
             match self.frames.recv_timeout(CANCEL_POLL) {
                 Ok(frame) => {
-                    return Ok(Run::Done(result(&serde_json::from_slice(&frame?)?)));
+                    let frame = serde_json::from_slice(&frame?)?;
+                    self.timing = timing(&frame);
+                    return Ok(Run::Done(result(&frame)));
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if cancelled() {
@@ -311,7 +327,8 @@ impl Drop for Server {
     }
 }
 
-/// Runs one task that carries a payload, starting a server for it if this agent has none yet.
+/// Runs one task that carries a payload, starting a server for it if this agent has none yet,
+/// and says where its time went.
 ///
 /// A blob is trusted because its bytes hash to its name, and the task that uses one is where that
 /// has to hold. `Servers::verify` decides when the hash has to be read again.
@@ -320,11 +337,16 @@ pub fn run(
     args: &Map<String, Value>,
     context: &Context,
     cancelled: &dyn Fn() -> bool,
-) -> Run {
+) -> (Run, Timing) {
     let remote_tmp = crate::blobs::remote_tmp();
     let blob = match crate::blobs::path(&remote_tmp, &payload.blob) {
         Ok(blob) => blob,
-        Err(err) => return Run::Done(fail(format!("payload {}: {err}", payload.blob), None)),
+        Err(err) => {
+            return (
+                Run::Done(fail(format!("payload {}: {err}", payload.blob), None)),
+                Timing::default(),
+            );
+        }
     };
     SERVERS.with(|table| {
         table
@@ -403,7 +425,7 @@ impl Servers {
         args: &Map<String, Value>,
         context: &Context,
         cancelled: &dyn Fn() -> bool,
-    ) -> Run {
+    ) -> (Run, Timing) {
         let key = (payload.interpreter.clone(), payload.blob.clone());
         if self
             .live
@@ -413,10 +435,10 @@ impl Servers {
             self.live.remove(&key);
         }
         if let Err(msg) = self.verify(payload, remote_tmp, blob, &key) {
-            return Run::Done(fail(msg, None));
+            return (Run::Done(fail(msg, None)), Timing::default());
         }
         if let Some(refused) = self.refused.get(&key) {
-            return Run::Done(fail(refused.clone(), None));
+            return (Run::Done(fail(refused.clone(), None)), Timing::default());
         }
         if !self.live.contains_key(&key) {
             let spent = self.starts.entry(key.clone()).or_default();
@@ -427,26 +449,29 @@ impl Servers {
                     payload.interpreter
                 );
                 self.refused.insert(key, msg.clone());
-                return Run::Done(fail(msg, None));
+                return (Run::Done(fail(msg, None)), Timing::default());
             }
             match Server::start(&payload.interpreter, blob, cancelled) {
                 Ok(server) => {
                     self.live.insert(key.clone(), server);
                 }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => return Run::Cancelled,
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    return (Run::Cancelled, Timing::default());
+                }
                 Err(err) => {
                     let msg = format!("{err}");
                     self.refused.insert(key, msg.clone());
-                    return Run::Done(fail(msg, None));
+                    return (Run::Done(fail(msg, None)), Timing::default());
                 }
             }
         }
         let server = self.live.get_mut(&key).expect("just started");
         let run = server.run(payload, args, context, cancelled);
+        let timing = server.timing;
         if !server.alive() {
             self.live.remove(&key);
         }
-        run
+        (run, timing)
     }
 
     /// Hashes the blob unless a live server already runs on it and the file is still the one
@@ -502,6 +527,22 @@ fn started(frame: &[u8]) -> io::Result<u32> {
         })
 }
 
+/// The server's own measure of the task, in microseconds. A frame from a server that measured
+/// nothing, or a value that is not a count, reads as unmeasured rather than as zero.
+fn timing(frame: &Value) -> Timing {
+    let field = |name: &str| {
+        frame
+            .get("timing")
+            .and_then(|timing| timing.get(name))
+            .and_then(Value::as_u64)
+    };
+    Timing {
+        fork: field("fork_us"),
+        import: field("import_us"),
+        module: field("module_us"),
+    }
+}
+
 /// What the module did, as the task's result.
 ///
 /// The module's own JSON is the truth whenever `stdout` is one object and nothing else, exit
@@ -546,11 +587,7 @@ fn result(frame: &Value) -> TaskResult {
         );
     }
     match serde_json::from_str::<Value>(stdout) {
-        // ansible-core's `TaskExecutor._execute` fills in a missing `changed` and nothing more.
-        Ok(Value::Object(mut result)) => {
-            result.entry("changed").or_insert(Value::Bool(false));
-            TaskResult(result)
-        }
+        Ok(Value::Object(result)) => crate::modules::module_result(result),
         _ => fail(
             format!(
                 "the module wrote something that is not a result (exit status {code}): {}",
@@ -903,7 +940,7 @@ mod tests {
         unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
         let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
         batch_started();
-        let run = run(&payload, &args(json!({})), &Context::default(), &|| true);
+        let run = run(&payload, &args(json!({})), &Context::default(), &|| true).0;
         assert!(
             matches!(run, Run::Cancelled),
             "the start was not cancelled: {:?}",
@@ -927,12 +964,7 @@ mod tests {
         batch_started();
         let before = crate::blobs::HASHED.load(Ordering::Relaxed);
         for _ in 0..3 {
-            let result = done(run(
-                &payload,
-                &args(json!({})),
-                &Context::default(),
-                &|| false,
-            ));
+            let result = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
             assert!(!result.failed(), "{:?}", result.0);
         }
         assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
@@ -955,12 +987,7 @@ mod tests {
             unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
             let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
             batch_started();
-            let first = done(run(
-                &payload,
-                &args(json!({})),
-                &Context::default(),
-                &|| false,
-            ));
+            let first = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
             assert!(!first.failed(), "{:?}", first.0);
 
             let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
@@ -984,12 +1011,7 @@ mod tests {
                 std::fs::rename(&target, &at).unwrap();
             }
 
-            let second = done(run(
-                &payload,
-                &args(json!({})),
-                &Context::default(),
-                &|| false,
-            ));
+            let second = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
             assert_eq!(
                 second.0["msg"],
                 format!("payload {} is not on this host", payload.blob),
@@ -1037,6 +1059,56 @@ mod tests {
         assert_eq!(
             Value::Object(result.0),
             json!({"changed": false, "ping": "pong"})
+        );
+    }
+
+    /// The server reports where a task's time went: the fork, the import up to the module
+    /// building its `AnsibleModule`, and the rest. The stub sleeps 20 ms before building it and
+    /// 30 ms after, so each figure has a floor it cannot fall under, and a module that never
+    /// builds one reports no import at all rather than a made-up one.
+    ///
+    /// What would make this red: the timing pipe not read, or read before the child wrote it
+    /// (every figure `None`); the mark taken somewhere else than `AnsibleModule.__init__` (an
+    /// import or a module time under its floor); or a result frame without `timing` read as
+    /// zeros rather than as unmeasured.
+    #[test]
+    fn the_server_reports_where_the_time_went() {
+        let blob = stub_blob(
+            "\n    import time\n    from ansible.module_utils.basic import AnsibleModule\n    time.sleep(0.02)\n    if not args.get(\"bare\"):\n        AnsibleModule()\n    time.sleep(0.03)\n    print(json.dumps({}))\n",
+        );
+        std::fs::write(
+            blob.path().join("ansible/module_utils/basic.py"),
+            "class AnsibleModule:\n    def __init__(self):\n        pass\n",
+        )
+        .unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(!result.failed(), "{:?}", result.0);
+        let timing = server.timing;
+        assert!(timing.fork.is_some(), "{timing:?}");
+        assert!(timing.import.is_some_and(|us| us >= 20_000), "{timing:?}");
+        assert!(timing.module.is_some_and(|us| us >= 30_000), "{timing:?}");
+
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({"bare": true})),
+            &Context::default(),
+            &|| false,
+        ));
+        assert!(!result.failed(), "{:?}", result.0);
+        let timing = server.timing;
+        assert_eq!(timing.import, None, "{timing:?}");
+        assert!(timing.module.is_some_and(|us| us >= 50_000), "{timing:?}");
+
+        assert_eq!(
+            super::timing(&json!({"exit": 0})),
+            Timing::default(),
+            "a frame from a server that measured nothing"
         );
     }
 
@@ -1121,19 +1193,22 @@ mod tests {
     #[test]
     fn a_task_whose_payload_is_not_cached_fails_naming_it() {
         let hash = "0".repeat(64);
-        let result = done(run(
-            &PythonPayload {
-                blob: hash.clone(),
-                module_fqn: "ansible.modules.ping".into(),
-                profile: "legacy".into(),
-                rlimit_nofile: 0,
-                extensions: Map::new(),
-                interpreter: HOST_PYTHON.into(),
-            },
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
+        let result = done(
+            run(
+                &PythonPayload {
+                    blob: hash.clone(),
+                    module_fqn: "ansible.modules.ping".into(),
+                    profile: "legacy".into(),
+                    rlimit_nofile: 0,
+                    extensions: Map::new(),
+                    interpreter: HOST_PYTHON.into(),
+                },
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            )
+            .0,
+        );
         assert!(result.failed());
         assert_eq!(
             result.0["msg"],
@@ -1231,18 +1306,8 @@ mod tests {
             interpreter: HOST_PYTHON.into(),
         };
         batch_started();
-        let first = done(run(
-            &payload,
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        let second = done(run(
-            &payload,
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
+        let first = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
+        let second = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
 
         assert!(first.failed() && second.failed());
         assert!(
@@ -1277,7 +1342,8 @@ mod tests {
             root.path(),
             "\n    import os, signal\n    if args.get(\"kill_parent\"):\n        os.kill(os.getppid(), signal.SIGKILL)\n    print(json.dumps({\"parent\": os.getppid()}))\n",
         );
-        let task = |args_: Value| done(run(&payload, &args(args_), &Context::default(), &|| false));
+        let task =
+            |args_: Value| done(run(&payload, &args(args_), &Context::default(), &|| false).0);
         batch_started();
 
         let first = task(json!({}));
@@ -1526,6 +1592,104 @@ mod tests {
         assert!(
             matches!(run, Run::Cancelled),
             "a cancel became something else"
+        );
+    }
+
+    /// A module that leaves a daemon behind the way `module_utils.service.fork_process` does -
+    /// fork without exec, `setsid`, 0-2 on `/dev/null`, every other descriptor kept - and then
+    /// outlives its `timeout:` is timed out, and the next task runs on the same server. The
+    /// daemon still holds whatever pipe the child had open when it forked.
+    ///
+    /// What would make this red: the child keeping its stdout and stderr pipes open under their
+    /// own numbers, or the server reading the timing pipe to its end, or blocking on it. Either
+    /// waits on a daemon that lives a minute, until the agent gives the server up after
+    /// `REAP_TIMEOUT` and the next task starts a new one under another pid.
+    #[test]
+    fn a_daemon_the_module_leaves_behind_does_not_hold_the_server() {
+        let blob = stub_blob(
+            "\n    import os, time\n    if args.get(\"pidfile\"):\n        if os.fork() == 0:\n            null = os.open(os.devnull, os.O_RDWR)\n            for n in range(3):\n                os.dup2(null, n)\n            os.setsid()\n            with open(args[\"pidfile\"], \"w\") as f:\n                f.write(str(os.getpid()))\n            time.sleep(60)\n            os._exit(0)\n        time.sleep(30)\n    print(json.dumps({\"parent\": os.getppid()}))\n",
+        );
+        let dir = tempdir();
+        let pidfile = dir.path().join("daemon.pid");
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let task = |server: &mut Server, args_: Value, context: &Context| {
+            done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(args_),
+                context,
+                &|| false,
+            ))
+        };
+        let first = task(&mut server, json!({}), &Context::default());
+        assert!(!first.failed(), "{:?}", first.0);
+
+        let started = Instant::now();
+        let timed_out = task(
+            &mut server,
+            json!({"pidfile": pidfile}),
+            &Context {
+                timeout: Some(Duration::from_secs(1)),
+                ..Context::default()
+            },
+        );
+        let waited = started.elapsed();
+        let next = task(&mut server, json!({}), &Context::default());
+        if let Ok(pid) = std::fs::read_to_string(&pidfile) {
+            // SAFETY: `kill` takes a pid and a signal and touches no memory of this process.
+            unsafe { libc::kill(pid.trim().parse().unwrap(), libc::SIGKILL) };
+        }
+        assert_eq!(
+            timed_out.0["msg"], "Task failed: Timed out after 1 second(s).",
+            "{:?}",
+            timed_out.0
+        );
+        assert_eq!(
+            next.0.get("parent"),
+            first.0.get("parent"),
+            "the server was given up after {waited:?}: {:?}",
+            next.0
+        );
+    }
+
+    /// A module whose `AnsibleModule(...)` call raises shows the traceback Python itself gives,
+    /// with no frame of the server's timing in it: that traceback is what the task's message
+    /// quotes. Called with an argument `__init__` does not take, Python raises at the call, so
+    /// the last frame is the module's own line.
+    ///
+    /// What would make this red: the timing mark taken by a wrapper around `__init__`, which
+    /// accepts any argument, calls the real one from its own frame, and so puts that frame at the
+    /// end of the traceback, between the module and the error.
+    #[test]
+    fn the_timing_mark_leaves_the_module_s_traceback_alone() {
+        let blob = stub_blob(
+            "\n    from ansible.module_utils.basic import AnsibleModule\n    AnsibleModule(bogus=True)\n",
+        );
+        std::fs::write(
+            blob.path().join("ansible/module_utils/basic.py"),
+            "class AnsibleModule:\n    def __init__(self, argument_spec=None):\n        self.argument_spec = argument_spec\n",
+        )
+        .unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        let msg = result.0["msg"].as_str().unwrap_or_default();
+        let frames: Vec<&str> = msg
+            .lines()
+            .filter(|line| line.trim_start().starts_with("File "))
+            .filter_map(|line| line.rsplit(", in ").next())
+            .collect();
+        assert_eq!(frames, ["run_child", "run_module"], "{msg}");
+        // The class name in the message depends on the Python version: the Linux machines write
+        // `AnsibleModule.__init__()`, the macOS CI runner's interpreter writes `__init__()`.
+        let last = msg.lines().last().unwrap_or_default();
+        assert!(
+            last.starts_with("TypeError: ")
+                && last.ends_with("__init__() got an unexpected keyword argument 'bogus'"),
+            "{msg}"
         );
     }
 

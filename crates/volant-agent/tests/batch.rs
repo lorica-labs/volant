@@ -17,6 +17,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         environment: BTreeMap::default(),
         payload: None,
         files: Vec::new(),
+        force_python: false,
     }
 }
 

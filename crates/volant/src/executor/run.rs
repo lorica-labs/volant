@@ -1263,6 +1263,7 @@ fn sub_task(
                 blob: blob.hash.clone(),
             })
             .collect(),
+        force_python: false,
     })
 }
 
@@ -1613,6 +1614,7 @@ pub(super) fn protocol_task(
         // module, and the arguments travel outside the blob.
         payload: python.map(|(module, interpreter)| module.under(interpreter)),
         files: Vec::new(),
+        force_python: false,
     }
 }
 
@@ -3552,6 +3554,7 @@ mod tests {
                 batch,
                 index: 0,
                 result: TaskResult(vars(result)),
+                ran: None,
             },
             FromAgent::BatchDone {
                 batch,
@@ -4373,6 +4376,7 @@ mod tests {
                 batch: 1,
                 index: 0,
                 result: TaskResult(vars(json!({"failed": true, "msg": "No package matching"}))),
+                ran: None,
             },
             FromAgent::BatchDone {
                 batch: 1,
@@ -5957,6 +5961,7 @@ mod tests {
                 environment: BTreeMap::default(),
                 payload: None,
                 files: Vec::new(),
+                force_python: false,
             }],
         })
         .await
@@ -6484,6 +6489,7 @@ mod tests {
             result: TaskResult(vars(
                 json!({"rc": 1, "stdout": "", "stderr": "shutdown: Permission denied\n"}),
             )),
+            ran: None,
         }];
         let mut agent = before_the_reboot(Some(answered));
         let mut relink = Scripted::new(Vec::new());

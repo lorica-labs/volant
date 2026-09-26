@@ -191,6 +191,7 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
                 environment: std::collections::BTreeMap::new(),
                 payload: None,
                 files: Vec::new(),
+                force_python: false,
             }],
         });
         send(&ToAgent::PutBlob {
@@ -423,6 +424,7 @@ fn a_native_module_cannot_take_staged_files() {
             arg: "src".into(),
             blob: file.clone(),
         }],
+        force_python: false,
     }]);
     assert_eq!(
         results[0].0["msg"],
@@ -659,6 +661,7 @@ fn python_task(union: &str, file: &str) -> Task {
             arg: "src".into(),
             blob: file.into(),
         }],
+        force_python: false,
     }
 }
 

@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use volant_protocol::modules::{ArgStatus, ModuleSpec, arg_bool, short_name};
-use volant_protocol::{Task, TaskResult};
+use volant_protocol::{ExecPath, Ran, Task, TaskResult};
+
+use crate::natives::{self, NativeRun};
 
 /// Outcome of running one task.
 pub enum Run {
@@ -33,6 +35,11 @@ pub struct Context {
     /// Variables the module's process runs with, added to the ones the agent inherited
     /// (Ansible's `environment`).
     pub environment: BTreeMap<String, String>,
+    /// The interpreter the task's Python payload names, for a native that has to run what the
+    /// module would have run under it. `None` for a task without a payload.
+    pub interpreter: Option<String>,
+    /// The agent's `remote_tmp`, where a native keeps whatever the module would keep there.
+    pub remote_tmp: String,
 }
 
 /// The function signature every native module implements.
@@ -46,27 +53,69 @@ pub struct Module {
 
 pub const MODULES: &[Module] = &[command::MODULE, raw::MODULE, shell::MODULE];
 
-/// Runs a task with the native module that matches its name.
-pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
+/// Runs a task, and says which code ran it. `Ran::micros` is left at 0 for the caller, which
+/// times the whole of this call.
+pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
     let name = short_name(&task.module);
-    let context = Context {
+    let mut context = Context {
         timeout: task.timeout.map(Duration::from_secs),
         environment: task.environment.clone(),
+        ..Context::default()
+    };
+    let mut ran = Ran {
+        path: ExecPath::Native,
+        reason: None,
+        micros: 0,
+        fork_micros: None,
+        import_micros: None,
+        module_micros: None,
     };
     // A task that carries a payload is a Python module, and the name it goes by is the
     // reference's rather than this table's: `ping` is a module here and a payload there, so the
     // payload decides before the name is looked up at all.
     if let Some(payload) = &task.payload {
-        return staged(task, |args| {
-            crate::python::run(payload, args, &context, cancelled)
+        context.interpreter = Some(payload.interpreter.clone());
+        context.remote_tmp = crate::blobs::remote_tmp();
+        ran.path = ExecPath::Python;
+        // The module the payload resolved to, not the name the playbook wrote: a bare `stat`
+        // under a play's `collections:` can be another collection's module, and only the
+        // reference's own builtin has a native.
+        let native = payload
+            .module_fqn
+            .strip_prefix("ansible.modules.")
+            .and_then(natives::find)
+            .filter(|native| native.enabled && !task.force_python);
+        let run = staged(task, |args| {
+            if let Some(native) = native {
+                match natives::run(native, args, &context, cancelled) {
+                    NativeRun::Done(result) => {
+                        ran.path = ExecPath::Native;
+                        return Run::Done(module_result(result.0));
+                    }
+                    NativeRun::Cancelled => return Run::Cancelled,
+                    NativeRun::Fallback(reason) => {
+                        ran.path = ExecPath::Fallback;
+                        ran.reason = Some(reason);
+                    }
+                }
+            }
+            let (run, timing) = crate::python::run(payload, args, &context, cancelled);
+            ran.fork_micros = timing.fork;
+            ran.import_micros = timing.import;
+            ran.module_micros = timing.module;
+            run
         });
+        return (run, ran);
     }
     if !task.files.is_empty() {
-        return Run::Done(TaskResult::failed_with(format!(
-            "the module {name} cannot take staged files"
-        )));
+        return (
+            Run::Done(TaskResult::failed_with(format!(
+                "the module {name} cannot take staged files"
+            ))),
+            ran,
+        );
     }
-    match MODULES.iter().find(|m| m.spec.name == name) {
+    let run = match MODULES.iter().find(|m| m.spec.name == name) {
         Some(module) => match unsupported_parameters(module.spec, &task.args)
             .or_else(|| refused_argument(module.spec, &task.args))
         {
@@ -76,7 +125,16 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> Run {
         None => Run::Done(TaskResult::failed_with(format!(
             "The module {name} is not available on the agent yet"
         ))),
-    }
+    };
+    (run, ran)
+}
+
+/// A module's own result as the task's: ansible-core's `TaskExecutor._execute` fills in a
+/// missing `changed` and nothing more, whichever code wrote the result, the Python module or
+/// the native standing in for it.
+pub fn module_result(mut result: Map<String, Value>) -> TaskResult {
+    result.entry("changed").or_insert(Value::Bool(false));
+    TaskResult(result)
 }
 
 /// Runs `module` with each of the task's files taken out of the connection's staging directory

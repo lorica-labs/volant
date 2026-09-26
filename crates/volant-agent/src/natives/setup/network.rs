@@ -542,8 +542,7 @@ esac
         sysfs(&fake);
         install_ip(&fake, IP);
         // On `lo`, which carries no default address: the read alone raises.
-        fake.write("/sys/class/net/lo/mtu", "jumbo
-");
+        fake.write("/sys/class/net/lo/mtu", "jumbo\n");
         assert_eq!(
             collect(&fake.root(), &env(), unbounded()).unwrap(),
             Map::new()

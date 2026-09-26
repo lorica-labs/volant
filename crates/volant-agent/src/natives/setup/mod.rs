@@ -1312,7 +1312,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             .as_object()
             .unwrap()
             .clone();
-        let facts = &answer(&args, &root, &context).unwrap()["ansible_facts"];
+        let facts = &answer(&args, &root, &context, unbounded()).unwrap()["ansible_facts"];
         assert_eq!(facts["ansible_processor_vcpus"], json!(1));
         assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
     }

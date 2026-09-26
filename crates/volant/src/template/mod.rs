@@ -97,6 +97,10 @@ pub struct Vars<'a> {
     /// because these used to be written into it last and last is what wins. A name written into
     /// the map later still wins, because `HostVars::insert` takes it out of here first.
     pub shared: Option<&'a Arc<Map<String, Value>>>,
+    /// The host's gathered facts, a layer shared rather than copied into `map` for every task.
+    /// Consulted after `shared` and before `map`: whoever builds it leaves out every fact a layer
+    /// of `map` outranks, so the facts left answer ahead of the layers below them.
+    pub facts: Option<&'a Arc<Map<String, Value>>>,
     /// Names in `map` whose value came from a managed host. Reading one of them during a render
     /// makes the result data: see `render_in`.
     pub untrusted: Option<&'a BTreeSet<String>>,
@@ -111,6 +115,7 @@ impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
             map,
             hostvars: None,
             shared: None,
+            facts: None,
             untrusted: None,
             untrusted_hosts: None,
         }
@@ -149,6 +154,7 @@ struct Context {
     vars: Map<String, Value>,
     hostvars: Option<Arc<Map<String, Value>>>,
     shared: Option<Arc<Map<String, Value>>>,
+    facts: Option<Arc<Map<String, Value>>>,
     untrusted: BTreeSet<String>,
     untrusted_hosts: BTreeSet<String>,
     tainted: Tainted,
@@ -199,6 +205,12 @@ impl Object for Context {
             {
                 return Some(minijinja::Value::from_serialize(value));
             }
+            // Between the two: the facts that answer, the ones no layer of the map outranks.
+            if let Some(facts) = &self.facts
+                && let Some(value) = facts.get(key)
+            {
+                return Some(minijinja::Value::from_serialize(value));
+            }
             self.vars.get(key).map(minijinja::Value::from_serialize)
         })
     }
@@ -214,6 +226,13 @@ impl Object for Context {
         }
         for key in self.shared.iter().flat_map(|s| s.keys()) {
             if !self.vars.contains_key(key) {
+                keys.push(minijinja::Value::from(key.as_str()));
+            }
+        }
+        for key in self.facts.iter().flat_map(|f| f.keys()) {
+            if !self.vars.contains_key(key)
+                && !self.shared.as_ref().is_some_and(|s| s.contains_key(key))
+            {
                 keys.push(minijinja::Value::from(key.as_str()));
             }
         }
@@ -262,6 +281,7 @@ fn context_of(vars: Vars<'_>) -> (minijinja::Value, Tainted) {
         vars: vars.map.clone(),
         hostvars: vars.hostvars.cloned(),
         shared: vars.shared.cloned(),
+        facts: vars.facts.cloned(),
         untrusted: vars.untrusted.cloned().unwrap_or_default(),
         untrusted_hosts: vars.untrusted_hosts.cloned().unwrap_or_default(),
         tainted: Arc::clone(&tainted),
@@ -502,6 +522,7 @@ impl Templar {
                 map: &current,
                 hostvars: vars.hostvars,
                 shared: vars.shared,
+                facts: vars.facts,
                 untrusted: Some(&untrusted),
                 untrusted_hosts: vars.untrusted_hosts,
             });
@@ -971,6 +992,7 @@ mod unit {
                 map: &empty,
                 hostvars: Some(&shared),
                 shared: None,
+                facts: None,
                 untrusted: None,
                 untrusted_hosts: None,
             };
@@ -998,6 +1020,7 @@ mod unit {
             map: &empty,
             hostvars: Some(&shared),
             shared: None,
+            facts: None,
             untrusted: None,
             untrusted_hosts: None,
         });
@@ -1039,6 +1062,7 @@ mod unit {
             map: &fact,
             hostvars: None,
             shared: Some(&shared),
+            facts: None,
             untrusted: None,
             untrusted_hosts: None,
         };
@@ -1071,6 +1095,7 @@ mod unit {
             map: &fact,
             hostvars: None,
             shared: Some(&shared),
+            facts: None,
             untrusted: None,
             untrusted_hosts: None,
         });
@@ -1122,6 +1147,7 @@ mod unit {
                 map: &map,
                 hostvars: Some(&view),
                 shared: Some(&shared),
+                facts: None,
                 untrusted: None,
                 untrusted_hosts: None,
             };
@@ -1148,6 +1174,7 @@ mod unit {
                 map: &empty,
                 hostvars: Some(&view),
                 shared: None,
+                facts: None,
                 untrusted: None,
                 untrusted_hosts,
             };
@@ -1226,6 +1253,7 @@ mod unit {
             map: &map,
             hostvars: Some(&view),
             shared: None,
+            facts: None,
             untrusted: Some(&registered),
             untrusted_hosts: Some(&hosts),
         };

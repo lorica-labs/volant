@@ -14,7 +14,7 @@ use crate::compile::{Compiled, IncludeParams, Origin, Step};
 use crate::playbook::{Flag, PlayTask, python_repr};
 use crate::python::ModulePayload;
 use crate::render::ansible_json;
-use crate::template::{Templar, TemplateError, Vars};
+use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectionDefaults, Escalation};
 use crate::vars::{HostVars, Scope, VarStore, host_setting, omit_token};
 
@@ -226,12 +226,11 @@ pub(super) fn host_vars(
         batch_hosts: live.live_hosts.clone(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
-    let (raw, hostvars, shared, untrusted, untrusted_hosts) = {
+    let mut vars = {
         let mut store = store.lock().expect("vars lock");
         // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
-        let shared = store.shared_values(&scope);
         let mut untrusted = store.untrusted_of(host, &scope);
         // What an include handed down is already rendered, so its provenance cannot be read off
         // the store: it travelled with the values.
@@ -241,32 +240,28 @@ pub(super) fn host_vars(
                 .flat_map(|p| p.untrusted.iter().cloned()),
         );
         let untrusted_hosts = store.untrusted_hosts();
-        let mut raw = store.for_host(host, &scope);
-        // Before anything of the task's own `vars:` resolves, never after: a lookup one of them
-        // calls (`first_found`, `template`) reads these two names to find its file, and a pass
-        // that resolves the task's variables without them first is a pass that lookup cannot
-        // complete on.
-        insert_search_path(&mut raw, &mut untrusted, origin, playbook_dir);
-        (raw, hostvars, shared, untrusted, untrusted_hosts)
+        let layers = store.layered_for_host(host, &scope);
+        HostVars {
+            map: layers.map,
+            hostvars,
+            shared: layers.shared,
+            facts: layers.facts,
+            untrusted,
+            untrusted_hosts,
+        }
     };
+    // Before anything of the task's own `vars:` resolves, never after: a lookup one of them
+    // calls (`first_found`, `template`) reads these two names to find its file, and a pass that
+    // resolves the task's variables without them first is a pass that lookup cannot complete on.
+    insert_search_path(&mut vars, origin, playbook_dir);
     // The merged map carries this host's facts, so the names that came from a managed host
     // travel into the resolution below and are left there exactly as they arrived. The set comes
     // back wider than it went in: a `vars:` of the play, of a block or of the task itself built
     // from a registered value is data too, and this resolution is the only place that can tell.
-    let (map, untrusted) = templar.resolve_vars_tainted(Vars {
-        map: &raw,
-        hostvars: Some(&hostvars),
-        shared: Some(&shared),
-        untrusted: Some(&untrusted),
-        untrusted_hosts: Some(&untrusted_hosts),
-    });
-    HostVars {
-        map,
-        hostvars,
-        shared,
-        untrusted,
-        untrusted_hosts,
-    }
+    let (map, untrusted) = templar.resolve_vars_tainted(&vars);
+    vars.map = map;
+    vars.untrusted = untrusted;
+    vars
 }
 
 /// A task rendered for one host: what to do with it.
@@ -292,7 +287,7 @@ pub(super) enum Prepared {
     Remote(
         Vec<Item>,
         Option<Escalation>,
-        Option<(String, Map<String, Value>)>,
+        Option<(String, HostVars)>,
         /// Present when this task is a Python module: the module's half of the payload every
         /// item of it runs with. One per task rather than one per item, because the module is
         /// the task's, not the item's - a loop varies the arguments, never the module.
@@ -582,8 +577,7 @@ pub(super) fn prepare(
             store,
             &step.origin,
             &playbook_dir,
-        )
-        .map;
+        );
         (name, vars)
     });
     // From the delegating host's own variables, measured on ansible-core 2.19.12:
@@ -666,12 +660,7 @@ fn delegate_for(
 /// these two names (`first_found`, `template`) has to find it on the same pass that resolves the
 /// task's variables, or it is left as the unrendered call, with no later pass to pick it back up.
 /// A host fact of the same name does not outlive them, so `untrusted` drops both names too.
-fn insert_search_path(
-    vars: &mut Map<String, Value>,
-    untrusted: &mut BTreeSet<String>,
-    origin: &Origin,
-    playbook_dir: &Path,
-) {
+fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path) {
     let mut search: Vec<&Path> = Vec::new();
     for dir in origin
         .role_dir
@@ -687,14 +676,14 @@ fn insert_search_path(
         .iter()
         .map(|dir| Value::String(dir.display().to_string()))
         .collect();
+    // `HostVars::insert`: the engine's own value beats a gathered fact of the same name, and it
+    // is trusted whatever the name held before.
     vars.insert("ansible_search_path".into(), Value::Array(search));
-    untrusted.remove("ansible_search_path");
     if let Some(role) = &origin.role_dir {
         vars.insert(
             "role_path".into(),
             Value::String(role.display().to_string()),
         );
-        untrusted.remove("role_path");
     }
 }
 
@@ -1412,6 +1401,52 @@ mod tests {
         let vars = &prepared(&in_play, &store).unwrap()[0].vars;
         assert_eq!(vars.map["ansible_search_path"], json!(["/srv/play"]));
         assert!(!vars.map.contains_key("role_path"));
+    }
+
+    /// A managed host that reports `role_path` and `ansible_search_path` as facts does not choose
+    /// where a role's lookups look on the controller. Gathered facts are a layer read ahead of
+    /// the host's own map, so the engine's two values have to leave that layer as they are
+    /// written, which `HostVars::insert` does.
+    ///
+    /// What would make this red: the two written straight into `map`, under the host's facts,
+    /// which then answer with a directory the host chose.
+    #[test]
+    fn a_host_s_facts_never_choose_the_search_path() {
+        let play = PathBuf::from("/srv/play");
+        let role = play.join("roles/probe");
+        let store = store_at(&play);
+        store.lock().unwrap().gather_facts(
+            "h1",
+            json!({"role_path": "/tmp/x", "ansible_search_path": ["/tmp/x"]})
+                .as_object()
+                .unwrap(),
+        );
+        let in_role = step_of(
+            task("command"),
+            Origin {
+                file_dir: role.join("tasks"),
+                role_dir: Some(role.clone()),
+                depth: 0,
+                inherited: None,
+            },
+        );
+        let vars = &prepared(&in_role, &store).unwrap()[0].vars;
+        assert_eq!(vars.get("role_path"), Some(&json!("/srv/play/roles/probe")));
+        assert_eq!(
+            vars.get("ansible_search_path"),
+            Some(&json!([
+                "/srv/play/roles/probe",
+                "/srv/play/roles/probe/tasks",
+                "/srv/play"
+            ]))
+        );
+        let templar = Templar::new(play.clone());
+        assert_eq!(
+            templar.render("{{ role_path }}", vars).unwrap(),
+            json!("/srv/play/roles/probe"),
+            "a template reads the engine's value too"
+        );
+        assert!(!vars.untrusted.contains("role_path"));
     }
 
     /// A task's own `vars:` built from a lookup that needs the role's search path to find its

@@ -183,7 +183,7 @@ pub(crate) struct Context<'a> {
     pub args: &'a Map<String, Value>,
     pub args_untrusted: &'a BTreeSet<String>,
     /// The variables of the host the module runs on - the delegate's when there is one.
-    pub running_vars: &'a Map<String, Value>,
+    pub running_vars: &'a HostVars,
     /// Whether that host is a delegate: the facts a result carries are filed under the host the
     /// task was written for, so a plugin that would hand back the delegate's has to know.
     pub delegated: bool,
@@ -245,7 +245,7 @@ fn setup_failed(mut facts: TaskResult, action: &str) -> TaskResult {
 }
 
 /// `ansible_facts.<name>` of the host the module runs on, when it is a string.
-fn fact<'a>(vars: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+fn fact<'a>(vars: &'a HostVars, name: &str) -> Option<&'a str> {
     vars.get("ansible_facts")?.get(name)?.as_str()
 }
 
@@ -264,6 +264,22 @@ fn lost(module: &str) -> TaskResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gathered fact sits in its own layer beside the host's map, not in it, and the backend
+    /// `package` and `service` pick is read off it all the same.
+    ///
+    /// What would make this red: `fact` reading the host's own map alone, which misses every
+    /// gathered fact and sends a filtered `setup` for a manager the host already reported.
+    #[test]
+    fn a_gathered_fact_is_read_from_the_facts_layer() {
+        let facts: Map<String, Value> =
+            serde_json::from_str(r#"{"ansible_facts": {"pkg_mgr": "apt"}}"#).unwrap();
+        let vars = HostVars {
+            facts: std::sync::Arc::new(facts),
+            ..HostVars::default()
+        };
+        assert_eq!(fact(&vars, "pkg_mgr"), Some("apt"));
+    }
 
     /// The list holds what the reference runs through an action plugin and nothing this
     /// release already runs itself.

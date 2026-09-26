@@ -252,7 +252,7 @@ mod tests {
         item_vars: &HostVars,
     ) -> Box<dyn Plugin> {
         let args = map(args);
-        let running = Map::new();
+        let running = HostVars::default();
         let templar = crate::template::Templar::new(dir.to_path_buf());
         let origin = crate::compile::Origin {
             file_dir: dir.to_path_buf(),

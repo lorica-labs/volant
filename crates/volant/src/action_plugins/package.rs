@@ -27,7 +27,7 @@ enum State {
 
 pub(super) struct Package<'a> {
     args: &'a Map<String, Value>,
-    running_vars: &'a Map<String, Value>,
+    running_vars: &'a crate::vars::HostVars,
     state: State,
 }
 

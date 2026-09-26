@@ -102,7 +102,6 @@ impl Fetch {
         let flat = flag(args, "flat", false);
         let host = ctx
             .item_vars
-            .map
             .get("inventory_hostname")
             .and_then(Value::as_str)
             .unwrap_or_default()
@@ -516,7 +515,7 @@ mod tests {
         let Value::Object(args) = args else {
             unreachable!()
         };
-        let running = Map::new();
+        let running = HostVars::default();
         let dir = std::env::temp_dir();
         let templar = crate::template::Templar::new(dir.clone());
         let origin = crate::compile::Origin::default();

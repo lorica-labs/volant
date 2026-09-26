@@ -445,7 +445,7 @@ mod tests {
         untrusted: &BTreeSet<String>,
         playbook_dir: &Path,
     ) -> Box<dyn Plugin> {
-        let running = Map::new();
+        let running = crate::vars::HostVars::default();
         let item_vars = crate::vars::HostVars::default();
         let templar = crate::template::Templar::new(playbook_dir.to_path_buf());
         let origin = crate::compile::Origin {

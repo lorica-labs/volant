@@ -115,6 +115,7 @@ mod tests {
             map: &map,
             hostvars: None,
             shared: None,
+            facts: None,
             untrusted: Some(&untrusted),
             untrusted_hosts: None,
         };

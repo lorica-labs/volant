@@ -241,6 +241,7 @@ fn render_template_at(
     let mut untrusted: BTreeSet<String> = ctx.map(|c| c.untrusted.clone()).unwrap_or_default();
     let hostvars = ctx.and_then(|c| c.hostvars.as_ref());
     let shared = ctx.and_then(|c| c.shared.as_ref());
+    let facts = ctx.and_then(|c| c.facts.as_ref());
     let untrusted_hosts = ctx.map(|c| &c.untrusted_hosts);
 
     let read = templar
@@ -258,6 +259,7 @@ fn render_template_at(
                 map: &map,
                 hostvars,
                 shared,
+                facts,
                 untrusted: Some(&untrusted),
                 untrusted_hosts,
             },
@@ -285,10 +287,25 @@ fn render_template_at(
     );
     untrusted.remove("template_path");
     untrusted.remove("template_fullpath");
+    // The two names just written beat a gathered fact of the same name, which would otherwise
+    // answer first from its own layer.
+    let named = ["template_path", "template_fullpath"];
+    let facts = facts.map(|f| {
+        if named.iter().any(|k| f.contains_key(*k)) {
+            let mut f = serde_json::Map::clone(f);
+            named.iter().for_each(|k| {
+                f.shift_remove(*k);
+            });
+            std::sync::Arc::new(f)
+        } else {
+            std::sync::Arc::clone(f)
+        }
+    });
     let vars = Vars {
         map: &map,
         hostvars,
         shared,
+        facts: facts.as_ref(),
         untrusted: Some(&untrusted),
         untrusted_hosts,
     };
@@ -669,6 +686,7 @@ mod tests {
             map: &resolved,
             hostvars: None,
             shared: None,
+            facts: None,
             untrusted: Some(&untrusted),
             untrusted_hosts: None,
         };
@@ -1009,6 +1027,7 @@ mod tests {
             map: &map,
             hostvars: None,
             shared: None,
+            facts: None,
             untrusted: Some(&from_host),
             untrusted_hosts: None,
         };

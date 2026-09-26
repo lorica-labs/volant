@@ -28,7 +28,7 @@ enum State {
 
 pub(super) struct Service<'a> {
     args: &'a Map<String, Value>,
-    running_vars: &'a Map<String, Value>,
+    running_vars: &'a crate::vars::HostVars,
     warnings: &'a mut Vec<String>,
     state: State,
 }

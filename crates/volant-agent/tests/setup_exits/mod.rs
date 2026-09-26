@@ -34,6 +34,7 @@ const HOST_EXITS: &[&str] = &[
     "the module's locale cannot be set",
     "lsb_release printed something other than UTF-8",
     "/etc/lsb-release has a line without '='",
+    "ip was found and could not be started",
 ];
 
 /// Whether `reason` is a host outside the subset, rather than the native failing.

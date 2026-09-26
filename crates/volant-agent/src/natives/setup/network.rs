@@ -344,8 +344,10 @@ fn two(text: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 pub mod tests {
+    #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
 
+    #[cfg(target_os = "linux")]
     use serde_json::json;
 
     use super::super::tests::FakeRoot;
@@ -355,6 +357,7 @@ pub mod tests {
     /// An `ip` at `/usr/sbin/ip` answering the reference's commands with what a guest with one
     /// ethernet interface, a secondary address and IPv6 printed (addresses from the
     /// documentation ranges).
+    #[cfg(target_os = "linux")]
     pub const IP: &str = r#"#!/bin/sh
 case "$*" in
 "-4 route get 8.8.8.8")
@@ -412,6 +415,7 @@ esac
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub fn install_ip(fake: &FakeRoot, script: &str) {
         fake.write("/usr/sbin/ip", script);
         std::fs::set_permissions(
@@ -432,6 +436,7 @@ esac
     /// taken from anywhere but its device; the alias not the label; a loopback address listed;
     /// the secondary's label missing from `interfaces` or its colon kept.
     #[test]
+    #[cfg(target_os = "linux")]
     fn the_default_routes_and_addresses_are_the_reference_s() {
         let fake = FakeRoot::new("network");
         sysfs(&fake);
@@ -488,6 +493,7 @@ esac
     /// reads it; `ip` prints `metric` first on a DHCP address, so the reference's broadcast is
     /// empty there, and here too. Without `metric` it is read.
     #[test]
+    #[cfg(target_os = "linux")]
     fn the_broadcast_is_read_where_the_reference_reads_it() {
         let fake = FakeRoot::new("network-brd");
         sysfs(&fake);
@@ -515,6 +521,7 @@ esac
     /// No route: `ip` prints nothing on stdout and the reference keeps an empty dict. A route
     /// without a source address leaves the default address unenriched.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_missing_route_is_an_empty_dict() {
         let fake = FakeRoot::new("network-no-route");
         sysfs(&fake);
@@ -537,6 +544,7 @@ esac
     /// number, a default address on a device before any MAC address was read. A command found
     /// and not startable fails the module, so the native hands back.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_read_the_reference_raises_on_drops_the_collector() {
         let fake = FakeRoot::new("network-raise");
         sysfs(&fake);
@@ -570,6 +578,7 @@ esac
     /// What would make this red: the commands started outside the executor, or the cancel never
     /// polled while they run, which leaves the task waiting thirty seconds.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_hung_ip_ends_at_the_timeout_or_the_cancel() {
         let fake = FakeRoot::new("network-hung");
         sysfs(&fake);
@@ -600,6 +609,7 @@ esac
 
     /// A busybox `ip` refuses `primary`: the reference asks again without it.
     #[test]
+    #[cfg(target_os = "linux")]
     fn busybox_ip_is_asked_without_primary() {
         let fake = FakeRoot::new("network-busybox");
         sysfs(&fake);

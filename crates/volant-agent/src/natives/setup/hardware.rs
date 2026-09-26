@@ -50,6 +50,7 @@ fn affinity() -> Option<usize> {
 /// as too small (`EINVAL`), as CPython's `sched_getaffinity` doubles it: a kernel built for more
 /// than 1024 processors refuses a `cpu_set_t`. `None` for any other error, which Python raises,
 /// and past 2^20 processors.
+#[cfg(any(target_os = "linux", test))]
 fn grown_mask(mut get: impl FnMut(&mut [libc::c_ulong]) -> Result<(), i32>) -> Option<usize> {
     const BITS: usize = libc::c_ulong::BITS as usize;
     let mut words = 1024 / BITS;
@@ -490,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn the_scheduler_answers_on_this_machine() {
         assert!(affinity().is_some_and(|n| n > 0));
     }

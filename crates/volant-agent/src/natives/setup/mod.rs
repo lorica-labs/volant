@@ -1475,6 +1475,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// which leaves a cancelled task waiting on a hung `ip` for as long as it hangs; or not
     /// halted when the probe fails.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_hung_early_ip_ends_at_the_cancel_or_a_failed_probe() {
         let fake = debian_root("hung-ip");
         let interpreter = python::tests::fake_interpreter(&fake, &probe());

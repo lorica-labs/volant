@@ -14,10 +14,12 @@ use std::os::unix::fs::MetadataExt;
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, access, add_path_info, bool_param,
-    check, check_names, clock, failure, group_account, module_args, native_run, os_error,
-    owner_account, parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
+    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, add_path_info, bool_param,
+    check_names, clock, failure, group_account, module_args, native_run, os_error, owner_account,
+    parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
 };
+#[cfg(target_os = "linux")]
+use super::common::{access, check};
 use super::{Native, NativeRun};
 use crate::modules::Context;
 
@@ -390,8 +392,11 @@ fn walk(dir: &str, meta: &Statx, top: &Statx, euid: u32, clock: Clock) -> Result
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 const STATX_ATTR_IMMUTABLE: u64 = 0x10;
+#[cfg(target_os = "linux")]
 const STATX_ATTR_APPEND: u64 = 0x20;
+#[cfg(target_os = "linux")]
 const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
 
 /// The kernel's `struct statx`, up to the fields read here: `libc` only declares it for glibc

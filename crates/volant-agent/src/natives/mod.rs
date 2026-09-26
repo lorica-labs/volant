@@ -196,4 +196,22 @@ mod tests {
             }
         }
     }
+
+    /// The modules page says which natives run from the protocol's list; this agent's table is
+    /// the truth.
+    ///
+    /// What would make this red: a native enabled here and not named on the page, or the page
+    /// naming one this agent does not run.
+    #[test]
+    #[cfg(unix)]
+    fn the_modules_page_names_the_natives_this_agent_runs() {
+        use volant_protocol::modules::NATIVE_ENABLED;
+
+        let mut ours = enabled_names();
+        ours.retain(|name| name != "volant_echo");
+        ours.sort();
+        let mut page = NATIVE_ENABLED.to_vec();
+        page.sort_unstable();
+        assert_eq!(ours, page);
+    }
 }

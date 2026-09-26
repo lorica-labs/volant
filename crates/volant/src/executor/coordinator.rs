@@ -18,7 +18,7 @@ use crate::render::{Dump, Renderer};
 use crate::stats::{Outcome, Stats};
 use crate::template::Templar;
 
-use super::driver::drive_host;
+use super::driver::{Definitions, drive_host, mark_boundaries};
 use super::include::IncludeGroup;
 use super::prepare::{PlayPlan, host_vars};
 use super::{LinkKey, RunOptions, RunState};
@@ -190,7 +190,24 @@ pub(super) async fn run_batch(
     // the sender; every driver reads through its own receiver. One copy per batch: the handlers
     // a batch splices in behind a flush point belong to that batch alone, and the next one starts
     // from the list the compiler produced.
-    let (plan_tx, plan_rx) = watch::channel(Arc::new(compiled.clone()));
+    //
+    // Marked here rather than at compile time because what a variable name can read depends on
+    // the inventory, the play's `vars` and `vars_files`, which the compiler never sees; and per
+    // batch because each batch starts again from the compiler's list.
+    let mut definitions = Definitions::default();
+    let playbook_dir = {
+        let store = state.vars.lock().expect("vars lock");
+        store.static_maps().for_each(|m| definitions.add(m));
+        store.playbook_dir().to_path_buf()
+    };
+    definitions.add(&play.vars);
+    vars_files
+        .values()
+        .flatten()
+        .for_each(|m| definitions.add(m));
+    let mut first = compiled.clone();
+    mark_boundaries(&mut first, &definitions, &playbook_dir);
+    let (plan_tx, plan_rx) = watch::channel(Arc::new(first));
     let plan = Arc::new(PlayPlan {
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
@@ -507,6 +524,9 @@ pub(super) async fn run_batch(
                     }
                 }
             }
+            // What was spliced in is marked with the rest, and a role it brought carries
+            // variables that can change the mark of a step further down.
+            mark_boundaries(&mut next, &definitions, &playbook_dir);
             plan_tx.send_replace(Arc::new(next));
 
             // The splice moved every index past this point, so an election decided for the step

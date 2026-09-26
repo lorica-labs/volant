@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! One host's run through a play, from its first step to the moment it leaves the batch.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
@@ -13,7 +14,7 @@ use volant_protocol::{BatchOutcome, TaskResult};
 use crate::action_plugins::Kind;
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{
-    Compiled, StepKind, after, after_failure, after_pending, first, rescue_target,
+    Compiled, Step, StepKind, after, after_failure, after_pending, first, rescue_target,
 };
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
@@ -42,49 +43,295 @@ use super::{LinkKey, RunOptions};
 /// of the others, so `linear` puts a boundary in front of it.
 const CROSS_HOST_NAMES: [&str; 3] = ["hostvars", "play_hosts", "play_batch"];
 
-/// Whether the hosts of a play meet in front of this step. Without `batching`, every step is
-/// such a point: that is what `linear` means, and a task's text cannot show a dependency that
-/// runs through a file, a database or a service. With `batching`, the keyword table and the
-/// textual scan decide, and a host carries on through the steps in between.
+/// Words that, inside an expression, read a variable whose name is only known once it renders -
+/// `vars[...]`, `vars.get(...)`, `lookup('vars', ...)` - or read a template file this scan never
+/// opens, `lookup('template', ...)`. Either can land on another host's value.
+const DYNAMIC_READS: [&str; 2] = ["vars", "template"];
+
+/// The template statements that pull another file's text in, which the body scan does not
+/// follow.
+const TEMPLATE_PULLS: [&str; 4] = ["include", "import", "from", "extends"];
+
+/// Whether the hosts of a play meet in front of step `pos`. With `strict`, every step is such a
+/// point: that is what `linear` means, and a task's text cannot show a dependency that runs
+/// through a file, a database or a service. Otherwise the keyword table and the step's mark
+/// decide (see [`mark_boundaries`]), and a host carries on through the steps in between.
 ///
 /// The step loop asks it twice on the way through an iteration, once to give back a fork permit
 /// kept from the batch before and once to stop and wait for the other hosts. What a batch end
 /// asks instead is whether this driver carries straight on, which is a different question.
-fn is_boundary(task: &PlayTask, batching: bool) -> bool {
-    if !batching {
+fn is_boundary(c: &Compiled, pos: usize, strict: bool) -> bool {
+    if strict || c.steps[pos].task.barrier() {
         return true;
     }
-    task.barrier() || reads_across_hosts(task)
+    // A list nobody marked is a list where every step is a boundary.
+    c.crosses.len() != c.steps.len() || c.crosses[pos]
 }
 
-/// Whether a task reads across hosts, decided once per play from its unrendered text.
-fn reads_across_hosts(task: &PlayTask) -> bool {
+/// Whether the hosts meet in front of every step: `[volant] batching` is off, or a fact the
+/// playbook wrote while the run went is still a template (see [`VarStore::templated_facts`]).
+/// Asked again at every step, because the second half can turn on at any of them.
+fn strict(batching: bool, store: &Mutex<VarStore>) -> bool {
+    !batching || store.lock().expect("vars lock").templated_facts()
+}
+
+/// Whether a text names one of [`CROSS_HOST_NAMES`].
+fn mentions(s: &str) -> bool {
     // `ansible_play_hosts_all` is a static copy of the play's starting host list: no host can
     // ever change it, so matching it buys no ordering guarantee and only costs a barrier. Strip
     // it before matching so it does not trip the `play_hosts` needle on its own; a task that
     // separately mentions `ansible_play_hosts` or `play_batch` still is a boundary.
-    let mentions = |s: &str| {
-        let s = s.replace("play_hosts_all", "");
-        CROSS_HOST_NAMES.iter().any(|n| s.contains(n))
-    };
-    if mentions(&task.name) {
-        return true;
+    let s = s.replace("play_hosts_all", "");
+    CROSS_HOST_NAMES.iter().any(|n| s.contains(n))
+}
+
+/// Every string in `value`, keys included, at any depth.
+fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+    match value {
+        Value::String(s) => out.push(s),
+        Value::Array(items) => items.iter().for_each(|v| strings(v, out)),
+        Value::Object(map) => {
+            for (k, v) in map {
+                out.push(k);
+                strings(v, out);
+            }
+        }
+        _ => {}
     }
-    if task
+}
+
+/// What sits between `{{ }}` and between `{% %}` in a text. An opening nothing closes runs to the
+/// end, which reads more rather than less.
+fn expressions(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('{') {
+        let after = &rest[at + 1..];
+        let close = match after.as_bytes().first() {
+            Some(b'{') => "}}",
+            Some(b'%') => "%}",
+            _ => {
+                rest = after;
+                continue;
+            }
+        };
+        let body = &after[1..];
+        let end = body.find(close).unwrap_or(body.len());
+        out.push(&body[..end]);
+        rest = &body[(end + close.len()).min(body.len())..];
+    }
+    out
+}
+
+/// Every word of `text` that could name a variable, and a good many that do not: a filter, a
+/// test, a word inside a string. Reading too many only costs a barrier.
+fn words(text: &str, out: &mut BTreeSet<String>) {
+    for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+            out.insert(word.to_string());
+        }
+    }
+}
+
+/// Every string of a task that is rendered before it runs: the templated text, and apart from it
+/// the bare expressions (`when` and its kin, `debug`'s `var`, `assert`'s `that`), which render
+/// without braces.
+fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
+    let mut text: Vec<&str> = vec![&task.name];
+    let mut bare: Vec<&str> = task
         .when
         .iter()
         .chain(&task.changed_when)
         .chain(&task.failed_when)
-        .any(|s| mentions(s))
+        .chain(&task.until)
+        .map(String::as_str)
+        .collect();
+    let module = short_name(&task.module);
+    for (key, value) in &task.args {
+        if (module == "debug" && key == "var") || (module == "assert" && key == "that") {
+            strings(value, &mut bare);
+        } else {
+            text.push(key);
+            strings(value, &mut text);
+        }
+    }
+    for (key, value) in &task.vars {
+        text.push(key);
+        strings(value, &mut text);
+    }
+    for value in task
+        .loop_items
+        .iter()
+        .chain(&task.retries)
+        .chain(&task.delay)
+        .chain(&task.environment)
     {
+        strings(value, &mut text);
+    }
+    text.extend(
+        [&task.delegate_to, &task.become_user, &task.loop_label]
+            .into_iter()
+            .flatten()
+            .map(String::as_str),
+    );
+    (text, bare)
+}
+
+/// Whether a task names another host's state in its own text: [`CROSS_HOST_NAMES`] anywhere in
+/// what renders before it runs. Decided from the unrendered text, never from what it renders to.
+fn reads_across_hosts(task: &PlayTask) -> bool {
+    let (text, bare) = task_strings(task);
+    text.iter().chain(&bare).any(|s| mentions(s))
+}
+
+/// A play's static variable definitions, as far as the barrier cares: for each name, whether its
+/// value reads another host on its own, and every word its expressions name.
+///
+/// Names are pooled over every host, role and layer: a name that reads another host anywhere is
+/// treated as reading one everywhere. That is wider than any one host's view and never narrower.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Definitions(Vec<(String, bool, BTreeSet<String>)>);
+
+impl Definitions {
+    pub(super) fn add(&mut self, map: &Map<String, Value>) {
+        for (name, value) in map {
+            let mut texts = Vec::new();
+            strings(value, &mut texts);
+            let mut named = BTreeSet::new();
+            let mut direct = false;
+            for text in texts {
+                direct |= mentions(text);
+                for expr in expressions(text) {
+                    words(expr, &mut named);
+                }
+            }
+            direct |= DYNAMIC_READS.iter().any(|w| named.contains(*w));
+            self.0.push((name.clone(), direct, named));
+        }
+    }
+
+    /// The names whose value can read another host's: directly, or through another such name,
+    /// however many names deep.
+    fn crossing(&self) -> BTreeSet<String> {
+        let mut crossing: BTreeSet<String> = self
+            .0
+            .iter()
+            .filter(|(_, direct, _)| *direct)
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        loop {
+            let before = crossing.len();
+            for (name, _, named) in &self.0 {
+                if !crossing.contains(name) && !named.is_disjoint(&crossing) {
+                    crossing.insert(name.clone());
+                }
+            }
+            if crossing.len() == before {
+                return crossing;
+            }
+        }
+    }
+}
+
+/// Marks the steps of `c` that read what another host did, so that `is_boundary` stops the
+/// hosts in front of them under `[volant] batching`. Called once the list is laid out and again
+/// behind every splice: no host is past a splice point while it waits for one, so a mark that
+/// changes behind it changes nothing a host has already walked.
+///
+/// A step reads another host when its own text names one ([`reads_across_hosts`]); when an
+/// expression of it reads a variable by a name only known at render time ([`DYNAMIC_READS`]);
+/// when it names a variable whose static definition reads another host, however deep
+/// ([`Definitions::crossing`] over `base`, the play's roles and their parameters); when it is a
+/// `template` whose file does any of that, or whose file cannot be read here; or when it comes
+/// behind a task that writes its facts onto the host it delegated to.
+pub(super) fn mark_boundaries(c: &mut Compiled, base: &Definitions, playbook_dir: &Path) {
+    let mut defs = base.clone();
+    for role in c.roles.iter().chain([&c.exported]) {
+        defs.add(&role.defaults);
+        defs.add(&role.vars);
+        defs.add(&role.params);
+    }
+    let crossing = defs.crossing();
+    // A delegated task with `delegate_facts` writes into another host's variables, and that host
+    // reads them as its own, through a name no scan can tie back to the writer. Every step
+    // behind the first such task is a boundary, so no host can run past the write.
+    let writes_elsewhere = c
+        .steps
+        .iter()
+        .position(|s| s.task.delegates_facts() && s.task.delegate_to.is_some());
+    c.crosses = c
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| {
+            writes_elsewhere.is_some_and(|w| i > w) || step_crosses(step, &crossing, playbook_dir)
+        })
+        .collect();
+}
+
+fn step_crosses(step: &Step, crossing: &BTreeSet<String>, playbook_dir: &Path) -> bool {
+    let task = &step.task;
+    if reads_across_hosts(task) {
         return true;
     }
-    let mut text = serde_json::to_string(&task.args).unwrap_or_default();
-    text.push_str(&serde_json::to_string(&task.vars).unwrap_or_default());
-    if let Some(items) = &task.loop_items {
-        text.push_str(&items.to_string());
+    let (text, bare) = task_strings(task);
+    // Every word, for the names: a name in a text that is not an expression costs a barrier at
+    // worst. Only the words of expressions for the dynamic reads, or every task called
+    // "Include OS-specific vars" would be one.
+    let mut named = BTreeSet::new();
+    let mut read = BTreeSet::new();
+    for s in &text {
+        words(s, &mut named);
+        for expr in expressions(s) {
+            words(expr, &mut read);
+        }
     }
-    mentions(&text)
+    for s in &bare {
+        words(s, &mut named);
+        words(s, &mut read);
+    }
+    let lookup = task.loop_with.as_deref().map(short_name);
+    DYNAMIC_READS
+        .iter()
+        .any(|w| read.contains(*w) || lookup == Some(*w))
+        || !named.is_disjoint(crossing)
+        || (short_name(&task.module) == "template"
+            && template_crosses(step, crossing, playbook_dir))
+}
+
+/// Whether the file a `template` task renders reads another host. A `src` that is itself a
+/// template, a file that is not there or not text, and a file pulling in another are all taken
+/// to read one: the scan cannot see what they hold.
+fn template_crosses(step: &Step, crossing: &BTreeSet<String>, playbook_dir: &Path) -> bool {
+    let Some(src) = step.task.args.get("src").and_then(Value::as_str) else {
+        return true;
+    };
+    if Templar::is_template(src) {
+        return true;
+    }
+    let body =
+        crate::action_plugins::files::search_paths(&step.origin, playbook_dir, "templates", src)
+            .into_iter()
+            .find(|p| p.exists())
+            .and_then(|p| std::fs::read_to_string(p).ok());
+    let Some(body) = body else {
+        return true;
+    };
+    if mentions(&body) {
+        return true;
+    }
+    let mut read = BTreeSet::new();
+    for expr in expressions(&body) {
+        let first = expr
+            .trim_start_matches(['-', '+'])
+            .split_whitespace()
+            .next();
+        if first.is_some_and(|w| TEMPLATE_PULLS.contains(&w)) {
+            return true;
+        }
+        words(expr, &mut read);
+    }
+    DYNAMIC_READS.iter().any(|w| read.contains(*w)) || !read.is_disjoint(crossing)
 }
 
 #[expect(
@@ -321,13 +568,13 @@ pub(super) async fn drive_host(
             // and another host is waiting for it; an escalated link is a process and a
             // connection on this host alone, which no other host is waiting for, so holding one
             // across a barrier delays nobody. Releasing it costs an `ssh`, a `sudo` and a
-            // handshake at the next escalated task, and under the strict `linear` default every
+            // handshake at the next escalated task, and under the strict `linear` every
             // task raises a barrier. What the links are bounded by is `keep_links` at the end of
             // the play, the failure arm at the top of this loop, and the rule below that a host
             // holds at most one of them at a time.
             if batch.is_empty()
                 && permit.is_some()
-                && (is_boundary(task, options.batching)
+                && (is_boundary(&c, pos, strict(options.batching, &store))
                     || crate::compile::is_splice_point(&step.kind)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
@@ -364,7 +611,7 @@ pub(super) async fn drive_host(
             // because a host that walked into one of those without stopping here would report a
             // step the others have not reached, and every wait in this file opens on the
             // coordinator's frontier.
-            if is_boundary(task, options.batching) && pos > 0 {
+            if is_boundary(&c, pos, strict(options.batching, &store)) && pos > 0 {
                 if !batch.is_empty() {
                     break;
                 }
@@ -2000,6 +2247,15 @@ mod tests {
         let mut t = task("command");
         t.failed_when = vec!["play_hosts | length > 1".into()];
         assert!(reads_across_hosts(&t), "failed_when");
+        let mut t = task("command");
+        t.until = vec!["hostvars['a'].ready".into()];
+        assert!(reads_across_hosts(&t), "until");
+        let mut t = task("command");
+        t.delegate_to = Some("{{ hostvars['a'].peer }}".into());
+        assert!(reads_across_hosts(&t), "delegate_to");
+        let mut t = task("command");
+        t.environment = vec![json!({"PEER": "{{ hostvars['a'].ip }}"})];
+        assert!(reads_across_hosts(&t), "environment");
     }
 
     /// `ansible_play_hosts_all` never changes once the play starts, so a task mentioning it and
@@ -2083,9 +2339,324 @@ mod tests {
     /// other hosts, permit and all.
     #[test]
     fn a_pause_is_a_boundary_under_batching() {
-        for module in ["pause", "ansible.builtin.pause"] {
-            assert!(is_boundary(&task(module), true), "{module}");
+        let c = marked(vec![
+            task("debug"),
+            task("pause"),
+            task("ansible.builtin.pause"),
+        ]);
+        assert_eq!(boundaries(&c), [false, true, true]);
+    }
+
+    fn step(task: PlayTask) -> Step {
+        Step {
+            kind: StepKind::Task,
+            task,
+            block: None,
+            section: crate::compile::Section::Body,
+            role: None,
+            origin: Arc::default(),
+            include_params: None,
+            hosts: None,
         }
-        assert!(!is_boundary(&task("debug"), true));
+    }
+
+    /// A list of plain steps, marked against no variable definitions at all.
+    fn marked(tasks: Vec<PlayTask>) -> Compiled {
+        let mut c = Compiled {
+            steps: tasks.into_iter().map(step).collect(),
+            ..Compiled::default()
+        };
+        mark_boundaries(&mut c, &Definitions::default(), Path::new("."));
+        c
+    }
+
+    /// What `is_boundary` answers for each step under `batching`.
+    fn boundaries(c: &Compiled) -> Vec<bool> {
+        (0..c.steps.len())
+            .map(|pos| is_boundary(c, pos, false))
+            .collect()
+    }
+
+    /// A scratch tree for one test, removed when it goes out of scope.
+    struct Tree(std::path::PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Tree {
+            let dir =
+                std::env::temp_dir().join(format!("volant-barrier-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            Tree(dir)
+        }
+
+        fn file(&self, path: &str, text: &str) -> &Self {
+            let path = self.0.join(path);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+            std::fs::write(path, text).expect("a file");
+            self
+        }
+
+        /// `site.yml` compiled with `roles/` beside it, gathering nothing, and marked against
+        /// `base`: the task names in order, each with its answer under `batching`.
+        fn marked(&self, base: &Definitions) -> Vec<(String, bool)> {
+            let site = self.0.join("site.yml");
+            let mut pb = crate::playbook::load(&site).unwrap_or_else(|e| panic!("{e:#}"));
+            pb.plays[0].gather_facts = false;
+            let search = crate::roles::RoleSearch {
+                paths: vec![self.0.join("roles")],
+                collections: Vec::new(),
+            };
+            let mut c = crate::compile::compile(
+                &pb.plays[0],
+                &search,
+                &crate::compile::TagSelection::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:#}"));
+            mark_boundaries(&mut c, base, &self.0);
+            (0..c.steps.len())
+                .filter(|&pos| c.steps[pos].kind == StepKind::Task)
+                .map(|pos| (c.steps[pos].task.name.clone(), is_boundary(&c, pos, false)))
+                .collect()
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A role with one task file, the tasks written as a YAML list under it.
+    fn role(tree: &Tree, tasks: &str) {
+        tree.file("site.yml", "- hosts: all\n  roles:\n    - prereq\n")
+            .file("roles/prereq/tasks/main.yml", tasks);
+    }
+
+    fn named(marks: &[(String, bool)], name: &str) -> bool {
+        marks
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no task {name} in {marks:?}"))
+            .1
+    }
+
+    /// The shape of the k3s proof's nftables task: the task names nothing of another host, and
+    /// the template it renders loops over every host of two groups and reads each one's
+    /// `ansible_default_ipv4`, under an `is defined` guard. Run ahead of the other hosts' fact
+    /// gathering, the guard is false for them and their rules silently go missing. The template
+    /// is the proof's own, cut down.
+    ///
+    /// What would make this red: the body of the template left unread, which is what the scan
+    /// did before - the task's own text is clean.
+    #[test]
+    fn a_template_body_reading_hostvars_is_a_boundary() {
+        let tree = Tree::new("template");
+        role(
+            &tree,
+            "- name: nft\n  ansible.builtin.template:\n    src: k3s.nft.j2\n    dest: /etc/nftables.d/k3s.nft\n\
+             - name: plain\n  template:\n    src: plain.j2\n    dest: /etc/plain\n\
+             - name: missing\n  template:\n    src: missing.j2\n    dest: /etc/missing\n\
+             - name: rendered src\n  template:\n    src: \"{{ flavour }}.j2\"\n    dest: /etc/x\n\
+             - name: pulls another in\n  template:\n    src: pulls.j2\n    dest: /etc/y\n",
+        );
+        tree.file(
+            "roles/prereq/templates/k3s.nft.j2",
+            "# Allow inter-node communication (server + agent nodes)\n\
+             {% for host in (groups[server_group] | default([]) + groups[agent_group] | default([])) | unique %}\n\
+             {% if hostvars[host].ansible_default_ipv4 is defined %}\n\
+             insert rule inet filter input ip saddr {{ hostvars[host].ansible_default_ipv4.address }} accept\n\
+             {% endif %}\n\
+             {% endfor %}\n\
+             insert rule inet filter input tcp dport {{ api_port | default(6443) }} accept\n",
+        )
+        .file(
+            "roles/prereq/templates/plain.j2",
+            "# loaded via an include in nftables.conf\nport {{ api_port | default(6443) }}\n",
+        )
+        .file("roles/prereq/templates/pulls.j2", "{% include 'k3s.nft.j2' %}\n");
+        let marks = tree.marked(&Definitions::default());
+        assert!(named(&marks, "nft"), "{marks:?}");
+        assert!(!named(&marks, "plain"), "{marks:?}");
+        assert!(named(&marks, "missing"), "a file the scan cannot read");
+        assert!(named(&marks, "rendered src"), "a file the scan cannot name");
+        assert!(
+            named(&marks, "pulls another in"),
+            "a file the scan does not follow"
+        );
+    }
+
+    /// A variable whose definition reads another host carries that read into every task naming
+    /// it, however many names deep and whichever layer defines it. The role default is the k3s
+    /// inventory's `api_endpoint` in a role's `defaults/`; the inventory one is the same line
+    /// where the k3s proof writes it.
+    ///
+    /// What would make this red: the definitions left unread (every task here spells no
+    /// cross-host name of its own), or the reading stopped at the first level, which loses `a`.
+    #[test]
+    fn a_variable_defined_from_hostvars_is_a_boundary() {
+        let tree = Tree::new("definition");
+        role(
+            &tree,
+            "- name: direct\n  debug:\n    msg: \"{{ api_url }}\"\n\
+             - name: through b\n  debug:\n    msg: \"{{ a }}\"\n\
+             - name: bare\n  debug:\n    msg: ok\n  when: api_url is defined\n\
+             - name: from the inventory\n  command: \"curl {{ api_endpoint }}\"\n\
+             - name: in a template\n  template:\n    src: conf.j2\n    dest: /etc/conf\n\
+             - name: plain\n  debug:\n    msg: \"{{ plain }}\"\n",
+        );
+        tree.file(
+            "roles/prereq/defaults/main.yml",
+            "api_url: \"{{ hostvars[groups['server'][0]].ansible_host }}\"\n\
+             a: \"{{ b }}\"\n\
+             b: \"https://{{ api_url }}:6443\"\n\
+             plain: \"{{ a_local_value | default('x') }}\"\n",
+        )
+        .file("roles/prereq/templates/conf.j2", "server: {{ a }}\n");
+        let mut inventory = Definitions::default();
+        inventory.add(&serde_json::from_value(json!({
+            "api_endpoint": "{{ hostvars[groups['server'][0]]['ansible_host'] | default(groups['server'][0]) }}",
+        })).expect("a map"));
+        let marks = tree.marked(&inventory);
+        assert!(named(&marks, "direct"), "{marks:?}");
+        assert!(named(&marks, "through b"), "two names deep: {marks:?}");
+        assert!(named(&marks, "bare"), "a bare condition: {marks:?}");
+        assert!(named(&marks, "from the inventory"), "{marks:?}");
+        assert!(named(&marks, "in a template"), "{marks:?}");
+        assert!(!named(&marks, "plain"), "{marks:?}");
+    }
+
+    /// A name only known once it renders can be any variable, another host's included: `vars`
+    /// by subscript, the `vars` lookup, and a `template` lookup whose file the scan never opens.
+    /// Spelled in a task or in a definition the task reads.
+    ///
+    /// What would make this red: `DYNAMIC_READS` emptied, or read only in a task's own text.
+    #[test]
+    fn a_dynamic_vars_read_is_a_boundary() {
+        let t = |msg: &str| {
+            let mut t = task("debug");
+            t.args.insert("msg".into(), json!(msg));
+            t
+        };
+        let c = marked(vec![
+            t("{{ vars['peer_' ~ inventory_hostname] }}"),
+            t("{{ lookup('vars', 'peer') }}"),
+            t("{{ lookup('ansible.builtin.template', 'peer.j2') }}"),
+            t("{{ q('vars', 'peer') }}"),
+        ]);
+        assert_eq!(boundaries(&c), [true; 4]);
+
+        let mut c = Compiled {
+            steps: vec![step(t("{{ peer }}"))],
+            ..Compiled::default()
+        };
+        let mut defs = Definitions::default();
+        defs.add(&serde_json::from_value(json!({"peer": "{{ vars[peer_name] }}"})).expect("a map"));
+        mark_boundaries(&mut c, &defs, Path::new("."));
+        assert_eq!(boundaries(&c), [true], "through a definition");
+    }
+
+    /// A fact the playbook writes while the run goes - an `include_vars` whose file name renders,
+    /// a `set_fact` of a raw template - is read again by every task that names it, and nothing
+    /// before the run could know what it names. From the first such write, every step is a
+    /// boundary. A template a managed host returned is data and never renders, so it changes
+    /// nothing.
+    ///
+    /// What would make this red: the flag never raised by `set_fact`, raised by an untrusted
+    /// write, or not read by `strict`.
+    #[test]
+    fn a_fact_still_holding_a_template_makes_every_step_a_boundary() {
+        let store = Mutex::new(
+            VarStore::new(
+                &crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory"),
+                None,
+                Path::new("."),
+                Map::new(),
+            )
+            .expect("a store"),
+        );
+        assert!(!strict(true, &store));
+        assert!(strict(false, &store), "batching off is strict");
+        store
+            .lock()
+            .unwrap()
+            .set_fact("h1", "plain", json!({"a": ["x"]}));
+        store
+            .lock()
+            .unwrap()
+            .set_untrusted_fact("h1", "from_host", json!("{{ hostvars }}"));
+        assert!(!strict(true, &store), "neither of these renders again");
+        store
+            .lock()
+            .unwrap()
+            .set_fact("h1", "loaded", json!({"url": ["{{ api_url }}"]}));
+        assert!(strict(true, &store));
+    }
+
+    /// Tasks that read nothing of another host run ahead: the whole point of `batching`. A task
+    /// named after `vars` without reading any, a template whose file reads only this host, a
+    /// `set_fact` of this host's own values.
+    ///
+    /// What would make this red: any rule above made so wide that the proofs' ordinary tasks all
+    /// wait again, which is the strict `linear` under another name.
+    #[test]
+    fn a_host_local_task_is_not_a_boundary() {
+        let tree = Tree::new("local");
+        role(
+            &tree,
+            "- name: Include OS-specific vars\n  include_vars: Debian.yml\n\
+             - name: Install {{ package }}\n  apt:\n    name: \"{{ package }}\"\n\
+             - name: conf\n  template:\n    src: local.j2\n    dest: /etc/local\n\
+             - name: remember\n  set_fact:\n    seen: \"{{ ansible_facts.hostname }}:{{ port }}\"\n\
+             - name: all hosts\n  debug:\n    msg: \"{{ ansible_play_hosts_all | length }}\"\n",
+        );
+        tree.file("roles/prereq/vars/main.yml", "port: 80\n")
+            .file("roles/prereq/vars/Debian.yml", "package: nginx\n")
+            .file(
+                "roles/prereq/templates/local.j2",
+                "listen {{ port }} on {{ inventory_hostname }}\n",
+            );
+        let marks = tree.marked(&Definitions::default());
+        assert!(marks.iter().all(|(_, b)| !b), "{marks:?}");
+        assert_eq!(marks.len(), 5, "{marks:?}");
+    }
+
+    /// `delegate_facts` writes into the delegate's variables, which the delegate reads as its
+    /// own under a name no scan ties to the writer. Nothing behind the writer may run before it.
+    ///
+    /// What would make this red: the rule dropped, which lets the delegate read its own `peer`
+    /// before the writer wrote it.
+    #[test]
+    fn a_task_writing_facts_onto_another_host_holds_every_step_behind_it() {
+        let mut writer = task("set_fact");
+        writer.args.insert("peer".into(), json!("up"));
+        writer.delegate_to = Some("h2".into());
+        writer.delegate_facts = Some(true);
+        let mut reader = task("debug");
+        reader.args.insert("msg".into(), json!("{{ peer }}"));
+        let c = marked(vec![task("debug"), writer.clone(), reader.clone()]);
+        assert_eq!(boundaries(&c), [false, false, true]);
+        writer.delegate_facts = Some(false);
+        let c = marked(vec![task("debug"), writer, reader]);
+        assert_eq!(boundaries(&c), [false, false, false]);
+    }
+
+    /// Steps a splice puts in are boundaries until the list is marked again, and the marks of
+    /// the steps around them move with them. A list nobody marked is all boundaries.
+    ///
+    /// What would make this red: a splice that leaves `crosses` where it was, which shifts every
+    /// mark past the splice point onto the wrong step.
+    #[test]
+    fn a_splice_keeps_the_marks_on_their_steps() {
+        let mut reader = task("debug");
+        reader
+            .args
+            .insert("msg".into(), json!("{{ hostvars['h2'].x }}"));
+        let mut c = marked(vec![task("debug"), reader, task("debug")]);
+        assert_eq!(boundaries(&c), [false, true, false]);
+        c.splice(1, vec![step(task("debug"))]);
+        assert_eq!(boundaries(&c), [false, true, true, false]);
+        mark_boundaries(&mut c, &Definitions::default(), Path::new("."));
+        assert_eq!(boundaries(&c), [false, false, true, false]);
+        c.crosses.clear();
+        assert_eq!(boundaries(&c), [true; 4]);
     }
 }

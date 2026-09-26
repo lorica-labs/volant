@@ -48,7 +48,9 @@ pub struct Config {
     pub tags_skip: Vec<String>,
     /// `[volant] batching`, or `VOLANT_BATCHING`: whether a host may carry on through the tasks
     /// between two synchronisation points instead of meeting the other hosts in front of every
-    /// one of them. Off by default, which is what `linear` means.
+    /// one of them. On by default: a host meets the others only in front of a task that reads
+    /// what another host did (see `is_boundary` in the executor). `false` or `0` gives back the
+    /// strict `linear`, where the hosts meet in front of every task.
     ///
     /// Not a playbook keyword, and never one: a playbook has to stay runnable by the reference
     /// as written, and the reference has no such keyword. Measured on ansible-core 2.19.12 with
@@ -84,7 +86,7 @@ impl Default for Config {
             collections_path: default_collections_path(),
             tags_run: Vec::new(),
             tags_skip: Vec::new(),
-            batching: false,
+            batching: true,
             native_modules: true,
             ssh_control_master: true,
         }
@@ -518,20 +520,25 @@ mod tests {
         parse(text, Path::new(base), "ansible.cfg").expect("the sample parses")
     }
 
-    /// Cross-host batching is off unless a `[volant] batching` line asks for it, and the
+    /// Cross-host batching is on unless a `[volant] batching` line turns it off, and the
     /// section a shared file carries for the other engine is read here without disturbing
     /// `[defaults]` around it.
     ///
-    /// What would make this red: the key read with `bool_from_str` alone, which answers nothing
-    /// for `1` and leaves the option off for the spelling the documentation gives.
+    /// What would make this red: the default put back to off, which makes every task a barrier
+    /// again; or the key read with `bool_from_str` alone, which answers nothing for `0` and
+    /// leaves batching on for the spelling the documentation gives to turn it off.
     #[test]
     fn the_volant_section_carries_the_batching_switch() {
-        assert!(!cfg("[defaults]\nforks = 3\n", ".").batching);
+        assert!(Config::default().batching, "on by default");
+        assert!(cfg("[defaults]\nforks = 3\n", ".").batching);
         assert!(cfg("[volant]\nbatching = true\n", ".").batching);
         assert!(cfg("[volant]\nbatching = 1\n", ".").batching);
         assert!(!cfg("[volant]\nbatching = no\n", ".").batching);
         assert!(!cfg("[volant]\nbatching = 0\n", ".").batching);
-        assert!(!cfg("[volant]\nbatching = maybe\n", ".").batching);
+        assert!(
+            cfg("[volant]\nbatching = maybe\n", ".").batching,
+            "a word that is no switch leaves the default alone"
+        );
         // An unknown key in the section is passed over, and the section does not swallow the
         // one behind it.
         let c = cfg(

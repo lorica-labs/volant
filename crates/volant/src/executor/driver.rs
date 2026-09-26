@@ -134,9 +134,7 @@ fn reads_controller_files(task: &PlayTask) -> bool {
 fn writes_controller_files(task: &PlayTask) -> bool {
     short_name(&task.module) == "fetch"
         || task.delegate_to.is_some()
-        || task
-            .vars
-            .get("ansible_connection")
+        || crate::vars::host_setting(&task.vars, "ansible_connection")
             .is_some_and(|c| c.as_str() != Some("ssh"))
 }
 

@@ -6,10 +6,13 @@
 //! set: the native produces every key of `NATIVE_FACT_KEYS` whose source this machine has, and no
 //! key outside the list.
 
+#[cfg(target_os = "linux")]
 use std::collections::BTreeSet;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
 use serde_json::Value;
 use volant_protocol::facts::NATIVE_FACT_KEYS;
 
@@ -21,7 +24,9 @@ fn agent(args: &[&str]) -> std::process::Output {
 }
 
 /// What the test needs from the machine, checked first so a machine outside the native's subset
-/// fails naming the reason rather than with a key list.
+/// fails naming the missing prerequisite rather than with a key list. The tests that call it are
+/// Linux only: the native answers nowhere else, and elsewhere it has nothing to check.
+#[cfg(target_os = "linux")]
 fn check_the_machine() {
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
     let id = os_release
@@ -36,9 +41,39 @@ fn check_the_machine() {
         Command::new("python3").arg("-c").arg("").status().is_ok(),
         "the native setup needs python3 for the python facts, and this machine has none on PATH"
     );
+    let nsswitch = std::fs::read_to_string("/etc/nsswitch.conf").unwrap_or_default();
+    let files_first = nsswitch
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("hosts:"))
+        .and_then(|sources| sources.split_whitespace().next())
+        == Some("files");
+    let node = String::from_utf8(
+        Command::new("uname")
+            .arg("-n")
+            .output()
+            .expect("uname runs")
+            .stdout,
+    )
+    .unwrap_or_default();
+    let node = node.trim();
+    let hosts = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    let listed = hosts.lines().any(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .skip(1)
+            .any(|name| name.eq_ignore_ascii_case(node))
+    });
+    assert!(
+        files_first && listed,
+        "the native setup reads the fqdn from /etc/hosts, and on this machine `hosts:` does not \
+         start with `files` ({files_first}) or /etc/hosts does not name the node {node} ({listed})"
+    );
 }
 
 /// The keys whose source this machine lacks, which the reference leaves out as well.
+#[cfg(target_os = "linux")]
 fn absent_here() -> BTreeSet<&'static str> {
     let mut absent = BTreeSet::new();
     let ssh_key = |algo: &str| {
@@ -67,6 +102,21 @@ fn absent_here() -> BTreeSet<&'static str> {
         absent.insert("ansible_cmdline");
         absent.insert("ansible_proc_cmdline");
     }
+    // The reference writes it for an x86 machine only.
+    let machine = Command::new("uname")
+        .arg("-m")
+        .output()
+        .expect("uname runs")
+        .stdout;
+    let machine = String::from_utf8_lossy(&machine);
+    let machine = machine.trim();
+    let x86 = machine == "x86_64"
+        || ["i386", "i486", "i586", "i686", "i86pc"]
+            .iter()
+            .any(|i86| machine.contains(i86));
+    if !x86 {
+        absent.insert("ansible_userspace_architecture");
+    }
     absent
 }
 
@@ -78,6 +128,7 @@ fn absent_here() -> BTreeSet<&'static str> {
 /// writes, which a play reading it would find missing; or the native handing back on a machine
 /// inside its subset, which the message names.
 #[test]
+#[cfg(target_os = "linux")]
 fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
     check_the_machine();
     let out = agent(&["--native-facts", "min", "python3"]);
@@ -131,6 +182,7 @@ fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
 /// What would make this red: `tz_dst` read from the current offset rather than the zone's
 /// daylight name, or `tz_offset` printed without the sign and four digits of `%z`.
 #[test]
+#[cfg(target_os = "linux")]
 fn the_time_zone_names_match_python_on_this_machine() {
     check_the_machine();
     let out = agent(&["--native-facts", "min", "python3"]);

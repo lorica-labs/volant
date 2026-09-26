@@ -198,13 +198,14 @@ fn a_native_that_panics_hands_the_task_back() {
 /// with the `changed: false` a module result gets, and the default subset handed to the payload
 /// with the reason.
 ///
-/// Runs on the machine's own facts, so it needs what the native needs: Debian or Ubuntu, and
-/// `/usr/bin/python3`. A machine without them fails on the first assertion, naming the reason
-/// the native gave.
+/// Runs on the machine's own facts, so it needs what the native needs: Linux, Debian or Ubuntu,
+/// `/usr/bin/python3`, and the node name in `/etc/hosts`. A machine without them fails on the
+/// first assertion, naming the reason the native gave.
 ///
 /// What would make this red: the native given no interpreter (the dispatcher's context left
 /// empty), or a subset outside `min` answered.
 #[test]
+#[cfg(target_os = "linux")]
 fn setup_answers_min_and_hands_the_default_subset_back() {
     let scratch = Scratch::new("setup");
     let mut agent = Agent::spawn(&scratch.0);
@@ -215,7 +216,12 @@ fn setup_answers_min_and_hands_the_default_subset_back() {
         task
     };
     let (result, ran) = agent.run_one(1, with_python(json!({"gather_subset": ["min"]})));
-    assert_eq!(ran.path, ExecPath::Native, "{:?}", ran.reason);
+    assert_eq!(
+        ran.path,
+        ExecPath::Native,
+        "the native setup handed back on this machine, which lacks what it needs: {:?}",
+        ran.reason
+    );
     assert_eq!(result.0["changed"], false);
     assert_eq!(result.0["ansible_facts"]["module_setup"], true);
     assert_eq!(result.0["ansible_facts"]["ansible_pkg_mgr"], "apt");

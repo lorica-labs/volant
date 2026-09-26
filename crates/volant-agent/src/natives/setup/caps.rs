@@ -4,15 +4,15 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, splitlines};
+use super::{Host, Stop, splitlines};
 
-pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
+pub fn collect(host: &Host) -> Result<Map<String, Value>, Stop> {
     let mut enforced = Value::from("N/A");
     let mut capabilities = Value::from("N/A");
     if let Some(capsh) = host.bin_path("capsh") {
         // A capsh that cannot be started is a warning in the module's result.
         let (code, out) = host
-            .run(&capsh, &["--print"])
+            .run(&capsh, &["--print"])?
             .ok_or("capsh was found and could not be started")?;
         if code == 0 {
             let (value, caps) = parse(&out);

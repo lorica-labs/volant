@@ -57,9 +57,9 @@ pub enum NativeRun {
     /// This case is outside the native subset. Returned before anything on the host changed;
     /// the dispatcher then runs the task's Python payload, which does the real work.
     Fallback(String),
-    #[expect(
-        dead_code,
-        reason = "returned by the first native that honours a cancel"
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "returned by the natives of a Linux build")
     )]
     Cancelled,
 }

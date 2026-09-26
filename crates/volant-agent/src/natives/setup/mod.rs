@@ -32,12 +32,13 @@ mod user;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
-use crate::modules::Context;
+use crate::modules::{Context, Run};
 use crate::natives::common::{ArgSpec, invocation};
 use crate::natives::{Native, NativeRun};
 
@@ -45,11 +46,64 @@ pub const NATIVE: Native = Native {
     name: "setup",
     aliases: &[],
     enabled: true,
-    run: |args, context, _| match answer(args, &Root::real(), context) {
-        Ok(result) => NativeRun::Done(TaskResult(result)),
-        Err(reason) => NativeRun::Fallback(reason),
+    run: |args, context, cancelled| {
+        let clock = Clock {
+            deadline: context.timeout.map(|timeout| Instant::now() + timeout),
+            cancelled,
+        };
+        match answer(args, &Root::real(), context, clock) {
+            Ok(result) => NativeRun::Done(TaskResult(result)),
+            Err(Stop::HandBack(reason)) => NativeRun::Fallback(reason),
+            // What the Python path answers when the module outlives the task's `timeout`.
+            Err(Stop::TimedOut) => NativeRun::Done(TaskResult::timed_out(
+                context.timeout.unwrap_or_default().as_secs(),
+            )),
+            Err(Stop::Cancelled) => NativeRun::Cancelled,
+        }
     },
 };
+
+/// Why collecting ended without the facts.
+#[derive(Debug)]
+pub enum Stop {
+    /// Outside what the native reproduces: the payload runs instead.
+    HandBack(String),
+    /// A command the native ran outlived the task's `timeout`.
+    TimedOut,
+    /// The controller cancelled the task while a command was running.
+    Cancelled,
+}
+
+impl From<String> for Stop {
+    fn from(reason: String) -> Stop {
+        Stop::HandBack(reason)
+    }
+}
+
+impl From<&str> for Stop {
+    fn from(reason: &str) -> Stop {
+        Stop::HandBack(reason.to_string())
+    }
+}
+
+/// What bounds every command the native runs: the task's deadline and the controller's cancel,
+/// honoured by the executor `command` runs under.
+#[derive(Clone, Copy)]
+pub struct Clock<'a> {
+    pub deadline: Option<Instant>,
+    pub cancelled: &'a dyn Fn() -> bool,
+}
+
+/// A task with no `timeout` that nothing cancels.
+pub fn unbounded() -> Clock<'static> {
+    fn never() -> bool {
+        false
+    }
+    Clock {
+        deadline: None,
+        cancelled: &never,
+    }
+}
 
 const DEFAULT_FACT_PATH: &str = "/etc/ansible/facts.d";
 
@@ -112,9 +166,10 @@ fn answer(
     args: &Map<String, Value>,
     root: &Root,
     context: &Context,
-) -> Result<Map<String, Value>, String> {
+    clock: Clock,
+) -> Result<Map<String, Value>, Stop> {
     let request = request(args)?;
-    let facts = collect(&request, root, context)?;
+    let facts = collect(&request, root, context, clock)?;
     let mut invocation = invocation(SPEC, args);
     invocation["module_args"]["gather_subset"] = Value::from(request.gather_subset);
     let mut result = Map::new();
@@ -179,6 +234,10 @@ fn gather_subset(value: Option<&Value>) -> Result<Vec<String>, String> {
         None | Some(Value::Null) => return Err("gather_subset defaults to all".into()),
         Some(_) => return Err("gather_subset is not a list".into()),
     };
+    // `gather_subset or ['all']`: an empty list is everything, and the fact then says `['all']`.
+    if given.is_empty() {
+        return Err("an empty gather_subset is all".into());
+    }
     let mut excluded: Vec<&str> = Vec::new();
     let mut named: Vec<&str> = Vec::new();
     for subset in &given {
@@ -217,20 +276,23 @@ fn gather_subset(value: Option<&Value>) -> Result<Vec<String>, String> {
 
 /// The facts of `min`, under the names the module returns them, or the reason to hand back.
 ///
-/// Distribution first: it decides whether the host is inside the subset at all, and costs
-/// nothing but reads.
+/// The distribution's `ID` first: it decides whether the host is inside the subset at all for
+/// one file read, where the interpreter and `lsb_release` cost tens of milliseconds.
 fn collect(
     request: &Request,
     root: &Root,
     context: &Context,
-) -> Result<Map<String, Value>, String> {
+    clock: Clock,
+) -> Result<Map<String, Value>, Stop> {
     for key in context.environment.keys() {
         if key == "LANG" || key == "LANGUAGE" || key == "TZ" || key.starts_with("LC_") {
             return Err(format!(
                 "the task sets {key}, which changes what the module reads of its locale"
-            ));
+            )
+            .into());
         }
     }
+    distribution::gate(root)?;
     let interpreter = context
         .interpreter
         .as_deref()
@@ -245,26 +307,38 @@ fn collect(
             env.extend(context.environment.clone());
             env
         });
+    // The early run cannot ask the task's cancel, which answers once and on this thread: it
+    // stops at the deadline, or as soon as the probe ends without an answer.
+    let halt = AtomicBool::new(false);
     let (probe, early) = std::thread::scope(|scope| {
-        let early = guess
-            .as_ref()
-            .map(|env| scope.spawn(|| LsbRelease::run(root, env)));
-        (
-            python::probe(interpreter),
-            early.and_then(|thread| thread.join().ok()),
-        )
+        let early = guess.as_ref().map(|env| {
+            scope.spawn(|| {
+                let halted = || halt.load(Ordering::Relaxed);
+                let early_clock = Clock {
+                    deadline: clock.deadline,
+                    cancelled: &halted,
+                };
+                LsbRelease::run(root, env, early_clock)
+            })
+        });
+        let probe = python::probe(interpreter, clock);
+        if probe.is_err() {
+            halt.store(true, Ordering::Relaxed);
+        }
+        (probe, early.and_then(|thread| thread.join().ok()))
     });
     let probe = probe?;
     let mut env = probe.env.clone();
     env.extend(context.environment.clone());
     let lsb_release = match early {
         Some(early) if guess.as_ref() == Some(&env) => early?,
-        _ => LsbRelease::run(root, &env)?,
+        _ => LsbRelease::run(root, &env, clock)?,
     };
     let host = Host {
         root,
         env,
         probe: &probe,
+        clock,
     };
     let collected = [
         distribution::collect(&host, &lsb_release)?,
@@ -349,6 +423,7 @@ pub struct Host<'a> {
     /// The module's environment: the one its interpreter starts with, plus the task's.
     pub env: BTreeMap<String, String>,
     pub probe: &'a python::Probe,
+    pub clock: Clock<'a>,
 }
 
 impl Host<'_> {
@@ -356,8 +431,8 @@ impl Host<'_> {
         bin_path(self.root, &self.env, name)
     }
 
-    pub fn run(&self, program: &Path, args: &[&str]) -> Option<(i32, String)> {
-        run(&self.env, program, args)
+    pub fn run(&self, program: &Path, args: &[&str]) -> Result<Option<(i32, String)>, Stop> {
+        run(&self.env, self.clock, program, args)
     }
 }
 
@@ -392,21 +467,48 @@ fn exec_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<
         .find(|path| is_executable_file(path))
 }
 
-/// `module.run_command([program, args...])`: the exit code and standard output, decoded lossily;
-/// `None` when the program cannot be started, which the module reports rather than answering.
-fn run(env: &BTreeMap<String, String>, program: &Path, args: &[&str]) -> Option<(i32, String)> {
-    let out = Command::new(program)
-        .args(args)
-        .env_clear()
-        .envs(env)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    Some((
-        out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-    ))
+/// `module.run_command([program, args...])`, through the executor `command` runs under, so the
+/// task's `timeout` and cancel reach it: the exit code and standard output, or `None` when the
+/// program cannot be started, which the module reports rather than answering.
+///
+/// `env` is set over the agent's own environment, of which the module's is a superset.
+pub fn run(
+    env: &BTreeMap<String, String>,
+    clock: Clock,
+    program: &Path,
+    args: &[&str],
+) -> Result<Option<(i32, String)>, Stop> {
+    let timeout = match clock.deadline {
+        Some(deadline) => Some(
+            deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(Stop::TimedOut)?,
+        ),
+        None => None,
+    };
+    let mut argv = vec![Value::from(program.to_string_lossy().into_owned())];
+    argv.extend(args.iter().map(|arg| Value::from(*arg)));
+    let mut command = Map::new();
+    command.insert("argv".into(), Value::Array(argv));
+    command.insert("strip_empty_ends".into(), Value::Bool(false));
+    let context = Context {
+        timeout,
+        environment: env.clone(),
+        ..Context::default()
+    };
+    match crate::modules::command::execute(&command, false, &context, clock.cancelled) {
+        Run::Cancelled => Err(Stop::Cancelled),
+        Run::Done(result) if result.0.contains_key("timedout") => Err(Stop::TimedOut),
+        // Only a command that started has a `start`.
+        Run::Done(result) if result.0.contains_key("start") => Ok(Some((
+            result.0["rc"]
+                .as_i64()
+                .and_then(|rc| i32::try_from(rc).ok())
+                .unwrap_or(-1),
+            result.0["stdout"].as_str().unwrap_or_default().to_string(),
+        ))),
+        Run::Done(_) => Ok(None),
+    }
 }
 
 /// `lsb_release -a`, run once for the two readers the reference runs it for: the `distro`
@@ -420,19 +522,19 @@ pub struct LsbRelease {
 }
 
 impl LsbRelease {
-    fn run(root: &Root, env: &BTreeMap<String, String>) -> Result<LsbRelease, String> {
+    fn run(root: &Root, env: &BTreeMap<String, String>, clock: Clock) -> Result<LsbRelease, Stop> {
         let collector_path = bin_path(root, env, "lsb_release");
         let distro_path = exec_path(root, env, "lsb_release");
         let started = "lsb_release was found and could not be started";
         let collector = match &collector_path {
-            Some(path) => Some(run(env, path, &["-a"]).ok_or(started)?),
+            Some(path) => Some(run(env, clock, path, &["-a"])?.ok_or(started)?),
             None => None,
         };
         let distro_run = if distro_path == collector_path {
             collector.clone()
         } else {
             match &distro_path {
-                Some(path) => Some(run(env, path, &["-a"]).ok_or(started)?),
+                Some(path) => Some(run(env, clock, path, &["-a"])?.ok_or(started)?),
                 None => None,
             }
         };
@@ -516,14 +618,18 @@ pub fn print(gather_subset: &str, interpreter: &str) -> i32 {
         interpreter: Some(interpreter.to_string()),
         ..Context::default()
     };
-    match answer(&args, &Root::real(), &context) {
+    match answer(&args, &Root::real(), &context, unbounded()) {
         Ok(result) => {
             let result = crate::modules::module_result(result);
             println!("{}", Value::Object(result.0));
             0
         }
-        Err(reason) => {
+        Err(Stop::HandBack(reason)) => {
             eprintln!("volant-agent: the native setup hands back: {reason}");
+            2
+        }
+        Err(stop) => {
+            eprintln!("volant-agent: the native setup stopped: {stop:?}");
             2
         }
     }
@@ -573,6 +679,14 @@ pub mod tests {
             self
         }
 
+        /// An executable shell script at `path` running `body`.
+        pub fn script(&self, path: &str, body: &str) -> &Self {
+            self.write(path, &format!("#!/bin/sh\n{body}\n"));
+            let full = self.0.join(path.trim_start_matches('/'));
+            std::fs::set_permissions(full, std::fs::Permissions::from_mode(0o755)).unwrap();
+            self
+        }
+
         pub fn mkdir(&self, path: &str) -> &Self {
             std::fs::create_dir_all(self.0.join(path.trim_start_matches('/'))).unwrap();
             self
@@ -583,7 +697,12 @@ pub mod tests {
         pub fn host<'a>(&self, root: &'a Root, probe: &'a python::Probe) -> Host<'a> {
             let mut env = probe.env.clone();
             env.insert("PATH".into(), "/usr/bin".into());
-            Host { root, env, probe }
+            Host {
+                root,
+                env,
+                probe,
+                clock: unbounded(),
+            }
         }
     }
 
@@ -610,7 +729,9 @@ pub mod tests {
                 ("LOGNAME".to_string(), "user".to_string()),
             ]),
             lc_time: Some("C.UTF-8".into()),
+            tz_dst: "UTC".into(),
             selinux: Some(false),
+            distro: None,
         }
     }
 
@@ -681,7 +802,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         let root = fake.root();
         let probe = probe();
         let host = fake.host(&root, &probe);
-        let lsb = LsbRelease::run(host.root, &host.env).unwrap();
+        let lsb = LsbRelease::run(host.root, &host.env, unbounded()).unwrap();
         let collected = [
             distribution::collect(&host, &lsb).unwrap(),
             apparmor::collect(&host),
@@ -760,6 +881,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             json!("min, !hardware"),
             json!([1]),
             json!(null),
+            json!([]),
         ] {
             assert!(gather_subset(Some(&not_min)).is_err(), "{not_min}");
         }
@@ -836,7 +958,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             .as_object()
             .unwrap()
             .clone();
-        let result = answer(&args, &root, &context).unwrap();
+        let result = answer(&args, &root, &context, unbounded()).unwrap();
         assert_eq!(
             result["invocation"],
             json!({"module_args": {
@@ -873,9 +995,86 @@ BUG_REPORT_URL="https://bugs.debian.org/"
                 gather_subset: vec!["min".into()],
                 fact_path: None,
             };
-            let reason = collect(&request, &fake.root(), &context).unwrap_err();
+            let Err(Stop::HandBack(reason)) =
+                collect(&request, &fake.root(), &context, unbounded())
+            else {
+                panic!("{key} is answered");
+            };
             assert!(reason.contains(key), "{reason}");
         }
+    }
+
+    /// Outside Debian and Ubuntu the native hands back before it starts anything: the interpreter
+    /// here leaves a mark if it runs.
+    ///
+    /// What would make this red: the distribution checked after the probe, which makes every
+    /// hand-back on another distribution cost an interpreter start and `lsb_release`.
+    #[test]
+    fn another_distribution_hands_back_before_the_interpreter_starts() {
+        let fake = FakeRoot::new("gate-first");
+        let mark = fake.0.join("probed");
+        fake.write("/etc/os-release", "ID=fedora\nVERSION_ID=40\n")
+            .script("/usr/bin/fake-python", &format!("touch {}", mark.display()));
+        let context = Context {
+            interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
+            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            ..Context::default()
+        };
+        let request = Request {
+            gather_subset: vec!["min".into()],
+            fact_path: None,
+        };
+        let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
+        else {
+            panic!("fedora is answered");
+        };
+        assert!(reason.contains("fedora"), "{reason}");
+        assert!(!mark.exists(), "the interpreter ran");
+    }
+
+    /// The interpreter and `lsb_release` both hang here. The task's `timeout` ends them as it
+    /// ends a Python module, and a cancel ends them as it ends a command, both well before the
+    /// thirty seconds they would take.
+    ///
+    /// What would make this red: a command run outside the executor, or the early `lsb_release`
+    /// left running, which keeps the task waiting for it after the probe has stopped.
+    #[test]
+    fn a_hung_command_ends_at_the_timeout_or_the_cancel() {
+        let fake = debian_root("hung");
+        fake.script("/usr/bin/fake-python", "sleep 30")
+            .script("/usr/bin/lsb_release", "sleep 30");
+        let context = Context {
+            interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
+            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            timeout: Some(std::time::Duration::from_secs(1)),
+            ..Context::default()
+        };
+        let request = Request {
+            gather_subset: vec!["min".into()],
+            fact_path: None,
+        };
+        let started = Instant::now();
+        let clock = Clock {
+            deadline: Some(started + std::time::Duration::from_secs(1)),
+            cancelled: &|| false,
+        };
+        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+        let asked = std::cell::Cell::new(0);
+        let cancelled = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 5
+        };
+        let started = Instant::now();
+        let clock = Clock {
+            deadline: None,
+            cancelled: &cancelled,
+        };
+        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
 
     #[test]

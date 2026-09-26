@@ -10,7 +10,7 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, LsbRelease, py_strip, splitlines};
+use super::{Host, LsbRelease, Root, py_strip, splitlines};
 
 /// Release files the reference reads before `/etc/os-release` as Debian's, each of which names
 /// another distribution when it exists.
@@ -43,13 +43,9 @@ const DISTRO_IGNORED: &[&str] = &[
     "ec2_version",
 ];
 
-pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Value>, String> {
-    let root = host.root;
-    for variable in ["UNIXCONFDIR", "UNIXUSRLIBDIR"] {
-        if host.env.contains_key(variable) {
-            return Err(format!("{variable} moves where distro reads"));
-        }
-    }
+/// `/etc/os-release` as `distro` reads it, and the distribution's normalised `ID`, which must be
+/// `ubuntu` or `debian`: the check the native makes before it spends anything on a host.
+pub fn gate(root: &Root) -> Result<(Vec<(String, String)>, String), String> {
     if !root.is_file("/etc/os-release") {
         return Err("/etc/os-release is missing".into());
     }
@@ -58,14 +54,7 @@ pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Valu
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or("/etc/os-release is unreadable or not UTF-8")?;
     let os = parse_os_release(&os_release)?;
-    // A key given twice keeps its last value, as in the library's dictionary.
-    let get = |key: &str| {
-        os.iter()
-            .rev()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    };
-    let id = get("id")
+    let id = last(&os, "id")
         .unwrap_or_default()
         .to_lowercase()
         .replace(' ', "_");
@@ -74,6 +63,38 @@ pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Valu
             "the distribution is '{id}', outside Debian and Ubuntu"
         ));
     }
+    Ok((os, id))
+}
+
+/// A key given twice keeps its last value, as in the library's dictionary.
+fn last<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    pairs
+        .iter()
+        .rev()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+}
+
+pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Value>, String> {
+    let root = host.root;
+    for variable in ["UNIXCONFDIR", "UNIXUSRLIBDIR"] {
+        if host.env.contains_key(variable) {
+            return Err(format!("{variable} moves where distro reads"));
+        }
+    }
+    // `ansible.module_utils.distro` imports a system `distro` when there is one. Before 1.8 it
+    // did not rank `/etc/debian_version` among the versions, and the native follows 1.9.
+    match host.probe.distro.as_deref() {
+        None => {}
+        Some(version) if version.starts_with("1.9.") => {}
+        Some(version) => {
+            return Err(format!(
+                "the interpreter imports distro '{version}', not the bundled 1.9"
+            ));
+        }
+    }
+    let (os, id) = gate(root)?;
+    let get = |key: &str| last(&os, key);
     for path in EARLIER_FILES {
         if std::fs::metadata(root.path(path)).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
             return Err(format!("{path} names another distribution"));
@@ -372,10 +393,33 @@ mod tests {
     use super::*;
 
     fn distribution(fake: &FakeRoot) -> Result<Value, String> {
-        let (root, probe) = (fake.root(), probe());
+        distribution_with(fake, None)
+    }
+
+    fn distribution_with(fake: &FakeRoot, distro: Option<&str>) -> Result<Value, String> {
+        let root = fake.root();
+        let mut probe = probe();
+        probe.distro = distro.map(str::to_string);
         let host = fake.host(&root, &probe);
-        let lsb = LsbRelease::run(host.root, &host.env).unwrap();
+        let lsb = LsbRelease::run(host.root, &host.env, super::super::unbounded()).unwrap();
         collect(&host, &lsb).map(Value::Object)
+    }
+
+    /// A system `distro` other than 1.9 hands back: `ansible.module_utils.distro` imports it
+    /// before its bundled copy, and 1.5 ranks versions without `/etc/debian_version` (a Debian
+    /// 11 host would be `11` there, `11.11` here).
+    ///
+    /// What would make this red: the probe's `distro` ignored.
+    #[test]
+    fn a_system_distro_other_than_1_9_hands_back() {
+        let fake = debian_root("system-distro");
+        assert!(distribution_with(&fake, Some("1.9.0")).is_ok());
+        let reason = distribution_with(&fake, Some("1.5.0")).unwrap_err();
+        assert!(reason.contains("1.5.0"), "{reason}");
+        assert!(
+            distribution_with(&fake, Some("")).is_err(),
+            "a version nobody could read"
+        );
     }
 
     /// Ubuntu 24.04's `/etc/os-release`, sanitised, as target and gen measured it.

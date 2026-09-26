@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `date_time` collector: one clock reading, formatted in local time and in UTC as the
-//! reference's `strftime` calls format it. Local time and zone names come from the C library,
-//! which reads the same `TZ` and `/etc/localtime` the module's interpreter reads. Weekday names
-//! are English: a locale that would name them otherwise hands back.
+//! reference's `strftime` calls format it. Local time, `%Z` and `%z` come from the C library,
+//! which reads the same `TZ` and `/etc/localtime` the module's interpreter reads; `tz_dst` is
+//! the interpreter's own `time.tzname[1]`, which musl would not give. Weekday names are
+//! English: a locale that would name them otherwise hands back.
 
-use std::ffi::{CStr, c_char};
+use std::ffi::CStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
@@ -21,11 +22,6 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
-unsafe extern "C" {
-    fn tzset();
-    static tzname: [*const c_char; 2];
-}
-
 pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
     match host.probe.lc_time.as_deref() {
         Some(locale) if english(locale) => {}
@@ -39,17 +35,16 @@ pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
         .map_err(|_| "the clock is before 1970")?;
     let seconds = libc::time_t::try_from(now.as_secs()).map_err(|_| "the clock is out of range")?;
     let micros = now.subsec_micros();
-    // Safety: `tzset` and the two conversions write only the process's time zone state and the
-    // structures given; `tzname` is read after `tzset` filled it.
-    let (local, utc, dst_name) = unsafe {
-        tzset();
+    // Safety: the two conversions write only the process's time zone state and the structures
+    // given.
+    let (local, utc) = unsafe {
         let mut local: libc::tm = std::mem::zeroed();
         let mut utc: libc::tm = std::mem::zeroed();
         libc::localtime_r(&raw const seconds, &raw mut local);
         libc::gmtime_r(&raw const seconds, &raw mut utc);
-        let dst_name = CStr::from_ptr(tzname[1]).to_string_lossy().into_owned();
-        (local, utc, dst_name)
+        (local, utc)
     };
+    let dst_name = host.probe.tz_dst.clone();
     let zone = unsafe { CStr::from_ptr(local.tm_zone) }
         .to_string_lossy()
         .into_owned();
@@ -146,6 +141,24 @@ mod tests {
         assert!(collect(&fake.host(&root, &probe)).is_err());
         probe.lc_time = None;
         assert!(collect(&fake.host(&root, &probe)).is_err());
+    }
+
+    /// `tz_dst` is the interpreter's `time.tzname[1]`, whatever the C library the agent is linked
+    /// against says. Measured: for `Etc/UTC` the reference says `UTC`, and musl, which the
+    /// uploaded agent is built with, leaves its own `tzname[1]` empty.
+    ///
+    /// What would make this red: `tz_dst` read from the agent's C library again, which on the
+    /// musl agent answers `""` for every zone without daylight time.
+    #[test]
+    fn the_daylight_zone_name_is_the_interpreter_s() {
+        let fake = FakeRoot::new("tz-dst");
+        let root = fake.root();
+        let mut probe = probe();
+        for name in ["UTC", "XDT"] {
+            probe.tz_dst = name.into();
+            let facts = collect(&fake.host(&root, &probe)).unwrap();
+            assert_eq!(facts["date_time"]["tz_dst"], name);
+        }
     }
 
     /// `%W` against dates whose week number is known: 2026-01-01 is a Thursday (week 00), the

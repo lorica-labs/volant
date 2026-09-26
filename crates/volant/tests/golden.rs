@@ -1920,7 +1920,7 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         return;
     };
     assert!(
-        identity().uid != Value::from(0),
+        identity().uid != 0,
         "run as root: the recording's literal `root` would read as the running account's own; run \
          as an ordinary account with passwordless `sudo -n`"
     );

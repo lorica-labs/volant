@@ -1081,7 +1081,10 @@ mod tests {
     /// What would make this red: the key without the environment (task `b` runs under the server
     /// started for `a`, and imports ahead under `a`); the server started without it (the parent's
     /// own environment lacks the variable); or the old environment's server kept alive.
+    ///
+    /// Linux only: it reads the server's start-up environment and liveness from `/proc`.
     #[test]
+    #[cfg(target_os = "linux")]
     fn each_environment_gets_a_server_started_with_it() {
         let root = tempdir();
         // SAFETY: nextest runs each test in its own process, so this reaches no other test.
@@ -1527,7 +1530,10 @@ print(json.dumps([
     ///
     /// What would make this red: the old server's last words read into the failure (the message
     /// carries what the old server had on its stderr).
+    ///
+    /// Linux only: the module writes into the server's own stderr through `/proc/<pid>/fd/2`.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_replacement_that_cannot_start_speaks_for_itself() {
         let blob = runpy_blob(&[(
             "ansible/modules/probe.py",

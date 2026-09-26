@@ -26,12 +26,12 @@ fn agent(args: &[&str]) -> std::process::Output {
 #[cfg(target_os = "linux")]
 mod setup_exits;
 
-/// The native's answer to `gather_subset: min` on this machine, or `None` once it has handed
+/// The native's answer to `gather_subset` on this machine, or `None` once it has handed
 /// back for a host outside its subset, which is asserted and printed. Any other hand-back, or a
 /// failure, is red. Linux only: the native answers nowhere else.
 #[cfg(target_os = "linux")]
-fn answer_here() -> Option<Value> {
-    let out = agent(&["--native-facts", "min", "python3"]);
+fn answer_here(gather_subset: &str) -> Option<Value> {
+    let out = agent(&["--native-facts", gather_subset, "python3"]);
     if out.status.success() {
         return Some(serde_json::from_slice(&out.stdout).expect("the answer is JSON"));
     }
@@ -94,10 +94,34 @@ fn absent_here() -> BTreeSet<&'static str> {
     if !x86 {
         absent.insert("ansible_userspace_architecture");
     }
+    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    if !cpuinfo
+        .lines()
+        .any(|line| line.split(':').next().map(str::trim) == Some("flags"))
+    {
+        absent.insert("ansible_flags");
+    }
+    // `get_bin_path('ip')`: along `PATH`, then the `sbin` directories.
+    let path = std::env::var("PATH").unwrap_or_default();
+    let has_ip = path
+        .split(':')
+        .chain(["/sbin", "/usr/sbin", "/usr/local/sbin"])
+        .any(|dir| Path::new(dir).join("ip").is_file());
+    if !has_ip {
+        for key in [
+            "ansible_interfaces",
+            "ansible_default_ipv4",
+            "ansible_default_ipv6",
+            "ansible_all_ipv4_addresses",
+            "ansible_all_ipv6_addresses",
+        ] {
+            absent.insert(key);
+        }
+    }
     absent
 }
 
-/// On this machine the native answers `gather_subset: min` with exactly the keys of
+/// On this machine the native answers `gather_subset: all` with exactly the keys of
 /// `NATIVE_FACT_KEYS` whose source exists here, each under the name the reference gives it.
 ///
 /// What would make this red: a key the collector writes and the list does not name, which the
@@ -108,7 +132,7 @@ fn absent_here() -> BTreeSet<&'static str> {
 #[test]
 #[cfg(target_os = "linux")]
 fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
-    let Some(result) = answer_here() else {
+    let Some(result) = answer_here("all") else {
         return;
     };
     let produced: BTreeSet<&str> = result["ansible_facts"]
@@ -135,12 +159,12 @@ fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
     );
     assert_eq!(
         result["ansible_facts"]["gather_subset"],
-        serde_json::json!(["min"])
+        serde_json::json!(["all"])
     );
     assert_eq!(
         result["invocation"],
         serde_json::json!({"module_args": {
-            "gather_subset": ["min"],
+            "gather_subset": ["all"],
             "gather_timeout": 10,
             "filter": [],
             "fact_path": "/etc/ansible/facts.d",
@@ -156,7 +180,7 @@ fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
 #[test]
 #[cfg(target_os = "linux")]
 fn the_time_zone_names_match_python_on_this_machine() {
-    let Some(result) = answer_here() else {
+    let Some(result) = answer_here("min") else {
         return;
     };
     let date_time = &result["ansible_facts"]["ansible_date_time"];

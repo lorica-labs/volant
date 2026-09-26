@@ -197,20 +197,21 @@ fn a_native_that_panics_hands_the_task_back() {
     assert_eq!(ran.path, ExecPath::Native);
 }
 
-/// The native `setup` through the dispatcher: `min` answered under the payload's interpreter,
-/// with the `changed: false` a module result gets, and the default subset handed to the payload
-/// with the reason.
+/// The native `setup` through the dispatcher: `min` and the default subset answered under the
+/// payload's interpreter, with the `changed: false` a module result gets, and a subset naming a
+/// collector the native does not run handed to the payload with the reason.
 ///
 /// Runs on the machine's own facts. On a host outside the native's subset (a runner with
-/// `/usr/bin/rpm`) the first task hands back, and the test asserts the reason is one of those
-/// hosts' and checks the answer no further; the second task's hand-back is decided by the
+/// `/usr/bin/rpm`) the first two tasks hand back, and the test asserts the reason is one of
+/// those hosts' and checks the answer no further; the third task's hand-back is decided by the
 /// arguments alone and is checked everywhere.
 ///
 /// What would make this red: the native given no interpreter (the dispatcher's context left
-/// empty, which hands back for a reason no host gives), or a subset outside `min` answered.
+/// empty, which hands back for a reason no host gives), or a subset naming a collector the
+/// native does not run answered.
 #[test]
 #[cfg(target_os = "linux")]
-fn setup_answers_min_and_hands_the_default_subset_back() {
+fn setup_answers_the_default_subset_and_hands_a_foreign_one_back() {
     let scratch = Scratch::new("setup");
     let mut agent = Agent::spawn(&scratch.0);
     agent.hello();
@@ -220,7 +221,8 @@ fn setup_answers_min_and_hands_the_default_subset_back() {
         task
     };
     let (result, ran) = agent.run_one(1, with_python(json!({"gather_subset": ["min"]})));
-    if ran.path == ExecPath::Native {
+    let inside = ran.path == ExecPath::Native;
+    if inside {
         assert_eq!(result.0["changed"], false);
         assert_eq!(result.0["ansible_facts"]["module_setup"], true);
         assert_eq!(result.0["ansible_facts"]["ansible_pkg_mgr"], "apt");
@@ -234,8 +236,24 @@ fn setup_answers_min_and_hands_the_default_subset_back() {
     }
 
     let (result, ran) = agent.run_one(2, with_python(json!({})));
+    if inside {
+        assert_eq!(ran.path, ExecPath::Native, "{:?}", ran.reason);
+        assert_eq!(result.0["ansible_facts"]["gather_subset"], json!(["all"]));
+        assert!(result.0["ansible_facts"]["ansible_processor_vcpus"].is_i64());
+    } else {
+        let reason = ran.reason.as_deref().unwrap_or_default();
+        assert!(
+            ran.path == ExecPath::Fallback && setup_exits::is_host_exit(reason),
+            "the default subset handed back, and not for a host outside the subset: {ran:?}"
+        );
+    }
+
+    let (result, ran) = agent.run_one(3, with_python(json!({"gather_subset": ["virtual"]})));
     assert_eq!(ran.path, ExecPath::Fallback);
-    assert_eq!(ran.reason.as_deref(), Some("gather_subset defaults to all"));
+    assert_eq!(
+        ran.reason.as_deref(),
+        Some("gather_subset names 'virtual', whose facts the native does not collect")
+    );
     assert_python_ran(&result);
 }
 

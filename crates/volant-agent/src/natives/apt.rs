@@ -290,7 +290,7 @@ fn plan(
     // The module compares naive local times and makes `cache_update_time` with `mktime`: both
     // equal their UTC counterparts only while the zone keeps one offset around the stamp and
     // from it to now.
-    let offsets: Option<Vec<i64>> = [seconds - 3600, seconds, seconds + 3600, now_seconds]
+    let offsets: Option<Vec<libc::c_long>> = [seconds - 3600, seconds, seconds + 3600, now_seconds]
         .into_iter()
         .map(utc_offset)
         .collect();
@@ -749,12 +749,12 @@ fn from_timestamp(sec: i64, nsec: i64) -> (i64, i64) {
 }
 
 /// The local zone's offset from UTC at `seconds`, as the C library reads it.
-fn utc_offset(seconds: i64) -> Option<i64> {
+fn utc_offset(seconds: i64) -> Option<libc::c_long> {
     let time = libc::time_t::try_from(seconds).ok()?;
     // SAFETY: `tm` is plain data, and `localtime_r` writes it whole or returns null.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let done = unsafe { libc::localtime_r(&raw const time, &raw mut tm) };
-    (!done.is_null()).then(|| i64::from(tm.tm_gmtoff))
+    (!done.is_null()).then_some(tm.tm_gmtoff)
 }
 
 /// `module.get_bin_path(name)`: the first executable file of that name along the module's

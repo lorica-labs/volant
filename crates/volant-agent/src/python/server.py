@@ -213,6 +213,7 @@ class Outside:
         import sysconfig
 
         self.path_finder = importlib.machinery.PathFinder
+        self.frozen = importlib.machinery.FrozenImporter
         self.blob = blob
         self.stdlib = {sysconfig.get_path("stdlib"), sysconfig.get_path("platstdlib")}
         self.refused = False
@@ -229,12 +230,25 @@ class Outside:
             return None
         spec = self.path_finder.find_spec(name)
         if spec is None:
-            return None
-        if spec.has_location:
+            # Built in, frozen, or not there at all: the import system says which, as it would in
+            # the child. Anything else serving the name is a finder a third-party package
+            # installed (an editable install's, setuptools' `distutils` redirect), and what it
+            # serves is checked by nothing here.
+            if name in sys.builtin_module_names or self.frozen.find_spec(name) is not None:
+                return None
+            if not any(
+                finder is not self and finder.find_spec(name, None, None) is not None
+                for finder in sys.meta_path
+                if hasattr(finder, "find_spec") and finder is not self.path_finder
+            ):
+                return None
+        if spec is None:
+            locations = []
+        elif spec.has_location:
             locations = [spec.origin]
         else:
             locations = list(spec.submodule_search_locations or [])
-        if locations and all(self.allowed(location) for location in locations):
+        if spec is not None and locations and all(self.allowed(location) for location in locations):
             return None
         self.refused = True
         raise Refused("not imported ahead: %s" % name, name=name)
@@ -291,6 +305,33 @@ def restore_state(state, cwd):
             live.update(saved)
 
 
+def roll_back(before):
+    """Puts `sys.modules` back as `before` had it, and each package attribute an import bound to a
+    module it dropped: `from pkg import sub` finds `sub` on `pkg` before it looks in
+    `sys.modules`, so a package that stays must not keep the dropped module bound."""
+    changed = {
+        name: module
+        for name, module in list(sys.modules.items())
+        if before.get(name) is not module
+    }
+    for name in changed:
+        if name in before:
+            sys.modules[name] = before[name]
+        else:
+            del sys.modules[name]
+    for name, module in before.items():
+        if sys.modules.get(name) is not module:
+            sys.modules[name] = module
+    for name, module in changed.items():
+        parent, _, child = name.rpartition(".")
+        package = sys.modules.get(parent) if parent else None
+        if package is not None and getattr(package, child, None) is module:
+            if name in before:
+                setattr(package, child, before[name])
+            else:
+                delattr(package, child)
+
+
 def preimport(module_fqn, blob):
     """Imports, in this parent, what `module_fqn` imports whenever it loads, so the children of its
     later tasks find it done. Measured, `systemd_service` spends 207 ms of its 229 importing.
@@ -325,7 +366,7 @@ def preimport(module_fqn, blob):
 
     def load(node, where):
         """Runs one import statement; False when it failed as it would in the child."""
-        before = set(sys.modules)
+        before = dict(sys.modules)
         outside.refused = False
         failed = False
         try:
@@ -340,8 +381,7 @@ def preimport(module_fqn, blob):
         except BaseException:
             failed = True
         if failed or outside.refused or process_state() != state:
-            for name in set(sys.modules) - before:
-                del sys.modules[name]
+            roll_back(before)
             restore_state(state, cwd)
         return not failed
 
@@ -545,6 +585,7 @@ def main():
         streams = drain({"stdout": out_r, "stderr": err_r})
         _, status = os.waitpid(pid, 0)
         timing = read_timing(timing_r)
+        preload = request["module_fqn"] not in preimported and request.get("preload", True)
         write_frame(
             stdout,
             {
@@ -558,14 +599,19 @@ def main():
                 # Sent so the agent's sentence quotes the bound applied here, not a copy of it.
                 "limit": STREAM_LIMIT,
                 "timing": timing,
+                "preloading": preload,
             },
         )
         # Once the result is sent: the task never waits for it, and its timeout never covers it.
-        if request["module_fqn"] not in preimported:
+        # The agent is told when it is done, and waits for that before it sends the next request,
+        # for a bounded time and answering a cancel; past that it gives up on this server and
+        # asks the next one not to preload this module (`preload: false`).
+        if preload:
             preimported.add(request["module_fqn"])
             spec = preimport(request["module_fqn"], blob)
             if spec is not None:
                 specs[request["module_fqn"]] = spec
+            write_frame(stdout, {"preloaded": True})
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
 //! JSON - so there is one framing in the whole agent rather than two.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -43,6 +43,12 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the server gets to hand back a result once its child has been killed. The child is
 /// gone by then, so this only covers the parent reaping it and writing one frame.
 const REAP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a task waits for the server to finish importing ahead for the previous task's module
+/// before it gives up on that server and runs under a fresh one. Measured on `target`, the
+/// heaviest of the proof roles' modules (`systemd_service`) takes about 200 ms; the margin is for
+/// a loaded host, and the bound is what keeps an import that blocks from reaching the task.
+const PRELOAD_WAIT: Duration = Duration::from_secs(3);
 
 /// How long the agent waits for a dead server's stderr to reach its end before it reports what
 /// has arrived. Long enough for a pipe that is already closed to be drained, short enough that a
@@ -81,6 +87,19 @@ pub struct Server {
     environment: BTreeMap<String, String>,
     /// What the last result frame said about the task's time.
     timing: Timing,
+    /// The module the server is importing ahead for, once its result frame said it would.
+    preloading: Option<String>,
+    /// Modules a server gave up on importing ahead for in time; its replacements are asked not
+    /// to import them ahead again.
+    abandoned: HashSet<String>,
+}
+
+/// Where the server stands before a task is sent to it.
+enum Settled {
+    Ready,
+    Cancelled,
+    /// Still importing ahead for this module once `PRELOAD_WAIT` has passed.
+    Stuck(String),
 }
 
 impl Server {
@@ -168,6 +187,8 @@ impl Server {
             blob: blob.to_path_buf(),
             environment: environment.clone(),
             timing: Timing::default(),
+            preloading: None,
+            abandoned: HashSet::new(),
         };
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
@@ -195,21 +216,28 @@ impl Server {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> Run {
-        let outcome = match self.attempt(payload, args, context, cancelled) {
+        let outcome = match self.settle(cancelled) {
+            Ok(Settled::Ready) => self.attempt(payload, args, context, cancelled),
+            Ok(Settled::Cancelled) => return Run::Cancelled,
+            // Given up on rather than waited for: the task runs under a fresh server, which is
+            // asked not to import that module ahead again.
+            Ok(Settled::Stuck(module)) => {
+                self.abandoned.insert(module);
+                if let Err(run) = self.replace(cancelled) {
+                    return run;
+                }
+                self.attempt(payload, args, context, cancelled)
+            }
+            Err(err) => Err(err),
+        };
+        let outcome = match outcome {
             // The server had imported from a directory that has changed since, and ended rather
             // than fork a child from what it imported then: a fresh one runs the task.
-            // A replacement that cannot start fails the task with its own words: the old
-            // server's stderr belongs to a process that had nothing wrong with it.
             Ok(None) => {
-                match Server::start_in(&self.interpreter, &self.blob, &self.environment, cancelled)
-                {
-                    Ok(fresh) => {
-                        *self = fresh;
-                        self.attempt(payload, args, context, cancelled)
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Interrupted => return Run::Cancelled,
-                    Err(err) => return Run::Done(fail(format!("{err}"), None)),
+                if let Err(run) = self.replace(cancelled) {
+                    return run;
                 }
+                self.attempt(payload, args, context, cancelled)
             }
             other => other,
         };
@@ -241,6 +269,69 @@ impl Server {
         }
     }
 
+    /// Puts a fresh server in this one's place, with the same interpreter, payload and
+    /// environment, and the modules this one gave up importing ahead. A replacement that cannot
+    /// start fails the task with its own words: the old server's stderr belongs to a process that
+    /// had nothing wrong with it.
+    fn replace(&mut self, cancelled: &dyn Fn() -> bool) -> Result<(), Run> {
+        match Server::start_in(&self.interpreter, &self.blob, &self.environment, cancelled) {
+            Ok(mut fresh) => {
+                fresh.abandoned = std::mem::take(&mut self.abandoned);
+                *self = fresh;
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => Err(Run::Cancelled),
+            Err(err) => Err(Run::Done(fail(format!("{err}"), None))),
+        }
+    }
+
+    /// Waits, before a task is sent, for the server to finish importing ahead for the previous
+    /// task's module: at most `PRELOAD_WAIT`, and answering `cancelled` every [`CANCEL_POLL`].
+    /// Nothing has been sent yet, so a cancel or a server given up on leaves no frame behind.
+    fn settle(&mut self, cancelled: &dyn Fn() -> bool) -> io::Result<Settled> {
+        let Some(module) = self.preloading.take() else {
+            return Ok(Settled::Ready);
+        };
+        let deadline = Instant::now() + PRELOAD_WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.frames.recv_timeout(left.min(CANCEL_POLL)) {
+                Ok(frame) => {
+                    let frame: Value = serde_json::from_slice(&frame?)?;
+                    if frame.get("preloaded").and_then(Value::as_bool) == Some(true) {
+                        return Ok(Settled::Ready);
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "the python server did not say its imports were done",
+                    ));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if cancelled() {
+                        self.preloading = Some(module);
+                        return Ok(Settled::Cancelled);
+                    }
+                    if Instant::now() >= deadline {
+                        return Ok(Settled::Stuck(module));
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "the python server ended",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Notes, from a result frame, that the server now imports ahead for `module`.
+    fn note_preload(&mut self, frame: &Value, module: &str) {
+        if frame.get("preloading").and_then(Value::as_bool) == Some(true) {
+            self.preloading = Some(module.to_string());
+        }
+    }
+
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -260,6 +351,7 @@ impl Server {
             "extensions": payload.extensions,
             "environment": context.environment,
             "rlimit_nofile": payload.rlimit_nofile,
+            "preload": !self.abandoned.contains(&payload.module_fqn),
         });
         write_frame(&mut self.stdin, &serde_json::to_vec(&request)?)?;
 
@@ -280,7 +372,7 @@ impl Server {
                 && Instant::now() >= end
             {
                 kill_group(pid);
-                self.reap();
+                self.reap(&payload.module_fqn);
                 let seconds = context.timeout.unwrap_or_default().as_secs();
                 return Ok(Some(Run::Done(TaskResult::timed_out(seconds))));
             }
@@ -288,12 +380,13 @@ impl Server {
                 Ok(frame) => {
                     let frame = serde_json::from_slice(&frame?)?;
                     self.timing = timing(&frame);
+                    self.note_preload(&frame, &payload.module_fqn);
                     return Ok(Some(Run::Done(result(&frame))));
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if cancelled() {
                         kill_group(pid);
-                        self.reap();
+                        self.reap(&payload.module_fqn);
                         return Ok(Some(Run::Cancelled));
                     }
                 }
@@ -316,9 +409,16 @@ impl Server {
     /// that cannot finish draining, because a grandchild that called `setsid` still holds the
     /// child's stdout, is killed instead: that is what keeps its orphan frame out of the next
     /// task.
-    fn reap(&mut self) {
-        if self.frame(Instant::now() + REAP_TIMEOUT).is_err() {
-            let _ = self.child.kill();
+    fn reap(&mut self, module: &str) {
+        match self.frame(Instant::now() + REAP_TIMEOUT) {
+            Ok(frame) => {
+                if let Ok(frame) = serde_json::from_slice::<Value>(&frame) {
+                    self.note_preload(&frame, module);
+                }
+            }
+            Err(_) => {
+                let _ = self.child.kill();
+            }
         }
     }
 
@@ -517,9 +617,20 @@ impl Servers {
                     // an environment replaces any other of the same interpreter and payload that
                     // has one, and costs a start when two of them alternate.
                     if !key.2.is_empty() {
-                        self.live.retain(|other, _| {
-                            other.0 != key.0 || other.1 != key.1 || other.2.is_empty()
-                        });
+                        let evicted: Vec<Key> = self
+                            .live
+                            .keys()
+                            .filter(|other| {
+                                other.0 == key.0 && other.1 == key.1 && !other.2.is_empty()
+                            })
+                            .cloned()
+                            .collect();
+                        // Evicted, not stopped: the start it cost is not one of the batch's
+                        // allowance for servers that die.
+                        for other in evicted {
+                            self.live.remove(&other);
+                            self.starts.remove(&other);
+                        }
                     }
                     self.live.insert(key.clone(), server);
                 }
@@ -1015,8 +1126,14 @@ mod tests {
     /// can read host state as it loads, and each child reads it afresh, as the reference's does.
     /// The module_util that imports it stays cold with it.
     ///
+    /// The second module has the `HAS_REQUESTS` shape: its module_util catches the import's
+    /// failure, and the module takes it with `from package import module_util`, which finds the
+    /// module_util on its package before it looks in `sys.modules`.
+    ///
     /// What would make this red: the server importing it (the second task reads the file's old
-    /// content, frozen in the server by the first task's import).
+    /// content, frozen in the server by the first task's import); or the dropped module_util left
+    /// bound on its package (the `probe_from` task reads the `None` it worked out while the
+    /// package was refused).
     #[test]
     fn a_package_outside_the_payload_is_imported_by_each_child() {
         let blob = runpy_blob(&[
@@ -1025,8 +1142,16 @@ mod tests {
                 "import volant_third_party\nVALUE = volant_third_party.VALUE\n",
             ),
             (
+                "ansible/module_utils/maybe_third.py",
+                "try:\n    import volant_third_party\n    VALUE = volant_third_party.VALUE\nexcept ImportError:\n    VALUE = None\n",
+            ),
+            (
                 "ansible/modules/probe.py",
                 "import json, os\nfrom ansible.module_utils.uses_third import VALUE\nprint(json.dumps({\"value\": VALUE, \"parent\": os.getppid()}))\n",
+            ),
+            (
+                "ansible/modules/probe_from.py",
+                "import json, os\nfrom ansible.module_utils import maybe_third\nprint(json.dumps({\"value\": maybe_third.VALUE, \"parent\": os.getppid()}))\n",
             ),
         ]);
         let site = tempdir();
@@ -1053,17 +1178,21 @@ mod tests {
         // Two tasks before the change: the server answers the second only once it has done its
         // imports for the first, so nothing it does races the change.
         for _ in 0..2 {
-            let before = call(&mut server, "ansible.modules.probe");
-            assert_eq!(before.0["value"], "one", "{:?}", before.0);
+            for fqn in ["ansible.modules.probe", "ansible.modules.probe_from"] {
+                let before = call(&mut server, fqn);
+                assert_eq!(before.0["value"], "one", "{fqn}: {:?}", before.0);
+            }
         }
         std::fs::write(&state, "two").unwrap();
-        let after = call(&mut server, "ansible.modules.probe");
-        assert_eq!(after.0["value"], "two", "{:?}", after.0);
-        assert_eq!(
-            after.0["parent"],
-            u64::from(server.child.id()),
-            "the server was replaced"
-        );
+        for fqn in ["ansible.modules.probe", "ansible.modules.probe_from"] {
+            let after = call(&mut server, fqn);
+            assert_eq!(after.0["value"], "two", "{fqn}: {:?}", after.0);
+            assert_eq!(
+                after.0["parent"],
+                u64::from(server.child.id()),
+                "the server was replaced"
+            );
+        }
     }
 
     /// A dependency that sets up the process for its own later use as it loads - its vendored
@@ -1072,8 +1201,9 @@ mod tests {
     /// reference's does, and no other module's task inherits the deprecation.
     ///
     /// What would make this red: the state put back and the module kept (the second `vendoring`
-    /// task cannot import what its dependency's directory holds); or ansible's lists left out of
-    /// the state (the `reader` task returns the deprecation).
+    /// task cannot import what its dependency's directory holds); the dropped module left bound
+    /// on its package (the same, for `vendoring_from`, which takes it with `from ... import`); or
+    /// ansible's lists left out of the state (the `reader` task returns the deprecation).
     #[test]
     fn a_dependency_that_sets_itself_up_as_it_loads_stays_cold() {
         let vendor = tempdir();
@@ -1109,6 +1239,10 @@ mod tests {
                 "ansible/modules/vendoring.py",
                 "import json\nimport ansible.module_utils.vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
             ),
+            (
+                "ansible/modules/vendoring_from.py",
+                "import json\nfrom ansible.module_utils import vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
+            ),
         ]);
         std::fs::write(
             blob.path().join("ansible/module_utils/vendoring.py"),
@@ -1117,8 +1251,13 @@ mod tests {
         .unwrap();
         let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         for _ in 0..2 {
-            let vendored = call(&mut server, "ansible.modules.vendoring");
-            assert_eq!(vendored.0["value"], "vendored", "{:?}", vendored.0);
+            for fqn in [
+                "ansible.modules.vendoring",
+                "ansible.modules.vendoring_from",
+            ] {
+                let vendored = call(&mut server, fqn);
+                assert_eq!(vendored.0["value"], "vendored", "{fqn}: {:?}", vendored.0);
+            }
             let noisy = call(&mut server, "ansible.modules.noisy");
             assert!(!noisy.failed(), "{:?}", noisy.0);
         }
@@ -1230,6 +1369,158 @@ print(json.dumps([
         );
         let seen: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(seen, json!([true, true, false, false, false, false]));
+    }
+
+    /// A loop whose items alternate two environments, all in one batch, runs every item: a server
+    /// replaced because the other environment needed the place was evicted, not stopped, and
+    /// does not spend the batch's allowance for servers that die.
+    ///
+    /// What would make this red: an eviction counted as a start of a server that died (the fifth
+    /// item, the third start of `p1`, is refused as "stopped twice in one batch").
+    #[test]
+    fn a_loop_alternating_two_environments_runs_every_item() {
+        let root = tempdir();
+        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
+        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
+        batch_started();
+        for proxy in ["p1", "p2", "p1", "p2", "p1"] {
+            let mut context = Context::default();
+            context
+                .environment
+                .insert("https_proxy".into(), proxy.into());
+            let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
+            assert!(!result.failed(), "{proxy}: {:?}", result.0);
+        }
+    }
+
+    /// A name no directory on the path holds, served by a finder something else installed (an
+    /// editable install's, setuptools' `distutils` redirect), is refused like any package from
+    /// outside the payload: nothing checked where it comes from.
+    ///
+    /// What would make this red: the server letting the other finder serve it (the task after
+    /// the change reads the file's old content).
+    #[test]
+    fn a_package_another_finder_serves_is_imported_by_each_child() {
+        let blob = runpy_blob(&[
+            (
+                "ansible/module_utils/uses_elsewhere.py",
+                "import volant_served_elsewhere\nVALUE = volant_served_elsewhere.VALUE\n",
+            ),
+            (
+                "ansible/modules/probe.py",
+                "import json\nfrom ansible.module_utils.uses_elsewhere import VALUE\nprint(json.dumps({\"value\": VALUE}))\n",
+            ),
+        ]);
+        let site = tempdir();
+        let elsewhere = tempdir();
+        let state = elsewhere.path().join("state");
+        std::fs::write(&state, "one").unwrap();
+        let state_literal = format!("{:?}", state.to_str().unwrap());
+        let source = elsewhere.path().join("served.py");
+        std::fs::write(
+            &source,
+            format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
+        )
+        .unwrap();
+        let source_literal = format!("{:?}", source.to_str().unwrap());
+        std::fs::write(
+            site.path().join("sitecustomize.py"),
+            format!(
+                "import importlib.util, sys\n\n\nclass Elsewhere:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"volant_served_elsewhere\":\n            return importlib.util.spec_from_file_location(name, {source_literal})\n        return None\n\n\nsys.meta_path.append(Elsewhere())\n"
+            ),
+        )
+        .unwrap();
+        let environment = BTreeMap::from([
+            (
+                "PYTHONPATH".to_string(),
+                site.path().to_str().unwrap().to_string(),
+            ),
+            ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
+        ]);
+        let mut server =
+            Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
+        for _ in 0..2 {
+            let before = call(&mut server, "ansible.modules.probe");
+            assert_eq!(before.0["value"], "one", "{:?}", before.0);
+        }
+        std::fs::write(&state, "two").unwrap();
+        let after = call(&mut server, "ansible.modules.probe");
+        assert_eq!(after.0["value"], "two", "{:?}", after.0);
+    }
+
+    /// A server still importing ahead when the next task comes is waited for a bounded time, then
+    /// given up on: the task runs under a fresh server instead of failing, and the fresh server
+    /// is asked not to import that module ahead again.
+    ///
+    /// The dependency blocks in the server alone, for as long as the gate stays shut.
+    ///
+    /// What would make this red: the request sent straight to the busy server (the task waits for
+    /// a pid that never comes and fails "did not answer"); or the module imported ahead again by
+    /// the replacement (the third task finds it busy in turn and runs under yet another server).
+    #[test]
+    fn a_server_still_importing_ahead_is_given_up_on_not_waited_for() {
+        let (blob, gate) = gated_blob();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let first = call(&mut server, "ansible.modules.probe");
+        assert!(!first.failed(), "{:?}", first.0);
+        let second = call(&mut server, "ansible.modules.probe");
+        assert!(!second.failed(), "{:?}", second.0);
+        assert_ne!(second.0["parent"], first.0["parent"]);
+        let third = call(&mut server, "ansible.modules.probe");
+        assert!(!third.failed(), "{:?}", third.0);
+        assert_eq!(
+            third.0["parent"], second.0["parent"],
+            "the replacement imported the module ahead again"
+        );
+        std::fs::write(gate, "").unwrap();
+    }
+
+    /// A cancel while the task waits for the server to finish importing ahead ends the wait, and
+    /// the server is kept for the next task.
+    ///
+    /// What would make this red: the wait deaf to the cancel (it runs out, the server is given
+    /// up on, and the task after the cancel runs under another one).
+    #[test]
+    fn a_cancel_ends_the_wait_for_the_server_s_imports() {
+        let (blob, gate) = gated_blob();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let first = call(&mut server, "ansible.modules.probe");
+        assert!(!first.failed(), "{:?}", first.0);
+        let cancelled = server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| true,
+        );
+        assert!(matches!(cancelled, Run::Cancelled));
+        std::fs::write(&gate, "").unwrap();
+        let after = call(&mut server, "ansible.modules.probe");
+        assert!(!after.failed(), "{:?}", after.0);
+        assert_eq!(
+            after.0["parent"], first.0["parent"],
+            "the server was replaced"
+        );
+    }
+
+    /// A payload whose `probe` imports a dependency that, in the server alone, blocks until the
+    /// returned gate file exists. The module reports the server it ran under.
+    fn gated_blob() -> (TempDir, PathBuf) {
+        let blob = runpy_blob(&[(
+            "ansible/modules/probe.py",
+            "import json, os\nimport ansible.module_utils.gated\nprint(json.dumps({\"parent\": os.getppid()}))\n",
+        )]);
+        // In the payload itself, which the server does not watch for changes.
+        let gate = blob.path().join("gate-open");
+        let gate_literal = format!("{:?}", gate.to_str().unwrap());
+        std::fs::write(
+            blob.path().join("ansible/module_utils/gated.py"),
+            format!(
+                "import os, sys, time\nif getattr(sys.modules[\"__main__\"], \"__file__\", None) is None:\n    while not os.path.exists({gate_literal}):\n        time.sleep(0.01)\n"
+            ),
+        )
+        .unwrap();
+        (blob, gate)
     }
 
     /// A replacement that cannot start fails the task with its own words, not the old server's.

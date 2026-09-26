@@ -824,8 +824,10 @@ pub(super) async fn drive_host(
                     let delegate_name = delegate.as_ref().map(|(name, _)| name.clone());
                     let target = delegate_name.clone().unwrap_or_else(|| name.clone());
                     let target_vars = running_host_vars(delegate.as_ref(), &items);
+                    // The host's own map is enough here: every connection setting is a name a
+                    // gather strips, so none of them is ever in the shared map beside it.
                     let transport =
-                        match Transport::for_vars(&target, target_vars, &options.defaults) {
+                        match Transport::for_vars(&target, &target_vars.map, &options.defaults) {
                             Ok(transport) => transport.shared(
                                 options.control_dir.as_deref(),
                                 &name,

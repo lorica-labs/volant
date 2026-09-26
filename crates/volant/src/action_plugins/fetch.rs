@@ -102,7 +102,6 @@ impl Fetch {
         let flat = flag(args, "flat", false);
         let host = ctx
             .item_vars
-            .map
             .get("inventory_hostname")
             .and_then(Value::as_str)
             .unwrap_or_default()

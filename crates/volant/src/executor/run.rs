@@ -1125,7 +1125,9 @@ pub(super) fn running_host_vars<'a>(
 /// A blank value is unset too, the way a blank `ansible_remote_tmp` already is: a playbook
 /// writing `"{{ py_override | default('') }}"` asked for nothing, and an empty path would have
 /// the host trying to start nothing and naming nothing when it failed.
-pub(super) fn requested_interpreter(vars: &Map<String, Value>) -> Option<String> {
+pub(super) fn requested_interpreter<V: crate::vars::HostSettings + ?Sized>(
+    vars: &V,
+) -> Option<String> {
     crate::vars::host_setting(vars, "ansible_python_interpreter")
         .and_then(Value::as_str)
         .map(str::trim)

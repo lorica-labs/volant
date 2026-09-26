@@ -265,6 +265,22 @@ fn lost(module: &str) -> TaskResult {
 mod tests {
     use super::*;
 
+    /// A gathered fact sits in the shared map beside the host's own, not in it, and the backend
+    /// `package` and `service` pick is read off it all the same.
+    ///
+    /// What would make this red: `fact` reading the host's own map alone, which misses every
+    /// gathered fact and sends a filtered `setup` for a manager the host already reported.
+    #[test]
+    fn a_gathered_fact_is_read_from_the_shared_map() {
+        let shared: Map<String, Value> =
+            serde_json::from_str(r#"{"ansible_facts": {"pkg_mgr": "apt"}}"#).unwrap();
+        let vars = HostVars {
+            shared: std::sync::Arc::new(shared),
+            ..HostVars::default()
+        };
+        assert_eq!(fact(&vars, "pkg_mgr"), Some("apt"));
+    }
+
     /// The list holds what the reference runs through an action plugin and nothing this
     /// release already runs itself.
     ///

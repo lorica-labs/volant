@@ -16,6 +16,9 @@ use crate::yaml;
 /// One host's merged variables, with the inventory-wide view its templates read `hostvars`
 /// from. The two travel together because every render a host does needs both, and the view is
 /// shared rather than copied into the map: see `crate::template::Vars`.
+///
+/// There is deliberately no `Deref` to `map`: a gathered fact is in `shared`, so a caller that
+/// reads the map as the host's variables misses it. `get` reads both.
 #[derive(Debug, Clone, Default)]
 pub struct HostVars {
     pub map: Map<String, Value>,
@@ -63,20 +66,6 @@ impl HostVars {
     /// hand rather than through a render goes through here, so the two answer alike.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.shared.get(key).or_else(|| self.map.get(key))
-    }
-}
-
-impl std::ops::Deref for HostVars {
-    type Target = Map<String, Value>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
-
-impl std::ops::DerefMut for HostVars {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.map
     }
 }
 

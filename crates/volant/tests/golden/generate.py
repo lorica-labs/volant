@@ -692,6 +692,9 @@ NATIVE_USER = "volantshape"
 # A group of its own, not the user's name: `userdel` deletes a primary group named after the user,
 # which would leave `group-removed` nothing to remove.
 NATIVE_GROUP = "volantgrp"
+# The account's home, which no case creates; removed before and after all the same, since a
+# `user` task that leaves `create_home` at its default creates it.
+NATIVE_HOME = "/nonexistent-volantshape"
 STAT_VOLATILE = [f"stat.{key}" for key in ("atime", "mtime", "ctime", "inode", "dev", "version")]
 # The `systemctl show` properties that move while a unit runs: times, process ids, the invocation,
 # resource counters. Every other `status` value is compared.
@@ -1254,7 +1257,7 @@ def natives():
     removal = [
         {"name": f"cleanup-{module}", module: {"name": who, "state": "absent"}, "become": True}
         for module, who in (("user", NATIVE_USER), ("group", NATIVE_GROUP))
-    ]
+    ] + [{"name": "cleanup-home", "file": {"path": NATIVE_HOME, "state": "absent"}, "become": True}]
     if sudo:
         tasks.extend(dict(task, name=f"{task['name']}-before") for task in removal)
     account = {
@@ -1263,7 +1266,7 @@ def natives():
         "group": NATIVE_GROUP,
         "shell": "/bin/sh",
         "create_home": False,
-        "home": "/nonexistent-volantshape",
+        "home": NATIVE_HOME,
     }
     case("group-created", "group", {"name": NATIVE_GROUP, "gid": 64999}, changed, become=True)
     case("group-same", "group", {"name": NATIVE_GROUP, "gid": 64999}, same, become=True)
@@ -1271,7 +1274,17 @@ def natives():
     case("user-same", "user", account, same, become=True)
     case("user-shell", "user", dict(account, shell="/bin/bash"), changed, become=True)
     # `!` is already what `useradd` left in shadow: no change, which the path check still catches.
-    case("user-password", "user", {"name": NATIVE_USER, "password": "!"}, same, "fallback", "password", become=True)
+    # `create_home: false` as in `account`: the module's default would create the missing home
+    # and answer `changed` for that, which a machine keeping the home of an earlier run would not.
+    case(
+        "user-password",
+        "user",
+        {"name": NATIVE_USER, "password": "!", "create_home": False},
+        same,
+        "fallback",
+        "password",
+        become=True,
+    )
     case("user-removed", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
     case("user-absent-missing", "user", {"name": NATIVE_USER, "state": "absent"}, same, become=True)
     case("group-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
@@ -1280,7 +1293,17 @@ def natives():
     if sudo:
         package_cleanup = {"name": "cleanup-package", "apt": {"name": NATIVE_PACKAGE, "state": "absent"}, "become": True}
         block["always"] = [dict(task, ignore_errors=True) for task in removal + [unit_cleanup, package_cleanup]]
-    play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": [block]}]
+    # The interpreter named in the play, as a playbook pins it, so the recording, the replay under
+    # Volant and the reference's own replay all run the same one: left to discovery, both engines
+    # take the first of python3.13, python3.12, ... that the host has, which on a runner with
+    # python3.12 is `/usr/bin/python3.12` and shows in `ansible_python.executable`.
+    play = [{
+        "hosts": "localhost",
+        "gather_facts": False,
+        "connection": "local",
+        "vars": {"ansible_python_interpreter": "/usr/bin/python3"},
+        "tasks": [block],
+    }]
     if sudo and _installed(NATIVE_PACKAGE):
         print(
             f"{NATIVE_PACKAGE} is installed on this machine, and the play installs and removes it: "
@@ -1297,8 +1320,6 @@ def natives():
         ANSIBLE_CALLBACK_PLUGINS=os.path.join(HERE, "callback_plugins"),
         ANSIBLE_STDOUT_CALLBACK="golden_json",
         ANSIBLE_NOCOLOR="1",
-        # Same reasoning as python_modules(): naming the interpreter outright skips discovery.
-        ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
     )
     shutil.rmtree(t, ignore_errors=True)
     os.makedirs(t)
@@ -1327,6 +1348,7 @@ def natives():
     if sudo:
         left = [f"{db} {who}" for db, who in (("passwd", NATIVE_USER), ("group", NATIVE_GROUP)) if _succeeds("getent", db, who)]
         left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
+        left += [NATIVE_HOME] * os.path.exists(NATIVE_HOME)
         if left:
             print(f"still on this machine: {', '.join(left)}; remove by hand", file=sys.stderr)
             return 1

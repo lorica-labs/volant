@@ -1938,6 +1938,7 @@
   },
   "user-password": {
     "args": {
+      "create_home": false,
       "name": "volantshape",
       "password": "!"
     },

@@ -6,17 +6,18 @@
 //! cannot be told, or on any error the reference reports in words this file does not know.
 //! `file` and `lsattr` run as the reference runs them, which is most of this native's time.
 
+use std::collections::BTreeMap;
 use std::fs::{self, Metadata};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::process::{Command, Stdio};
+use std::path::Path;
 
 use serde_json::{Map, Value, json};
-use volant_protocol::TaskResult;
 
 use super::common::{
-    ArgSpec, access, bin_path, bool_param, check_names, invocation, lookup_group, lookup_user,
-    module_args, path_param, realpath, str_param, strerror,
+    ArgSpec, Clock, Stop, access, bin_path, bool_param, check, check_names, clock, invocation,
+    lookup_group, lookup_user, module_args, native_run, path_param, realpath, run_program,
+    str_param, strerror,
 };
 use super::{Native, NativeRun};
 use crate::modules::Context;
@@ -90,14 +91,18 @@ const FILE_ATTRIBUTES: &[(char, &str)] = &[
     ('Z', "compresseddirty"),
 ];
 
-fn run(args: &Map<String, Value>, context: &Context, _: &dyn Fn() -> bool) -> NativeRun {
-    match answer(args, context) {
-        Ok(result) => NativeRun::Done(TaskResult(result)),
-        Err(reason) => NativeRun::Fallback(reason),
-    }
+/// `checksum_algorithm`'s `choices`, validated on every call whatever `get_checksum` says.
+const CHECKSUMS: &[&str] = &["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
+
+fn run(args: &Map<String, Value>, context: &Context, cancelled: &dyn Fn() -> bool) -> NativeRun {
+    native_run(answer(args, context, clock(context, cancelled)), context)
 }
 
-fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, String> {
+fn answer(
+    args: &Map<String, Value>,
+    context: &Context,
+    clock: Clock,
+) -> Result<Map<String, Value>, Stop> {
     if !cfg!(target_os = "linux") {
         return Err("the native answers on Linux only".into());
     }
@@ -111,7 +116,12 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
     let get_checksum = bool_param(&params, "get_checksum")?;
     let get_mime = bool_param(&params, "get_mime")?;
     let get_attributes = bool_param(&params, "get_attributes")?;
-    if get_checksum && str_param(&params, "checksum_algorithm")? != Some("sha1") {
+    // The reference fails its argument validation on anything else, taken or not.
+    let algorithm = str_param(&params, "checksum_algorithm")?;
+    if !algorithm.is_some_and(|name| CHECKSUMS.contains(&name)) {
+        return Err("checksum_algorithm is not one of the reference's choices".into());
+    }
+    if get_checksum && algorithm != Some("sha1") {
         return Err("checksum_algorithm is not sha1".into());
     }
 
@@ -122,14 +132,14 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
         fs::symlink_metadata(path)
     };
     let stat = match st {
-        Ok(st) => describe(path, &st, get_checksum, get_mime, get_attributes)?,
+        Ok(st) => describe(path, &st, get_checksum, get_mime, get_attributes, clock)?,
         Err(err) if err.raw_os_error() == Some(libc::ENOENT) => json!({"exists": false}),
         Err(err) => {
             // `fail_json(msg=ex.strerror, exception=ex)`.
             let msg = err
                 .raw_os_error()
                 .and_then(strerror)
-                .ok_or_else(|| format!("stat of {path}: {err}"))?;
+                .ok_or_else(|| Stop::HandBack(format!("stat of {path}: {err}")))?;
             result.insert("failed".into(), Value::Bool(true));
             result.insert("msg".into(), msg.into());
             result.insert("invocation".into(), invocation(SPEC, args));
@@ -149,7 +159,8 @@ fn describe(
     get_checksum: bool,
     get_mime: bool,
     get_attributes: bool,
-) -> Result<Value, String> {
+    clock: Clock,
+) -> Result<Value, Stop> {
     let mode = st.mode();
     let kind = mode & S_IFMT;
     let bit = |mask: u32| Value::Bool(mode & mask != 0);
@@ -210,39 +221,45 @@ fn describe(
             .ok_or_else(|| format!("the target of {path} is not UTF-8"))?;
         out.insert("lnk_target".into(), target.into());
     }
-    if let Some(user) = lookup_user(&st.uid().to_string())? {
+    if let Some(user) = lookup_user(&st.uid().to_string(), clock)? {
         out.insert("pw_name".into(), user.name.into());
     }
-    if let Some(group) = lookup_group(&st.gid().to_string())? {
+    if let Some(group) = lookup_group(&st.gid().to_string(), clock)? {
         out.insert("gr_name".into(), group.name.into());
     }
     if kind == S_IFREG && readable && get_checksum {
-        out.insert("checksum".into(), sha1_of(path)?);
+        out.insert("checksum".into(), sha1_of(path, clock)?);
     }
     if get_mime {
-        let (mimetype, charset) = mime(path)?;
+        let (mimetype, charset) = mime(path, clock)?;
         out.insert("mimetype".into(), mimetype.into());
         out.insert("charset".into(), charset.into());
     }
     if get_attributes {
-        attributes(path, &mut out)?;
+        attributes(path, &mut out, clock)?;
     }
     Ok(Value::Object(out))
 }
 
 /// `digest_from_file(path, 'sha1')`: `None` when the path no longer exists.
-fn sha1_of(path: &str) -> Result<Value, String> {
+///
+/// The deadline and the cancel are looked at every 16 blocks (1 MiB): a disk image takes
+/// minutes, and the Python module would be killed at the task's `timeout`.
+fn sha1_of(path: &str, clock: Clock) -> Result<Value, Stop> {
     if fs::metadata(path).is_err() {
         return Ok(Value::Null);
     }
     let mut file = fs::File::open(path).map_err(|err| format!("opening {path}: {err}"))?;
     let mut sha1 = sha1_smol::Sha1::new();
     let mut block = vec![0; 64 * 1024];
-    loop {
+    for round in 0_u64.. {
+        if round % 16 == 0 {
+            check(clock)?;
+        }
         match file.read(&mut block) {
             Ok(0) => break,
             Ok(n) => sha1.update(&block[..n]),
-            Err(err) => return Err(format!("reading {path}: {err}")),
+            Err(err) => return Err(Stop::HandBack(format!("reading {path}: {err}"))),
         }
     }
     Ok(sha1.digest().to_string().into())
@@ -250,13 +267,13 @@ fn sha1_of(path: &str) -> Result<Value, String> {
 
 /// `file --mime-type --mime-encoding`, read as the reference reads it: `unknown` for whatever
 /// it cannot take apart, and when there is no `file`.
-fn mime(path: &str) -> Result<(String, String), String> {
+fn mime(path: &str, clock: Clock) -> Result<(String, String), Stop> {
     let mut mimetype = "unknown".to_string();
     let mut charset = "unknown".to_string();
     let Some(file) = bin_path("file") else {
         return Ok((mimetype, charset));
     };
-    let Some(out) = run_command(&file, &["--mime-type", "--mime-encoding", path])? else {
+    let Some(out) = run_command(&file, &["--mime-type", "--mime-encoding", path], clock)? else {
         return Ok((mimetype, charset));
     };
     // `mimetype, charset = out.rsplit(':', 1)[1].split(';')`, then `charset.split('=')[1]`.
@@ -274,14 +291,14 @@ fn mime(path: &str) -> Result<(String, String), String> {
 
 /// `get_file_attributes(path)` into `out`: `lsattr -vd`, its first word the version and its
 /// second the flags.
-fn attributes(path: &str, out: &mut Map<String, Value>) -> Result<(), String> {
+fn attributes(path: &str, out: &mut Map<String, Value>, clock: Clock) -> Result<(), Stop> {
     out.insert("version".into(), Value::Null);
     out.insert("attributes".into(), json!([]));
     out.insert("attr_flags".into(), "".into());
     let Some(lsattr) = bin_path("lsattr") else {
         return Ok(());
     };
-    let Some(text) = run_command(&lsattr, &["-vd", path])? else {
+    let Some(text) = run_command(&lsattr, &["-vd", path], clock)? else {
         return Ok(());
     };
     let mut words = text.split_whitespace();
@@ -301,27 +318,24 @@ fn attributes(path: &str, out: &mut Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
 
-/// `run_command`'s standard output when the command exits 0, `None` otherwise. A command that
-/// cannot start fails the reference's module outright; the native hands back instead.
-fn run_command(program: &str, args: &[&str]) -> Result<Option<String>, String> {
-    let out = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("running {program}: {err}"))?;
-    if !out.status.success() {
-        return Ok(None);
+/// `run_command`'s standard output when the command exits 0, `None` otherwise, run through
+/// `command`'s executor under the task's clock. A command that cannot start fails the
+/// reference's module outright; the native hands back instead.
+fn run_command(program: &str, args: &[&str], clock: Clock) -> Result<Option<String>, Stop> {
+    match run_program(&BTreeMap::new(), clock, Path::new(program), args)? {
+        Some((0, out)) => Ok(Some(out)),
+        Some(_) => Ok(None),
+        None => Err(Stop::HandBack(format!("{program} cannot be run"))),
     }
-    String::from_utf8(out.stdout)
-        .map(Some)
-        .map_err(|_| format!("{program} printed something other than UTF-8"))
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::common::golden::{Scratch, differences};
+    use volant_protocol::TaskResult;
+
+    use super::super::common::golden::{Scratch, differences, within};
     use super::*;
 
     /// The index's volatile keys, plus the `lsattr` ones: the flags depend on the file system.
@@ -410,6 +424,33 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
+    /// A checksum of a disk image stops at the task's `timeout` with the answer the Python path
+    /// gives, and at the controller's cancel: a 64 GiB sparse file, which SHA-1 takes minutes
+    /// over.
+    ///
+    /// What would make this red: the loop not looking at the clock (the test runs for minutes
+    /// and nextest ends it), or the timeout answered as anything else.
+    #[test]
+    fn a_long_checksum_stops_at_the_timeout_and_the_cancel() {
+        let scratch = Scratch::new("stat-sparse");
+        let image = scratch.path("disk.img");
+        fs::File::create(&image).unwrap().set_len(64 << 30).unwrap();
+        let args = json!({"path": image, "get_mime": false, "get_attributes": false});
+        let context = Context {
+            timeout: Some(std::time::Duration::from_secs(1)),
+            ..Context::default()
+        };
+        let timed = args.clone();
+        let NativeRun::Done(result) = within(30, move || ask(&timed, &context)) else {
+            panic!("no answer")
+        };
+        assert_eq!(result, TaskResult::timed_out(1));
+        let cancelled = within(30, move || {
+            run(args.as_object().unwrap(), &Context::default(), &|| true)
+        });
+        assert!(matches!(cancelled, NativeRun::Cancelled));
+    }
+
     /// Outside the subset the task goes to the Python module: another checksum, a task
     /// `environment`, a boolean the reference would convert, an option given twice, a path the
     /// reference would expand.
@@ -435,6 +476,18 @@ mod tests {
             (json!({"path": file, "dest": file}), Context::default()),
             (json!({"path": "~/f.txt"}), Context::default()),
             (json!({"path": "$HOME/f.txt"}), Context::default()),
+            (
+                json!({"path": file, "get_checksum": false, "checksum_algorithm": "sha3"}),
+                Context::default(),
+            ),
+            (
+                json!({"path": file, "get_checksum": false, "checksum": "SHA256"}),
+                Context::default(),
+            ),
+            (
+                json!({"path": file, "get_checksum": false, "checksum_algorithm": 1}),
+                Context::default(),
+            ),
         ] {
             assert!(
                 matches!(ask(&args, &context), NativeRun::Fallback(_)),

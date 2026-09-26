@@ -4,18 +4,63 @@
 //!
 //! The rule every function here serves: a native answers only where it can say what the
 //! reference would say. Where that cannot be known without the Python module, a function
-//! returns the reason as an `Err(String)`, and the native hands the task back with it, before
-//! anything on the host changed.
+//! returns the reason as an `Err(String)` (or `Stop::HandBack`), and the native hands the task
+//! back with it, before anything on the host changed. Whatever runs a program or can take long
+//! does so under a `Clock`, the task's `timeout` and the controller's cancel.
 
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use serde_json::{Map, Value};
+
+pub use super::setup::{Clock, Stop, run as run_program};
+
+/// `Stop::TimedOut` once the task's deadline has passed, `Stop::Cancelled` once the controller
+/// has cancelled it: for a loop of the native's own that can run long.
+pub fn check(clock: Clock) -> Result<(), Stop> {
+    if clock
+        .deadline
+        .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    {
+        return Err(Stop::TimedOut);
+    }
+    if (clock.cancelled)() {
+        return Err(Stop::Cancelled);
+    }
+    Ok(())
+}
+
+/// What a native's answer becomes: the result, the hand-back, or, when the task's `timeout`
+/// ran out, what the Python path answers when the module outlives it.
+pub fn native_run(
+    answer: Result<Map<String, Value>, Stop>,
+    context: &crate::modules::Context,
+) -> super::NativeRun {
+    use super::NativeRun;
+    match answer {
+        Ok(result) => NativeRun::Done(volant_protocol::TaskResult(result)),
+        Err(Stop::HandBack(reason)) => NativeRun::Fallback(reason),
+        Err(Stop::TimedOut) => NativeRun::Done(volant_protocol::TaskResult::timed_out(
+            context.timeout.unwrap_or_default().as_secs(),
+        )),
+        Err(Stop::Cancelled) => NativeRun::Cancelled,
+    }
+}
+
+/// The clock of a task: its `timeout` from now, and the controller's cancel.
+pub fn clock<'a>(context: &crate::modules::Context, cancelled: &'a dyn Fn() -> bool) -> Clock<'a> {
+    Clock {
+        deadline: context
+            .timeout
+            .map(|timeout| std::time::Instant::now() + timeout),
+        cancelled,
+    }
+}
 
 /// One entry of a module's `argument_spec`, copied from ansible-core 2.19.12.
 pub struct ArgSpec {
@@ -138,18 +183,31 @@ pub struct Group {
 /// The agent is a static musl binary, with no NSS. `/etc/passwd` answers when `nsswitch.conf`
 /// puts `files` first; an account it does not hold is asked of `getent`, which runs through the
 /// host's own C library and so sees LDAP, sssd or systemd's dynamic users as Python does.
-pub fn lookup_user(name_or_uid: &str) -> Result<Option<Passwd>, String> {
-    Ok(lookup("passwd", "/etc/passwd", 7, name_or_uid)?.map(|(name, uid)| Passwd { name, uid }))
+///
+/// `getent` runs through `command`'s executor under `clock`: the task's `timeout` and cancel
+/// reach a name service that hangs, as they reach the Python module's own lookup.
+pub fn lookup_user(name_or_uid: &str, clock: Clock) -> Result<Option<Passwd>, Stop> {
+    Ok(lookup("passwd", "/etc/passwd", 7, name_or_uid, clock)?
+        .map(|(name, uid)| Passwd { name, uid }))
 }
 
 /// The group `name_or_gid` names, as `lookup_user` finds an account.
-pub fn lookup_group(name_or_gid: &str) -> Result<Option<Group>, String> {
-    Ok(lookup("group", "/etc/group", 4, name_or_gid)?.map(|(name, gid)| Group { name, gid }))
+pub fn lookup_group(name_or_gid: &str, clock: Clock) -> Result<Option<Group>, Stop> {
+    Ok(
+        lookup("group", "/etc/group", 4, name_or_gid, clock)?
+            .map(|(name, gid)| Group { name, gid }),
+    )
 }
 
 /// The name and id of the entry `key` names in the database `db`, read from `file` then from
 /// `getent`. An entry is `fields` colon-separated fields with the id third.
-fn lookup(db: &str, file: &str, fields: usize, key: &str) -> Result<Option<(String, u32)>, String> {
+fn lookup(
+    db: &str,
+    file: &str,
+    fields: usize,
+    key: &str,
+    clock: Clock,
+) -> Result<Option<(String, u32)>, Stop> {
     let id = if !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) {
         Some(
             key.parse::<u32>()
@@ -171,27 +229,21 @@ fn lookup(db: &str, file: &str, fields: usize, key: &str) -> Result<Option<(Stri
         let text = fs::read_to_string(file).map_err(|err| format!("reading {file}: {err}"))?;
         for line in text.lines() {
             if line.starts_with(['+', '-']) {
-                return Err(format!("{file} has NIS compat entries"));
+                return Err(format!("{file} has NIS compat entries").into());
             }
             if let Some(found) = entry(line) {
                 return Ok(Some(found));
             }
         }
     }
-    let out = Command::new("getent")
-        .args([db, key])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|err| format!("running getent: {err}"))?;
-    match out.status.code() {
-        Some(0) => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .find_map(entry)
-            .map(Some)
-            .ok_or_else(|| format!("getent {db} answered no entry for {key}")),
-        Some(2) => Ok(None),
-        _ => Err(format!("getent {db} ended with {}", out.status)),
+    let no_env = BTreeMap::new();
+    match run_program(&no_env, clock, Path::new("getent"), &[db, key])? {
+        Some((0, out)) => Ok(Some(out.lines().find_map(entry).ok_or_else(|| {
+            Stop::HandBack(format!("getent {db} answered no entry for {key}"))
+        })?)),
+        Some((2, _)) => Ok(None),
+        Some((rc, _)) => Err(Stop::HandBack(format!("getent {db} exited {rc}"))),
+        None => Err(Stop::HandBack("getent cannot be run".into())),
     }
 }
 
@@ -215,24 +267,21 @@ pub enum Account {
 }
 
 /// `owner` as `set_owner_if_different` reads it: a number is a uid, anything else a name.
-pub fn owner_account(owner: &str) -> Result<Account, String> {
-    account(owner, |name| Ok(lookup_user(name)?.map(|p| p.uid)))
+pub fn owner_account(owner: &str, clock: Clock) -> Result<Account, Stop> {
+    account(owner, |name| Ok(lookup_user(name, clock)?.map(|p| p.uid)))
 }
 
 /// `group` as `set_group_if_different` reads it.
-pub fn group_account(group: &str) -> Result<Account, String> {
-    account(group, |name| Ok(lookup_group(name)?.map(|g| g.gid)))
+pub fn group_account(group: &str, clock: Clock) -> Result<Account, Stop> {
+    account(group, |name| Ok(lookup_group(name, clock)?.map(|g| g.gid)))
 }
 
-fn account(
-    given: &str,
-    find: impl Fn(&str) -> Result<Option<u32>, String>,
-) -> Result<Account, String> {
+fn account(given: &str, find: impl Fn(&str) -> Result<Option<u32>, Stop>) -> Result<Account, Stop> {
     if !given.is_empty() && given.bytes().all(|b| b.is_ascii_digit()) {
         return given
             .parse()
             .map(Account::Id)
-            .map_err(|_| format!("id {given} is out of range"));
+            .map_err(|_| Stop::HandBack(format!("id {given} is out of range")));
     }
     // Python's `int()` also takes a sign, underscores, spaces and other scripts' digits.
     if given.is_empty()
@@ -241,9 +290,9 @@ fn account(
                 .chars()
                 .all(|c| c.is_numeric() || c.is_whitespace() || "+-_".contains(c)))
     {
-        return Err(format!(
+        return Err(Stop::HandBack(format!(
             "{given:?} is read as a number or not at all by Python"
-        ));
+        )));
     }
     Ok(find(given)?.map_or_else(|| Account::Unknown(given.to_string()), Account::Id))
 }
@@ -472,29 +521,37 @@ pub fn failure(path: &str, msg: String) -> Map<String, Value> {
 ///
 /// A name the host cannot resolve reads as the id, as it does in the reference when there is no
 /// such account; so does one whose lookup failed, which a native rules out before acting.
-pub fn add_path_info(result: &mut Map<String, Value>) {
+///
+/// A lookup that outlives the task's `timeout`, or that the controller cancels, ends the answer
+/// the way the Python module's would end.
+pub fn add_path_info(result: &mut Map<String, Value>, clock: Clock) -> Result<(), Stop> {
     let path = match result.get("path") {
         Some(path) => path,
         None => match result.get("dest") {
             Some(dest) => dest,
-            None => return,
+            None => return Ok(()),
         },
     };
     let Some(path) = path.as_str().map(str::to_string) else {
-        return;
+        return Ok(());
     };
     let (Ok(stat), Ok(lstat)) = (fs::metadata(&path), fs::symlink_metadata(&path)) else {
-        return;
+        return Ok(());
     };
     let (uid, gid) = (lstat.uid(), lstat.gid());
-    let owner = lookup_user(&uid.to_string())
-        .ok()
-        .flatten()
-        .map_or_else(|| uid.to_string(), |p| p.name);
-    let group = lookup_group(&gid.to_string())
-        .ok()
-        .flatten()
-        .map_or_else(|| gid.to_string(), |g| g.name);
+    let name = |found: Result<Option<String>, Stop>, id: u32| match found {
+        Ok(Some(name)) => Ok(name),
+        Ok(None) | Err(Stop::HandBack(_)) => Ok(id.to_string()),
+        Err(stop) => Err(stop),
+    };
+    let owner = name(
+        lookup_user(&uid.to_string(), clock).map(|p| p.map(|p| p.name)),
+        uid,
+    )?;
+    let group = name(
+        lookup_group(&gid.to_string(), clock).map(|g| g.map(|g| g.name)),
+        gid,
+    )?;
     let state = if lstat.file_type().is_symlink() {
         "link"
     } else if stat.is_dir() {
@@ -514,6 +571,7 @@ pub fn add_path_info(result: &mut Map<String, Value>) {
     );
     result.insert("state".into(), state.into());
     result.insert("size".into(), lstat.size().into());
+    Ok(())
 }
 
 /// Python's `str()` of the `OSError` an `os` call on the bytes path `path` raises:
@@ -611,6 +669,7 @@ pub fn realpath(path: &str) -> Result<String, String> {
 mod tests {
     use serde_json::json;
 
+    use super::super::setup::unbounded;
     use super::*;
 
     /// `stat`'s shape against the reference: `dest` given, `path` filled from it, both kept, and
@@ -757,20 +816,65 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn accounts_are_found_by_name_and_by_id() {
-        assert_eq!(lookup_user("0").unwrap().unwrap().name, "root");
-        assert_eq!(lookup_user("root").unwrap().unwrap().uid, 0);
-        assert_eq!(lookup_group("0").unwrap().unwrap().name, "root");
-        assert_eq!(lookup_group("root").unwrap().unwrap().gid, 0);
-        assert!(lookup_user("volant-no-such-user").unwrap().is_none());
-        assert!(matches!(owner_account("1234"), Ok(Account::Id(1234))));
+        let clock = unbounded();
+        assert_eq!(lookup_user("0", clock).unwrap().unwrap().name, "root");
+        assert_eq!(lookup_user("root", clock).unwrap().unwrap().uid, 0);
+        assert_eq!(lookup_group("0", clock).unwrap().unwrap().name, "root");
+        assert_eq!(lookup_group("root", clock).unwrap().unwrap().gid, 0);
+        assert!(lookup_user("volant-no-such-user", clock).unwrap().is_none());
         assert!(matches!(
-            owner_account("volant-no-such-user"),
+            owner_account("1234", clock),
+            Ok(Account::Id(1234))
+        ));
+        assert!(matches!(
+            owner_account("volant-no-such-user", clock),
             Ok(Account::Unknown(_))
         ));
         assert!(
-            owner_account("+12").is_err(),
+            owner_account("+12", clock).is_err(),
             "Python reads +12 as a number"
         );
+    }
+
+    /// An account only the name service knows, as on an LDAP or sssd host: a fake `getent` first
+    /// on `PATH` answers for `volant-ldapuser` (uid 4242), whom `/etc/passwd` does not hold.
+    ///
+    /// What would make this red: the `getent` step dropped, or its exit 0 read as anything but
+    /// the entry; `file` would then fail `chown failed: failed to look up user volant-ldapuser`
+    /// where the reference chowns, and `add_path_info` would print the uid for the owner.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn an_account_only_the_name_service_knows_is_found_through_getent() {
+        let scratch = golden::Scratch::new("getent");
+        golden::fake_getent(
+            &scratch,
+            r#"case "$1 $2" in
+  "passwd volant-ldapuser"|"passwd 4242") echo "volant-ldapuser:x:4242:4242::/:/bin/sh" ;;
+  "group volant-ldapgroup"|"group 4243") echo "volant-ldapgroup:x:4243:" ;;
+  *) exit 2 ;;
+esac"#,
+        );
+        let clock = unbounded();
+        assert!(matches!(
+            owner_account("volant-ldapuser", clock),
+            Ok(Account::Id(4242))
+        ));
+        assert_eq!(
+            lookup_user("4242", clock).unwrap().unwrap().name,
+            "volant-ldapuser"
+        );
+        assert!(matches!(
+            group_account("volant-ldapgroup", clock),
+            Ok(Account::Id(4243))
+        ));
+        assert_eq!(
+            lookup_group("4243", clock).unwrap().unwrap().name,
+            "volant-ldapgroup"
+        );
+        assert!(matches!(
+            owner_account("volant-nobody", clock),
+            Ok(Account::Unknown(_))
+        ));
     }
 
     /// Python's `str()` of an `OSError` raised on a bytes path, glibc's wording.
@@ -858,6 +962,29 @@ pub mod golden {
         }
     }
 
+    /// A `getent` running `body` (`sh`), put first on this test process's `PATH`. Nextest runs
+    /// each test in a process of its own, so no other test sees it.
+    pub fn fake_getent(scratch: &Scratch, body: &str) {
+        let bin = scratch.path("bin");
+        fs::create_dir(&bin).unwrap();
+        let getent = format!("{bin}/getent");
+        fs::write(&getent, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&getent, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        unsafe { std::env::set_var("PATH", format!("{bin}:{path}")) };
+    }
+
+    /// `f`'s answer, run on a thread, or a failure after `secs`: a native that ignores its clock
+    /// would otherwise hold the test until nextest ends it, ten minutes on.
+    pub fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (sent, got) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(f());
+        });
+        got.recv_timeout(std::time::Duration::from_secs(secs))
+            .expect("the native did not stop at the task's timeout or cancel")
+    }
+
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -895,8 +1022,15 @@ pub mod golden {
 
     fn mask(map: &mut Map<String, Value>, scratch: &Scratch) {
         let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
-        let user = super::lookup_user(&uid.to_string()).unwrap().unwrap().name;
-        let group = super::lookup_group(&gid.to_string()).unwrap().unwrap().name;
+        let clock = super::super::setup::unbounded();
+        let user = super::lookup_user(&uid.to_string(), clock)
+            .unwrap()
+            .unwrap()
+            .name;
+        let group = super::lookup_group(&gid.to_string(), clock)
+            .unwrap()
+            .unwrap()
+            .name;
         for (key, value) in map.iter_mut() {
             let placeholder = match (key.as_str(), &*value) {
                 ("uid", v) if *v == uid => Some("<uid>"),

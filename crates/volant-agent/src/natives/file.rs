@@ -12,12 +12,11 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 
 use serde_json::{Map, Value, json};
-use volant_protocol::TaskResult;
 
 use super::common::{
-    Account, ArgSpec, FsError, ModeError, add_path_info, bool_param, check_names, failure,
-    group_account, module_args, os_error, owner_account, parse_mode, path_param, realpath,
-    selinux_enabled, set_fs_attributes, str_param,
+    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, access, add_path_info, bool_param,
+    check, check_names, clock, failure, group_account, module_args, native_run, os_error,
+    owner_account, parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
 };
 use super::{Native, NativeRun};
 use crate::modules::Context;
@@ -111,11 +110,22 @@ enum Stop {
     Fail(Map<String, Value>),
     /// Outside the subset. Only ever returned before anything on the host changed.
     Back(String),
+    /// The task's `timeout` ran out, or the controller cancelled it.
+    Clock(Halt),
 }
 
 impl From<String> for Stop {
     fn from(reason: String) -> Self {
         Stop::Back(reason)
+    }
+}
+
+impl From<Halt> for Stop {
+    fn from(halt: Halt) -> Self {
+        match halt {
+            Halt::HandBack(reason) => Stop::Back(reason),
+            other => Stop::Clock(other),
+        }
     }
 }
 
@@ -152,14 +162,15 @@ impl Attrs {
     }
 }
 
-fn run(args: &Map<String, Value>, context: &Context, _: &dyn Fn() -> bool) -> NativeRun {
-    match answer(args, context) {
-        Ok(result) => NativeRun::Done(TaskResult(result)),
-        Err(reason) => NativeRun::Fallback(reason),
-    }
+fn run(args: &Map<String, Value>, context: &Context, cancelled: &dyn Fn() -> bool) -> NativeRun {
+    native_run(answer(args, context, clock(context, cancelled)), context)
 }
 
-fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, String> {
+fn answer(
+    args: &Map<String, Value>,
+    context: &Context,
+    clock: Clock,
+) -> Result<Map<String, Value>, Halt> {
     if !cfg!(target_os = "linux") {
         return Err("the native answers on Linux only".into());
     }
@@ -175,7 +186,7 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
     check_names(SPEC, args)?;
     let mut params = module_args(SPEC, args);
     if let Some(name) = UNSUPPORTED.iter().find(|name| !params[**name].is_null()) {
-        return Err(format!("{name} is set"));
+        return Err(format!("{name} is set").into());
     }
     for name in ["recurse", "force", "follow", "unsafe_writes"] {
         bool_param(&params, name)?;
@@ -190,14 +201,14 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
     if let Some(mode) = &mode
         && let Err(ModeError::Unsupported(why)) = parse_mode(mode, 0, false)
     {
-        return Err(why);
+        return Err(why.into());
     }
     let attrs = Attrs {
         owner: str_param(&params, "owner")?
-            .map(owner_account)
+            .map(|owner| owner_account(owner, clock))
             .transpose()?,
         group: str_param(&params, "group")?
-            .map(group_account)
+            .map(|group| group_account(group, clock))
             .transpose()?,
         mode,
     };
@@ -231,10 +242,10 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
     params.insert("state".into(), state.clone().into());
 
     let outcome = match state.as_str() {
-        "absent" => ensure_absent(&path),
+        "absent" => ensure_absent(&path, clock),
         "file" => ensure_file(&path, follow, &attrs),
         "directory" => ensure_directory(&path, follow, &attrs),
-        other => return Err(format!("state {other}")),
+        other => return Err(format!("state {other}").into()),
     };
     let mut result = match outcome {
         Ok(result) => result,
@@ -242,9 +253,10 @@ fn answer(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Va
             fail.insert("failed".into(), Value::Bool(true));
             fail
         }
-        Err(Stop::Back(reason)) => return Err(reason),
+        Err(Stop::Back(reason)) => return Err(Halt::HandBack(reason)),
+        Err(Stop::Clock(halt)) => return Err(halt),
     };
-    add_path_info(&mut result);
+    add_path_info(&mut result, clock)?;
     result.insert("invocation".into(), json!({"module_args": params}));
     Ok(result)
 }
@@ -287,7 +299,7 @@ fn attrs_path(path: &str, follow: bool) -> Result<String, String> {
 }
 
 /// `ensure_absent`.
-fn ensure_absent(path: &str) -> Result<Map<String, Value>, Stop> {
+fn ensure_absent(path: &str, clock: Clock) -> Result<Map<String, Value>, Stop> {
     let mut result = Map::new();
     result.insert("path".into(), path.into());
     result.insert("state".into(), "absent".into());
@@ -297,17 +309,10 @@ fn ensure_absent(path: &str) -> Result<Map<String, Value>, Stop> {
             return Ok(result);
         }
         "directory" => {
-            // `shutil.rmtree` names the entry it failed on, which `remove_dir_all` does not say:
-            // a tree with a directory the agent cannot empty goes to the Python module.
-            if !removable(path) {
-                return Err(Stop::Back(format!("{path} holds what cannot be removed")));
-            }
-            if let Err(err) = fs::remove_dir_all(path) {
-                return Err(Stop::Fail(message(format!(
-                    "rmtree failed: {}",
-                    os_error(&err, path)
-                ))));
-            }
+            // `shutil.rmtree`'s failure names the entry it stopped at, and how depends on the
+            // host's Python: a tree where removal could fail goes to the Python module whole.
+            removable(path, clock)?;
+            remove_tree(path, clock)?;
         }
         _ => match fs::remove_file(path) {
             Err(err) if err.raw_os_error() != Some(libc::ENOENT) => {
@@ -320,21 +325,144 @@ fn ensure_absent(path: &str) -> Result<Map<String, Value>, Stop> {
     Ok(result)
 }
 
-/// Whether every directory of the tree at `dir`, `dir` included, can be listed and emptied.
-fn removable(dir: &str) -> bool {
-    use super::common::access;
-    if !access(dir, libc::R_OK | libc::W_OK | libc::X_OK) {
-        return false;
+/// Hands back unless removing the tree at `top` can only fail where the reference's message
+/// names what the native's does: every directory listable, writable and searchable; no mount
+/// point at or under `top`; no file or directory marked immutable or append-only; and, for an
+/// agent that is not root, no sticky directory holding another account's entry in a directory
+/// that account does not own.
+///
+/// Not seen: the attributes of a special file (a device, a FIFO, a socket), which cannot be
+/// read without opening it, and whatever changes between this walk and the removal.
+fn removable(top: &str, clock: Clock) -> Result<(), Halt> {
+    let back = |why: String| Err(Halt::HandBack(why));
+    let mounts = fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|_| Halt::HandBack("the mount table cannot be read".into()))?;
+    if let Some(point) = mount_under(&mounts, top) {
+        return back(format!("{point} is a mount point"));
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+    let euid = unsafe { libc::geteuid() };
+    walk(top, euid, clock)
+}
+
+/// The first mount point of `mountinfo` at `top` or under it.
+fn mount_under(mountinfo: &str, top: &str) -> Option<String> {
+    let top = top.trim_end_matches('/');
+    let under = format!("{top}/");
+    mountinfo
+        .lines()
+        .map(|line| unescape_mount(line.split(' ').nth(4).unwrap_or_default()))
+        .find(|point| point == top || point.starts_with(&under))
+}
+
+fn walk(dir: &str, euid: u32, clock: Clock) -> Result<(), Halt> {
+    let back = |why: String| Err(Halt::HandBack(why));
+    check(clock)?;
+    if !access(dir, libc::R_OK | libc::W_OK | libc::X_OK) {
+        return back(format!("{dir} cannot be emptied"));
+    }
+    let meta = fs::symlink_metadata(dir).map_err(|err| Halt::HandBack(err.to_string()))?;
+    if protected(dir) {
+        return back(format!("{dir} is immutable or append-only"));
+    }
+    let sticky = meta.mode() & 0o1000 != 0 && euid != 0 && meta.uid() != euid;
+    let entries = fs::read_dir(dir).map_err(|err| Halt::HandBack(err.to_string()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| Halt::HandBack(err.to_string()))?;
+        let path = entry.path();
+        let path = path
+            .to_str()
+            .ok_or_else(|| Halt::HandBack("a name is not UTF-8".into()))?;
+        let meta = entry
+            .metadata()
+            .map_err(|err| Halt::HandBack(err.to_string()))?;
+        if sticky && meta.uid() != euid {
+            return back(format!(
+                "{path} belongs to another account in a sticky directory"
+            ));
+        }
+        if meta.is_dir() {
+            walk(path, euid, clock)?;
+        } else if meta.is_file() && protected(path) {
+            return back(format!("{path} is immutable or append-only"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `path` (a file or a directory) carries the `i` or `a` attribute, or cannot be opened
+/// to tell.
+#[cfg(target_os = "linux")]
+fn protected(path: &str) -> bool {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const FS_IMMUTABLE_FL: libc::c_long = 0x10;
+    const FS_APPEND_FL: libc::c_long = 0x20;
+    let Ok(file) = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)
+    else {
+        return true;
     };
-    entries.into_iter().all(|entry| {
-        entry.is_ok_and(|entry| {
-            !entry.file_type().is_ok_and(|kind| kind.is_dir())
-                || entry.path().to_str().is_some_and(removable)
-        })
-    })
+    let mut flags: libc::c_long = 0;
+    let got = unsafe {
+        libc::ioctl(
+            std::os::fd::AsRawFd::as_raw_fd(&file),
+            libc::FS_IOC_GETFLAGS,
+            &raw mut flags,
+        )
+    };
+    // A file system without attributes (`ENOTTY`, `EOPNOTSUPP`) has none to refuse with.
+    got == 0 && flags & (FS_IMMUTABLE_FL | FS_APPEND_FL) != 0
+}
+
+#[cfg(not(target_os = "linux"))]
+fn protected(_: &str) -> bool {
+    true
+}
+
+/// A mount point as `mountinfo` writes it, with `\040` and the like for spaces, tabs,
+/// newlines and backslashes.
+fn unescape_mount(field: &str) -> String {
+    let mut out = String::new();
+    let mut rest = field;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let code = rest.get(at + 1..at + 4);
+        if let Some(byte) = code.and_then(|code| u8::from_str_radix(code, 8).ok()) {
+            out.push(byte as char);
+            rest = &rest[at + 4..];
+        } else {
+            out.push('\\');
+            rest = &rest[at + 1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `shutil.rmtree` without following links, the deadline and the cancel looked at before each
+/// entry. A failure names the entry, with its full path as Python 3.13 does.
+fn remove_tree(dir: &str, clock: Clock) -> Result<(), Stop> {
+    let failed = |err: &std::io::Error, path: &str| {
+        Stop::Fail(message(format!("rmtree failed: {}", os_error(err, path))))
+    };
+    let entries = fs::read_dir(dir).map_err(|err| failed(&err, dir))?;
+    for entry in entries {
+        check(clock)?;
+        let entry = entry.map_err(|err| failed(&err, dir))?;
+        let path = entry.path().to_string_lossy().into_owned();
+        let is_dir = entry
+            .file_type()
+            .map_err(|err| failed(&err, &path))?
+            .is_dir();
+        if is_dir {
+            remove_tree(&path, clock)?;
+        } else {
+            fs::remove_file(&path).map_err(|err| failed(&err, &path))?;
+        }
+    }
+    fs::remove_dir(dir).map_err(|err| failed(&err, dir))
 }
 
 /// `ensure_file_attributes`: the path must be a file (or a link to one, when followed).
@@ -436,7 +564,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::super::common::golden::{Scratch, differences};
+    use super::super::common::golden::{Scratch, differences, within};
     use super::*;
 
     fn ask(args: &Value) -> NativeRun {
@@ -486,11 +614,10 @@ mod tests {
     /// missing.
     #[test]
     fn file_answers_every_recorded_case_like_the_reference() {
-        assert_ne!(
-            unsafe { libc::geteuid() },
-            0,
-            "file-chown-denied needs a chown to be refused, and root is refused nothing"
-        );
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipped as root: file-chown-denied needs a chown to be refused");
+            return;
+        }
         type Setup = fn(&Scratch);
         let cases: [(&str, &str, Value, Setup); 12] = [
             (
@@ -661,11 +788,10 @@ mod tests {
     /// goes) and fails with another message.
     #[test]
     fn a_tree_the_agent_cannot_empty_is_handed_back_whole() {
-        assert_ne!(
-            unsafe { libc::geteuid() },
-            0,
-            "root can empty any directory"
-        );
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipped as root: root can empty any directory");
+            return;
+        }
         let scratch = Scratch::new("file-tree");
         mkdir(&scratch.path("t/sub"), 0o755);
         fs::write(scratch.path("t/sub/x"), "x").unwrap();
@@ -676,6 +802,105 @@ mod tests {
         chmod(&scratch.path("t/sub"), 0o755);
         assert!(matches!(answer, NativeRun::Fallback(_)));
         assert_eq!(left["exists"], true);
+    }
+
+    /// A tree holding what `rmtree` can fail on halfway goes to the Python module before
+    /// anything is removed: an append-only file, and another account's file in a sticky
+    /// directory. Both need `sudo -n` to set up, and the test says so and stops without it.
+    ///
+    /// What would make this red: the attribute check or the sticky check dropped, after which
+    /// the native removes what it can (`t/y` goes) and fails naming another entry than the
+    /// reference might.
+    #[test]
+    fn a_tree_rmtree_would_fail_in_is_handed_back_whole() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipped as root: the sticky case needs another account than the agent's");
+            return;
+        }
+        let sudo = |args: &[&str]| {
+            std::process::Command::new("sudo")
+                .arg("-n")
+                .args(args)
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        let scratch = Scratch::new("file-rmtree");
+        mkdir(&scratch.path("a"), 0o755);
+        fs::write(scratch.path("a/y"), "y").unwrap();
+        fs::write(scratch.path("a/log"), "log").unwrap();
+        mkdir(&scratch.path("s"), 0o755);
+        fs::write(scratch.path("s/y"), "y").unwrap();
+        let (log, sticky) = (scratch.path("a/log"), scratch.path("s/t"));
+        if !sudo(&["chattr", "+a", &log])
+            || !sudo(&["mkdir", "-m", "1777", &sticky])
+            || !sudo(&["touch", &format!("{sticky}/theirs")])
+        {
+            sudo(&["chattr", "-a", &log]);
+            sudo(&["rm", "-rf", &sticky]);
+            eprintln!("skipped: sudo -n cannot set up an append-only file and a sticky directory");
+            return;
+        }
+        let append_only = ask(&json!({"path": scratch.path("a"), "state": "absent"}));
+        let other = ask(&json!({"path": scratch.path("s"), "state": "absent"}));
+        let left = (after(&scratch.path("a/y")), after(&scratch.path("s/y")));
+        sudo(&["chattr", "-a", &log]);
+        sudo(&["rm", "-rf", &sticky]);
+        assert!(matches!(append_only, NativeRun::Fallback(_)), "append-only");
+        assert!(matches!(other, NativeRun::Fallback(_)), "sticky");
+        assert_eq!(left.0["exists"], true);
+        assert_eq!(left.1["exists"], true);
+    }
+
+    /// A mount point at or under the tree hands it back, `mountinfo`'s escapes read.
+    ///
+    /// What would make this red: only the top compared (the nested mount missed), or a sibling
+    /// sharing the prefix (`/srv/data2`) taken for a mount under `/srv/data`.
+    #[test]
+    fn a_mount_point_in_the_tree_is_found() {
+        let info = "22 1 0:21 / /srv/data2 rw - ext4 /dev/x rw\n\
+                    23 1 0:22 / /srv/data/my\\040disk rw - ext4 /dev/y rw\n";
+        assert_eq!(
+            mount_under(info, "/srv/data/"),
+            Some("/srv/data/my disk".into())
+        );
+        assert_eq!(
+            mount_under(info, "/srv/data/my disk"),
+            Some("/srv/data/my disk".into())
+        );
+        assert_eq!(mount_under(info, "/srv/dat"), None);
+        let mounts = fs::read_to_string("/proc/self/mountinfo").unwrap();
+        assert_eq!(mount_under(&mounts, "/proc"), Some("/proc".into()));
+    }
+
+    /// The task's `timeout` reaches a name service that hangs: a `getent` that sleeps, first on
+    /// `PATH`, for an owner `/etc/passwd` does not hold. The answer is the one the Python path
+    /// gives for a module that outlives the task, and nothing was changed.
+    ///
+    /// What would make this red: `getent` run outside `command`'s executor (the test waits for
+    /// the sleep, 600 s, and nextest ends it), or the timeout answered as anything else.
+    #[test]
+    fn a_hung_name_service_ends_with_the_timeout() {
+        let scratch = Scratch::new("file-hung");
+        let file = scratch.fixture();
+        super::super::common::golden::fake_getent(&scratch, "exec sleep 600");
+        let context = Context {
+            timeout: Some(std::time::Duration::from_secs(1)),
+            ..Context::default()
+        };
+        let args = json!({"path": file, "owner": "volant-no-such-user", "mode": "0600"});
+        let timed = args.clone();
+        let answer = within(30, move || {
+            run(timed.as_object().unwrap(), &context, &|| false)
+        });
+        let NativeRun::Done(result) = answer else {
+            panic!("no answer")
+        };
+        assert_eq!(result, volant_protocol::TaskResult::timed_out(1));
+        assert_eq!(after(&file)["mode"], "0644");
+        let cancelled = within(30, move || {
+            run(args.as_object().unwrap(), &Context::default(), &|| true)
+        });
+        assert!(matches!(cancelled, NativeRun::Cancelled));
     }
 
     /// `_original_basename`, as `copy` sends it: a directory named as the destination stands for

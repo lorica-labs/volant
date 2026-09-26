@@ -1067,6 +1067,83 @@
       "ignore_errors": true
      },
      {
+      "name": "cleanup-unit-before",
+      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
+      "become": true
+     },
+     {
+      "name": "setup-124",
+      "copy": {
+       "content": "[Unit]\nDescription=Volant golden throwaway unit\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
+       "dest": "/etc/systemd/system/volant-golden.service",
+       "mode": "0644"
+      },
+      "become": true
+     },
+     {
+      "name": "systemd-unit-daemon-reload",
+      "systemd": {
+       "name": "volant-golden",
+       "daemon_reload": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-started",
+      "systemd": {
+       "name": "volant-golden",
+       "state": "started"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-stopped",
+      "systemd": {
+       "name": "volant-golden",
+       "state": "stopped"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-restarted",
+      "systemd": {
+       "name": "volant-golden",
+       "state": "restarted"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-reloaded",
+      "systemd": {
+       "name": "volant-golden",
+       "state": "reloaded"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-enabled",
+      "systemd": {
+       "name": "volant-golden",
+       "enabled": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-unit-disabled",
+      "systemd": {
+       "name": "volant-golden",
+       "enabled": false
+      },
+      "register": "last",
+      "become": true
+     },
+     {
       "name": "apt-present-installed",
       "apt": {
        "name": "bash",
@@ -1132,6 +1209,33 @@
       "register": "last",
       "become": true,
       "ignore_errors": true
+     },
+     {
+      "name": "apt-install-absent",
+      "apt": {
+       "name": "hello",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-present-installed-now",
+      "apt": {
+       "name": "hello",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-remove-installed",
+      "apt": {
+       "name": "hello",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
      },
      {
       "name": "package-facts",
@@ -1295,6 +1399,21 @@
       "name": "cleanup-group",
       "group": {
        "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-unit",
+      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-package",
+      "apt": {
+       "name": "hello",
        "state": "absent"
       },
       "become": true,

@@ -1983,8 +1983,7 @@ fn reference_results(
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/callback_plugins"),
         )
         .env("ANSIBLE_STDOUT_CALLBACK", "golden_json")
-        .env("ANSIBLE_NOCOLOR", "1")
-        .env("ANSIBLE_PYTHON_INTERPRETER", "/usr/bin/python3");
+        .env("ANSIBLE_NOCOLOR", "1");
     let out = finish_within(&mut command, "the reference");
     assert!(
         out.status.success(),

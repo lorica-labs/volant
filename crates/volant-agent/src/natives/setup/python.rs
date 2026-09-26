@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `python` collector, and everything else only the module's interpreter can say: its
-//! `platform` answers, the environment it starts with, its locale, and whether it can load
-//! libselinux. One run of the interpreter per agent, kept while the interpreter file is the same.
+//! `platform` answers, the environment it starts with, its locale, its clock, the `distro` it
+//! would import, and whether it can load libselinux.
+//!
+//! One run per `setup` task, in the task's environment, as the reference starts one module per
+//! task: nothing the interpreter says is kept for the next task, since a play can install a
+//! `distro`, move the time zone or set `PYTHONPATH` between two gathers.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Mutex;
-use std::time::SystemTime;
 
 use serde_json::{Map, Value};
 
@@ -82,13 +84,42 @@ try:
     selinux = bool(lib.is_selinux_enabled())
 except (ImportError, OSError):
     pass
-import time
+import datetime, time
+epoch_ts = time.time()
+now = datetime.datetime.fromtimestamp(epoch_ts)
+utcnow = datetime.datetime.fromtimestamp(epoch_ts, tz=datetime.timezone.utc)
+date_time = {}
+date_time['year'] = now.strftime('%Y')
+date_time['month'] = now.strftime('%m')
+date_time['weekday'] = now.strftime('%A')
+date_time['weekday_number'] = now.strftime('%w')
+date_time['weeknumber'] = now.strftime('%W')
+date_time['day'] = now.strftime('%d')
+date_time['hour'] = now.strftime('%H')
+date_time['minute'] = now.strftime('%M')
+date_time['second'] = now.strftime('%S')
+date_time['epoch'] = now.strftime('%s')
+if date_time['epoch'] == '' or date_time['epoch'][0] == '%':
+    date_time['epoch'] = str(int(epoch_ts))
+date_time['epoch_int'] = str(int(now.strftime('%s')))
+if date_time['epoch_int'] == '' or date_time['epoch_int'][0] == '%':
+    date_time['epoch_int'] = str(int(epoch_ts))
+date_time['date'] = now.strftime('%Y-%m-%d')
+date_time['time'] = now.strftime('%H:%M:%S')
+date_time['iso8601_micro'] = utcnow.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+date_time['iso8601'] = utcnow.strftime('%Y-%m-%dT%H:%M:%SZ')
+date_time['iso8601_basic'] = now.strftime('%Y%m%dT%H%M%S%f')
+date_time['iso8601_basic_short'] = now.strftime('%Y%m%dT%H%M%S')
+date_time['tz'] = time.strftime('%Z')
+date_time['tz_dst'] = time.tzname[1]
+date_time['tz_offset'] = time.strftime('%z')
 distro = None
 try:
     import importlib.util
     spec = importlib.util.find_spec('distro')
 except Exception:
     spec = None
+    distro = ''
 if spec is not None:
     distro = ''
     paths = [spec.origin or '']
@@ -137,7 +168,7 @@ sys.stdout.write(dump({
     'bits': str(struct.calcsize('P') * 8) + 'bit',
     'env': env,
     'lc_time': lc_time,
-    'tz_dst': time.tzname[1],
+    'date_time': date_time,
     'selinux': selinux,
     'distro': distro,
 }))
@@ -152,15 +183,15 @@ pub struct Probe {
     pub python_version: String,
     /// `platform.architecture()[0]`: `64bit`, `32bit`.
     pub bits: String,
-    /// `os.environ` when the interpreter starts, which is the module's before the task's own
-    /// variables are added.
+    /// `os.environ` when the interpreter starts under the task's environment: the module's.
     pub env: BTreeMap<String, String>,
     /// The `LC_TIME` locale after `setlocale(LC_ALL, '')`, `None` when that call fails.
     pub lc_time: Option<String>,
-    /// `time.tzname[1]`, read once at import as the module reads it. The C library would do
-    /// for glibc, not for the musl agent: for a zone without daylight time (`Etc/UTC`) musl
-    /// leaves it empty where glibc repeats the standard name.
-    pub tz_dst: String,
+    /// The `date_time` fact, computed line for line as `DateTimeFactCollector` computes it,
+    /// after the locale is set as the module sets it. The musl agent's own C library cannot
+    /// stand in: it leaves `tzname[1]` empty for a zone without daylight time where glibc and
+    /// Python repeat the standard name, and it never reloads `/etc/localtime` once read.
+    pub date_time: Value,
     /// `None` when libselinux cannot be loaded, else whether SELinux is enabled.
     pub selinux: Option<bool>,
     /// The version of the `distro` package `import distro` finds, which
@@ -169,35 +200,16 @@ pub struct Probe {
     pub distro: Option<String>,
 }
 
-type Key = (String, Option<(u64, SystemTime)>);
-
-static CACHE: Mutex<Option<(Key, Probe)>> = Mutex::new(None);
-
-/// The probe for `interpreter`, run once and kept while the interpreter's file keeps its size
-/// and modification time: an upgrade of Python between two gathers runs it again.
-pub fn probe(interpreter: &str, clock: Clock) -> Result<Probe, Stop> {
-    let key: Key = (
-        interpreter.to_string(),
-        std::fs::metadata(interpreter)
-            .ok()
-            .and_then(|meta| Some((meta.len(), meta.modified().ok()?))),
-    );
-    let mut cache = CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((cached, probe)) = cache.as_ref()
-        && *cached == key
-    {
-        return Ok(probe.clone());
-    }
-    // In the agent's own environment, which is the one the Python server starts with.
-    let (code, out) = super::run(
-        &BTreeMap::new(),
-        clock,
-        Path::new(interpreter),
-        &["-c", PROBE],
-    )?
-    .ok_or_else(|| format!("{interpreter} could not be started"))?;
+/// What `interpreter` says, started with the task's `environment` over the agent's own, as
+/// ansible-core starts a module: `PYTHONPATH`, `PYTHONHOME`, `PYTHONUSERBASE` or `HOME` there
+/// change what it imports.
+pub fn probe(
+    interpreter: &str,
+    environment: &BTreeMap<String, String>,
+    clock: Clock,
+) -> Result<Probe, Stop> {
+    let (code, out) = super::run(environment, clock, Path::new(interpreter), &["-c", PROBE])?
+        .ok_or_else(|| format!("{interpreter} could not be started"))?;
     if code != 0 {
         return Err(format!("{interpreter} could not describe itself").into());
     }
@@ -211,11 +223,12 @@ pub fn probe(interpreter: &str, clock: Clock) -> Result<Probe, Stop> {
         env: serde_json::from_value(answer["env"].clone())
             .map_err(|err| format!("reading the interpreter's environment: {err}"))?,
         lc_time: text("lc_time"),
-        tz_dst: text("tz_dst").ok_or("no time zone names")?,
+        date_time: Some(answer["date_time"].clone())
+            .filter(Value::is_object)
+            .ok_or("no date_time")?,
         selinux: answer["selinux"].as_bool(),
         distro: text("distro"),
     };
-    *cache = Some((key, probe.clone()));
     Ok(probe)
 }
 
@@ -229,7 +242,7 @@ pub fn collect(host: &Host) -> Map<String, Value> {
 pub mod tests {
     use serde_json::json;
 
-    use super::super::tests::{FakeRoot, probe as ubuntu_probe};
+    use super::super::tests::FakeRoot;
     use super::*;
 
     /// An interpreter that answers the probe with `probe`, whatever it is asked.
@@ -240,7 +253,7 @@ pub mod tests {
             "bits": probe.bits,
             "env": probe.env,
             "lc_time": probe.lc_time,
-            "tz_dst": probe.tz_dst,
+            "date_time": probe.date_time,
             "selinux": probe.selinux,
             "distro": probe.distro,
         });
@@ -253,8 +266,9 @@ pub mod tests {
 
     /// The probe run by a real interpreter answers what the reference's own calls answer on the
     /// same interpreter: `platform.python_version()`, `platform.architecture()[0]`, the `ssl`
-    /// import, `sys.executable`, `locale.setlocale`, `time.tzname[1]`, and the `distro` that
-    /// `import distro` finds. And its hand-written JSON carries any text an environment can hold.
+    /// import, `sys.executable`, `locale.setlocale`, the zone fields of `date_time`, and the
+    /// `distro` that `import distro` finds. And its hand-written JSON carries any text an
+    /// environment can hold.
     ///
     /// What would make this red: a shortcut that stops agreeing with the call it replaces, or an
     /// environment value with a quote, a backslash, a newline or a character outside ASCII
@@ -264,7 +278,8 @@ pub mod tests {
         let tricky = "a\"b\\c\nd\té 😀 \u{7f}";
         // Safety: set before any thread of this test process reads the environment.
         unsafe { std::env::set_var("VOLANT_PROBE_TEXT", tricky) };
-        let probe = probe("python3", super::super::unbounded()).expect("python3 answers the probe");
+        let probe = probe("python3", &BTreeMap::new(), super::super::unbounded())
+            .expect("python3 answers the probe");
         assert_eq!(probe.env["VOLANT_PROBE_TEXT"], tricky);
         let reference = std::process::Command::new("python3")
             .args([
@@ -276,7 +291,8 @@ pub mod tests {
                  except ImportError:\n    distro = None\n\
                  locale.setlocale(locale.LC_ALL, '')\n\
                  print(json.dumps([platform.python_version(), platform.architecture()[0],\n\
-                 sys.executable, ssl, locale.setlocale(locale.LC_TIME), time.tzname[1], distro]))",
+                 sys.executable, ssl, locale.setlocale(locale.LC_TIME), time.strftime('%Z'),\n\
+                 time.tzname[1], time.strftime('%z'), distro]))",
             ])
             .output()
             .unwrap();
@@ -288,7 +304,9 @@ pub mod tests {
                 probe.python["executable"],
                 probe.python["has_sslcontext"],
                 probe.lc_time,
-                probe.tz_dst,
+                probe.date_time["tz"],
+                probe.date_time["tz_dst"],
+                probe.date_time["tz_offset"],
                 probe.distro,
             ]),
             reference
@@ -313,35 +331,56 @@ pub mod tests {
             "/lib/distro/distro.py",
             "import os\n__version__ = \"1.5.0\"\n",
         )
-        .write("/single/distro.py", "__version__ = '1.9.0'\n");
-        let run = |dir: &str| {
-            let out = std::process::Command::new("python3")
-                .env("PYTHONPATH", fake.0.join(dir))
-                .args(["-c", PROBE])
-                .output()
-                .unwrap();
-            serde_json::from_slice::<Value>(&out.stdout).unwrap()["distro"].clone()
+        .write("/single/distro.py", "__version__ = '1.9.0'\n")
+        // A lookup that raises: the module is in `sys.modules` with no spec.
+        .write(
+            "/broken/sitecustomize.py",
+            "import sys, types\nm = types.ModuleType('distro')\nm.__spec__ = None\nsys.modules['distro'] = m\n",
+        );
+        let distro = |dir: &str| {
+            let environment = BTreeMap::from([(
+                "PYTHONPATH".to_string(),
+                fake.0.join(dir).display().to_string(),
+            )]);
+            probe("python3", &environment, super::super::unbounded())
+                .unwrap()
+                .distro
         };
-        assert_eq!(run("lib"), json!("1.5.0"));
-        assert_eq!(run("single"), json!("1.9.0"));
+        assert_eq!(distro("lib").as_deref(), Some("1.5.0"));
+        assert_eq!(distro("single").as_deref(), Some("1.9.0"));
+        assert_eq!(
+            distro("broken").as_deref(),
+            Some(""),
+            "a lookup that fails is a version nobody could read, not no distro"
+        );
     }
 
-    /// The probe is run again when the interpreter file changes, and not otherwise.
+    /// Nothing is kept from one probe to the next: a `distro` installed between two gathers,
+    /// or a time zone moved, shows in the second.
     ///
-    /// What would make this red: a cache keyed on the path alone, which keeps the old Python's
-    /// version after an upgrade in the middle of a play.
+    /// What would make this red: the probe cached per agent, which answers the second gather
+    /// with the first one's `distro` and zone.
     #[test]
-    fn a_changed_interpreter_is_probed_again() {
-        let fake = FakeRoot::new("probe-cache");
-        let mut first = ubuntu_probe();
-        let interpreter = fake_interpreter(&fake, &first);
+    fn each_probe_sees_what_changed_since_the_last() {
+        let fake = FakeRoot::new("probe-fresh");
+        fake.mkdir("/site");
         let clock = super::super::unbounded();
-        assert_eq!(probe(&interpreter, clock).unwrap().python_version, "3.12.3");
-        first.python_version = "3.12.40".into();
-        fake_interpreter(&fake, &first);
-        assert_eq!(
-            probe(&interpreter, clock).unwrap().python_version,
-            "3.12.40"
-        );
+        let mut environment = BTreeMap::from([
+            (
+                "PYTHONPATH".to_string(),
+                fake.0.join("site").display().to_string(),
+            ),
+            ("TZ".to_string(), "UTC".to_string()),
+        ]);
+        let first = probe("python3", &environment, clock).unwrap();
+        // The machine's own `distro`, if it has one, until the one on `PYTHONPATH` appears.
+        assert_ne!(first.distro.as_deref(), Some("1.5.0"));
+        assert_eq!(first.date_time["tz"], "UTC");
+        fake.write("/site/distro.py", "__version__ = \"1.5.0\"\n");
+        environment.insert("TZ".into(), "Asia/Tokyo".into());
+        let second = probe("python3", &environment, clock).unwrap();
+        assert_eq!(second.distro.as_deref(), Some("1.5.0"));
+        assert_eq!(second.date_time["tz"], "JST");
+        assert_eq!(second.date_time["tz_offset"], "+0900");
     }
 }

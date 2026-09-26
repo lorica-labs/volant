@@ -33,11 +33,13 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
+use crate::modules::command::CANCEL_POLL;
 use crate::modules::{Context, Run};
 use crate::natives::common::{ArgSpec, invocation};
 use crate::natives::{Native, NativeRun};
@@ -307,26 +309,49 @@ fn collect(
             env.extend(context.environment.clone());
             env
         });
-    // The early run cannot ask the task's cancel, which answers once and on this thread: it
-    // stops at the deadline, or as soon as the probe ends without an answer.
+    // The early run cannot ask the task's cancel, which answers once and on this thread. It
+    // stops at the deadline, or when this thread raises `halt`: as soon as the probe ends
+    // without an answer, and when the cancel arrives while this thread waits for it.
     let halt = AtomicBool::new(false);
-    let (probe, early) = std::thread::scope(|scope| {
+    let (probe, early, cancelled) = std::thread::scope(|scope| {
         let early = guess.as_ref().map(|env| {
-            scope.spawn(|| {
+            let (sent, answer) = mpsc::channel();
+            let halt = &halt;
+            scope.spawn(move || {
                 let halted = || halt.load(Ordering::Relaxed);
                 let early_clock = Clock {
                     deadline: clock.deadline,
                     cancelled: &halted,
                 };
-                LsbRelease::run(root, env, early_clock)
-            })
+                let _ = sent.send(LsbRelease::run(root, env, early_clock));
+            });
+            answer
         });
-        let probe = python::probe(interpreter, clock);
+        let probe = python::probe(interpreter, &context.environment, clock);
         if probe.is_err() {
             halt.store(true, Ordering::Relaxed);
         }
-        (probe, early.and_then(|thread| thread.join().ok()))
+        let mut cancelled = false;
+        let early = early.and_then(|answer| {
+            loop {
+                match answer.recv_timeout(CANCEL_POLL) {
+                    Ok(early) => break Some(early),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if (clock.cancelled)() {
+                            halt.store(true, Ordering::Relaxed);
+                            cancelled = true;
+                            break None;
+                        }
+                    }
+                }
+            }
+        });
+        (probe, early, cancelled)
     });
+    if cancelled {
+        return Err(Stop::Cancelled);
+    }
     let probe = probe?;
     let mut env = probe.env.clone();
     env.extend(context.environment.clone());
@@ -729,7 +754,16 @@ pub mod tests {
                 ("LOGNAME".to_string(), "user".to_string()),
             ]),
             lc_time: Some("C.UTF-8".into()),
-            tz_dst: "UTC".into(),
+            // Measured on target (UTC), the instant's fields sanitised to one fixed date.
+            date_time: json!({
+                "year": "2026", "month": "09", "weekday": "Thursday", "weekday_number": "4",
+                "weeknumber": "38", "day": "24", "hour": "15", "minute": "47", "second": "42",
+                "epoch": "1790264862", "epoch_int": "1790264862", "date": "2026-09-24",
+                "time": "15:47:42", "iso8601_micro": "2026-09-24T15:47:42.158470Z",
+                "iso8601": "2026-09-24T15:47:42Z", "iso8601_basic": "20260924T154742158470",
+                "iso8601_basic_short": "20260924T154742", "tz": "UTC", "tz_dst": "UTC",
+                "tz_offset": "+0000",
+            }),
             selinux: Some(false),
             distro: None,
         }
@@ -1075,6 +1109,77 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
         assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
+    /// The interpreter answers at once and only the early `lsb_release` hangs: the task's cancel
+    /// and its timeout still end the wait for it.
+    ///
+    /// What would make this red: the early run halted only when the probe fails, which leaves a
+    /// cancelled task waiting on a hung `lsb_release` for as long as it hangs.
+    #[test]
+    fn a_hung_early_lsb_release_ends_at_the_cancel_or_the_timeout() {
+        let fake = debian_root("hung-lsb");
+        let interpreter = python::tests::fake_interpreter(&fake, &probe());
+        fake.script("/usr/bin/lsb_release", "sleep 30");
+        let context = Context {
+            interpreter: Some(interpreter),
+            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            ..Context::default()
+        };
+        let request = Request {
+            gather_subset: vec!["min".into()],
+            fact_path: None,
+        };
+        let asked = std::cell::Cell::new(0);
+        let cancelled = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 5
+        };
+        let started = Instant::now();
+        let clock = Clock {
+            deadline: None,
+            cancelled: &cancelled,
+        };
+        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+        let started = Instant::now();
+        let clock = Clock {
+            deadline: Some(started + std::time::Duration::from_secs(1)),
+            cancelled: &|| false,
+        };
+        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
+    /// A `PYTHONPATH` in the task's `environment` that brings an old `distro` makes the native
+    /// hand back, as the module started under that environment would import it.
+    ///
+    /// What would make this red: the probe run in the agent's environment only, which finds no
+    /// `distro` and answers with 1.9's version rules.
+    #[test]
+    fn a_task_pythonpath_with_an_old_distro_hands_back() {
+        let fake = debian_root("task-distro");
+        fake.write("/site/distro.py", "__version__ = \"1.5.0\"\n");
+        let context = Context {
+            interpreter: Some("python3".into()),
+            environment: BTreeMap::from([(
+                "PYTHONPATH".to_string(),
+                fake.0.join("site").display().to_string(),
+            )]),
+            ..Context::default()
+        };
+        let request = Request {
+            gather_subset: vec!["min".into()],
+            fact_path: None,
+        };
+        let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
+        else {
+            panic!("the old distro is not seen");
+        };
+        assert!(reason.contains("1.5.0"), "{reason}");
     }
 
     #[test]

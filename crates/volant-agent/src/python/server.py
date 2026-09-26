@@ -213,7 +213,10 @@ def preimport(module_fqn):
 
     Any failure is left to the child that needs the import, which fails with its own message;
     here it only leaves the module cold.
+
+    Returns the module's spec, for `KnownSpec`, or `None` when it could not be found.
     """
+    spec = None
     environ = os.environ.copy()
     path = list(sys.path)
     streams = (sys.stdin, sys.stdout, sys.stderr)
@@ -259,6 +262,28 @@ def preimport(module_fqn):
         os.umask(mask)
         os.fchdir(cwd)
         os.close(cwd)
+    return spec
+
+
+class KnownSpec:
+    """A finder that answers once, for the module about to run, with the spec the parent found for
+    it, and takes itself off `sys.meta_path` as it does.
+
+    Python 3.12's zipimport compiles a module's whole source just to name its file when it builds
+    a spec, and `runpy` asks for one in every child: measured on `target`, `file.py` was compiled
+    twice per task, 7.4 ms of 31. The parent already built the spec while it imported the module's
+    dependencies, from the same payload, which is named by its hash and never changes under it.
+    """
+
+    def __init__(self, name, spec):
+        self.name = name
+        self.spec = spec
+
+    def find_spec(self, name, path=None, target=None):
+        if name != self.name:
+            return None
+        sys.meta_path.remove(self)
+        return self.spec
 
 
 def fingerprint(blob):
@@ -276,7 +301,7 @@ def fingerprint(blob):
     return marks
 
 
-def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
+def run_child(request, blob, loader, basic, spec, out_w, err_w, timing_w, forked):
     """The forked half. Never returns: it exits the process."""
     started = time.monotonic_ns()
     running = None
@@ -304,6 +329,8 @@ def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
             os.environ[key] = value
         set_open_file_limit(request.get("rlimit_nofile") or 0)
         timed_module_init(basic, marks)
+        if spec is not None:
+            sys.meta_path.insert(0, KnownSpec(request["module_fqn"], spec))
         running = time.monotonic_ns()
         loader.run_module(
             json_params=json.dumps({"ANSIBLE_MODULE_ARGS": request["args"]}).encode(),
@@ -361,6 +388,7 @@ def main():
     stdout = sys.stdout.buffer
     write_frame(stdout, {"ready": True})
     preimported = set()
+    specs = {}
     baseline = fingerprint(blob)
 
     while True:
@@ -388,7 +416,8 @@ def main():
             os.close(out_r)
             os.close(err_r)
             os.close(timing_r)
-            run_child(request, blob, _loader, basic, out_w, err_w, timing_w, forked)
+            spec = specs.get(request["module_fqn"])
+            run_child(request, blob, _loader, basic, spec, out_w, err_w, timing_w, forked)
         os.close(out_w)
         os.close(err_w)
         os.close(timing_w)
@@ -403,7 +432,9 @@ def main():
         # After the fork, while the child runs: the child imports as it did, the next one gains.
         if request["module_fqn"] not in preimported:
             preimported.add(request["module_fqn"])
-            preimport(request["module_fqn"])
+            spec = preimport(request["module_fqn"])
+            if spec is not None:
+                specs[request["module_fqn"]] = spec
         streams = drain({"stdout": out_r, "stderr": err_r})
         _, status = os.waitpid(pid, 0)
         timing = read_timing(timing_r)

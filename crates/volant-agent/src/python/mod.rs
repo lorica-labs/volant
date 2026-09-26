@@ -900,6 +900,53 @@ mod tests {
         );
     }
 
+    /// A module's later children take its spec from the server, which found it while importing
+    /// the module's dependencies, instead of asking the path for it again: Python 3.12's zipimport
+    /// compiles the whole module to build one. The finder that hands it over is gone from
+    /// `sys.meta_path` by the time the module runs.
+    ///
+    /// What would make this red: the spec not handed over (the path is asked for the module in the
+    /// second and third children, and the spy placed before it sees the lookups); or the finder
+    /// left behind (the module sees it on `sys.meta_path`).
+    #[test]
+    fn a_module_s_later_children_take_its_spec_from_the_server() {
+        let blob = runpy_blob(&[(
+            "ansible/modules/probe.py",
+            "import json, sys\nimport ansible.module_utils.spy\nprint(json.dumps({\"finders\": [type(f).__name__ for f in sys.meta_path]}))\n",
+        )]);
+        let logs = tempdir();
+        let log = logs.path().join("lookups");
+        let log_literal = format!("{:?}", log.to_str().unwrap());
+        std::fs::write(
+            blob.path().join("ansible/module_utils/spy.py"),
+            format!(
+                "import sys\n\n\nclass Spy:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"ansible.modules.probe\":\n            with open({log_literal}, \"a\") as log:\n                log.write(\"looked up\\n\")\n        return None\n\n\nsys.meta_path.insert(0, Spy())\n"
+            ),
+        )
+        .unwrap();
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let results: Vec<TaskResult> = (0..3)
+            .map(|_| call(&mut server, "ansible.modules.probe"))
+            .collect();
+        for result in &results {
+            assert!(!result.failed(), "{:?}", result.0);
+        }
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap_or_default(),
+            "",
+            "a later child asked the path for the module"
+        );
+        assert_eq!(results[2].0["finders"][0], "Spy", "{:?}", results[2].0);
+        assert!(
+            !results[2].0["finders"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("KnownSpec")),
+            "{:?}",
+            results[2].0
+        );
+    }
+
     /// What the server imports for a module is imported with nothing to read and nowhere to
     /// write, and leaves the process as it found it: a dependency that changes the environment,
     /// the working directory, the umask, `sys.path` or `sys.stdout` as it loads reaches no other

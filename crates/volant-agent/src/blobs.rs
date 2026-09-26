@@ -797,8 +797,19 @@ mod tests {
     #[test]
     fn a_payload_larger_than_the_filesystem_is_refused_with_both_figures() {
         let dir = tempdir();
-        let free = free_bytes(dir.path()).unwrap();
-        let err = check_space(free_bytes, dir.path(), u64::MAX).unwrap_err();
+        // The figure the check itself read: the space left moves while other tests write.
+        let seen = std::cell::Cell::new(None);
+        let err = check_space(
+            |d: &Path| {
+                let free = free_bytes(d)?;
+                seen.set(Some(free));
+                Ok(free)
+            },
+            dir.path(),
+            u64::MAX,
+        )
+        .unwrap_err();
+        let free = seen.get().expect("the check read the free space");
         assert_eq!(err.kind(), io::ErrorKind::StorageFull);
         assert!(err.to_string().contains(&u64::MAX.to_string()), "{err}");
         assert!(err.to_string().contains(&free.to_string()), "{err}");

@@ -4,7 +4,7 @@
 //! text, and the result is never itself rendered, unlike `Templar::render_in`'s extra passes over
 //! a task's arguments.
 
-use super::{Templar, TemplateError, Vars, context_of, convert_error};
+use super::{Templar, TemplateError, Vars, context_of, convert_error, render_str};
 
 /// The `template` module's own options, as the reference reads them.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,9 +64,7 @@ impl Templar {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let (ctx, _tainted) = context_of(vars.into());
         let name = options.name.as_deref().unwrap_or("<string>");
-        let mut rendered = env
-            .render_named_str(name, &normalized, ctx)
-            .map_err(convert_error)?;
+        let mut rendered = render_str(&env, name, &normalized, &ctx).map_err(convert_error)?;
         let wanted = trailing_newlines(text);
         let got = trailing_newlines(&rendered);
         if wanted > got {

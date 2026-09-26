@@ -2,15 +2,20 @@
 //! Jinja2 templating the way ansible-core 2.19 does it: strict about undefined variables, and a
 //! template that is one expression yields that expression's value, not its text.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use minijinja::functions::Function;
+use minijinja::machinery::{
+    CodeGenerator, CompiledTemplate, Instruction, Instructions, TemplateConfig, Vm,
+    WhitespaceConfig, make_string_output, parse_expr,
+};
+use minijinja::syntax::SyntaxConfig;
 use minijinja::value::{Enumerator, FunctionArgs, FunctionResult, Object, Rest, ValueKind};
-use minijinja::{Environment, ErrorKind, State, UndefinedBehavior};
+use minijinja::{AutoEscape, Environment, ErrorKind, State, UndefinedBehavior};
 use serde_json::{Map, Value};
 
 mod file;
@@ -60,6 +65,10 @@ pub(crate) const TAINT_KEY: &str = "volant::tainted";
 /// a playbook for the same reason as `TAINT_KEY`; through `lookup('vars', ...)` it hands back
 /// the root context, whose every read goes through `get_value` and taints as a bare read does.
 pub(crate) const CONTEXT_KEY: &str = "volant::context";
+
+/// The global every `~` is compiled to call, see [`route_concat`]. Unwritable in Jinja for the
+/// same reason as `TAINT_KEY`, and `Context` answers nothing for it, so no variable shadows it.
+const CONCAT_KEY: &str = "volant::concat";
 
 #[derive(Debug)]
 pub(crate) struct TaintSink(pub(crate) Tainted);
@@ -149,6 +158,11 @@ struct Context {
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
+        // Not a variable: the VM looks the root up before the globals, so a variable of that
+        // name (`-e '{"volant::concat": 1}'`) would otherwise replace every `~`.
+        if key == CONCAT_KEY {
+            return None;
+        }
         if key == TAINT_KEY {
             return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
                 &self.tainted,
@@ -275,6 +289,7 @@ impl Templar {
             minijinja::escape_formatter(out, state, value)
         });
         filters::register(&mut env, base_dir);
+        env.add_function(CONCAT_KEY, concat);
         Self { env }
     }
 
@@ -334,8 +349,7 @@ impl Templar {
         if let Some(expr) = single_expression(text) {
             return self.evaluate_in(expr, ctx);
         }
-        self.env
-            .render_str(text, ctx)
+        render_str(&self.env, "<string>", text, ctx)
             .map(Value::String)
             .map_err(convert_error)
     }
@@ -435,8 +449,7 @@ impl Templar {
     }
 
     fn evaluate_in(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
-        let compiled = self.env.compile_expression(expr).map_err(convert_error)?;
-        let value = compiled.eval(ctx).map_err(convert_error)?;
+        let value = eval_expr(&self.env, expr, ctx).map_err(convert_error)?;
         // Strict mode only raises on operations that force an undefined value (printing,
         // comparing, ...); an attribute lookup that never gets used stays a lazy Undefined, alone
         // or inside a list or mapping, that serde_json would otherwise turn into `null`. Force
@@ -751,6 +764,88 @@ pub(crate) fn truthy(v: &Value) -> bool {
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
     }
+}
+
+/// `a ~ b`. minijinja's own `~` only refuses an operand that is undefined itself and prints a
+/// list or mapping holding one as `[1, undefined]`; measured on ansible-core 2.19.12,
+/// `'x' ~ [1, nope]` and `'x' ~ {'k': nope}` are undefined reads, like `'x' ~ nope`.
+fn concat(
+    left: minijinja::Value,
+    right: minijinja::Value,
+) -> Result<minijinja::Value, minijinja::Error> {
+    if holds_undefined(&left) || holds_undefined(&right) {
+        return Err(minijinja::Error::from(ErrorKind::UndefinedError));
+    }
+    Ok(minijinja::Value::from(format!("{left}{right}")))
+}
+
+/// Replaces each `~` in compiled code by a call to [`concat()`]. minijinja evaluates `~` in its VM
+/// with no hook, and its syntax tree cannot be rewritten in place, so the swap happens on the
+/// bytecode: the concatenation instruction and a two-argument call take the same two operands
+/// off the stack in the same order, so every jump target stays where it was.
+fn route_concat(instructions: &mut Instructions<'_>) {
+    let mut idx = 0;
+    while let Some(op) = instructions.get_mut(idx) {
+        if matches!(op, Instruction::StringConcat) {
+            *op = Instruction::CallFunction(CONCAT_KEY, Some(2));
+        }
+        idx += 1;
+    }
+}
+
+/// `env.render_named_str`, with `~` routed through [`concat()`]. Compiled once per call, as
+/// `render_named_str` does, with the environment's own whitespace settings. The only place
+/// that decides auto-escape and syntax: `Environment` has no getter for either, so a setting
+/// changed on the environment does not reach here and has to be made here.
+fn render_str(
+    env: &Environment<'_>,
+    name: &str,
+    source: &str,
+    ctx: &minijinja::Value,
+) -> Result<String, minijinja::Error> {
+    let config = TemplateConfig {
+        syntax_config: SyntaxConfig,
+        ws_config: WhitespaceConfig {
+            keep_trailing_newline: env.keep_trailing_newline(),
+            lstrip_blocks: env.lstrip_blocks(),
+            trim_blocks: env.trim_blocks(),
+        },
+        default_auto_escape: Arc::new(minijinja::default_auto_escape_callback),
+    };
+    let mut compiled = CompiledTemplate::new(name, source, &config)?;
+    route_concat(&mut compiled.instructions);
+    compiled.blocks.values_mut().for_each(route_concat);
+    let mut out = String::with_capacity(compiled.buffer_size_hint);
+    Vm::new(env).eval(
+        &compiled.instructions,
+        ctx.clone(),
+        &compiled.blocks,
+        &mut make_string_output(&mut out),
+        compiled.initial_auto_escape,
+    )?;
+    Ok(out)
+}
+
+/// `env.compile_expression(expr)?.eval(ctx)`, with `~` routed through [`concat()`].
+fn eval_expr(
+    env: &Environment<'_>,
+    expr: &str,
+    ctx: &minijinja::Value,
+) -> Result<minijinja::Value, minijinja::Error> {
+    let ast = parse_expr(expr)?;
+    let mut codegen = CodeGenerator::new("<expression>", expr);
+    codegen.compile_expr(&ast);
+    let (mut instructions, _) = codegen.finish();
+    route_concat(&mut instructions);
+    let mut out = String::new();
+    let (value, _) = Vm::new(env).eval(
+        &instructions,
+        ctx.clone(),
+        &BTreeMap::new(),
+        &mut make_string_output(&mut out),
+        AutoEscape::None,
+    )?;
+    Ok(value.unwrap_or_default())
 }
 
 fn convert_error(err: minijinja::Error) -> TemplateError {
@@ -1300,17 +1395,52 @@ mod unit {
         assert_eq!(t.render("{{ [1, nope] | first }}", &vars), Ok(json!(1)));
     }
 
-    /// Measured on ansible-core 2.19.12: `'x' ~ [1, nope]` is an undefined read. minijinja 2.24
-    /// concatenates by `Display` inside its VM and only checks that neither side is undefined
-    /// itself, so the list prints as `[1, undefined]`; no environment hook reaches it.
+    /// Measured on ansible-core 2.19.12, each of these fails with `'nope' is undefined`, in a
+    /// task argument, around text, inside a block, at the end of a chain, in a `when:` and in a
+    /// `template` file. minijinja 2.24 concatenates by `Display` and only checks that neither
+    /// side is undefined itself, so without [`concat()`] the list printed as `[1, undefined]`.
+    /// What the reference answers when nothing is undefined stays as it was, and so does `+`,
+    /// which the reference lets carry the undefined value to `length`. A variable named like the
+    /// global `~` calls does not replace it.
     #[test]
-    #[ignore = "minijinja 2.24 offers no hook on the ~ operator for a list holding undefined"]
     fn a_concatenation_with_a_container_holding_an_undefined_fails_the_read() {
         let t = Templar::new(std::env::temp_dir());
+        let none = Map::new();
+        for text in [
+            "{{ 'x' ~ [1, nope] }}",
+            "{{ 'x' ~ nope }}",
+            "{{ 'x' ~ {'k': nope} }}",
+            "{{ [1, nope] ~ 'x' }}",
+            "pre {{ 'x' ~ [1, nope] }} post",
+            "{% block b %}{{ 'x' ~ [1, nope] }}{% endblock %}",
+            "{{ ('x' ~ [1, nope]) | default('d') }}",
+            "{{ ('x' ~ nope) | default('d') }}",
+            "{{ 'a' ~ 'b' ~ [1, nope] }}",
+        ] {
+            let err = t.render(text, &none).expect_err(&format!("leaked: {text}"));
+            assert!(err.is_undefined(), "{text}: {err}");
+        }
         let err = t
-            .render("{{ 'x' ~ [1, nope] }}", &Map::new())
-            .expect_err("leaked: {{ 'x' ~ [1, nope] }}");
+            .condition("'x' ~ [1, nope] == 'x'", &none)
+            .expect_err("leaked: when: 'x' ~ [1, nope] == 'x'");
         assert!(err.is_undefined(), "{err}");
+        let err = t
+            .render_file("{{ 'x' ~ [1, nope] }}", &none, &FileRender::default())
+            .expect_err("leaked: template file {{ 'x' ~ [1, nope] }}");
+        assert!(err.is_undefined(), "{err}");
+        for (text, want) in [
+            ("{{ 'a' ~ 'b' }}", json!("ab")),
+            ("{{ 'a' ~ 'b' ~ 'c' }}", json!("abc")),
+            ("{{ 1 ~ 2 }}", json!("12")),
+            ("{{ 'x' ~ [1, 2] }}", json!("x[1, 2]")),
+            ("{{ ([1, nope] + [2]) | length }}", json!(3)),
+        ] {
+            assert_eq!(t.render(text, &none), Ok(want), "{text}");
+        }
+        assert_eq!(t.condition("'a' ~ 'b' == 'ab'", &none), Ok(true));
+        // Variables, not literals: minijinja folds `'a' ~ 'b'` at compile time, with no call.
+        let shadow = vars(json!({ "volant::concat": 1, "a": "a", "b": "b" }));
+        assert_eq!(t.render("{{ a ~ b }}", &shadow), Ok(json!("ab")));
     }
 
     /// The idioms roles write around undefined values, each measured on ansible-core 2.19.12.

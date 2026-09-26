@@ -2490,14 +2490,17 @@ mod tests {
     /// where the k3s proof writes it.
     ///
     /// What would make this red: the definitions left unread (every task here spells no
-    /// cross-host name of its own), or the reading stopped at the first level, which loses `a`.
+    /// cross-host name of its own), or the reading stopped short of a fixed point, which loses
+    /// `a`: it reaches `api_url` through `b` and `c`, and every definition is pooled twice (the
+    /// role's own layer and the play-wide export), so a single pass over them already goes two
+    /// names deep and a chain of two would not tell.
     #[test]
     fn a_variable_defined_from_hostvars_is_a_boundary() {
         let tree = Tree::new("definition");
         role(
             &tree,
             "- name: direct\n  debug:\n    msg: \"{{ api_url }}\"\n\
-             - name: through b\n  debug:\n    msg: \"{{ a }}\"\n\
+             - name: chained\n  debug:\n    msg: \"{{ a }}\"\n\
              - name: bare\n  debug:\n    msg: ok\n  when: api_url is defined\n\
              - name: from the inventory\n  command: \"curl {{ api_endpoint }}\"\n\
              - name: in a template\n  template:\n    src: conf.j2\n    dest: /etc/conf\n\
@@ -2507,7 +2510,8 @@ mod tests {
             "roles/prereq/defaults/main.yml",
             "api_url: \"{{ hostvars[groups['server'][0]].ansible_host }}\"\n\
              a: \"{{ b }}\"\n\
-             b: \"https://{{ api_url }}:6443\"\n\
+             b: \"{{ c }}/v1\"\n\
+             c: \"https://{{ api_url }}:6443\"\n\
              plain: \"{{ a_local_value | default('x') }}\"\n",
         )
         .file("roles/prereq/templates/conf.j2", "server: {{ a }}\n");
@@ -2517,7 +2521,7 @@ mod tests {
         })).expect("a map"));
         let marks = tree.marked(&inventory);
         assert!(named(&marks, "direct"), "{marks:?}");
-        assert!(named(&marks, "through b"), "two names deep: {marks:?}");
+        assert!(named(&marks, "chained"), "three names deep: {marks:?}");
         assert!(named(&marks, "bare"), "a bare condition: {marks:?}");
         assert!(named(&marks, "from the inventory"), "{marks:?}");
         assert!(named(&marks, "in a template"), "{marks:?}");

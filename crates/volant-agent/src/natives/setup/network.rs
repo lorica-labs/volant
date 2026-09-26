@@ -541,7 +541,9 @@ esac
         let fake = FakeRoot::new("network-raise");
         sysfs(&fake);
         install_ip(&fake, IP);
-        fake.write("/sys/class/net/eth0/mtu", "jumbo\n");
+        // On `lo`, which carries no default address: the read alone raises.
+        fake.write("/sys/class/net/lo/mtu", "jumbo
+");
         assert_eq!(
             collect(&fake.root(), &env(), unbounded()).unwrap(),
             Map::new()

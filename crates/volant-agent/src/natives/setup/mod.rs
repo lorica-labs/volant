@@ -1240,7 +1240,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     ///
     /// What would make this red: the string left as given in `module_args`, which the reference
     /// never prints; a default missing from `module_args`; or the early `lsb_release` kept when
-    /// the module's environment differs from the one it ran in.
+    /// the module's environment differs from the one it ran in; or `hardware` and `network`
+    /// collected when the subset leaves them out, or left out when it names them.
     #[test]
     #[cfg(target_os = "linux")]
     fn the_answer_carries_the_facts_and_the_reference_s_invocation() {
@@ -1292,6 +1293,23 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             json!("user"),
             "the module's LOGNAME, not the agent's"
         );
+        for key in ["ansible_processor", "ansible_interfaces"] {
+            assert!(
+                !result["ansible_facts"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key(key),
+                "{key} collected for !all"
+            );
+        }
+
+        let args = json!({"gather_subset": ["!all", "hardware", "network"]})
+            .as_object()
+            .unwrap()
+            .clone();
+        let facts = &answer(&args, &root, &context).unwrap()["ansible_facts"];
+        assert_eq!(facts["ansible_processor_vcpus"], json!(1));
+        assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
     }
 
     /// A task environment that changes the locale or the time zone hands back: the module would

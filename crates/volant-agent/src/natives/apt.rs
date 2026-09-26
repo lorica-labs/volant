@@ -303,7 +303,11 @@ fn plan(
         // `datetime.now()` floors to the microsecond.
         let now_micros = i128::from(now_seconds) * 1_000_000 + i128::from(now.subsec_micros());
         if stamp + valid < now_micros {
-            return Err("the package cache is older than cache_valid_time".into());
+            return Err(if request.cache_valid_time == 0 {
+                "update_cache without cache_valid_time".into()
+            } else {
+                "the package cache is older than cache_valid_time".into()
+            });
         }
     }
 
@@ -1075,8 +1079,11 @@ Architecture: amd64
     #[test]
     fn a_cache_the_module_would_update_is_left_to_it() {
         let host = Host::new("stale");
+        assert_eq!(
+            host.hands_back(&json!({"update_cache": true})),
+            "update_cache without cache_valid_time"
+        );
         for args in [
-            json!({"update_cache": true}),
             json!({"update_cache": true, "name": "bash"}),
             json!({"update_cache": true, "cache_valid_time": 30, "name": "bash"}),
         ] {

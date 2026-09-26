@@ -75,6 +75,20 @@ fn strict(batching: bool, store: &Mutex<VarStore>) -> bool {
     !batching || store.lock().expect("vars lock").templated_facts()
 }
 
+/// Whether a remote task's module writes this host's facts: `setup`, the `*_facts` modules and
+/// `getent`, the ones that answer with `ansible_facts`. A batch ends behind one, because every
+/// task after it in the same batch is rendered before it runs.
+///
+/// A name, not a promise: any module may return `ansible_facts`, and one outside this list that
+/// does is read by a later task of its batch as it stood before. A task whose render fails for
+/// want of it is rendered again behind the batch rather than failed, which covers the fact that
+/// did not exist yet, and not the fact that changed.
+fn writes_facts(task: &PlayTask) -> bool {
+    let module = short_name(&task.module);
+    let module = module.rsplit('.').next().unwrap_or(module);
+    matches!(module, "setup" | "gather_facts" | "getent") || module.ends_with("_facts")
+}
+
 /// Whether a text names one of [`CROSS_HOST_NAMES`].
 fn mentions(s: &str) -> bool {
     // `ansible_play_hosts_all` is a static copy of the play's starting host list: no host can
@@ -394,6 +408,8 @@ pub(super) async fn drive_host(
         pos += grown;
     }
     let mut batch_id: u64 = 0;
+    // The step whose render warnings were last sent, so a step rendered twice says them once.
+    let mut warned: Option<usize> = None;
     // The handlers this host has asked for and not yet run, as indices into `compiled.handlers`.
     // Never twice: measured, a handler notified by two tasks runs once.
     let mut notified: Vec<usize> = Vec::new();
@@ -850,17 +866,28 @@ pub(super) async fn drive_host(
             // Not censored: measured on ansible-core 2.19.12, the one warning `prepare` can
             // raise quotes the playbook's own `environment` source and never a rendered value,
             // and the reference leaves it in plain sight under `no_log`.
-            for message in warnings {
-                let _ = tx
-                    .send(Event::Warning {
-                        host: name.clone(),
-                        index: pos,
-                        message,
-                        censored: false,
-                    })
-                    .await;
+            //
+            // Once per step: a step rendered behind a batch in hand is often rendered again once
+            // that batch has run (see the `Err` arm below), and its warning is said once.
+            if warned != Some(pos) {
+                for message in warnings {
+                    let _ = tx
+                        .send(Event::Warning {
+                            host: name.clone(),
+                            index: pos,
+                            message,
+                            censored: false,
+                        })
+                        .await;
+                }
             }
+            warned = Some(pos);
             match prepared {
+                // Rendered behind a batch in hand, against variables that batch has not written
+                // yet: a fact the batch's `setup` gathers, say. Not this step's failure - the
+                // batch goes out and the step is rendered again behind it, where the strict
+                // `linear` would have rendered it.
+                Err(_) if !batch.is_empty() => break,
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;
@@ -1104,6 +1131,8 @@ pub(super) async fn drive_host(
                     }
                     let retry = match retry_plan(task, items.first(), &templar) {
                         Ok(retry) => retry,
+                        // As for a render that failed: rendered again behind the batch in hand.
+                        Err(_) if !batch.is_empty() => break,
                         Err(err) => {
                             deferred_error = Some((pos, err));
                             break;
@@ -1129,7 +1158,12 @@ pub(super) async fn drive_host(
                     // `ignore_errors` set, so the agent runs all of them the way Ansible does.
                     // Only `report_task` may decide the task failed, from the aggregate, and
                     // nothing behind it in the same batch is allowed to run before it has.
+                    //
+                    // A task that writes facts ends it as well: every task behind it in the batch
+                    // is rendered now, before those facts exist, and one that reads them would
+                    // run with nothing or with the values from before.
                     let boundary = task.register.is_some()
+                        || writes_facts(task)
                         || task.loop_items.is_some()
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty()
@@ -2345,6 +2379,36 @@ mod tests {
             task("ansible.builtin.pause"),
         ]);
         assert_eq!(boundaries(&c), [false, true, true]);
+    }
+
+    /// Every task of a batch is rendered before the batch goes out, so a task that writes facts
+    /// has to be the last of its batch: the next one may read them.
+    ///
+    /// What would make this red: `setup` dropped from the list. The roles proof's first role
+    /// then renders its `include_vars: "{{ ansible_facts.os_family }}.yml"` in the same batch
+    /// as the play's fact gathering, before the facts exist, and fails it on both hosts.
+    #[test]
+    fn a_task_that_writes_facts_ends_its_batch() {
+        for module in [
+            "setup",
+            "ansible.builtin.setup",
+            "gather_facts",
+            "package_facts",
+            "ansible.builtin.service_facts",
+            "community.general.listen_ports_facts",
+            "getent",
+        ] {
+            assert!(writes_facts(&task(module)), "{module}");
+        }
+        for module in [
+            "apt",
+            "ansible.builtin.stat",
+            "template",
+            "command",
+            "facts",
+        ] {
+            assert!(!writes_facts(&task(module)), "{module}");
+        }
     }
 
     fn step(task: PlayTask) -> Step {

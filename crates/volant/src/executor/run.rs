@@ -6863,7 +6863,8 @@ mod tests {
     #[tokio::test]
     async fn a_failed_check_stops_the_master_and_retires_the_hosts_other_links() {
         use std::sync::atomic::Ordering::SeqCst;
-        let dir = std::env::temp_dir().join(format!("volant-cm-kept-{}", std::process::id()));
+        let dir =
+            std::path::Path::new("/tmp").join(format!("volant-cm-kept-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let transport = shared_to_h1(&dir);
@@ -6924,7 +6925,8 @@ mod tests {
     #[tokio::test]
     async fn a_key_with_no_kept_link_does_not_ride_a_master_older_than_the_last_reboot() {
         use std::sync::atomic::Ordering::SeqCst;
-        let dir = std::env::temp_dir().join(format!("volant-cm-unproven-{}", std::process::id()));
+        let dir =
+            std::path::Path::new("/tmp").join(format!("volant-cm-unproven-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let transport = shared_to_h1(&dir);

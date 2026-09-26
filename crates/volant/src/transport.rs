@@ -754,7 +754,7 @@ fn control_path_for(
     (path.as_os_str().len() <= CONTROL_PATH_MAX).then(|| path.into_boxed_path())
 }
 
-/// The directory for the shared connections' sockets, for this user (see [`control_dir_in`]),
+/// The directory for the shared connections' sockets, for this user (see `control_dir_in`),
 /// or `None` after a warning saying why there is none.
 #[cfg(unix)]
 pub fn control_dir() -> Option<PathBuf> {
@@ -2329,8 +2329,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("volant-cm-test-{}-{name}", std::process::id()));
+        let dir = Path::new("/tmp").join(format!("volant-cm-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir
@@ -2668,7 +2667,10 @@ mod tests {
             .create(tmp.join(format!("volant-cm-{other}")))
             .expect("a directory of the wrong owner");
         let err = control_dir_in(None, &tmp, other).expect_err("another owner");
-        assert!(err.contains("owned by"), "{err}");
+        assert!(
+            err.contains("owned by"),
+            "the refusal names the wrong owner"
+        );
 
         let runtime = tmp.join("runtime");
         std::fs::create_dir(&runtime).expect("a runtime directory");
@@ -2695,7 +2697,10 @@ mod tests {
         std::fs::create_dir(&open).expect("a shared parent");
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).expect("chmod");
         let err = control_dir_in(None, &open, uid).expect_err("a parent anybody can write to");
-        assert!(err.contains("not sticky"), "{err}");
+        assert!(
+            err.contains("not sticky"),
+            "the refusal names the missing sticky bit"
+        );
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o1777)).expect("chmod");
         assert_eq!(
             control_dir_in(None, &open, uid),

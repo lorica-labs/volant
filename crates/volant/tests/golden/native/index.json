@@ -16,9 +16,53 @@
     "volatile": [],
     "why": ""
   },
+  "apt-install-absent": {
+    "args": {
+      "name": "hello",
+      "state": "present"
+    },
+    "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "apt",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "cache_update_time",
+      "stdout",
+      "stdout_lines",
+      "stderr",
+      "stderr_lines"
+    ],
+    "why": "not installed"
+  },
   "apt-present-installed": {
     "args": {
       "name": "bash",
+      "state": "present"
+    },
+    "become": true,
+    "branch": {
+      "cache_updated": false,
+      "changed": false
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "apt",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "cache_update_time"
+    ],
+    "why": ""
+  },
+  "apt-present-installed-now": {
+    "args": {
+      "name": "hello",
       "state": "present"
     },
     "become": true,
@@ -98,6 +142,28 @@
       "cache_update_time"
     ],
     "why": ""
+  },
+  "apt-remove-installed": {
+    "args": {
+      "name": "hello",
+      "state": "absent"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "fallback",
+    "module": "apt",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "stdout",
+      "stdout_lines",
+      "stderr",
+      "stderr_lines"
+    ],
+    "why": "installed"
   },
   "apt-update-always": {
     "args": {
@@ -1237,6 +1303,533 @@
       "status.Names",
       "status.Requires",
       "status.WantedBy"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestamp",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestamp",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-daemon-reload": {
+    "args": {
+      "daemon_reload": true,
+      "name": "volant-golden"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestamp",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestamp",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-disabled": {
+    "args": {
+      "enabled": false,
+      "name": "volant-golden"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires",
+      "status.WantedBy"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestampMonotonic",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-disabled-same": {
+    "args": {
+      "enabled": false,
+      "name": "volant-golden"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestampMonotonic",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-enabled": {
+    "args": {
+      "enabled": true,
+      "name": "volant-golden"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestampMonotonic",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-reloaded": {
+    "args": {
+      "name": "volant-golden",
+      "state": "reloaded"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestamp",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestamp",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-restarted": {
+    "args": {
+      "name": "volant-golden",
+      "state": "restarted"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestamp",
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestamp",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestamp",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestamp",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestamp",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestamp",
+      "status.InactiveExitTimestampMonotonic",
+      "status.InvocationID",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestamp",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-started": {
+    "args": {
+      "name": "volant-golden",
+      "state": "started"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
+    ],
+    "volatile": [
+      "status.ActiveEnterTimestampMonotonic",
+      "status.ActiveExitTimestampMonotonic",
+      "status.AssertTimestampMonotonic",
+      "status.CPUUsageNSec",
+      "status.ConditionTimestampMonotonic",
+      "status.ControlGroupId",
+      "status.ControlPID",
+      "status.ExecMainExitTimestampMonotonic",
+      "status.ExecMainHandoffTimestampMonotonic",
+      "status.ExecMainPID",
+      "status.ExecMainStartTimestampMonotonic",
+      "status.IOReadBytes",
+      "status.IOReadOperations",
+      "status.IOWriteBytes",
+      "status.IOWriteOperations",
+      "status.IPEgressBytes",
+      "status.IPEgressPackets",
+      "status.IPIngressBytes",
+      "status.IPIngressPackets",
+      "status.InactiveEnterTimestampMonotonic",
+      "status.InactiveExitTimestampMonotonic",
+      "status.MainPID",
+      "status.MemoryAvailable",
+      "status.MemoryCurrent",
+      "status.MemoryPeak",
+      "status.MemorySwapCurrent",
+      "status.MemorySwapPeak",
+      "status.MemoryZSwapCurrent",
+      "status.NRestarts",
+      "status.StateChangeTimestampMonotonic",
+      "status.TasksCurrent",
+      "status.WatchdogTimestampMonotonic"
+    ],
+    "why": "status is the host's own systemctl show: its systemd version sets the key set, and CPU set, memory, limits, pids and times are the machine's; compared with a reference run on the same host"
+  },
+  "systemd-unit-stopped": {
+    "args": {
+      "name": "volant-golden",
+      "state": "stopped"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "systemd",
+    "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
+    },
+    "unordered": [
+      "status.After",
+      "status.Before",
+      "status.Conflicts",
+      "status.Names",
+      "status.Requires"
     ],
     "volatile": [
       "status.ActiveEnterTimestamp",

@@ -1,0 +1,1514 @@
+[
+ {
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "tasks": [
+   {
+    "block": [
+     {
+      "name": "stat-file",
+      "stat": {
+       "path": "<golden-tmp>/f.txt"
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-dir",
+      "stat": {
+       "path": "<golden-tmp>"
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-link-follow",
+      "stat": {
+       "path": "<golden-tmp>/l",
+       "follow": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-link-nofollow",
+      "stat": {
+       "path": "<golden-tmp>/l"
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-missing",
+      "stat": {
+       "path": "<golden-tmp>/nope"
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-plugin",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "follow": false,
+       "get_checksum": true,
+       "checksum_algorithm": "sha1"
+      },
+      "register": "last"
+     },
+     {
+      "name": "stat-bare",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "last"
+     },
+     {
+      "name": "file-absent-missing",
+      "file": {
+       "path": "<golden-tmp>/gone",
+       "state": "absent"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-absent-missing",
+      "stat": {
+       "path": "<golden-tmp>/gone",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-absent-missing",
+      "slurp": {
+       "src": "<golden-tmp>/gone"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "setup-10",
+      "file": {
+       "path": "<golden-tmp>/d0",
+       "state": "directory"
+      }
+     },
+     {
+      "name": "file-absent-present",
+      "file": {
+       "path": "<golden-tmp>/d0",
+       "state": "absent"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-absent-present",
+      "stat": {
+       "path": "<golden-tmp>/d0",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-absent-present",
+      "slurp": {
+       "src": "<golden-tmp>/d0"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-dir-created",
+      "file": {
+       "path": "<golden-tmp>/a/b",
+       "state": "directory",
+       "mode": "0755"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-dir-created",
+      "stat": {
+       "path": "<golden-tmp>/a/b",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-dir-created",
+      "slurp": {
+       "src": "<golden-tmp>/a/b"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-dir-same",
+      "file": {
+       "path": "<golden-tmp>/a/b",
+       "state": "directory",
+       "mode": 493
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-dir-same",
+      "stat": {
+       "path": "<golden-tmp>/a/b",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-dir-same",
+      "slurp": {
+       "src": "<golden-tmp>/a/b"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-dir-symbolic",
+      "file": {
+       "path": "<golden-tmp>/a/b",
+       "state": "directory",
+       "mode": "u=rwx,g=rx,o="
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-dir-symbolic",
+      "stat": {
+       "path": "<golden-tmp>/a/b",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-dir-symbolic",
+      "slurp": {
+       "src": "<golden-tmp>/a/b"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-dest-alias",
+      "file": {
+       "dest": "<golden-tmp>/a/b",
+       "state": "directory"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-dest-alias",
+      "stat": {
+       "path": "<golden-tmp>/a/b",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-dest-alias",
+      "slurp": {
+       "src": "<golden-tmp>/a/b"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-state-file-missing",
+      "file": {
+       "path": "<golden-tmp>/missing",
+       "state": "file"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-file-state-file-missing",
+      "stat": {
+       "path": "<golden-tmp>/missing",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-state-file-missing",
+      "slurp": {
+       "src": "<golden-tmp>/missing"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-state-file-same",
+      "file": {
+       "path": "<golden-tmp>/f.txt",
+       "state": "file"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-state-file-same",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-state-file-same",
+      "slurp": {
+       "src": "<golden-tmp>/f.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-state-file-mode",
+      "file": {
+       "path": "<golden-tmp>/f.txt",
+       "state": "file",
+       "mode": "0600"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-state-file-mode",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-state-file-mode",
+      "slurp": {
+       "src": "<golden-tmp>/f.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-dir-over-file",
+      "file": {
+       "path": "<golden-tmp>/f.txt",
+       "state": "directory"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-file-dir-over-file",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-dir-over-file",
+      "slurp": {
+       "src": "<golden-tmp>/f.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-owner-unknown",
+      "file": {
+       "path": "<golden-tmp>/f.txt",
+       "owner": "volant-no-such-user"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-file-owner-unknown",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-owner-unknown",
+      "slurp": {
+       "src": "<golden-tmp>/f.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-chown-denied",
+      "file": {
+       "path": "<golden-tmp>/f.txt",
+       "owner": "root"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-file-chown-denied",
+      "stat": {
+       "path": "<golden-tmp>/f.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-chown-denied",
+      "slurp": {
+       "src": "<golden-tmp>/f.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-link",
+      "file": {
+       "path": "<golden-tmp>/l2",
+       "src": "<golden-tmp>/f.txt",
+       "state": "link"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-link",
+      "stat": {
+       "path": "<golden-tmp>/l2",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-link",
+      "slurp": {
+       "src": "<golden-tmp>/l2"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "file-recurse",
+      "file": {
+       "path": "<golden-tmp>/a",
+       "state": "directory",
+       "recurse": true,
+       "mode": "0755"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-file-recurse",
+      "stat": {
+       "path": "<golden-tmp>/a",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-file-recurse",
+      "slurp": {
+       "src": "<golden-tmp>/a"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-created",
+      "copy": {
+       "content": "one\n",
+       "dest": "<golden-tmp>/c.txt",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-copy-module-created",
+      "stat": {
+       "path": "<golden-tmp>/c.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-created",
+      "slurp": {
+       "src": "<golden-tmp>/c.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-modified-backup",
+      "copy": {
+       "content": "two\n",
+       "dest": "<golden-tmp>/c.txt",
+       "backup": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-copy-module-modified-backup",
+      "stat": {
+       "path": "<golden-tmp>/c.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-modified-backup",
+      "slurp": {
+       "src": "<golden-tmp>/c.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "after-backup-copy-module-modified-backup",
+      "slurp": {
+       "src": "{{ last.backup_file }}"
+      }
+     },
+     {
+      "name": "copy-module-validate-fail",
+      "copy": {
+       "content": "",
+       "dest": "<golden-tmp>/v.txt",
+       "validate": "test -s %s"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-copy-module-validate-fail",
+      "stat": {
+       "path": "<golden-tmp>/v.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-validate-fail",
+      "slurp": {
+       "src": "<golden-tmp>/v.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-no-dir",
+      "copy": {
+       "content": "x\n",
+       "dest": "<golden-tmp>/nodir/x.txt"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-copy-module-no-dir",
+      "stat": {
+       "path": "<golden-tmp>/nodir/x.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-no-dir",
+      "slurp": {
+       "src": "<golden-tmp>/nodir/x.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-remote-src",
+      "copy": {
+       "src": "<golden-tmp>/f.txt",
+       "dest": "<golden-tmp>/r.txt",
+       "remote_src": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-copy-module-remote-src",
+      "stat": {
+       "path": "<golden-tmp>/r.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-remote-src",
+      "slurp": {
+       "src": "<golden-tmp>/r.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-missing",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "a=1"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-lineinfile-missing",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-missing",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-created",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "a=1",
+       "create": true,
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-created",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-created",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-same",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "a=1",
+       "create": true,
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-same",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-same",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-appended",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^b=",
+       "line": "b=2"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-appended",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-appended",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-replaced-backup",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^a=",
+       "line": "a=3",
+       "backup": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-replaced-backup",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-replaced-backup",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "after-backup-lineinfile-replaced-backup",
+      "slurp": {
+       "src": "{{ last.backup }}"
+      }
+     },
+     {
+      "name": "lineinfile-mode",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^a=",
+       "line": "a=3",
+       "mode": "0600"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-mode",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-mode",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-insertafter",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "c=4",
+       "insertafter": "^a="
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-insertafter",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-insertafter",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-search-string",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "search_string": "c=4",
+       "line": "c=5"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-search-string",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-search-string",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-validate-ok",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "d=6",
+       "validate": "test -s %s"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-validate-ok",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-validate-ok",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-validate-fail",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "line": "e=7",
+       "validate": "false %s"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-lineinfile-validate-fail",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-validate-fail",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-absent",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^d=",
+       "state": "absent"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-absent",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-absent",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-absent-same",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^d=",
+       "state": "absent"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-absent-same",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-absent-same",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-dir",
+      "lineinfile": {
+       "path": "<golden-tmp>",
+       "line": "x"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-lineinfile-dir",
+      "stat": {
+       "path": "<golden-tmp>",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-dir",
+      "slurp": {
+       "src": "<golden-tmp>"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-lookahead",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^(?!#)a=",
+       "line": "a=9"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-lookahead",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-lookahead",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-backrefs",
+      "lineinfile": {
+       "path": "<golden-tmp>/l.conf",
+       "regexp": "^(a)=.*",
+       "line": "\\1=10",
+       "backrefs": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-backrefs",
+      "stat": {
+       "path": "<golden-tmp>/l.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-backrefs",
+      "slurp": {
+       "src": "<golden-tmp>/l.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "setup-112",
+      "copy": {
+       "content": "a=1\nx=1\na=2\nx=2\nz=0\n",
+       "dest": "<golden-tmp>/m.conf",
+       "mode": "0644"
+      }
+     },
+     {
+      "name": "lineinfile-last-match",
+      "lineinfile": {
+       "path": "<golden-tmp>/m.conf",
+       "regexp": "^a=",
+       "line": "a=3"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-last-match",
+      "stat": {
+       "path": "<golden-tmp>/m.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-last-match",
+      "slurp": {
+       "src": "<golden-tmp>/m.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "lineinfile-insertafter-last",
+      "lineinfile": {
+       "path": "<golden-tmp>/m.conf",
+       "line": "y=1",
+       "insertafter": "^x="
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-lineinfile-insertafter-last",
+      "stat": {
+       "path": "<golden-tmp>/m.conf",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-lineinfile-insertafter-last",
+      "slurp": {
+       "src": "<golden-tmp>/m.conf"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "systemd-started-same",
+      "systemd": {
+       "name": "cron",
+       "state": "started",
+       "enabled": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-enabled-only",
+      "systemd_service": {
+       "name": "cron.service",
+       "enabled": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-daemon-reload",
+      "systemd": {
+       "daemon_reload": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "systemd-missing-unit",
+      "systemd": {
+       "name": "volant-no-such-unit",
+       "state": "started"
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-unit-before",
+      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
+      "become": true
+     },
+     {
+      "name": "setup-124",
+      "copy": {
+       "content": "[Unit]\nDescription=Volant golden throwaway unit\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
+       "dest": "/etc/systemd/system/volant-golden.service",
+       "mode": "0644"
+      },
+      "become": true
+     },
+     {
+      "name": "systemd-unit-started",
+      "systemd": {
+       "state": "started",
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-started",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-pid_before",
+      "command": "systemctl show volant-golden -p MainPID --value",
+      "register": "pid_before"
+     },
+     {
+      "name": "systemd-unit-restarted",
+      "systemd": {
+       "state": "restarted",
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-restarted",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-pid_after",
+      "command": "systemctl show volant-golden -p MainPID --value",
+      "register": "pid_after"
+     },
+     {
+      "name": "assert-pid_after",
+      "assert": {
+       "that": [
+        "pid_after.stdout != pid_before.stdout"
+       ],
+       "fail_msg": "restarted left the unit as it was"
+      }
+     },
+     {
+      "name": "probe-reload_before",
+      "command": "systemctl show volant-golden -p ExecReload --value",
+      "register": "reload_before"
+     },
+     {
+      "name": "systemd-unit-reloaded",
+      "systemd": {
+       "state": "reloaded",
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-reloaded",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-reload_after",
+      "command": "systemctl show volant-golden -p ExecReload --value",
+      "register": "reload_after"
+     },
+     {
+      "name": "assert-reload_after",
+      "assert": {
+       "that": [
+        "reload_after.stdout != reload_before.stdout"
+       ],
+       "fail_msg": "reloaded left the unit as it was"
+      }
+     },
+     {
+      "name": "setup-137",
+      "copy": {
+       "content": "[Unit]\nDescription=Volant golden throwaway unit, edited\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
+       "dest": "/etc/systemd/system/volant-golden.service",
+       "mode": "0644"
+      },
+      "become": true
+     },
+     {
+      "name": "systemd-unit-daemon-reload",
+      "systemd": {
+       "daemon_reload": true,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-daemon-reload",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-stopped",
+      "systemd": {
+       "state": "stopped",
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-stopped",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-enabled",
+      "systemd": {
+       "enabled": true,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-enabled",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-disabled",
+      "systemd": {
+       "enabled": false,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-disabled",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-disabled-same",
+      "systemd": {
+       "enabled": false,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-disabled-same",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "apt-present-installed",
+      "apt": {
+       "name": "bash",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-present-list",
+      "apt": {
+       "name": [
+        "bash",
+        "coreutils"
+       ],
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-absent-missing",
+      "apt": {
+       "name": "volant-no-such-package",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-update-always",
+      "apt": {
+       "update_cache": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-update-fresh",
+      "apt": {
+       "update_cache": true,
+       "cache_valid_time": 86400
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-present-update-fresh",
+      "apt": {
+       "name": "bash",
+       "update_cache": true,
+       "cache_valid_time": 86400
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-present-unknown",
+      "apt": {
+       "name": "volant-no-such-package",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "apt-install-absent",
+      "apt": {
+       "name": "hello",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-present-installed-now",
+      "apt": {
+       "name": "hello",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "apt-remove-installed",
+      "apt": {
+       "name": "hello",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "package-facts",
+      "package_facts": {
+       "manager": "auto"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "service-facts",
+      "service_facts": {},
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "setup-pkg-mgr",
+      "setup": {
+       "gather_subset": [
+        "!all"
+       ],
+       "filter": [
+        "ansible_pkg_mgr"
+       ]
+      },
+      "register": "last"
+     },
+     {
+      "name": "setup-service-mgr",
+      "setup": {
+       "gather_subset": [
+        "!all"
+       ],
+       "filter": [
+        "ansible_service_mgr"
+       ]
+      },
+      "register": "last"
+     },
+     {
+      "name": "cleanup-user-before",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
+      "name": "cleanup-group-before",
+      "group": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
+      "name": "group-created",
+      "group": {
+       "name": "volantgrp",
+       "gid": 64999
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-same",
+      "group": {
+       "name": "volantgrp",
+       "gid": 64999
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-created",
+      "user": {
+       "name": "volantshape",
+       "uid": 64999,
+       "group": "volantgrp",
+       "shell": "/bin/sh",
+       "create_home": false,
+       "home": "/nonexistent-volantshape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-same",
+      "user": {
+       "name": "volantshape",
+       "uid": 64999,
+       "group": "volantgrp",
+       "shell": "/bin/sh",
+       "create_home": false,
+       "home": "/nonexistent-volantshape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-shell",
+      "user": {
+       "name": "volantshape",
+       "uid": 64999,
+       "group": "volantgrp",
+       "shell": "/bin/bash",
+       "create_home": false,
+       "home": "/nonexistent-volantshape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-password",
+      "user": {
+       "name": "volantshape",
+       "password": "!"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-removed",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-absent-missing",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-removed",
+      "group": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     }
+    ],
+    "always": [
+     {
+      "name": "cleanup-user",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-group",
+      "group": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-unit",
+      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-package",
+      "apt": {
+       "name": "hello",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     }
+    ]
+   }
+  ]
+ }
+]

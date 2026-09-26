@@ -169,6 +169,8 @@ smoke-embedded: agent-musl
     cp target/release/volant-agent "$agents/volant-agent"
     cp target/agents/volant-agent-x86_64-unknown-linux-musl "$agents/"
     cp target/agents/volant-agent-x86_64-unknown-linux-musl "$agents/volant-agent-aarch64-unknown-linux-musl"
+    # `volant_echo` is a native for the agent's own tests: a release agent must not carry it.
+    if grep -alq volant_echo "$agents"/volant-agent*; then echo "a release agent carries the test-only native volant_echo"; exit 1; fi
     VOLANT_EMBED_AGENTS_DIR="$agents" cargo build -p volant --release
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
@@ -191,7 +193,13 @@ ssh-test: agent-musl
     # need the pinned collections this job installs. Without this line the two python.rs tests run
     # in no job at all: the `test` job's ansible-core-less pythons skip them. The same holds for
     # the CLI test of `retries` on an action plugin, which needs ansible-core to run `copy`.
-    cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    # The native module golden needs `sudo -n`, systemd, apt and cron too; its path check runs
+    # against `volant_echo`, a native only an agent built with `test-natives` has, kept apart from
+    # the agent every other test runs.
+    cargo build -p volant-agent --features test-natives
+    mkdir -p target/test-natives
+    cp target/debug/volant-agent target/test-natives/volant-agent
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
 
 # The commit the bench corpus is pinned to, so the thing being timed cannot change under the
 # recipe. Refreshed by hand with `git ls-remote https://github.com/ansible-lockdown/UBUNTU22-CIS

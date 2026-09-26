@@ -77,7 +77,7 @@ pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Valu
     Ok(facts)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use serde_json::json;
 

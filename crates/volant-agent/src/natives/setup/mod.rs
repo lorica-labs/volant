@@ -663,6 +663,7 @@ pub fn print(gather_subset: &str, interpreter: &str) -> i32 {
 #[cfg(test)]
 pub mod tests {
     use serde_json::json;
+    #[cfg(target_os = "linux")]
     use volant_protocol::facts::NATIVE_FACT_KEYS;
 
     use super::*;
@@ -797,6 +798,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
 
     /// Every source a Debian 12 host can give the collectors, the DSA host key included, so that
     /// every key the native can produce is produced.
+    #[cfg(target_os = "linux")]
     pub fn debian_root(name: &str) -> FakeRoot {
         let fake = FakeRoot::new(name);
         fake.write("/etc/os-release", DEBIAN_OS_RELEASE)
@@ -831,6 +833,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// controller would then never trust the native for; or a key in the list the native never
     /// writes, which a play would find missing.
     #[test]
+    #[cfg(target_os = "linux")]
     fn on_a_host_with_every_source_the_native_writes_exactly_the_listed_keys() {
         let fake = debian_root("keys");
         let root = fake.root();
@@ -964,6 +967,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// never prints; a default missing from `module_args`; or the early `lsb_release` kept when
     /// the module's environment differs from the one it ran in.
     #[test]
+    #[cfg(target_os = "linux")]
     fn the_answer_carries_the_facts_and_the_reference_s_invocation() {
         let fake = debian_root("answer");
         fake.write(
@@ -1073,6 +1077,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// What would make this red: a command run outside the executor, or the early `lsb_release`
     /// left running, which keeps the task waiting for it after the probe has stopped.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_hung_command_ends_at_the_timeout_or_the_cancel() {
         let fake = debian_root("hung");
         fake.script("/usr/bin/fake-python", "sleep 30")
@@ -1117,6 +1122,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// What would make this red: the early run halted only when the probe fails, which leaves a
     /// cancelled task waiting on a hung `lsb_release` for as long as it hangs.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_hung_early_lsb_release_ends_at_the_cancel_or_the_timeout() {
         let fake = debian_root("hung-lsb");
         let interpreter = python::tests::fake_interpreter(&fake, &probe());
@@ -1160,6 +1166,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// What would make this red: the probe run in the agent's environment only, which finds no
     /// `distro` and answers with 1.9's version rules.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_task_pythonpath_with_an_old_distro_hands_back() {
         let fake = debian_root("task-distro");
         fake.write("/site/distro.py", "__version__ = \"1.5.0\"\n");

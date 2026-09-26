@@ -246,6 +246,7 @@ pub mod tests {
     use super::*;
 
     /// An interpreter that answers the probe with `probe`, whatever it is asked.
+    #[cfg(target_os = "linux")]
     pub fn fake_interpreter(fake: &FakeRoot, probe: &Probe) -> String {
         let answer = json!({
             "python": probe.python,

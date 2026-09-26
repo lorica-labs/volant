@@ -389,7 +389,9 @@ fn minor_version(line: &str) -> Option<&str> {
 mod tests {
     use serde_json::json;
 
-    use super::super::tests::{DEBIAN_OS_RELEASE, FakeRoot, UBUNTU_OS_RELEASE, debian_root, probe};
+    #[cfg(target_os = "linux")]
+    use super::super::tests::debian_root;
+    use super::super::tests::{DEBIAN_OS_RELEASE, FakeRoot, UBUNTU_OS_RELEASE, probe};
     use super::*;
 
     fn distribution(fake: &FakeRoot) -> Result<Value, String> {
@@ -411,6 +413,7 @@ mod tests {
     ///
     /// What would make this red: the probe's `distro` ignored.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_system_distro_other_than_1_9_hands_back() {
         let fake = debian_root("system-distro");
         assert!(distribution_with(&fake, Some("1.9.0")).is_ok());
@@ -454,6 +457,7 @@ mod tests {
     /// What would make this red: `12` kept as the version, or `distribution_minor_version`
     /// missing.
     #[test]
+    #[cfg(target_os = "linux")]
     fn debian_is_read_like_the_reference() {
         let fake = debian_root("debian");
         assert_eq!(

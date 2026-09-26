@@ -8,13 +8,15 @@
 //! - no package, and a fresh cache or no cache check at all:
 //!   `{"changed": false, "cache_updated": false, "cache_update_time": T}` (`{"changed": false}`
 //!   for `state: absent` without a check);
-//! - `state: present`, every package `install ok installed`: the same three keys, after
-//!   `apt-mark manual <packages>`, which the module runs whether or not anything changes;
+//! - `state: present`, every package `install ok installed` and marked manually installed: the
+//!   same three keys;
 //! - `state: absent`, no package installed: `{"changed": false}`.
 //!
-//! One divergence: `apt-mark manual` only changes something for a package marked automatically
-//! installed, so the native runs it only then. With every name already manual the call is a
-//! no-op, and an `apt-mark` that would fail there without changing anything is not reported.
+//! One divergence: for `state: present` the module runs `apt-mark manual <packages>` whether or
+//! not anything changes. With every name already manual that call is a no-op, and the native
+//! does not spawn it: an `apt-mark` that would fail there without changing anything is not
+//! reported. A name marked automatically installed, where the call changes something, goes to
+//! the module.
 //!
 //! The native reads files only (`/var/lib/dpkg/status`, `/var/lib/apt/extended_states`, the
 //! cache stamp) and takes no lock. dpkg replaces its status file by renaming a complete new one
@@ -24,7 +26,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -32,7 +34,7 @@ use volant_protocol::TaskResult;
 use super::common::{ArgSpec, invocation};
 use super::setup::Root;
 use super::{Native, NativeRun};
-use crate::modules::{Context, Run};
+use crate::modules::Context;
 
 pub const NATIVE: Native = Native {
     name: "apt",
@@ -46,11 +48,6 @@ const UPDATES: &str = "/var/lib/dpkg/updates";
 const EXTENDED_STATES: &str = "/var/lib/apt/extended_states";
 const STAMP: &str = "/var/lib/apt/periodic/update-success-stamp";
 const LISTS: &str = "/var/lib/apt/lists";
-
-/// What the module's `mark_installed_manually` looks for in `apt-mark`'s standard error before
-/// retrying with `unmarkauto`.
-const APT_MARK_INVALID_OP: &str = "Invalid operation";
-const APT_MARK_INVALID_OP_DEB6: &str = "Usage: apt-mark [options] {markauto|unmarkauto} packages";
 
 /// `apt`'s `argument_spec` in ansible-core 2.19.12, with its defaults and aliases.
 const SPEC: &[ArgSpec] = &[
@@ -223,21 +220,15 @@ const TAKEN: &[(&str, Take)] = &[
     ("auto_install_module_deps", Take::Bool),
 ];
 
-fn run(args: &Map<String, Value>, context: &Context, cancelled: &dyn Fn() -> bool) -> NativeRun {
-    answer(args, &Root::real(), context, SystemTime::now(), cancelled)
+/// Reads files only and spawns nothing, so there is no `timeout` or cancel to honour.
+fn run(args: &Map<String, Value>, context: &Context, _: &dyn Fn() -> bool) -> NativeRun {
+    answer(args, &Root::real(), context, SystemTime::now())
 }
 
-fn answer(
-    args: &Map<String, Value>,
-    root: &Root,
-    context: &Context,
-    now: SystemTime,
-    cancelled: &dyn Fn() -> bool,
-) -> NativeRun {
-    let deadline = context.timeout.map(|t| Instant::now() + t);
+fn answer(args: &Map<String, Value>, root: &Root, context: &Context, now: SystemTime) -> NativeRun {
     match plan(args, root, &context.environment, now) {
         Err(reason) => NativeRun::Fallback(reason),
-        Ok(plan) => finish(plan, context, deadline, cancelled),
+        Ok(result) => NativeRun::Done(TaskResult(result)),
     }
 }
 
@@ -257,20 +248,13 @@ struct Request {
     module_args: Map<String, Value>,
 }
 
-/// The answer, and the `apt-mark` run that comes with it for `state: present`.
-#[derive(Debug)]
-struct Plan {
-    result: Map<String, Value>,
-    mark: Option<(PathBuf, Vec<String>)>,
-}
-
 /// Decides, reading only. `Err` is the reason the task goes to the Python module.
 fn plan(
     args: &Map<String, Value>,
     root: &Root,
     task_env: &BTreeMap<String, String>,
     now: SystemTime,
-) -> Result<Plan, String> {
+) -> Result<Map<String, Value>, String> {
     if task_env.contains_key("TZ") {
         return Err("the task sets TZ, which moves the module's local time".into());
     }
@@ -342,7 +326,7 @@ fn plan(
         } else {
             result.insert("changed".into(), false.into());
         }
-        return Ok(Plan { result, mark: None });
+        return Ok(result);
     }
     match request.state {
         State::Absent => {
@@ -356,7 +340,7 @@ fn plan(
                 return Err(format!("{name} is installed, or partly"));
             }
             result.insert("changed".into(), false.into());
-            Ok(Plan { result, mark: None })
+            Ok(result)
         }
         State::Present => {
             // `dpkg` is always installed for the native architecture.
@@ -371,140 +355,26 @@ fn plan(
             {
                 return Err(format!("{name} is not installed"));
             }
-            let apt_mark = bin_path(task_env, "apt-mark")
-                .ok_or("apt-mark is not on PATH, and the module would warn")?;
-            // `apt-mark manual` changes something only for a name marked automatically
-            // installed; with every name already manual it is skipped (see the module's docs).
+            // The module's `apt-mark manual` would change what apt believes: that task is its own.
             let extended = read(root, EXTENDED_STATES)?.unwrap_or_default();
             let extended = stanzas(&extended);
-            let any_auto = request.packages.iter().any(|name| {
+            if let Some(name) = request.packages.iter().find(|name| {
                 extended
                     .get(name.as_str())
                     .is_some_and(|entries| entries.iter().any(|e| e.auto_installed))
-            });
-            cache(&mut result);
-            Ok(Plan {
-                result,
-                mark: any_auto.then_some((apt_mark, request.packages)),
-            })
-        }
-    }
-}
-
-/// Runs what the plan decided: nothing more for a cache check or `state: absent`,
-/// `apt-mark manual` for `state: present`, the way the module's `mark_installed_manually` does,
-/// under the task's `timeout` and cancel.
-fn finish(
-    plan: Plan,
-    context: &Context,
-    deadline: Option<Instant>,
-    cancelled: &dyn Fn() -> bool,
-) -> NativeRun {
-    let Plan { mut result, mark } = plan;
-    let Some((apt_mark, packages)) = mark else {
-        return NativeRun::Done(TaskResult(result));
-    };
-    let timed_out = || {
-        NativeRun::Done(TaskResult::timed_out(
-            context.timeout.unwrap_or_default().as_secs(),
-        ))
-    };
-    let mut env = context.environment.clone();
-    // The module's `APT_ENV_VARS`, with the locale `get_best_parsable_locale` picks on a Debian
-    // or Ubuntu host.
-    for (key, value) in [
-        ("DEBIAN_FRONTEND", "noninteractive"),
-        ("DEBIAN_PRIORITY", "critical"),
-        ("LANG", "C.UTF-8"),
-        ("LC_ALL", "C.UTF-8"),
-        ("LC_MESSAGES", "C.UTF-8"),
-        ("LC_CTYPE", "C.UTF-8"),
-        ("LANGUAGE", "C.UTF-8"),
-    ] {
-        env.insert(key.into(), value.into());
-    }
-    let program = apt_mark.to_string_lossy().into_owned();
-    let mut first = true;
-    let (cmd, rc, out, err) = loop {
-        let op = if first { "manual" } else { "unmarkauto" };
-        let mut argv = vec![program.clone(), op.to_string()];
-        argv.extend(packages.iter().cloned());
-        let (rc, out, err) = match execute(&argv, &env, deadline, cancelled) {
-            Ok(Some(done)) => done,
-            // Not started, so nothing changed yet: the module gets its chance.
-            Ok(None) if first => {
-                return NativeRun::Fallback("apt-mark could not be started".into());
+            }) {
+                return Err(format!(
+                    "{name} is marked automatically installed, and apt-mark would change that"
+                ));
             }
-            Ok(None) => (-1, String::new(), "apt-mark could not be started".into()),
-            Err(Stop::TimedOut) => return timed_out(),
-            Err(Stop::Cancelled) => return NativeRun::Cancelled,
-        };
-        let cmd = format!("{program} {op} {}", packages.join(" "));
-        if first && (err.contains(APT_MARK_INVALID_OP) || err.contains(APT_MARK_INVALID_OP_DEB6)) {
-            first = false;
-            continue;
+            // Without `apt-mark` the module warns; with it, every name manual, the call it makes
+            // is a no-op the native skips.
+            if bin_path(task_env, "apt-mark").is_none() {
+                return Err("apt-mark is not on PATH, and the module would warn".into());
+            }
+            cache(&mut result);
+            Ok(result)
         }
-        break (cmd, rc, out, err);
-    };
-    if rc != 0 {
-        for key in ["changed", "cache_updated", "cache_update_time"] {
-            result.remove(key);
-        }
-        result.insert("failed".into(), true.into());
-        result.insert("msg".into(), format!("'{cmd}' failed: {err}").into());
-        result.insert("stdout".into(), out.into());
-        result.insert("stderr".into(), err.into());
-        result.insert("rc".into(), rc.into());
-    }
-    NativeRun::Done(TaskResult(result))
-}
-
-#[derive(Debug)]
-enum Stop {
-    TimedOut,
-    Cancelled,
-}
-
-/// `module.run_command(argv)`, through the executor `command` runs under: exit code, standard
-/// output and standard error, or `None` when the program could not be started.
-fn execute(
-    argv: &[String],
-    env: &BTreeMap<String, String>,
-    deadline: Option<Instant>,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<Option<(i64, String, String)>, Stop> {
-    let timeout = match deadline {
-        Some(deadline) => Some(
-            deadline
-                .checked_duration_since(Instant::now())
-                .ok_or(Stop::TimedOut)?,
-        ),
-        None => None,
-    };
-    let mut command = Map::new();
-    command.insert(
-        "argv".into(),
-        Value::Array(argv.iter().cloned().map(Value::from).collect()),
-    );
-    command.insert("strip_empty_ends".into(), false.into());
-    let context = Context {
-        timeout,
-        environment: env.clone(),
-        ..Context::default()
-    };
-    match crate::modules::command::execute(&command, false, &context, cancelled) {
-        Run::Cancelled => Err(Stop::Cancelled),
-        Run::Done(result) if result.0.contains_key("timedout") => Err(Stop::TimedOut),
-        // Only a command that started has a `start`.
-        Run::Done(result) if result.0.contains_key("start") => {
-            let text = |key: &str| result.0[key].as_str().unwrap_or_default().to_string();
-            Ok(Some((
-                result.0["rc"].as_i64().unwrap_or(-1),
-                text("stdout"),
-                text("stderr"),
-            )))
-        }
-        Run::Done(_) => Ok(None),
     }
 }
 
@@ -966,13 +836,7 @@ Architecture: amd64
         }
 
         fn answer_at(&self, args: &Value, context: &Context, now: SystemTime) -> NativeRun {
-            answer(
-                args.as_object().unwrap(),
-                &self.fake.root(),
-                context,
-                now,
-                &|| false,
-            )
+            answer(args.as_object().unwrap(), &self.fake.root(), context, now)
         }
 
         /// The answer a minute after the stamp.
@@ -1035,12 +899,11 @@ Architecture: amd64
     /// The three answers, key by key against the golden recordings with the arguments the golden
     /// play gave: a fresh cache alone (A), packages all installed (B), with and without a cache
     /// check, and a package that is nowhere (C). `cache_update_time` is the stamp's second, and
-    /// B runs `apt-mark manual` with the names, once per task, as the module does.
+    /// no `apt-mark` is spawned: every name is manual, where the module's call is a no-op.
     ///
     /// What would make this red: any key the reference writes missing or different, the
     /// `invocation` included (`package` as a list, `upgrade: null`, the defaults); a
-    /// `cache_update_time` for C, which the module's `remove` never adds; `apt-mark` skipped, or
-    /// run for A or C.
+    /// `cache_update_time` for C, which the module's `remove` never adds; `apt-mark` spawned.
     #[test]
     fn the_fast_path_answers_like_the_reference() {
         let host = Host::new("answers");
@@ -1192,85 +1055,6 @@ Architecture: amd64
         assert_eq!(time(&host), json!(STAMP_SECONDS - 5));
     }
 
-    /// `apt-mark manual` runs with the names, and its failure is the module's: the command line,
-    /// standard error, output and exit code, in the shape measured on ansible-core 2.19.12 with
-    /// an `apt-mark` exiting 3. An `apt-mark` too old for `manual` gets `unmarkauto`.
-    ///
-    /// What would make this red: `apt-mark` not run, or run with other arguments; its failure
-    /// reported as success; the retry missing.
-    #[test]
-    fn apt_mark_runs_as_the_module_runs_it() {
-        let host = Host::new("mark");
-        host.apt_mark("echo out-line; echo \"E: boom $*\" >&2; exit 3");
-        let result = host.done(&json!({"name": "libfoo"}));
-        let program = host.fake.0.join("bin/apt-mark").display().to_string();
-        assert_eq!(result["failed"], json!(true));
-        assert_eq!(
-            result["msg"],
-            json!(format!(
-                "'{program} manual libfoo' failed: E: boom manual libfoo\n"
-            ))
-        );
-        assert_eq!(result["stdout"], json!("out-line\n"));
-        assert_eq!(result["stderr"], json!("E: boom manual libfoo\n"));
-        assert_eq!(result["rc"], json!(3));
-        assert!(result.contains_key("invocation"));
-        assert!(!result.contains_key("cache_update_time"));
-
-        let _ = std::fs::remove_file(host.log_path());
-        host.apt_mark(
-            "[ \"$1\" = manual ] && { echo 'E: Invalid operation manual' >&2; exit 100; }; exit 0",
-        );
-        let result = host.done(&json!({"name": ["bash", "libfoo"]}));
-        assert_eq!(result.get("failed"), None, "{result:?}");
-        assert_eq!(
-            host.calls(),
-            ["manual bash libfoo", "unmarkauto bash libfoo"]
-        );
-    }
-
-    /// A task's `timeout` reaches `apt-mark`, which is killed; a cancel stops it too.
-    ///
-    /// What would make this red: `apt-mark` run outside the executor, which waits for it
-    /// however long it hangs.
-    #[test]
-    fn a_hung_apt_mark_times_out_or_is_cancelled() {
-        let host = Host::new("hung");
-        host.apt_mark("exec /bin/sleep 60");
-        let mut context = host.context();
-        context.timeout = Some(Duration::from_secs(1));
-        let started = Instant::now();
-        let NativeRun::Done(result) = host.answer_at(&json!({"name": "libfoo"}), &context, soon())
-        else {
-            panic!("not an answer");
-        };
-        assert_eq!(result.0, TaskResult::timed_out(1).0);
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            started.elapsed()
-        );
-
-        let started = Instant::now();
-        let asked = std::cell::Cell::new(0);
-        let run = answer(
-            json!({"name": "libfoo"}).as_object().unwrap(),
-            &host.fake.root(),
-            &host.context(),
-            soon(),
-            &|| {
-                asked.set(asked.get() + 1);
-                asked.get() > 2
-            },
-        );
-        assert!(matches!(run, NativeRun::Cancelled));
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            started.elapsed()
-        );
-    }
-
     /// Everything outside the three answers goes to the module untouched.
     ///
     /// What would make this red: any of these answered, each one a case where the module
@@ -1416,20 +1200,22 @@ Architecture: amd64
         assert_eq!(args["upgrade"], Value::Null);
     }
 
-    /// `apt-mark manual` runs only for a name marked automatically installed, the one case where
-    /// it changes something; with every name already manual it is skipped, as ruled.
+    /// A name marked automatically installed is the module's: its `apt-mark manual` changes what
+    /// apt believes, and no golden case holds the native to doing that. Every name manual: the
+    /// answer, and no `apt-mark` spawned (the fake records every call).
     ///
-    /// What would make this red: `apt-mark` spawned on the all-manual path (the fake records every
-    /// call), or skipped for an automatically installed name, which the reference marks manual.
+    /// What would make this red: the auto-installed name answered (with or without the call), or
+    /// `apt-mark` spawned on the all-manual path.
     #[test]
-    fn apt_mark_runs_only_where_it_changes_something() {
+    fn an_auto_installed_name_goes_to_the_module_and_manual_ones_spawn_nothing() {
         let host = Host::new("manual");
+        let reason = host.hands_back(&json!({"name": ["bash", "libfoo"]}));
+        assert!(
+            reason.starts_with("libfoo is marked automatically"),
+            "{reason}"
+        );
         host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));
         assert_eq!(host.calls(), Vec::<String>::new());
-        let result = host.done(&json!({"name": ["bash", "libfoo"]}));
-        assert_eq!(host.calls(), ["manual bash libfoo"]);
-        assert_eq!(result["cache_update_time"], json!(STAMP_SECONDS));
-        assert_eq!(result["changed"], json!(false));
     }
 
     /// With no package the module answers from its cache check alone, or, without one, from

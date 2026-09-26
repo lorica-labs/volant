@@ -43,6 +43,10 @@ import time
 # oversized result rather than killing the server that carried it.
 STREAM_LIMIT = 4 * 1024 * 1024
 
+# What a child writes on its timing pipe, at most. Under a pipe's 64 KiB, so the write, made before
+# anyone reads, never blocks the child.
+REPORT_LIMIT = 60000
+
 
 def set_open_file_limit(wanted):
     """Raises the soft limit on open files to what the payload asked for.
@@ -173,7 +177,7 @@ def read_timing(fd):
     """
     try:
         os.set_blocking(fd, False)
-        return json.loads(os.read(fd, 4096))
+        return json.loads(os.read(fd, REPORT_LIMIT))
     except (OSError, ValueError):
         return None
     finally:
@@ -196,14 +200,17 @@ def top_level_imports(tree):
             ]
 
 
-def preimport(module_fqn):
-    """Imports, in this parent, what `module_fqn` imports at its top level, so the children of its
-    later tasks find it done. Measured, `systemd_service` spends 207 ms of its 229 importing.
+def preimport(module_fqn, names):
+    """Imports, in this parent, what `module_fqn` imports at its top level (unless it is `None`)
+    and the modules in `names`, so the children of later tasks find them done. Measured,
+    `systemd_service` spends 207 ms of its 229 importing; `names` are what an earlier child
+    imported while it ran (a module's function-level imports, `basic`'s own lazy ones): 22 ms of
+    `file`'s 33.
 
-    Called once the child running the module has been forked: that child imports as it always
-    did, and only the next one gains. The module's own code is not run here - it is read and its
-    import statements are run one by one - so a module without an `if __name__ == "__main__"`
-    guard does not act on the host a second time, without its arguments.
+    Called once a child has been forked: that child imports as it always did, and only the next
+    one gains. The module's own code is not run here - it is read and its import statements are
+    run one by one - so a module without an `if __name__ == "__main__"` guard does not act on the
+    host a second time, without its arguments.
 
     What stays behind is what the imports put in `sys.modules`. The process state an import can
     change - environment, working directory, umask, `sys.path`, the standard streams - is put
@@ -228,19 +235,25 @@ def preimport(module_fqn):
         os.dup2(null, fd)
     os.close(null)
     try:
-        spec = importlib.util.find_spec(module_fqn)
-        tree = ast.parse(spec.loader.get_source(module_fqn))
-        where = {"__name__": module_fqn, "__package__": module_fqn.rpartition(".")[0]}
-        for node in top_level_imports(tree):
+        for name in names:
             try:
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        __import__(alias.name)
-                else:
-                    names = [alias.name for alias in node.names]
-                    __import__(node.module or "", where, None, names, node.level)
+                __import__(name)
             except BaseException:
                 pass
+        if module_fqn is not None:
+            spec = importlib.util.find_spec(module_fqn)
+            tree = ast.parse(spec.loader.get_source(module_fqn))
+            where = {"__name__": module_fqn, "__package__": module_fqn.rpartition(".")[0]}
+            for node in top_level_imports(tree):
+                try:
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            __import__(alias.name)
+                    else:
+                        fromlist = [alias.name for alias in node.names]
+                        __import__(node.module or "", where, None, fromlist, node.level)
+                except BaseException:
+                    pass
     except BaseException:
         pass
     finally:
@@ -279,6 +292,7 @@ def fingerprint(blob):
 def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
     """The forked half. Never returns: it exits the process."""
     started = time.monotonic_ns()
+    known = set(sys.modules)
     running = None
     marks = []
     code = 0
@@ -337,12 +351,21 @@ def run_child(request, blob, loader, basic, out_w, err_w, timing_w, forked):
                 stream.flush()
             except Exception:
                 pass
-        # A few dozen bytes into an empty pipe: never blocks, and a timing lost is only that.
+        # Into an empty pipe, under its size: never blocks, and a timing lost is only that. The
+        # modules this child imported go with it, for the parent to import for the next child;
+        # dropped rather than written past the bound.
         try:
-            os.write(
-                timing_w,
-                json.dumps(child_timing(forked, started, running, marks, ended)).encode(),
-            )
+            report = child_timing(forked, started, running, marks, ended)
+            report["imported"] = [
+                name
+                for name in list(sys.modules)
+                if name not in known and name not in ("__main__", request["module_fqn"])
+            ]
+            data = json.dumps(report).encode()
+            if len(data) > REPORT_LIMIT:
+                del report["imported"]
+                data = json.dumps(report).encode()
+            os.write(timing_w, data)
         except Exception:
             pass
         os._exit(code)
@@ -361,6 +384,10 @@ def main():
     stdout = sys.stdout.buffer
     write_frame(stdout, {"ready": True})
     preimported = set()
+    # What children imported while they ran, for the parent to import once; `tried` keeps a name
+    # that fails here from being tried again at every task.
+    learned = set()
+    tried = set()
     baseline = fingerprint(blob)
 
     while True:
@@ -401,12 +428,20 @@ def main():
         # late to kill it.
         write_frame(stdout, {"started": pid})
         # After the fork, while the child runs: the child imports as it did, the next one gains.
-        if request["module_fqn"] not in preimported:
-            preimported.add(request["module_fqn"])
-            preimport(request["module_fqn"])
+        fqn = request["module_fqn"]
+        names = [name for name in learned if name not in sys.modules and name not in tried]
+        learned.clear()
+        tried.update(names)
+        if fqn not in preimported or names:
+            preimport(None if fqn in preimported else fqn, names)
+            preimported.add(fqn)
         streams = drain({"stdout": out_r, "stderr": err_r})
         _, status = os.waitpid(pid, 0)
         timing = read_timing(timing_r)
+        if isinstance(timing, dict):
+            imported = timing.pop("imported", None)
+            if isinstance(imported, list):
+                learned.update(name for name in imported if isinstance(name, str))
         write_frame(
             stdout,
             {

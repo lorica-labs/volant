@@ -84,6 +84,7 @@ fn every_golden_case_matches_the_reference() {
             map: &vars,
             hostvars: None,
             shared: None,
+            facts: None,
             untrusted: Some(&untrusted),
             untrusted_hosts: None,
         };

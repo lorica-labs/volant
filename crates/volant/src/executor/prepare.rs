@@ -240,11 +240,12 @@ pub(super) fn host_vars(
                 .flat_map(|p| p.untrusted.iter().cloned()),
         );
         let untrusted_hosts = store.untrusted_hosts();
-        let (map, shared) = store.layered_for_host(host, &scope);
+        let layers = store.layered_for_host(host, &scope);
         HostVars {
-            map,
+            map: layers.map,
             hostvars,
-            shared,
+            shared: layers.shared,
+            facts: layers.facts,
             untrusted,
             untrusted_hosts,
         }
@@ -1400,6 +1401,52 @@ mod tests {
         let vars = &prepared(&in_play, &store).unwrap()[0].vars;
         assert_eq!(vars.map["ansible_search_path"], json!(["/srv/play"]));
         assert!(!vars.map.contains_key("role_path"));
+    }
+
+    /// A managed host that reports `role_path` and `ansible_search_path` as facts does not choose
+    /// where a role's lookups look on the controller. Gathered facts are a layer read ahead of
+    /// the host's own map, so the engine's two values have to leave that layer as they are
+    /// written, which `HostVars::insert` does.
+    ///
+    /// What would make this red: the two written straight into `map`, under the host's facts,
+    /// which then answer with a directory the host chose.
+    #[test]
+    fn a_host_s_facts_never_choose_the_search_path() {
+        let play = PathBuf::from("/srv/play");
+        let role = play.join("roles/probe");
+        let store = store_at(&play);
+        store.lock().unwrap().gather_facts(
+            "h1",
+            json!({"role_path": "/tmp/x", "ansible_search_path": ["/tmp/x"]})
+                .as_object()
+                .unwrap(),
+        );
+        let in_role = step_of(
+            task("command"),
+            Origin {
+                file_dir: role.join("tasks"),
+                role_dir: Some(role.clone()),
+                depth: 0,
+                inherited: None,
+            },
+        );
+        let vars = &prepared(&in_role, &store).unwrap()[0].vars;
+        assert_eq!(vars.get("role_path"), Some(&json!("/srv/play/roles/probe")));
+        assert_eq!(
+            vars.get("ansible_search_path"),
+            Some(&json!([
+                "/srv/play/roles/probe",
+                "/srv/play/roles/probe/tasks",
+                "/srv/play"
+            ]))
+        );
+        let templar = Templar::new(play.clone());
+        assert_eq!(
+            templar.render("{{ role_path }}", vars).unwrap(),
+            json!("/srv/play/roles/probe"),
+            "a template reads the engine's value too"
+        );
+        assert!(!vars.untrusted.contains("role_path"));
     }
 
     /// A task's own `vars:` built from a lookup that needs the role's search path to find its

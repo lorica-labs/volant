@@ -4,6 +4,7 @@
 The interpreter comes from the ansible-core tool environment, so PyYAML is available.
 """
 import base64
+import fcntl
 import gzip
 import grp
 import io
@@ -691,6 +692,9 @@ NATIVE_USER = "volantshape"
 # A group of its own, not the user's name: `userdel` deletes a primary group named after the user,
 # which would leave `group-removed` nothing to remove.
 NATIVE_GROUP = "volantgrp"
+# The account's home, which no case creates; removed before and after all the same, since a
+# `user` task that leaves `create_home` at its default creates it.
+NATIVE_HOME = "/nonexistent-volantshape"
 STAT_VOLATILE = [f"stat.{key}" for key in ("atime", "mtime", "ctime", "inode", "dev", "version")]
 # The `systemctl show` properties that move while a unit runs: times, process ids, the invocation,
 # resource counters. Every other `status` value is compared.
@@ -699,9 +703,11 @@ LIVE_STATUS = re.compile(
     r"|(Current|Peak)$|^MemoryAvailable$|^IO(Read|Write)(Bytes|Operations)$"
     r"|^IP(Ingress|Egress)(Bytes|Packets)$|^NRestarts$"
 )
-# ExecStart and ExecStartEx hold one `{ path=... ; argv[]=... ; ... }` record per command, whose
-# last fields describe the latest run. Those fields match a regex, the rest stays literal.
-EXEC_STATUS = ("ExecStart", "ExecStartEx")
+# ExecStart, ExecReload and the other `Exec*` properties hold one `{ path=... ; argv[]=... ; ... }`
+# record per command, whose last fields describe the latest run: the reload's too, once the unit
+# was reloaded. Those fields match a regex, the rest stays literal.
+EXEC_STATUS = re.compile(r"^Exec")
+EXEC_RECORD = "{ path="
 EXEC_LIVE_FIELD = re.compile(r"\b(start_time|stop_time)=\[[^\]]*\]|\bpid=-?\d+|\b(code|status)=\S+")
 EXEC_FIELD_REGEX = {"start_time": r"\[[^\]]*\]", "stop_time": r"\[[^\]]*\]", "pid": r"-?\d+"}
 # What the two cron cases keep of `status`. They are compared live, since the full `systemctl show`
@@ -733,6 +739,31 @@ LIVE_KEEP = {"packages": ("bash",), "services": ("cron.service", "systemd-journa
 
 TMP_PLACEHOLDER = "<golden-tmp>"
 HOST_PLACEHOLDER = "<golden-generator-host>"
+# Held from the machine checks to the last read-back: NATIVE_TMP, the accounts, the unit and the
+# package below are the whole machine's, and golden.rs takes the same lock before its own checks.
+# Under the account's own home, where no other account can create it first and keep it from
+# being opened; the runs that share the machine's state are this account's (the lanes of one
+# development machine, one CI job), and another account could not reuse NATIVE_TMP anyway.
+NATIVE_LOCK = os.path.join(os.path.expanduser("~"), ".cache", "volant-golden-native.lock")
+# A unit of the generator's own, so `systemd` can be asked to change something: started from
+# stopped, stopped, restarted, reloaded, enabled and disabled from the opposite state.
+NATIVE_UNIT = "volant-golden"
+NATIVE_UNIT_FILE = f"/etc/systemd/system/{NATIVE_UNIT}.service"
+NATIVE_UNIT_TEXT = (
+    "[Unit]\nDescription=Volant golden throwaway unit\n\n"
+    "[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n"
+    "[Install]\nWantedBy=multi-user.target\n"
+)
+NATIVE_UNIT_TEXT_EDITED = NATIVE_UNIT_TEXT.replace("throwaway unit", "throwaway unit, edited")
+# What each unit case leaves, read back after it into `_after`.
+UNIT_READ_BACK = f"systemctl show {NATIVE_UNIT} -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+# A small package in Debian and Ubuntu's main archive, installed and removed by the play: the one
+# `apt` change the cases ask for. A machine that already has it is refused rather than stripped.
+NATIVE_PACKAGE = "hello"
+# What apt and dpkg print while changing a package: download sizes, the mirror, the count of files
+# already installed. Replaced by one placeholder in the recording and not compared.
+MACHINE_OUTPUT = ["stdout", "stdout_lines", "stderr", "stderr_lines"]
+MACHINE_PLACEHOLDER = "<golden-machine-output>"
 
 
 def _literal(text):
@@ -792,6 +823,12 @@ def _succeeds(*command):
     return subprocess.run(command, capture_output=True).returncode == 0
 
 
+def _installed(package):
+    """Whether dpkg has `package` installed, config files alone not counting."""
+    query = subprocess.run(["dpkg-query", "-W", "-f=${db:Status-Status}", package], capture_output=True, text=True)
+    return query.stdout == "installed"
+
+
 def natives():
     """Record the reference's answer for every case a native module of the agent must reproduce,
     and, in native/index.json, the path an enabled native has to take for each one.
@@ -812,6 +849,11 @@ def natives():
 
     A `file`, `copy` or `lineinfile` case also records `_after`, read back once the task is done:
     whether its path exists, its type and mode, a regular file's content, and a backup's content.
+    native/play.json is the play that ran, with the same placeholders.
+
+    `systemd` and `apt` are also asked for changes, on NATIVE_UNIT, a unit the play installs, and
+    on NATIVE_PACKAGE, a package it installs and removes; both are removed in `always`. The play
+    runs under NATIVE_LOCK, with no `ANSIBLE_*` from the caller and an empty ansible.cfg.
 
     The cases with `become` need `sudo -n` and are left out without it; so are the two `cron`
     ones on a machine where cron is not both active and enabled, as `systemd-enabled-only` would
@@ -819,6 +861,10 @@ def natives():
     read as verified.
     """
     t = NATIVE_TMP
+    os.makedirs(os.path.dirname(NATIVE_LOCK), exist_ok=True)
+    # Released when this function returns and the file is closed.
+    lock = open(NATIVE_LOCK, "a")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     sudo = _succeeds("sudo", "-n", "true")
     cron = sudo and _succeeds("systemctl", "is-active", "cron") and _succeeds("systemctl", "is-enabled", "cron")
     if not sudo:
@@ -832,9 +878,19 @@ def natives():
     # Case name -> the result key naming its backup, or None, for every case recording `_after`.
     read_back = {}
 
-    def case(name, module, args, branch, expect="native", why="", compare="exact", volatile=(), become=False):
+    # Case name -> the MACHINE_OUTPUT keys its recording replaces with MACHINE_PLACEHOLDER.
+    machine = {}
+    # The unit cases followed by an `after-unit-` read-back.
+    unit_back = set()
+    # The cases whose recording keeps the facts' names and none of their values.
+    facts_shape = set()
+
+    def case(name, module, args, branch, expect="native", why="", compare="exact", volatile=(), become=False, output=False):
         if become and not sudo:
             return
+        if output:
+            machine[name] = MACHINE_OUTPUT
+            volatile = list(volatile) + MACHINE_OUTPUT
         task = {"name": name, module: args, "register": "last"}
         if become:
             task["become"] = True
@@ -858,6 +914,10 @@ def natives():
                 masked = _replace_in_strings(target, to_placeholder)
                 patterns[backup] = "^" + _literal(masked) + BACKUP_SUFFIX
             read_back[name] = backup
+        if module == "systemd" and args.get("name") == NATIVE_UNIT:
+            # The unit as the case left it: `status` is its state before the action.
+            tasks.append({"name": f"after-unit-{name}", "command": UNIT_READ_BACK})
+            unit_back.add(name)
         index[name] = {
             "module": module,
             "args": _replace_in_strings(args, to_placeholder),
@@ -1067,6 +1127,51 @@ def natives():
         failed("Could not find the requested service volant-no-such-unit: host"),
         become=True,
     )
+    # The generator's own unit, from nothing to running and back: each case asks for a change.
+    # Its status is compared live for the same reason as cron's. Removed first, in case an
+    # interrupted run left it running, and again in `always`.
+    unit_cleanup = {
+        "name": "cleanup-unit",
+        "shell": f"systemctl disable --now {NATIVE_UNIT}.service; rm -f {NATIVE_UNIT_FILE}; systemctl daemon-reload",
+        "become": True,
+    }
+    if sudo:
+        tasks.append(dict(unit_cleanup, name="cleanup-unit-before"))
+    setup("copy", {"content": NATIVE_UNIT_TEXT, "dest": NATIVE_UNIT_FILE, "mode": "0644"}, become=True)
+    unit_live = {"why": live_status, "compare": "live", "become": True}
+
+    def unit_case(name, args, branch):
+        case(name, "systemd", dict(args, name=NATIVE_UNIT), branch, **unit_live)
+
+    def probe(var, prop):
+        tasks.append({"name": f"probe-{var}", "command": f"systemctl show {NATIVE_UNIT} -p {prop} --value", "register": var})
+
+    def changed_since(before, after, what):
+        # Without `ignore_errors`: an action that did nothing fails the play, on either side.
+        tasks.append({
+            "name": f"assert-{after}",
+            "assert": {"that": [f"{after}.stdout != {before}.stdout"], "fail_msg": f"{what} left the unit as it was"},
+        })
+
+    unit_case("systemd-unit-started", {"state": "started"}, changed)
+    # On the running unit, where only a new main process tells a restart from a start.
+    probe("pid_before", "MainPID")
+    unit_case("systemd-unit-restarted", {"state": "restarted"}, changed)
+    probe("pid_after", "MainPID")
+    changed_since("pid_before", "pid_after", "restarted")
+    probe("reload_before", "ExecReload")
+    unit_case("systemd-unit-reloaded", {"state": "reloaded"}, changed)
+    probe("reload_after", "ExecReload")
+    changed_since("reload_before", "reload_after", "reloaded")
+    # The unit file edited under systemd: only a daemon reload makes the new Description show and
+    # NeedDaemonReload go back to `no`.
+    setup("copy", {"content": NATIVE_UNIT_TEXT_EDITED, "dest": NATIVE_UNIT_FILE, "mode": "0644"}, become=True)
+    unit_case("systemd-unit-daemon-reload", {"daemon_reload": True}, same)
+    unit_case("systemd-unit-stopped", {"state": "stopped"}, changed)
+    unit_case("systemd-unit-enabled", {"enabled": True}, changed)
+    unit_case("systemd-unit-disabled", {"enabled": False}, changed)
+    # So that what `disabled` did is seen by a case of its own.
+    unit_case("systemd-unit-disabled-same", {"enabled": False}, same)
 
     cache_time = ["cache_update_time"]
     fresh = {"changed": False, "cache_updated": False}
@@ -1101,10 +1206,50 @@ def natives():
         "not installed",
         become=True,
     )
+    # A package the machine does not have: installed, found installed, removed.
+    case(
+        "apt-install-absent",
+        "apt",
+        {"name": NATIVE_PACKAGE, "state": "present"},
+        {"changed": True, "cache_updated": False},
+        "fallback",
+        "not installed",
+        volatile=cache_time,
+        become=True,
+        output=True,
+    )
+    case("apt-present-installed-now", "apt", {"name": NATIVE_PACKAGE, "state": "present"}, fresh, volatile=cache_time, become=True)
+    case(
+        "apt-remove-installed",
+        "apt",
+        {"name": NATIVE_PACKAGE, "state": "absent"},
+        changed,
+        "fallback",
+        "installed",
+        become=True,
+        output=True,
+    )
     case("package-facts", "package_facts", {"manager": "auto"}, same, compare="live", become=True)
     case("service-facts", "service_facts", {}, same, compare="live", become=True)
-    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same)
-    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same)
+    # The native `setup` hands every `filter` back for now; these two go back to `native` when it
+    # learns `filter`.
+    no_filter = "a filter is outside the native setup"
+    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same, "fallback", no_filter)
+    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same, "fallback", no_filter)
+    # The `min` facts, which the native answers. They are the machine's (its name, id, addresses,
+    # keys, kernel command line), so compared live; the recording keeps their names only. The
+    # environment is the module's process's own, which is not Volant's agent's on one side and
+    # ansible-playbook's on the other, and the date and time move.
+    case(
+        "setup-min",
+        "setup",
+        {"gather_subset": ["min"]},
+        same,
+        why="the facts are the machine's: its name, id, addresses and keys; compared with a reference run on the same host",
+        compare="live",
+        volatile=["ansible_facts.ansible_env", "ansible_facts.ansible_date_time"],
+    )
+    facts_shape.add("setup-min")
 
     # The account and group are removed before the first case that creates them, in case an
     # interrupted run left them behind (`group-created` would record "no change"), and again in
@@ -1112,7 +1257,7 @@ def natives():
     removal = [
         {"name": f"cleanup-{module}", module: {"name": who, "state": "absent"}, "become": True}
         for module, who in (("user", NATIVE_USER), ("group", NATIVE_GROUP))
-    ]
+    ] + [{"name": "cleanup-home", "file": {"path": NATIVE_HOME, "state": "absent"}, "become": True}]
     if sudo:
         tasks.extend(dict(task, name=f"{task['name']}-before") for task in removal)
     account = {
@@ -1121,7 +1266,7 @@ def natives():
         "group": NATIVE_GROUP,
         "shell": "/bin/sh",
         "create_home": False,
-        "home": "/nonexistent-volantshape",
+        "home": NATIVE_HOME,
     }
     case("group-created", "group", {"name": NATIVE_GROUP, "gid": 64999}, changed, become=True)
     case("group-same", "group", {"name": NATIVE_GROUP, "gid": 64999}, same, become=True)
@@ -1129,21 +1274,52 @@ def natives():
     case("user-same", "user", account, same, become=True)
     case("user-shell", "user", dict(account, shell="/bin/bash"), changed, become=True)
     # `!` is already what `useradd` left in shadow: no change, which the path check still catches.
-    case("user-password", "user", {"name": NATIVE_USER, "password": "!"}, same, "fallback", "password", become=True)
+    # `create_home: false` as in `account`: the module's default would create the missing home
+    # and answer `changed` for that, which a machine keeping the home of an earlier run would not.
+    case(
+        "user-password",
+        "user",
+        {"name": NATIVE_USER, "password": "!", "create_home": False},
+        same,
+        "fallback",
+        "password",
+        become=True,
+    )
     case("user-removed", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
     case("user-absent-missing", "user", {"name": NATIVE_USER, "state": "absent"}, same, become=True)
     case("group-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
 
     block = {"block": tasks}
     if sudo:
-        block["always"] = [dict(task, ignore_errors=True) for task in removal]
-    play = [{"hosts": "localhost", "gather_facts": False, "connection": "local", "tasks": [block]}]
-    env = dict(
-        os.environ,
-        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        package_cleanup = {"name": "cleanup-package", "apt": {"name": NATIVE_PACKAGE, "state": "absent"}, "become": True}
+        block["always"] = [dict(task, ignore_errors=True) for task in removal + [unit_cleanup, package_cleanup]]
+    # The interpreter named in the play, as a playbook pins it, so the recording, the replay under
+    # Volant and the reference's own replay all run the same one: left to discovery, both engines
+    # take the first of python3.13, python3.12, ... that the host has, which on a runner with
+    # python3.12 is `/usr/bin/python3.12` and shows in `ansible_python.executable`.
+    play = [{
+        "hosts": "localhost",
+        "gather_facts": False,
+        "connection": "local",
+        "vars": {"ansible_python_interpreter": "/usr/bin/python3"},
+        "tasks": [block],
+    }]
+    if sudo and _installed(NATIVE_PACKAGE):
+        print(
+            f"{NATIVE_PACKAGE} is installed on this machine, and the play installs and removes it: "
+            "remove it by hand if an interrupted run left it, or record elsewhere",
+            file=sys.stderr,
+        )
+        return 1
+    # No `ANSIBLE_*` from the calling shell and no ansible.cfg of the account's: golden.rs runs
+    # both Volant and the reference the same way.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
+    env.update(
+        # callback_plugins/golden_json.py, which golden.rs also loads: `ansible.builtin.json` is
+        # `ansible.posix`'s in ansible-core 2.19, and the replay must not need that collection.
+        ANSIBLE_CALLBACK_PLUGINS=os.path.join(HERE, "callback_plugins"),
+        ANSIBLE_STDOUT_CALLBACK="golden_json",
         ANSIBLE_NOCOLOR="1",
-        # Same reasoning as python_modules(): naming the interpreter outright skips discovery.
-        ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
     )
     shutil.rmtree(t, ignore_errors=True)
     os.makedirs(t)
@@ -1164,11 +1340,15 @@ def natives():
             # anchor and an alias.
             with open(playbook, "w", encoding="utf-8") as f:
                 json.dump(play, f, indent=1)
+            env["ANSIBLE_CONFIG"] = os.path.join(tmp, "ansible.cfg")
+            open(env["ANSIBLE_CONFIG"], "w").close()
             run = subprocess.run(["ansible-playbook", "-i", "localhost,", playbook], env=env, capture_output=True, text=True)
     finally:
         os.umask(umask)
     if sudo:
         left = [f"{db} {who}" for db, who in (("passwd", NATIVE_USER), ("group", NATIVE_GROUP)) if _succeeds("getent", db, who)]
+        left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
+        left += [NATIVE_HOME] * os.path.exists(NATIVE_HOME)
         if left:
             print(f"still on this machine: {', '.join(left)}; remove by hand", file=sys.stderr)
             return 1
@@ -1193,16 +1373,28 @@ def natives():
     for name, spec in index.items():
         result = _replace_in_strings(_redact_staged_paths(outcomes[name]), to_placeholder)
         result = _mask_account(result, by_key)
+        for key in machine.get(name, ()):
+            if key in result:
+                result[key] = MACHINE_PLACEHOLDER
+        uncut = result
         status = result.get("status")
         if isinstance(status, dict) and status:
             # From the full `status`, before it is cut down: the live comparison meets every key.
             spec["volatile"] += [f"status.{key}" for key in sorted(status) if LIVE_STATUS.search(key)]
             spec["unordered"] = [f"status.{key}" for key in sorted(status) if SET_STATUS.search(key)]
             spec["patterns"].update(
-                {f"status.{key}": _exec_pattern(status[key]) for key in EXEC_STATUS if key in status}
+                {
+                    f"status.{key}": _exec_pattern(value)
+                    for key, value in status.items()
+                    if EXEC_STATUS.search(key) and str(value).startswith(EXEC_RECORD)
+                }
             )
+            # The patterns are checked against the whole status, which the live comparison meets.
+            uncut = dict(result)
             result["status"] = {key: value for key, value in status.items() if key in STATUS_KEEP}
         facts = result.get("ansible_facts", {})
+        if name in facts_shape:
+            result["ansible_facts"] = facts = {key: MACHINE_PLACEHOLDER for key in facts}
         for key, keep in LIVE_KEEP.items():
             if isinstance(facts.get(key), dict):
                 facts[key] = {k: v for k, v in facts[key].items() if k in keep}
@@ -1218,13 +1410,15 @@ def natives():
             if read_back[name]:
                 after["backup_content"] = base64.b64decode(outcomes[f"after-backup-{name}"]["content"]).decode()
             result["_after"] = after
+        if name in unit_back:
+            result["_after"] = dict(line.split("=", 1) for line in outcomes[f"after-unit-{name}"]["stdout"].splitlines())
         for key, want in dict({"failed": False}, **spec["branch"]).items():
             got = result.get(key, False if key == "failed" else None)
             if got != want:
                 wrong.append(f"{name}: {key} is {got!r}, not {want!r}")
         for path, pattern in spec["patterns"].items():
-            if not re.search(pattern, str(_at(result, path))):
-                wrong.append(f"{name}: {path} {_at(result, path)!r} does not match {pattern}")
+            if not re.search(pattern, str(_at(uncut, path))):
+                wrong.append(f"{name}: {path} {_at(uncut, path)!r} does not match {pattern}")
         results[name] = result
     if wrong:
         print("cases that did not land on the branch their name claims:", *wrong, sep="\n  ", file=sys.stderr)
@@ -1239,7 +1433,12 @@ def natives():
     with open(os.path.join(destination, "index.json"), "w", encoding="utf-8") as f:
         json.dump(index, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
-    for stale in sorted(set(os.listdir(destination)) - {f"{name}.json" for name in index} - {"index.json"}):
+    # The play itself, which golden.rs replays under Volant: the setup tasks, the read-backs and
+    # the order the cases meet each other's state in are nowhere else.
+    with open(os.path.join(destination, "play.json"), "w", encoding="utf-8") as f:
+        json.dump(_replace_in_strings(play, to_placeholder), f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    for stale in sorted(set(os.listdir(destination)) - {f"{name}.json" for name in index} - {"index.json", "play.json"}):
         os.remove(os.path.join(destination, stale))
         print(f"removed native/{stale}: this run did not record it", file=sys.stderr)
     print(f"native goldens recorded: {len(index)} cases")

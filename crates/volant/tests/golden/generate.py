@@ -812,6 +812,7 @@ def natives():
 
     A `file`, `copy` or `lineinfile` case also records `_after`, read back once the task is done:
     whether its path exists, its type and mode, a regular file's content, and a backup's content.
+    native/play.json is the play that ran, with the same placeholders.
 
     The cases with `become` need `sudo -n` and are left out without it; so are the two `cron`
     ones on a machine where cron is not both active and enabled, as `systemd-enabled-only` would
@@ -1239,7 +1240,12 @@ def natives():
     with open(os.path.join(destination, "index.json"), "w", encoding="utf-8") as f:
         json.dump(index, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
-    for stale in sorted(set(os.listdir(destination)) - {f"{name}.json" for name in index} - {"index.json"}):
+    # The play itself, which golden.rs replays under Volant: the setup tasks, the read-backs and
+    # the order the cases meet each other's state in are nowhere else.
+    with open(os.path.join(destination, "play.json"), "w", encoding="utf-8") as f:
+        json.dump(_replace_in_strings(play, to_placeholder), f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    for stale in sorted(set(os.listdir(destination)) - {f"{name}.json" for name in index} - {"index.json", "play.json"}):
         os.remove(os.path.join(destination, stale))
         print(f"removed native/{stale}: this run did not record it", file=sys.stderr)
     print(f"native goldens recorded: {len(index)} cases")

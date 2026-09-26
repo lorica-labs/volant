@@ -915,7 +915,7 @@ mod tests {
         let blob = runpy_blob(&[
             (
                 "ansible/modules/reader.py",
-                "import json, os, sys\nmask = os.umask(0)\nprint(json.dumps({\"leak\": os.environ.get(\"VOLANT_LEAK\"), \"cwd\": os.getcwd(), \"umask\": mask, \"path\": \"/leaked\" in sys.path}))\n",
+                "import json, os, sys\nmask = os.umask(0)\nprint(json.dumps({\"leak\": os.environ.get(\"VOLANT_LEAK\"), \"cwd\": os.getcwd(), \"umask\": mask, \"path\": \"/leaked\" in sys.path, \"parent\": os.getppid()}))\n",
             ),
             (
                 "ansible/modules/leaky.py",
@@ -936,7 +936,10 @@ mod tests {
         call(&mut server, "ansible.modules.leaky");
         let after = call(&mut server, "ansible.modules.reader");
         assert!(!after.failed(), "{:?}", after.0);
-        assert_eq!(after.0, before.0, "the server kept what an import changed");
+        assert_eq!(
+            after.0, before.0,
+            "the server kept what an import changed, or was replaced over it"
+        );
 
         server.child.kill().unwrap();
         server.child.wait().unwrap();

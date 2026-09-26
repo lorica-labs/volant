@@ -306,8 +306,8 @@ fn answer(
     Ok(result)
 }
 
-/// The arguments, checked for what the native reproduces exactly: `min`, no filter, and a fact
-/// path the module would find empty.
+/// The arguments, checked for what the native reproduces exactly: a subset it collects, no
+/// filter, and a fact path the module would find empty.
 fn request(args: &Map<String, Value>) -> Result<Request, String> {
     if let Some(key) = args
         .keys()

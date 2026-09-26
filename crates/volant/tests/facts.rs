@@ -44,8 +44,8 @@ const PLAY: &str = r#"- name: Gather and write the facts
         state: absent
 "#;
 
-/// Values that move between two gathers a second apart. Each is compared by its JSON type only.
-/// `SSH_CLIENT`, `SSH_CONNECTION` and `XDG_SESSION_ID` belong to the ssh session: two runs
+/// Values that move between two gathers a second apart. The key by key comparison looks at their
+/// JSON type only; the memory ones are then held to [`memory_differences`]. `SSH_CLIENT`, `SSH_CONNECTION` and `XDG_SESSION_ID` belong to the ssh session: two runs
 /// share one only while the first run's control master lingers, and measured without it they
 /// differ by the client port and the session number. `env._` is not here: both paths start
 /// from the same agent, so it is the same program on both. A `.*` entry covers every key below
@@ -271,6 +271,103 @@ fn differences(native: &Map<String, Value>, python: &Map<String, Value>) -> Vec<
             ));
         }
     }
+    found.extend(memory_differences(native, python));
+    found
+}
+
+/// How far apart a live memory figure may be on the two sides, in percent of its total. Measured
+/// over 3 s, the time between the two gathers: `MemFree` and `MemFree + Buffers + Cached` moved
+/// by at most 174 MB (1.1 % of the total) on the development machine while other builds ran on
+/// it, and by 0 on two idle 24.04 hosts; swap did not move on any of them. Reading
+/// `MemAvailable` for `MemFree` moves `memfree_mb` by 11 191 MB (73 %) on the first machine,
+/// 1 712 MB (22 %) and 512 MB (13 %) on the others.
+const TOLERANCE_PERCENT: i64 = 5;
+
+/// Each live memory figure and the total its tolerance is a share of.
+const TOLERATED: &[(&str, &str)] = &[
+    ("memfree_mb", "memory_mb.real.total"),
+    ("memory_mb.real.free", "memory_mb.real.total"),
+    ("memory_mb.real.used", "memory_mb.real.total"),
+    ("memory_mb.nocache.free", "memory_mb.real.total"),
+    ("memory_mb.nocache.used", "memory_mb.real.total"),
+    ("swapfree_mb", "memory_mb.swap.total"),
+    ("memory_mb.swap.free", "memory_mb.swap.total"),
+    ("memory_mb.swap.used", "memory_mb.swap.total"),
+    ("memory_mb.swap.cached", "memory_mb.swap.total"),
+];
+
+fn number(facts: &Map<String, Value>, path: &str) -> Option<i64> {
+    let (first, rest) = path.split_once('.').unwrap_or((path, ""));
+    let mut value = facts.get(first)?;
+    for part in rest.split('.').filter(|p| !p.is_empty()) {
+        value = value.get(part)?;
+    }
+    value.as_i64()
+}
+
+/// The live memory figures, which the key by key comparison takes by type only: each within
+/// [`TOLERANCE_PERCENT`] of its total of the reference's, and, on each side, the relations the
+/// reference's `get_memory_facts` builds them by, all from one read of `/proc/meminfo`. Those
+/// hold exactly, so a figure computed from the wrong terms is caught however small the error.
+/// A figure absent on either side is left to the key by key comparison, which names it.
+fn memory_differences(native: &Map<String, Value>, python: &Map<String, Value>) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, total) in TOLERATED {
+        let (Some(n), Some(p), Some(t)) = (
+            number(native, path),
+            number(python, path),
+            number(python, total),
+        ) else {
+            continue;
+        };
+        if (n - p).abs() > t * TOLERANCE_PERCENT / 100 {
+            found.push(format!(
+                "{path}: native {n} reference {p}, more than {TOLERANCE_PERCENT}% of {total} ({t}) apart"
+            ));
+        }
+    }
+    for (side, facts) in [("native", native), ("reference", python)] {
+        let get = |path: &str| number(facts, path);
+        let minus = |a: &str, b: &str| get(a).zip(get(b)).map(|(a, b)| a - b);
+        let equal = [
+            ("memfree_mb", get("memory_mb.real.free")),
+            ("swapfree_mb", get("memory_mb.swap.free")),
+            ("memtotal_mb", get("memory_mb.real.total")),
+            ("swaptotal_mb", get("memory_mb.swap.total")),
+            (
+                "memory_mb.real.used",
+                minus("memory_mb.real.total", "memory_mb.real.free"),
+            ),
+            (
+                "memory_mb.nocache.used",
+                minus("memory_mb.real.total", "memory_mb.nocache.free"),
+            ),
+            (
+                "memory_mb.swap.used",
+                minus("memory_mb.swap.total", "memory_mb.swap.free"),
+            ),
+        ];
+        for (path, expected) in equal {
+            if let (Some(got), Some(expected)) = (get(path), expected)
+                && got != expected
+            {
+                found.push(format!(
+                    "{path}: {side} {got}, its own other figures make it {expected}"
+                ));
+            }
+        }
+        // `nocache.free` is `Cached + MemFree + Buffers`, and only `MemFree` is a fact.
+        if let (Some(free), Some(nocache), Some(total)) = (
+            get("memory_mb.real.free"),
+            get("memory_mb.nocache.free"),
+            get("memory_mb.real.total"),
+        ) && !(free..=total).contains(&nocache)
+        {
+            found.push(format!(
+                "memory_mb.nocache.free: {side} {nocache}, outside real.free {free} to real.total {total}"
+            ));
+        }
+    }
     found
 }
 
@@ -385,5 +482,55 @@ fn a_wrong_unlisted_or_missing_key_is_named() {
             "invented: produced natively, absent from the reference",
             "machine: in NATIVE_FACT_KEYS and in the reference, absent natively",
         ]
+    );
+}
+
+/// `MemAvailable` read for `MemFree`, consistently, is caught by the tolerance; a `swap.used`
+/// off by 1 % of its total, within the tolerance, by the relation the reference builds it by.
+#[test]
+fn a_memory_figure_from_the_wrong_terms_is_named() {
+    let facts = |free: i64, swap_used: i64| {
+        json!({
+            "memfree_mb": free,
+            "memtotal_mb": 1000,
+            "swapfree_mb": 400,
+            "swaptotal_mb": 500,
+            "memory_mb": {
+                "real": {"total": 1000, "used": 1000 - free, "free": free},
+                "nocache": {"free": 700, "used": 300},
+                "swap": {"total": 500, "free": 400, "used": swap_used, "cached": 0},
+            },
+        })
+    };
+    let reference = facts(100, 100);
+    let within = facts(140, 100);
+    assert_eq!(
+        memory_differences(within.as_object().unwrap(), reference.as_object().unwrap()),
+        Vec::<String>::new()
+    );
+    let available = facts(600, 100);
+    assert_eq!(
+        memory_differences(
+            available.as_object().unwrap(),
+            reference.as_object().unwrap()
+        ),
+        [
+            "memfree_mb: native 600 reference 100, more than 5% of memory_mb.real.total (1000) apart",
+            "memory_mb.real.free: native 600 reference 100, more than 5% of memory_mb.real.total (1000) apart",
+            "memory_mb.real.used: native 400 reference 900, more than 5% of memory_mb.real.total (1000) apart",
+        ]
+    );
+    let swap = facts(100, 105);
+    assert_eq!(
+        memory_differences(swap.as_object().unwrap(), reference.as_object().unwrap()),
+        ["memory_mb.swap.used: native 105, its own other figures make it 100"]
+    );
+    let mut nocache = facts(100, 100);
+    nocache["memory_mb"]["nocache"] = json!({"free": 50, "used": 950});
+    assert_eq!(
+        memory_differences(nocache.as_object().unwrap(), reference.as_object().unwrap())
+            .last()
+            .unwrap(),
+        "memory_mb.nocache.free: native 50, outside real.free 100 to real.total 1000"
     );
 }

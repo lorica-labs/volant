@@ -560,6 +560,24 @@ fn results_by_task(stdout: &str) -> Map<String, Value> {
     results
 }
 
+/// The tasks of a run that printed a `fatal:` line, `...ignoring` or not, by the banner they came
+/// under.
+#[cfg(target_os = "linux")]
+fn failed_tasks(stdout: &str) -> std::collections::BTreeSet<String> {
+    let mut failed = std::collections::BTreeSet::new();
+    let mut task = "";
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("TASK [")
+            && let Some(end) = rest.find(']')
+        {
+            task = &rest[..end];
+        } else if line.starts_with("fatal: [") {
+            failed.insert(task.to_string());
+        }
+    }
+    failed
+}
+
 /// What a comparison found: the differences, and the known differences it stepped over.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
@@ -1481,9 +1499,33 @@ fn every_native_recording_is_indexed() {
 #[cfg(target_os = "linux")]
 const NATIVE_DIR: &str = "/var/tmp/volant-golden-native";
 
-/// `NATIVE_LOCK` in `generate.py`.
+/// `NATIVE_LOCK` in `generate.py`, taken and held until the returned file is dropped: the
+/// fixture, the accounts, the unit and the package are the machine's, so one run at a time, this
+/// test's or the generator's. Under the account's own home, where no other account can create the
+/// file first and keep it from being opened; the runs that share the state are this account's.
 #[cfg(target_os = "linux")]
-const NATIVE_LOCK: &str = "/var/tmp/volant-golden-native.lock";
+fn native_lock() -> std::fs::File {
+    use std::os::fd::AsRawFd as _;
+    let home = std::env::var_os("HOME").expect("HOME is set");
+    let path = std::path::Path::new(&home).join(".cache/volant-golden-native.lock");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("~/.cache is writable");
+    let lock = std::fs::File::options()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .unwrap_or_else(|e| panic!("{} opens: {e}", path.display()));
+    // Safety: a valid descriptor, open for as long as the lock is held.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        eprintln!(
+            "waiting for {}: another native golden run holds it",
+            path.display()
+        );
+        // Safety: as above.
+        let locked = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) };
+        assert_eq!(locked, 0, "{} is lockable", path.display());
+    }
+    lock
+}
 
 #[cfg(target_os = "linux")]
 fn replace_in_strings(value: &mut Value, from: &str, to: &str) {
@@ -1641,7 +1683,26 @@ fn native_result(case: &str, spec: &Value, results: &Map<String, Value>) -> Resu
     if ["file", "copy", "lineinfile"].contains(&spec["module"].as_str().unwrap_or_default()) {
         map.insert("_after".into(), read_back(case, spec, results)?);
     }
+    if let Some(read) = results.get(&format!("after-unit-{case}")) {
+        map.insert("_after".into(), unit_after(read)?);
+    }
     Ok(registered)
+}
+
+/// `_after` of a unit case, as `natives()` builds it: the `KEY=value` lines of its
+/// `after-unit-` read-back (`systemctl show -p ...`).
+#[cfg(target_os = "linux")]
+fn unit_after(read: &Value) -> Result<Value, String> {
+    let stdout = read["stdout"]
+        .as_str()
+        .ok_or("a unit read-back with no stdout")?;
+    Ok(Value::Object(
+        stdout
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key.to_string(), Value::from(value)))
+            .collect(),
+    ))
 }
 
 /// An `unordered` value's words, split on single spaces as `sorted(value.split(" "))` does.
@@ -1924,6 +1985,9 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         "run as root: the recording's literal `root` would read as the running account's own; run \
          as an ordinary account with passwordless `sudo -n`"
     );
+    // Before the machine checks: another run holding the lock is between `apt-install-absent` and
+    // its cleanup, with `hello` installed, and the check would read that as this machine's state.
+    let _lock = native_lock();
     let missing: Vec<&str> = [
         ("sudo -n true", "passwordless `sudo -n`"),
         ("test -d /run/systemd/system", "running systemd"),
@@ -1954,16 +2018,6 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         eprintln!("skipped: {why}.");
         return;
     }
-    // The fixture, the accounts, the unit and the package are the machine's: one run at a time,
-    // this test's or the generator's.
-    let lock = std::fs::File::options()
-        .create(true)
-        .append(true)
-        .open(NATIVE_LOCK)
-        .expect("the lock file opens");
-    // Safety: a valid descriptor, held open until the end of the test.
-    let locked = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX) };
-    assert_eq!(locked, 0, "{NATIVE_LOCK} is lockable");
 
     let index = native_file("index.json");
     let index = index.as_object().expect("index.json is a mapping");
@@ -2026,6 +2080,7 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
+    let failed = failed_tasks(&stdout);
     let mut failures = Vec::new();
     // Every failing case and every cleanup carries `ignore_errors`, so a sound run exits 0 and
     // runs its whole `always`: a native that answers its case and then breaks the agent, or ends
@@ -2045,12 +2100,31 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         let name = task["name"].as_str().unwrap_or_default();
         if !results.contains_key(name) {
             failures.push(format!("the cleanup {name} did not run"));
+        } else if failed.contains(name) {
+            // Ignored, so it does not end the run; but a `hello` left installed refuses every
+            // later run, and a unit or account left behind changes the next one's answers.
+            failures.push(format!("the cleanup {name} failed"));
         }
     }
     // The reference replays the whole recorded play from the same fixture, so each live case
     // meets the state the cases before it left.
     native_fixture();
     let live = reference_results(&python, &work, &recorded);
+    for task in recorded[0]["tasks"][0]["always"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let name = task["name"].as_str().unwrap_or_default();
+        if live
+            .get(name)
+            .is_none_or(|outcome| outcome["failed"] == true)
+        {
+            failures.push(format!(
+                "the reference's cleanup {name} did not run, or failed"
+            ));
+        }
+    }
     let masks = NativeMasks::new(format!("{}/tmp/", work.display()));
     let profile = native_profile(&profile);
     for native in profile.natives.iter().flatten() {
@@ -2079,7 +2153,18 @@ fn a_native_module_returns_the_reference_s_own_keys() {
                     failures.push(format!("case {case}: the reference gave no live result"));
                     continue;
                 };
+                if let Some(read) = live.get(&format!("after-unit-{case}"))
+                    && let Some(map) = reference.as_object_mut()
+                {
+                    match unit_after(read) {
+                        Ok(after) => {
+                            map.insert("_after".into(), after);
+                        }
+                        Err(why) => failures.push(format!("case {case}: the reference's {why}")),
+                    }
+                }
                 masks.apply(&mut reference);
+                same_names(case, &reference, &ours, &mut failures);
                 keep_live(&mut reference);
                 keep_live(&mut ours);
                 reference
@@ -2095,7 +2180,6 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     }
     let _ = std::fs::remove_dir_all(NATIVE_DIR);
     let _ = std::fs::remove_dir_all(&work);
-    drop(lock);
     assert!(
         failures.is_empty(),
         "{} difference(s) across {} native case(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
@@ -2120,6 +2204,38 @@ fn native_fixture() {
     std::fs::set_permissions(dir.join("f.txt"), std::fs::Permissions::from_mode(0o644))
         .expect("the fixture's mode is set");
     std::os::unix::fs::symlink("f.txt", dir.join("l")).expect("the link is made");
+}
+
+/// The names of every package and every unit, compared as sets before `keep_live` narrows the
+/// values: a `service_facts` that lists two units, or a `package_facts` that lists `bash`, would
+/// otherwise pass.
+#[cfg(target_os = "linux")]
+fn same_names(case: &str, reference: &Value, ours: &Value, failures: &mut Vec<String>) {
+    for key in ["packages", "services"] {
+        let names = |result: &Value| -> Option<std::collections::BTreeSet<String>> {
+            Some(
+                result["ansible_facts"][key]
+                    .as_object()?
+                    .keys()
+                    .cloned()
+                    .collect(),
+            )
+        };
+        let (want, got) = (names(reference), names(ours));
+        if want != got {
+            let (want, got) = (want.unwrap_or_default(), got.unwrap_or_default());
+            let only = |a: &std::collections::BTreeSet<String>,
+                        b: &std::collections::BTreeSet<String>| {
+                a.difference(b).take(5).cloned().collect::<Vec<_>>()
+            };
+            failures.push(format!(
+                "case {case}: key ansible_facts.{key}: the names differ, only the reference's {:?}, \
+                 only ours {:?} (first five each)",
+                only(&want, &got),
+                only(&got, &want)
+            ));
+        }
+    }
 }
 
 /// What `natives()` keeps of `package_facts` and `service_facts` (`LIVE_KEEP`), kept on both

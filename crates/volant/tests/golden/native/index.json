@@ -971,6 +971,27 @@
     "volatile": [],
     "why": ""
   },
+  "setup-min": {
+    "args": {
+      "gather_subset": [
+        "min"
+      ]
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "live",
+    "expect": "native",
+    "module": "setup",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "ansible_facts.ansible_env",
+      "ansible_facts.ansible_date_time"
+    ],
+    "why": "the facts are the machine's: its name, id, addresses and keys; compared with a reference run on the same host"
+  },
   "setup-pkg-mgr": {
     "args": {
       "filter": [
@@ -985,12 +1006,12 @@
       "changed": false
     },
     "compare": "exact",
-    "expect": "native",
+    "expect": "fallback",
     "module": "setup",
     "patterns": {},
     "unordered": [],
     "volatile": [],
-    "why": ""
+    "why": "a filter is outside the native setup"
   },
   "setup-service-mgr": {
     "args": {
@@ -1006,12 +1027,12 @@
       "changed": false
     },
     "compare": "exact",
-    "expect": "native",
+    "expect": "fallback",
     "module": "setup",
     "patterns": {},
     "unordered": [],
     "volatile": [],
-    "why": ""
+    "why": "a filter is outside the native setup"
   },
   "stat-bare": {
     "args": {

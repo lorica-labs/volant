@@ -1364,6 +1364,15 @@
       "register": "last"
      },
      {
+      "name": "setup-min",
+      "setup": {
+       "gather_subset": [
+        "min"
+       ]
+      },
+      "register": "last"
+     },
+     {
       "name": "cleanup-user-before",
       "user": {
        "name": "volantshape",

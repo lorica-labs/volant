@@ -879,6 +879,8 @@ def natives():
     machine = {}
     # The unit cases followed by an `after-unit-` read-back.
     unit_back = set()
+    # The cases whose recording keeps the facts' names and none of their values.
+    facts_shape = set()
 
     def case(name, module, args, branch, expect="native", why="", compare="exact", volatile=(), become=False, output=False):
         if become and not sudo:
@@ -1226,8 +1228,25 @@ def natives():
     )
     case("package-facts", "package_facts", {"manager": "auto"}, same, compare="live", become=True)
     case("service-facts", "service_facts", {}, same, compare="live", become=True)
-    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same)
-    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same)
+    # The native `setup` hands every `filter` back for now; these two go back to `native` when it
+    # learns `filter`.
+    no_filter = "a filter is outside the native setup"
+    case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same, "fallback", no_filter)
+    case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same, "fallback", no_filter)
+    # The `min` facts, which the native answers. They are the machine's (its name, id, addresses,
+    # keys, kernel command line), so compared live; the recording keeps their names only. The
+    # environment is the module's process's own, which is not Volant's agent's on one side and
+    # ansible-playbook's on the other, and the date and time move.
+    case(
+        "setup-min",
+        "setup",
+        {"gather_subset": ["min"]},
+        same,
+        why="the facts are the machine's: its name, id, addresses and keys; compared with a reference run on the same host",
+        compare="live",
+        volatile=["ansible_facts.ansible_env", "ansible_facts.ansible_date_time"],
+    )
+    facts_shape.add("setup-min")
 
     # The account and group are removed before the first case that creates them, in case an
     # interrupted run left them behind (`group-created` would record "no change"), and again in
@@ -1352,6 +1371,8 @@ def natives():
             uncut = dict(result)
             result["status"] = {key: value for key, value in status.items() if key in STATUS_KEEP}
         facts = result.get("ansible_facts", {})
+        if name in facts_shape:
+            result["ansible_facts"] = facts = {key: MACHINE_PLACEHOLDER for key in facts}
         for key, keep in LIVE_KEEP.items():
             if isinstance(facts.get(key), dict):
                 facts[key] = {k: v for k, v in facts[key].items() if k in keep}

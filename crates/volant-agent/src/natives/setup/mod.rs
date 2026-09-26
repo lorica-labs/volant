@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `setup`, answered in the agent for the `min` subset on Debian and Ubuntu: the 17 collectors
-//! ansible-core 2.19.12 runs for it, each reading what the reference reads, in the reference's
-//! words.
+//! `setup`, answered in the agent on Debian and Ubuntu: the 17 collectors ansible-core 2.19.12
+//! runs for `min`, each reading what the reference reads, in the reference's words, and the
+//! processor, memory and address facts of its `hardware` and `network` collectors.
 //!
-//! Anything the native cannot reproduce hands the task back to the Python module: an argument
-//! outside `min` with the default fact path, another distribution, SELinux enabled, a host name
-//! only DNS knows, a locale the module would replace. A fact the native cannot produce is never
-//! guessed. Handing back is always safe here, because collecting changes nothing on the host.
+//! A subset that also selects other collectors (`all`, the default) is answered without their
+//! facts: a key the native does not produce is absent, never guessed, and the controller sends
+//! `setup` here only for a play that reads none of them. A subset that names one of them hands
+//! back, as does anything else the native cannot reproduce: another distribution, SELinux
+//! enabled, a host name only DNS knows, a locale the module would replace. Handing back is always
+//! safe here, because collecting changes nothing on the host.
 //!
 //! Every file is read under a [`Root`], the real `/` or a test directory, and every command is
 //! found through the module's own `PATH` under the same root.
@@ -19,8 +21,10 @@ mod distribution;
 mod dns;
 mod env;
 mod fips;
+mod hardware;
 mod local;
 mod lsb;
+mod network;
 mod pkg_mgr;
 mod platform;
 mod python;
@@ -29,7 +33,7 @@ mod service_mgr;
 mod ssh_pub_keys;
 mod user;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -154,11 +158,133 @@ const MIN: &[&str] = &[
     "user",
 ];
 
+/// The collectors ansible-core 2.19.12 finds for Linux: the name, the fact ids that select it
+/// too, the collectors it requires. All but Puppet's, whose name and fact id only ever hand
+/// back: named, it is a collector the native does not run, and as an unknown name it is refused
+/// the same way; negated or brought in by `all`, it changes nothing the native collects.
+const COLLECTORS: &[(&str, &[&str], &[&str])] = &[
+    ("apparmor", &[], &[]),
+    (
+        "caps",
+        &["system_capabilities", "system_capabilities_enforced"],
+        &[],
+    ),
+    ("chroot", &["is_chroot"], &[]),
+    ("cmdline", &[], &[]),
+    ("date_time", &[], &[]),
+    (
+        "distribution",
+        &[
+            "distribution_major_version",
+            "distribution_release",
+            "distribution_version",
+            "os_family",
+        ],
+        &[],
+    ),
+    ("dns", &[], &[]),
+    ("env", &[], &[]),
+    ("fibre_channel_wwn", &[], &[]),
+    ("fips", &[], &[]),
+    (
+        "hardware",
+        &[
+            "devices",
+            "mounts",
+            "processor",
+            "processor_cores",
+            "processor_count",
+        ],
+        &["platform"],
+    ),
+    ("iscsi", &[], &[]),
+    ("loadavg", &[], &[]),
+    ("local", &[], &[]),
+    ("lsb", &[], &[]),
+    (
+        "network",
+        &[
+            "all_ipv4_addresses",
+            "all_ipv6_addresses",
+            "default_ipv4",
+            "default_ipv6",
+            "interfaces",
+        ],
+        &["distribution", "platform"],
+    ),
+    ("nvme", &[], &[]),
+    ("ohai", &[], &[]),
+    ("pkg_mgr", &[], &["distribution"]),
+    (
+        "platform",
+        &[
+            "architecture",
+            "kernel",
+            "kernel_version",
+            "machine",
+            "machine_id",
+            "python_version",
+            "system",
+        ],
+        &[],
+    ),
+    ("python", &[], &[]),
+    ("selinux", &[], &[]),
+    ("service_mgr", &[], &["distribution", "platform"]),
+    (
+        "ssh_pub_keys",
+        &[
+            "ssh_host_key_dsa_public",
+            "ssh_host_key_ecdsa_public",
+            "ssh_host_key_ed25519_public",
+            "ssh_host_key_rsa_public",
+            "ssh_host_pub_keys",
+        ],
+        &[],
+    ),
+    ("systemd", &[], &[]),
+    (
+        "user",
+        &[
+            "effective_group_ids",
+            "effective_user_id",
+            "real_user_id",
+            "user_dir",
+            "user_gecos",
+            "user_gid",
+            "user_id",
+            "user_shell",
+            "user_uid",
+        ],
+        &[],
+    ),
+    (
+        "virtual",
+        &[
+            "virtualization_role",
+            "virtualization_tech_guest",
+            "virtualization_tech_host",
+            "virtualization_type",
+        ],
+        &[],
+    ),
+];
+
+/// The collectors the native runs besides `min`, each restricted to part of its facts.
+const RESTRICTED: &[&str] = &["hardware", "network"];
+
+/// Fact ids that select a restricted collector for facts the native leaves out.
+const LEFT_OUT: &[&str] = &["devices", "mounts"];
+
 /// What the task asks of `setup`, once the native knows it can answer it.
 struct Request {
     /// `gather_subset` as the reference converts it, which is also what its `gather_subset` fact
     /// says.
     gather_subset: Vec<String>,
+    /// Whether the reference runs its `hardware` collector.
+    hardware: bool,
+    /// Whether the reference runs its `network` collector.
+    network: bool,
     /// `None` when the module would find no directory to read.
     fact_path: Option<String>,
 }
@@ -180,8 +306,8 @@ fn answer(
     Ok(result)
 }
 
-/// The arguments, checked for what the native reproduces exactly: `min`, no filter, and a fact
-/// path the module would find empty.
+/// The arguments, checked for what the native reproduces exactly: a subset it collects, no
+/// filter, and a fact path the module would find empty.
 fn request(args: &Map<String, Value>) -> Result<Request, String> {
     if let Some(key) = args
         .keys()
@@ -199,7 +325,7 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
         Some(timeout) if timeout.is_i64() => {}
         Some(_) => return Err("gather_timeout is not an integer".into()),
     }
-    let gather_subset = gather_subset(args.get("gather_subset"))?;
+    let (gather_subset, collectors) = gather_subset(args.get("gather_subset"))?;
     let fact_path = match args.get("fact_path") {
         None => Some(DEFAULT_FACT_PATH.to_string()),
         Some(Value::Null) => None,
@@ -213,70 +339,111 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
     };
     Ok(Request {
         gather_subset,
+        hardware: collectors.contains("hardware"),
+        network: collectors.contains("network"),
         fact_path,
     })
 }
 
-/// `gather_subset` converted as `type='list', elements='str'` converts it, if it selects exactly
-/// the `min` collectors.
+/// `gather_subset` converted as `type='list', elements='str'` converts it, and the collectors
+/// the reference resolves it to, if the native runs every one it names.
 ///
-/// The reference starts from `min`, adds what is named, removes what is negated unless it was
-/// also named, then adds back what the remaining collectors require: `service_mgr` needs
-/// `platform` and `distribution`, `pkg_mgr` needs `distribution`. Negating a name outside `min`
-/// removes nothing from it (measured: no other collector's fact ids reach into `min`). A
-/// positive name outside `min` is left to the reference, which collects it or refuses it.
-fn gather_subset(value: Option<&Value>) -> Result<Vec<String>, String> {
+/// The resolution is the reference's `get_collector_names`: start from `min`, add what is named
+/// (`all` adds every collector and fact id), remove what is negated (a collector with its fact
+/// ids) unless it was also named, then add what the remaining collectors require. The native
+/// answers when every `min` collector remains and every name given selects `min`, or `hardware`
+/// or `network` for facts it produces; the other collectors `all` brings in are left out, their
+/// facts absent. A name the reference does not know makes it fail, and is left to it.
+fn gather_subset(value: Option<&Value>) -> Result<(Vec<String>, BTreeSet<&'static str>), String> {
     let given: Vec<String> = match value {
+        None => vec!["all".to_string()],
         Some(Value::String(text)) => text.split(',').map(str::to_string).collect(),
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| item.as_str().map(str::to_string))
             .collect::<Option<_>>()
             .ok_or("gather_subset holds something other than strings")?,
-        None | Some(Value::Null) => return Err("gather_subset defaults to all".into()),
+        Some(Value::Null) => return Err("gather_subset is null".into()),
         Some(_) => return Err("gather_subset is not a list".into()),
     };
     // `gather_subset or ['all']`: an empty list is everything, and the fact then says `['all']`.
     if given.is_empty() {
         return Err("an empty gather_subset is all".into());
     }
-    let mut excluded: Vec<&str> = Vec::new();
-    let mut named: Vec<&str> = Vec::new();
-    for subset in &given {
-        match subset.strip_prefix('!') {
-            Some("min") => excluded.extend(MIN),
-            Some(other) => excluded.push(other),
-            None if subset == "min" => {}
-            None if MIN.contains(&subset.as_str()) => named.push(subset),
-            None => return Err(format!("gather_subset '{subset}' is outside min")),
-        }
-    }
-    let mut kept: Vec<&str> = MIN
+    let selecting = |name: &str| {
+        COLLECTORS
+            .iter()
+            .filter(|(collector, ids, _)| *collector == name || ids.contains(&name))
+            .map(|(collector, _, required)| (*collector, *required))
+            .collect::<Vec<_>>()
+    };
+    let valid: BTreeSet<&str> = COLLECTORS
         .iter()
-        .copied()
-        .filter(|name| !excluded.contains(name) || named.contains(name))
+        .flat_map(|(collector, ids, _)| std::iter::once(*collector).chain(ids.iter().copied()))
         .collect();
-    let requires: &[(&str, &[&str])] = &[
-        ("service_mgr", &["platform", "distribution"]),
-        ("pkg_mgr", &["distribution"]),
-    ];
-    for (collector, required) in requires {
-        if kept.contains(collector) {
-            kept.extend(
-                required
-                    .iter()
-                    .filter(|name| !kept.contains(name))
-                    .collect::<Vec<_>>(),
-            );
+    let mut added: BTreeSet<&str> = BTreeSet::new();
+    let mut excluded: BTreeSet<&str> = BTreeSet::new();
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    for subset in std::iter::once("min").chain(given.iter().map(String::as_str)) {
+        match subset.strip_prefix('!') {
+            None if subset == "min" => added.extend(MIN),
+            None if subset == "all" => added.extend(&valid),
+            Some("min") => excluded.extend(MIN),
+            Some("all") => excluded.extend(valid.iter().filter(|name| !MIN.contains(name))),
+            Some(name) => {
+                excluded.insert(name);
+                for (collector, ids, _) in COLLECTORS {
+                    if *collector == name {
+                        excluded.extend(ids.iter().copied());
+                    }
+                }
+            }
+            None if valid.contains(subset) => {
+                named.insert(subset);
+                added.insert(subset);
+            }
+            None => {
+                return Err(format!(
+                    "gather_subset '{subset}' is not a subset the native knows"
+                ));
+            }
         }
     }
-    if kept.len() != MIN.len() {
+    added.retain(|name| !excluded.contains(name) || named.contains(name));
+    loop {
+        let missing: Vec<&str> = added
+            .iter()
+            .flat_map(|name| selecting(name))
+            .flat_map(|(_, required)| required.iter().copied())
+            .filter(|required| !added.contains(required))
+            .collect();
+        if missing.is_empty() {
+            break;
+        }
+        added.extend(missing);
+    }
+    let collectors: BTreeSet<&'static str> = added
+        .iter()
+        .flat_map(|name| selecting(name))
+        .map(|(collector, _)| collector)
+        .collect();
+    if !MIN.iter().all(|name| collectors.contains(name)) {
         return Err("gather_subset leaves out part of min".into());
     }
-    Ok(given)
+    for name in named {
+        let foreign = selecting(name)
+            .iter()
+            .any(|(collector, _)| !MIN.contains(collector) && !RESTRICTED.contains(collector));
+        if foreign || LEFT_OUT.contains(&name) {
+            return Err(format!(
+                "gather_subset names '{name}', whose facts the native does not collect"
+            ));
+        }
+    }
+    Ok((given, collectors))
 }
 
-/// The facts of `min`, under the names the module returns them, or the reason to hand back.
+/// The facts, under the names the module returns them, or the reason to hand back.
 ///
 /// The distribution's `ID` first: it decides whether the host is inside the subset at all for
 /// one file read, where the interpreter and `lsb_release` cost tens of milliseconds.
@@ -299,9 +466,9 @@ fn collect(
         .interpreter
         .as_deref()
         .ok_or("no interpreter to read the python facts from")?;
-    // `lsb_release` needs the module's environment, not the interpreter: it runs beside the
-    // probe in the environment the module has when its interpreter adds nothing to the agent's,
-    // and again after the probe when it did (Python sets `LC_CTYPE` in a C locale).
+    // `lsb_release` and `ip` need the module's environment, not the interpreter: they run beside
+    // the probe in the environment the module has when its interpreter adds nothing to the
+    // agent's, and again after the probe when it did (Python sets `LC_CTYPE` in a C locale).
     let guess: Option<BTreeMap<String, String>> = std::env::vars_os()
         .map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .collect::<Option<BTreeMap<_, _>>>()
@@ -309,21 +476,29 @@ fn collect(
             env.extend(context.environment.clone());
             env
         });
-    // The early run cannot ask the task's cancel, which answers once and on this thread. It
-    // stops at the deadline, or when this thread raises `halt`: as soon as the probe ends
-    // without an answer, and when the cancel arrives while this thread waits for it.
+    // The early runs cannot ask the task's cancel, which answers once and on this thread. They
+    // stop at the deadline, or when this thread raises `halt`: as soon as the probe ends
+    // without an answer, and when the cancel arrives while this thread waits for them.
     let halt = AtomicBool::new(false);
-    let (probe, early, cancelled) = std::thread::scope(|scope| {
+    let halted = || halt.load(Ordering::Relaxed);
+    let halted: &(dyn Fn() -> bool + Sync) = &halted;
+    let deadline = clock.deadline;
+    let (probe, early, early_network) = std::thread::scope(|scope| {
+        let early_clock = move || Clock {
+            deadline,
+            cancelled: halted,
+        };
         let early = guess.as_ref().map(|env| {
             let (sent, answer) = mpsc::channel();
-            let halt = &halt;
             scope.spawn(move || {
-                let halted = || halt.load(Ordering::Relaxed);
-                let early_clock = Clock {
-                    deadline: clock.deadline,
-                    cancelled: &halted,
-                };
-                let _ = sent.send(LsbRelease::run(root, env, early_clock));
+                let _ = sent.send(LsbRelease::run(root, env, early_clock()));
+            });
+            answer
+        });
+        let network = guess.as_ref().filter(|_| request.network).map(|env| {
+            let (sent, answer) = mpsc::channel();
+            scope.spawn(move || {
+                let _ = sent.send(network::collect(root, env, early_clock()));
             });
             answer
         });
@@ -331,33 +506,28 @@ fn collect(
         if probe.is_err() {
             halt.store(true, Ordering::Relaxed);
         }
-        let mut cancelled = false;
-        let early = early.and_then(|answer| {
-            loop {
-                match answer.recv_timeout(CANCEL_POLL) {
-                    Ok(early) => break Some(early),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break None,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        if (clock.cancelled)() {
-                            halt.store(true, Ordering::Relaxed);
-                            cancelled = true;
-                            break None;
-                        }
-                    }
-                }
-            }
-        });
-        (probe, early, cancelled)
-    });
-    if cancelled {
-        return Err(Stop::Cancelled);
-    }
+        let early = match &early {
+            Some(answer) => wait_polling_cancel(answer, clock, &halt)?,
+            None => None,
+        };
+        let early_network = match &network {
+            Some(answer) => wait_polling_cancel(answer, clock, &halt)?,
+            None => None,
+        };
+        Ok::<_, Stop>((probe, early, early_network))
+    })?;
     let probe = probe?;
     let mut env = probe.env.clone();
     env.extend(context.environment.clone());
+    let same_env = guess.as_ref() == Some(&env);
     let lsb_release = match early {
-        Some(early) if guess.as_ref() == Some(&env) => early?,
+        Some(early) if same_env => early?,
         _ => LsbRelease::run(root, &env, clock)?,
+    };
+    let network = match early_network {
+        Some(early) if same_env => early?,
+        _ if request.network => network::collect(root, &env, clock)?,
+        _ => Map::new(),
     };
     let host = Host {
         root,
@@ -385,8 +555,23 @@ fn collect(
         user::collect(&host)?,
     ];
     let mut facts = Map::new();
-    for (name, value) in collected.into_iter().flatten() {
-        facts.insert(format!("ansible_{}", name.replace('-', "_")), value);
+    let add = |facts: &mut Map<String, Value>, collected: Map<String, Value>| {
+        for (name, value) in collected {
+            facts.insert(format!("ansible_{}", name.replace('-', "_")), value);
+        }
+    };
+    for collected in collected {
+        add(&mut facts, collected);
+    }
+    add(&mut facts, network);
+    if request.hardware {
+        // The reference counts processors by the architecture the platform collector found.
+        let architecture = facts
+            .get("ansible_architecture")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        add(&mut facts, hardware::collect(root, &architecture));
     }
     facts.insert(
         "gather_subset".into(),
@@ -394,6 +579,28 @@ fn collect(
     );
     facts.insert("module_setup".into(), Value::Bool(true));
     Ok(facts)
+}
+
+/// The next message on `answer`, waiting as long as it takes while polling the task's cancel,
+/// which only this thread may ask. On the cancel, raises `halt` so that the runs whose clock
+/// reads it stop, and says `Cancelled`. `None` when the sender is gone without a message.
+fn wait_polling_cancel<T>(
+    answer: &mpsc::Receiver<T>,
+    clock: Clock,
+    halt: &AtomicBool,
+) -> Result<Option<T>, Stop> {
+    loop {
+        match answer.recv_timeout(CANCEL_POLL) {
+            Ok(message) => return Ok(Some(message)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if (clock.cancelled)() {
+                    halt.store(true, Ordering::Relaxed);
+                    return Err(Stop::Cancelled);
+                }
+            }
+        }
+    }
 }
 
 /// Where the collectors read: `/` on a host, a directory in a test.
@@ -599,6 +806,32 @@ pub fn py_strip(text: &str) -> &str {
 /// `str.split()`.
 pub fn py_split(text: &str) -> impl Iterator<Item = &str> {
     text.split(py_space).filter(|word| !word.is_empty())
+}
+
+/// `int(text, radix)` for radix 10 or 16: surrounding whitespace, a sign, a `0x` prefix in base
+/// 16, underscores between digits. `None` where Python raises, or beyond `i64`.
+pub fn py_int(text: &str, radix: u32) -> Option<i64> {
+    let text = py_strip(text);
+    let (negative, rest) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let mut digits = rest;
+    if radix == 16
+        && let Some(after) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X"))
+    {
+        digits = after.strip_prefix('_').unwrap_or(after);
+    }
+    let well_formed = !digits.is_empty()
+        && !digits.starts_with('_')
+        && !digits.ends_with('_')
+        && !digits.contains("__")
+        && digits.chars().all(|c| c == '_' || c.is_digit(radix));
+    if !well_formed {
+        return None;
+    }
+    let value = i64::from_str_radix(&digits.replace('_', ""), radix).ok()?;
+    Some(if negative { -value } else { value })
 }
 
 /// `str.splitlines()`.
@@ -816,7 +1049,19 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             .write("/proc/sys/crypto/fips_enabled", "0\n")
             .write("/etc/resolv.conf", "nameserver 127.0.0.53\noptions edns0 trust-ad\nsearch example\n")
             .write("/etc/machine-id", "0123456789abcdef0123456789abcdef\n")
-            .write("/etc/hosts", "127.0.0.1 localhost\n127.0.1.1 probe-hostname\n");
+            .write("/etc/hosts", "127.0.0.1 localhost\n127.0.1.1 probe-hostname\n")
+            .write(
+                "/proc/cpuinfo",
+                "processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Xeon(R)\n\
+                 physical id\t: 0\nsiblings\t: 1\ncore id\t\t: 0\ncpu cores\t: 1\n\
+                 flags\t\t: fpu vme\n",
+            )
+            .write(
+                "/proc/meminfo",
+                "MemTotal: 2048 kB\nMemFree: 1024 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n",
+            );
+        network::tests::sysfs(&fake);
+        network::tests::install_ip(&fake, network::tests::IP);
         for algo in ["dsa", "rsa", "ecdsa", "ed25519"] {
             fake.write(
                 &format!("/etc/ssh/ssh_host_{algo}_key.pub"),
@@ -868,6 +1113,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             service_mgr::collect(&host).unwrap(),
             ssh_pub_keys::collect(&host).unwrap(),
             user::collect(&host).unwrap(),
+            hardware::collect(host.root, "x86_64"),
+            network::collect(host.root, &host.env, unbounded()).unwrap(),
         ];
         let mut keys: Vec<String> = collected
             .into_iter()
@@ -879,15 +1126,53 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         assert_eq!(keys, NATIVE_FACT_KEYS);
     }
 
-    /// The subsets that select exactly `min`, measured against ansible-core 2.19.12's own
-    /// resolution, and the ones that do not.
+    /// The subsets the native answers, measured against ansible-core 2.19.12's own resolution,
+    /// and the ones it hands back.
     ///
     /// What would make this red: `!all` read as nothing at all, a negated `min` collector not
     /// taken off, a required collector not put back (`!platform` alone still runs `platform`,
-    /// because `service_mgr` needs it), or a string not split on commas the way `type='list'`
-    /// splits it.
+    /// because `service_mgr` needs it), a string not split on commas the way `type='list'`
+    /// splits it, a named collector the native does not run answered without its facts, or
+    /// `hardware` and `network` run where the reference leaves them out.
     #[test]
-    fn only_a_subset_that_resolves_to_min_is_answered() {
+    fn only_a_subset_the_native_collects_is_answered() {
+        let runs = |value: Value| {
+            let (_, collectors) = gather_subset(Some(&value)).unwrap();
+            (
+                collectors.contains("hardware"),
+                collectors.contains("network"),
+            )
+        };
+        assert_eq!(runs(json!(["all"])), (true, true));
+        assert_eq!(runs(json!(["min"])), (false, false));
+        assert_eq!(runs(json!(["!all", "network"])), (false, true));
+        assert_eq!(runs(json!(["all", "!hardware"])), (false, true));
+        assert_eq!(runs(json!(["!hardware"])), (false, false), "min only");
+        assert_eq!(runs(json!("!all,processor_count")), (true, false));
+        assert_eq!(
+            runs(json!(["all", "!network", "default_ipv4"])),
+            (true, true)
+        );
+        assert_eq!(runs(json!(["all", "!virtual", "!ohai"])), (true, true));
+        assert_eq!(
+            gather_subset(None).unwrap().0,
+            vec!["all"],
+            "absent is all, as the fact and invocation say"
+        );
+        for not_answered in [
+            json!(["virtual"]),
+            json!(["min", "ohai"]),
+            json!(["mounts"]),
+            json!(["!all", "devices"]),
+            json!(["dmi"]),
+            json!(["all", "is_chroot"]),
+            json!(["!all", "!min", "network"]),
+        ] {
+            assert!(
+                gather_subset(Some(&not_answered)).is_err(),
+                "{not_answered}"
+            );
+        }
         for min in [
             json!(["min"]),
             json!(["!all"]),
@@ -903,18 +1188,15 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             assert!(gather_subset(Some(&min)).is_ok(), "{min}");
         }
         assert_eq!(
-            gather_subset(Some(&json!("!all,min"))).unwrap(),
+            gather_subset(Some(&json!("!all,min"))).unwrap().0,
             vec!["!all", "min"]
         );
         for not_min in [
-            json!(["all"]),
             json!(["!all", "!min"]),
             json!(["!min", "min"]),
             json!(["!service_mgr", "!platform"]),
             json!(["!dns"]),
             json!(["!min", "dns"]),
-            json!(["all", "!hardware"]),
-            json!(["network"]),
             json!("min, !hardware"),
             json!([1]),
             json!(null),
@@ -922,7 +1204,6 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         ] {
             assert!(gather_subset(Some(&not_min)).is_err(), "{not_min}");
         }
-        assert!(gather_subset(None).is_err(), "absent is all");
     }
 
     /// The arguments the native takes, and the ones it leaves to the module.
@@ -965,7 +1246,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     ///
     /// What would make this red: the string left as given in `module_args`, which the reference
     /// never prints; a default missing from `module_args`; or the early `lsb_release` kept when
-    /// the module's environment differs from the one it ran in.
+    /// the module's environment differs from the one it ran in; or `hardware` and `network`
+    /// collected when the subset leaves them out, or left out when it names them.
     #[test]
     #[cfg(target_os = "linux")]
     fn the_answer_carries_the_facts_and_the_reference_s_invocation() {
@@ -1017,6 +1299,23 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             json!("user"),
             "the module's LOGNAME, not the agent's"
         );
+        for key in ["ansible_processor", "ansible_interfaces"] {
+            assert!(
+                !result["ansible_facts"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key(key),
+                "{key} collected for !all"
+            );
+        }
+
+        let args = json!({"gather_subset": ["!all", "hardware", "network"]})
+            .as_object()
+            .unwrap()
+            .clone();
+        let facts = &answer(&args, &root, &context, unbounded()).unwrap()["ansible_facts"];
+        assert_eq!(facts["ansible_processor_vcpus"], json!(1));
+        assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
     }
 
     /// A task environment that changes the locale or the time zone hands back: the module would
@@ -1031,6 +1330,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             };
             let request = Request {
                 gather_subset: vec!["min".into()],
+                hardware: false,
+                network: false,
                 fact_path: None,
             };
             let Err(Stop::HandBack(reason)) =
@@ -1060,6 +1361,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         };
         let request = Request {
             gather_subset: vec!["min".into()],
+            hardware: false,
+            network: false,
             fact_path: None,
         };
         let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
@@ -1090,6 +1393,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         };
         let request = Request {
             gather_subset: vec!["min".into()],
+            hardware: false,
+            network: false,
             fact_path: None,
         };
         let started = Instant::now();
@@ -1134,6 +1439,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         };
         let request = Request {
             gather_subset: vec!["min".into()],
+            hardware: false,
+            network: false,
             fact_path: None,
         };
         let asked = std::cell::Cell::new(0);
@@ -1160,6 +1467,49 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
 
+    /// The interpreter and `lsb_release` answer at once and only the early `ip` hangs: the task's
+    /// cancel still ends the wait for it once the probe has answered, and a probe that fails
+    /// ends it without any cancel.
+    ///
+    /// What would make this red: the early network run waited for without polling the cancel,
+    /// which leaves a cancelled task waiting on a hung `ip` for as long as it hangs; or not
+    /// halted when the probe fails.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_hung_early_ip_ends_at_the_cancel_or_a_failed_probe() {
+        let fake = debian_root("hung-ip");
+        let interpreter = python::tests::fake_interpreter(&fake, &probe());
+        network::tests::install_ip(&fake, "#!/bin/sh\nsleep 30\n");
+        let mut context = Context {
+            interpreter: Some(interpreter),
+            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            ..Context::default()
+        };
+        let request = Request {
+            gather_subset: vec!["min".into()],
+            hardware: false,
+            network: true,
+            fact_path: None,
+        };
+        let started = Instant::now();
+        // Answers only once the probe and `lsb_release` are long done, so that the cancel
+        // reaches the wait for `ip` and nothing before it.
+        let cancelled = || started.elapsed() > std::time::Duration::from_secs(1);
+        let clock = Clock {
+            deadline: None,
+            cancelled: &cancelled,
+        };
+        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+        context.interpreter = Some("/nonexistent/python3".into());
+        let started = Instant::now();
+        let stop = collect(&request, &fake.root(), &context, unbounded()).unwrap_err();
+        assert!(matches!(stop, Stop::HandBack(_)), "{stop:?}");
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
     /// A `PYTHONPATH` in the task's `environment` that brings an old `distro` makes the native
     /// hand back, as the module started under that environment would import it.
     ///
@@ -1180,6 +1530,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         };
         let request = Request {
             gather_subset: vec!["min".into()],
+            hardware: false,
+            network: false,
             fact_path: None,
         };
         let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
@@ -1197,6 +1549,12 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         );
         assert_eq!(splitlines("a\n"), vec!["a"]);
         assert_eq!(py_strip("\x1f a \u{3000}"), "a");
+        assert_eq!(py_int(" -1_000\n", 10), Some(-1000));
+        assert_eq!(py_int("0x1003", 16), Some(0x1003));
+        assert_eq!(py_int("0x_ff", 16), Some(255));
+        for raises in ["", "1__0", "_1", "1_", "-+1", "0x10", "1.5"] {
+            assert_eq!(py_int(raises, 10), None, "{raises}");
+        }
         assert_eq!(
             py_split(" a\x1cb  c ").collect::<Vec<_>>(),
             vec!["a", "b", "c"]

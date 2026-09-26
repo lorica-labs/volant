@@ -345,7 +345,7 @@ fn ensure_file(path: &str, follow: bool, attrs: &Attrs) -> Result<Map<String, Va
     if follow && prev == "link" {
         path = realpath(&path)?;
         prev = get_state(&path)?;
-        target = path.clone();
+        target.clone_from(&path);
     }
     if prev != "file" && prev != "hard" {
         let mut fail = failure(&path, format!("file ({path}) is {prev}, cannot continue"));
@@ -364,7 +364,7 @@ fn ensure_directory(path: &str, follow: bool, attrs: &Attrs) -> Result<Map<Strin
     let mut target = attrs_path(&path, follow)?;
     if follow && prev == "link" {
         path = realpath(&path)?;
-        target = path.clone();
+        target.clone_from(&path);
         prev = get_state(&path)?;
     }
     match prev {

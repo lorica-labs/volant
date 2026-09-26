@@ -8,6 +8,7 @@
 //! anything on the host changed.
 
 use std::ffi::CString;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -566,7 +567,9 @@ fn bytes_repr(text: &str) -> String {
                 repr.push(quote);
             }
             0x20..0x7f => repr.push(byte as char),
-            _ => repr.push_str(&format!("\\x{byte:02x}")),
+            _ => {
+                let _ = write!(repr, "\\x{byte:02x}");
+            }
         }
     }
     repr.push(quote);
@@ -767,6 +770,23 @@ mod tests {
         assert!(
             owner_account("+12").is_err(),
             "Python reads +12 as a number"
+        );
+    }
+
+    /// Python's `str()` of an `OSError` raised on a bytes path, glibc's wording.
+    ///
+    /// What would make this red: the quote not switched for a path holding `'`, or a byte
+    /// outside ASCII printed as a character rather than `\xNN`.
+    #[test]
+    fn an_os_error_reads_as_python_prints_it() {
+        let denied = io::Error::from_raw_os_error(libc::EACCES);
+        assert_eq!(
+            os_error(&denied, "/x'y"),
+            "[Errno 13] Permission denied: b\"/x'y\""
+        );
+        assert_eq!(
+            os_error(&denied, "/é\n"),
+            "[Errno 13] Permission denied: b'/\\xc3\\xa9\\n'"
         );
     }
 

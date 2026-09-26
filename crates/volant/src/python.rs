@@ -1192,12 +1192,14 @@ mod tests {
         let builder = |env: &[(&str, &str)]| PythonBuilder::under_with(&python, env).unwrap();
         let union = builder(&[("ANSIBLE_COLLECTIONS_PATH", &collections)])
             .union(&["stat".to_string(), "volanttest.coll.good".to_string()])
-            .unwrap();
+            .unwrap()
+            .0;
         assert!(union.modules["stat"].core);
         assert!(!union.modules["volanttest.coll.good"].core);
         let union = builder(&[("ANSIBLE_LIBRARY", &library)])
             .union(&["stat".to_string(), "ping".to_string()])
-            .unwrap();
+            .unwrap()
+            .0;
         std::fs::remove_dir_all(&root).unwrap();
         // Measured on ansible-core 2.19.12: the wrapper names it `ansible.legacy.stat`, which
         // an agent looking natives up by `ansible.modules.<name>` does not match either. `core`
@@ -2159,6 +2161,7 @@ mod tests {
                 zip_b64: volant_protocol::encoding::b64_encode(b"PK"),
                 modules: BTreeMap::new(),
                 refused: BTreeMap::new(),
+                natives: Natives::default(),
             },
             sources: vec![crate::union_cache::Source::now(&source).unwrap()],
             resolved: BTreeMap::from([(

@@ -862,7 +862,11 @@ mod tests {
         let dir = root.0.join("unions");
         let key = some_key();
         let mut stored = entry(&root.0, b"PK zip");
-        stored.union.modules.values_mut().for_each(|f| f.core = true);
+        stored
+            .union
+            .modules
+            .values_mut()
+            .for_each(|f| f.core = true);
         store(&dir, &key, &stored).unwrap();
         assert!(load(&dir, &key).is_some(), "the current format reads back");
         let manifest = dir.join(format!("{}.json", key.0));

@@ -1182,6 +1182,42 @@ mod tests {
         assert!(!second.failed(), "{:?}", second.0);
     }
 
+    /// What the server may import ahead: the payload and the standard library, and nothing under
+    /// a `*-packages` directory even inside the standard library's own (Debian and Ubuntu put
+    /// `dist-packages` there).
+    ///
+    /// What would make this red: a site directory inside the standard library let through, or the
+    /// payload or the standard library refused.
+    #[test]
+    fn only_the_payload_and_the_standard_library_are_imported_ahead() {
+        const CHECK: &str = r#"
+import json, sys, sysconfig
+ns = {"__name__": "server"}
+exec(sys.argv[1], ns)
+outside = ns["Outside"]("/payload")
+stdlib = sysconfig.get_path("stdlib")
+print(json.dumps([
+    outside.allowed("/payload/ansible/module_utils/basic.py"),
+    outside.allowed(stdlib + "/json/__init__.py"),
+    outside.allowed(stdlib + "/dist-packages/apt/__init__.py"),
+    outside.allowed(stdlib + "/site-packages/yaml/__init__.py"),
+    outside.allowed("/usr/lib/python3/dist-packages/apt/__init__.py"),
+    outside.allowed("/payloadx/ansible/__init__.py"),
+]))
+"#;
+        let out = Command::new(HOST_PYTHON)
+            .args(["-c", CHECK, SERVER])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(seen, json!([true, true, false, false, false, false]));
+    }
+
     /// A replacement that cannot start fails the task with its own words, not the old server's.
     ///
     /// What would make this red: the old server's last words read into the failure (the message

@@ -312,7 +312,11 @@ fn ensure_absent(path: &str, clock: Clock) -> Result<Map<String, Value>, Stop> {
             // `shutil.rmtree`'s failure names the entry it stopped at, and how depends on the
             // host's Python: a tree where removal could fail goes to the Python module whole.
             removable(path, clock)?;
-            remove_tree(path, clock)?;
+            // `remove_dir_all` descends through directory handles and never follows a link,
+            // as `rmtree` does; it does not say which entry failed, so the message names the top.
+            fs::remove_dir_all(path).map_err(|err| {
+                Stop::Fail(message(format!("rmtree failed: {}", os_error(&err, path))))
+            })?;
         }
         _ => match fs::remove_file(path) {
             Err(err) if err.raw_os_error() != Some(libc::ENOENT) => {
@@ -327,142 +331,130 @@ fn ensure_absent(path: &str, clock: Clock) -> Result<Map<String, Value>, Stop> {
 
 /// Hands back unless removing the tree at `top` can only fail where the reference's message
 /// names what the native's does: every directory listable, writable and searchable; no mount
-/// point at or under `top`; no file or directory marked immutable or append-only; and, for an
-/// agent that is not root, no sticky directory holding another account's entry in a directory
-/// that account does not own.
+/// point under `top` (another device, or a mount root on the same one); no entry marked
+/// immutable or append-only; and, for an agent that is not root, no sticky directory holding
+/// another account's entry in a directory that account does not own.
 ///
-/// Not seen: the attributes of a special file (a device, a FIFO, a socket), which cannot be
-/// read without opening it, and whatever changes between this walk and the removal.
+/// Every entry is read with one `statx` that does not follow links and opens nothing; the clock
+/// is looked at before each one. A file system that does not report the `i` and `a` attributes
+/// through `statx` is taken to have none.
+#[cfg(target_os = "linux")]
 fn removable(top: &str, clock: Clock) -> Result<(), Halt> {
-    let back = |why: String| Err(Halt::HandBack(why));
-    let mounts = fs::read_to_string("/proc/self/mountinfo")
-        .map_err(|_| Halt::HandBack("the mount table cannot be read".into()))?;
-    if let Some(point) = mount_under(&mounts, top) {
-        return back(format!("{point} is a mount point"));
-    }
-    let euid = unsafe { libc::geteuid() };
-    walk(top, euid, clock)
+    let meta = statx(top)?;
+    walk(top, &meta, &meta, unsafe { libc::geteuid() }, clock)
 }
 
-/// The first mount point of `mountinfo` at `top` or under it.
-fn mount_under(mountinfo: &str, top: &str) -> Option<String> {
-    let top = top.trim_end_matches('/');
-    let under = format!("{top}/");
-    mountinfo
-        .lines()
-        .map(|line| unescape_mount(line.split(' ').nth(4).unwrap_or_default()))
-        .find(|point| point == top || point.starts_with(&under))
+#[cfg(not(target_os = "linux"))]
+fn removable(_: &str, _: Clock) -> Result<(), Halt> {
+    Err(Halt::HandBack(
+        "the removal check reads Linux attributes".into(),
+    ))
 }
 
-fn walk(dir: &str, euid: u32, clock: Clock) -> Result<(), Halt> {
+#[cfg(target_os = "linux")]
+fn walk(dir: &str, meta: &Statx, top: &Statx, euid: u32, clock: Clock) -> Result<(), Halt> {
     let back = |why: String| Err(Halt::HandBack(why));
-    check(clock)?;
     if !access(dir, libc::R_OK | libc::W_OK | libc::X_OK) {
         return back(format!("{dir} cannot be emptied"));
     }
-    let meta = fs::symlink_metadata(dir).map_err(|err| Halt::HandBack(err.to_string()))?;
-    if protected(dir) {
+    if meta.protected() {
         return back(format!("{dir} is immutable or append-only"));
     }
-    let sticky = meta.mode() & 0o1000 != 0 && euid != 0 && meta.uid() != euid;
+    let sticky = u32::from(meta.stx_mode) & 0o1000 != 0 && euid != 0 && meta.stx_uid != euid;
     let entries = fs::read_dir(dir).map_err(|err| Halt::HandBack(err.to_string()))?;
     for entry in entries {
+        check(clock)?;
         let entry = entry.map_err(|err| Halt::HandBack(err.to_string()))?;
         let path = entry.path();
         let path = path
             .to_str()
             .ok_or_else(|| Halt::HandBack("a name is not UTF-8".into()))?;
-        let meta = entry
-            .metadata()
-            .map_err(|err| Halt::HandBack(err.to_string()))?;
-        if sticky && meta.uid() != euid {
+        let child = statx(path)?;
+        if sticky && child.stx_uid != euid {
             return back(format!(
                 "{path} belongs to another account in a sticky directory"
             ));
         }
-        if meta.is_dir() {
-            walk(path, euid, clock)?;
-        } else if meta.is_file() && protected(path) {
+        if child.protected() {
             return back(format!("{path} is immutable or append-only"));
+        }
+        if u32::from(child.stx_mode) & 0o170_000 == 0o040_000 {
+            if (child.stx_dev_major, child.stx_dev_minor) != (top.stx_dev_major, top.stx_dev_minor)
+                || child.has(STATX_ATTR_MOUNT_ROOT)
+            {
+                return back(format!("{path} is a mount point"));
+            }
+            walk(path, &child, top, euid, clock)?;
         }
     }
     Ok(())
 }
 
-/// Whether `path` (a file or a directory) carries the `i` or `a` attribute, or cannot be opened
-/// to tell.
-#[cfg(target_os = "linux")]
-fn protected(path: &str) -> bool {
-    use std::os::unix::fs::OpenOptionsExt;
+const STATX_ATTR_IMMUTABLE: u64 = 0x10;
+const STATX_ATTR_APPEND: u64 = 0x20;
+const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
 
-    const FS_IMMUTABLE_FL: libc::c_long = 0x10;
-    const FS_APPEND_FL: libc::c_long = 0x20;
-    let Ok(file) = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
-        .open(path)
-    else {
-        return true;
-    };
-    let mut flags: libc::c_long = 0;
-    let got = unsafe {
-        libc::ioctl(
-            std::os::fd::AsRawFd::as_raw_fd(&file),
-            libc::FS_IOC_GETFLAGS,
-            &raw mut flags,
+/// The kernel's `struct statx`, up to the fields read here: `libc` only declares it for glibc
+/// and a newer musl than the agent's target.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct Statx {
+    stx_mask: u32,
+    stx_blksize: u32,
+    stx_attributes: u64,
+    stx_nlink: u32,
+    stx_uid: u32,
+    stx_gid: u32,
+    stx_mode: u16,
+    pad: u16,
+    stx_ino: u64,
+    stx_size: u64,
+    stx_blocks: u64,
+    stx_attributes_mask: u64,
+    times: [u64; 8],
+    stx_rdev_major: u32,
+    stx_rdev_minor: u32,
+    stx_dev_major: u32,
+    stx_dev_minor: u32,
+    spare: [u64; 14],
+}
+
+#[cfg(target_os = "linux")]
+impl Statx {
+    /// An attribute the file system reports and the entry carries.
+    fn has(&self, attribute: u64) -> bool {
+        self.stx_attributes_mask & self.stx_attributes & attribute != 0
+    }
+
+    fn protected(&self) -> bool {
+        self.has(STATX_ATTR_IMMUTABLE) || self.has(STATX_ATTR_APPEND)
+    }
+}
+
+/// `statx(path, AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS)`.
+#[cfg(target_os = "linux")]
+fn statx(path: &str) -> Result<Statx, Halt> {
+    let name = std::ffi::CString::new(path).map_err(|err| Halt::HandBack(err.to_string()))?;
+    // SAFETY: an all-zero `Statx` is a valid value of a plain integer struct.
+    let mut buf: Statx = unsafe { std::mem::zeroed() };
+    // SAFETY: `name` is NUL-terminated and `buf` is a 256-byte `struct statx` the call fills.
+    let done = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            libc::AT_FDCWD,
+            name.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+            0x7ff_u32,
+            &raw mut buf,
         )
     };
-    // A file system without attributes (`ENOTTY`, `EOPNOTSUPP`) has none to refuse with.
-    got == 0 && flags & (FS_IMMUTABLE_FL | FS_APPEND_FL) != 0
-}
-
-#[cfg(not(target_os = "linux"))]
-fn protected(_: &str) -> bool {
-    true
-}
-
-/// A mount point as `mountinfo` writes it, with `\040` and the like for spaces, tabs,
-/// newlines and backslashes.
-fn unescape_mount(field: &str) -> String {
-    let mut out = String::new();
-    let mut rest = field;
-    while let Some(at) = rest.find('\\') {
-        out.push_str(&rest[..at]);
-        let code = rest.get(at + 1..at + 4);
-        if let Some(byte) = code.and_then(|code| u8::from_str_radix(code, 8).ok()) {
-            out.push(byte as char);
-            rest = &rest[at + 4..];
-        } else {
-            out.push('\\');
-            rest = &rest[at + 1..];
-        }
+    if done != 0 {
+        return Err(Halt::HandBack(format!(
+            "statx {path}: {}",
+            std::io::Error::last_os_error()
+        )));
     }
-    out.push_str(rest);
-    out
-}
-
-/// `shutil.rmtree` without following links, the deadline and the cancel looked at before each
-/// entry. A failure names the entry, with its full path as Python 3.13 does.
-fn remove_tree(dir: &str, clock: Clock) -> Result<(), Stop> {
-    let failed = |err: &std::io::Error, path: &str| {
-        Stop::Fail(message(format!("rmtree failed: {}", os_error(err, path))))
-    };
-    let entries = fs::read_dir(dir).map_err(|err| failed(&err, dir))?;
-    for entry in entries {
-        check(clock)?;
-        let entry = entry.map_err(|err| failed(&err, dir))?;
-        let path = entry.path().to_string_lossy().into_owned();
-        let is_dir = entry
-            .file_type()
-            .map_err(|err| failed(&err, &path))?
-            .is_dir();
-        if is_dir {
-            remove_tree(&path, clock)?;
-        } else {
-            fs::remove_file(&path).map_err(|err| failed(&err, &path))?;
-        }
-    }
-    fs::remove_dir(dir).map_err(|err| failed(&err, dir))
+    Ok(buf)
 }
 
 /// `ensure_file_attributes`: the path must be a file (or a link to one, when followed).
@@ -805,12 +797,13 @@ mod tests {
     }
 
     /// A tree holding what `rmtree` can fail on halfway goes to the Python module before
-    /// anything is removed: an append-only file, and another account's file in a sticky
-    /// directory. Both need `sudo -n` to set up, and the test says so and stops without it.
+    /// anything is removed: an append-only file, another account's file in a sticky directory,
+    /// and a mount point. All need `sudo -n` to set up, and the test says so and stops without
+    /// it.
     ///
-    /// What would make this red: the attribute check or the sticky check dropped, after which
-    /// the native removes what it can (`t/y` goes) and fails naming another entry than the
-    /// reference might.
+    /// What would make this red: the attribute, sticky or mount check dropped, after which the
+    /// native removes what it can (`y` goes) and fails naming another entry than the reference
+    /// might.
     #[test]
     fn a_tree_rmtree_would_fail_in_is_handed_back_whole() {
         if unsafe { libc::geteuid() } == 0 {
@@ -830,46 +823,79 @@ mod tests {
         fs::write(scratch.path("a/log"), "log").unwrap();
         mkdir(&scratch.path("s"), 0o755);
         fs::write(scratch.path("s/y"), "y").unwrap();
-        let (log, sticky) = (scratch.path("a/log"), scratch.path("s/t"));
+        mkdir(&scratch.path("m/mnt"), 0o755);
+        fs::write(scratch.path("m/y"), "y").unwrap();
+        let (log, sticky, mnt) = (
+            scratch.path("a/log"),
+            scratch.path("s/t"),
+            scratch.path("m/mnt"),
+        );
+        let clean = || {
+            sudo(&["chattr", "-a", &log]);
+            sudo(&["rm", "-rf", &sticky]);
+            sudo(&["umount", &mnt]);
+        };
         if !sudo(&["chattr", "+a", &log])
             || !sudo(&["mkdir", "-m", "1777", &sticky])
             || !sudo(&["touch", &format!("{sticky}/theirs")])
+            || !sudo(&["mount", "-t", "tmpfs", "volant-test", &mnt])
         {
-            sudo(&["chattr", "-a", &log]);
-            sudo(&["rm", "-rf", &sticky]);
-            eprintln!("skipped: sudo -n cannot set up an append-only file and a sticky directory");
+            clean();
+            eprintln!(
+                "skipped: sudo -n cannot set up an append-only file, a sticky directory and a mount"
+            );
             return;
         }
-        let append_only = ask(&json!({"path": scratch.path("a"), "state": "absent"}));
-        let other = ask(&json!({"path": scratch.path("s"), "state": "absent"}));
-        let left = (after(&scratch.path("a/y")), after(&scratch.path("s/y")));
-        sudo(&["chattr", "-a", &log]);
-        sudo(&["rm", "-rf", &sticky]);
-        assert!(matches!(append_only, NativeRun::Fallback(_)), "append-only");
-        assert!(matches!(other, NativeRun::Fallback(_)), "sticky");
-        assert_eq!(left.0["exists"], true);
-        assert_eq!(left.1["exists"], true);
+        let answers =
+            ["a", "s", "m"].map(|dir| ask(&json!({"path": scratch.path(dir), "state": "absent"})));
+        let left = ["a/y", "s/y", "m/y"].map(|file| after(&scratch.path(file))["exists"].clone());
+        clean();
+        for (answer, case) in answers.iter().zip(["append-only", "sticky", "mount"]) {
+            assert!(matches!(answer, NativeRun::Fallback(_)), "{case}");
+        }
+        assert_eq!(left, [true, true, true].map(Value::from));
     }
 
-    /// A mount point at or under the tree hands it back, `mountinfo`'s escapes read.
+    /// The scan before a removal looks at the cancel for each entry, so a flat directory of a
+    /// million files still ends when the controller cancels the task.
     ///
-    /// What would make this red: only the top compared (the nested mount missed), or a sibling
-    /// sharing the prefix (`/srv/data2`) taken for a mount under `/srv/data`.
+    /// What would make this red: the clock looked at once per directory, which lets the scan
+    /// of `flat` finish.
     #[test]
-    fn a_mount_point_in_the_tree_is_found() {
-        let info = "22 1 0:21 / /srv/data2 rw - ext4 /dev/x rw\n\
-                    23 1 0:22 / /srv/data/my\\040disk rw - ext4 /dev/y rw\n";
-        assert_eq!(
-            mount_under(info, "/srv/data/"),
-            Some("/srv/data/my disk".into())
-        );
-        assert_eq!(
-            mount_under(info, "/srv/data/my disk"),
-            Some("/srv/data/my disk".into())
-        );
-        assert_eq!(mount_under(info, "/srv/dat"), None);
-        let mounts = fs::read_to_string("/proc/self/mountinfo").unwrap();
-        assert_eq!(mount_under(&mounts, "/proc"), Some("/proc".into()));
+    fn the_scan_before_a_removal_stops_at_the_cancel() {
+        let scratch = Scratch::new("file-scan-cancel");
+        mkdir(&scratch.path("flat"), 0o755);
+        fs::write(scratch.path("flat/x"), "x").unwrap();
+        fs::write(scratch.path("flat/y"), "y").unwrap();
+        let polls = std::cell::Cell::new(0);
+        let second_poll = || {
+            polls.set(polls.get() + 1);
+            polls.get() > 1
+        };
+        let clock = Clock {
+            deadline: None,
+            cancelled: &second_poll,
+        };
+        let top = scratch.path("flat");
+        assert!(matches!(removable(&top, clock), Err(Halt::Cancelled)));
+    }
+
+    /// A link inside the tree to a directory outside it is removed as a link: the directory it
+    /// points to, and what it holds, stay.
+    ///
+    /// What would make this red: a removal that follows links, which empties `outside`.
+    #[test]
+    fn a_link_out_of_the_tree_is_removed_not_followed() {
+        let scratch = Scratch::new("file-link-out");
+        mkdir(&scratch.path("outside"), 0o755);
+        fs::write(scratch.path("outside/keep"), "keep").unwrap();
+        mkdir(&scratch.path("t/d"), 0o755);
+        fs::write(scratch.path("t/d/x"), "x").unwrap();
+        std::os::unix::fs::symlink(scratch.path("outside"), scratch.path("t/sub")).unwrap();
+        let answer = ask(&json!({"path": scratch.path("t"), "state": "absent"}));
+        assert!(matches!(answer, NativeRun::Done(_)));
+        assert_eq!(after(&scratch.path("t"))["exists"], false);
+        assert_eq!(after(&scratch.path("outside/keep"))["content"], "keep");
     }
 
     /// The task's `timeout` reaches a name service that hangs: a `getent` that sleeps, first on

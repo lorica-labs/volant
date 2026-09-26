@@ -8,13 +8,20 @@
 ///
 /// The 55 keys ansible-core 2.19.12 returns for `gather_subset: min` on Ubuntu 24.04, plus three
 /// the same collectors add on other hosts of the subset: `distribution_minor_version` on Debian,
-/// and the DSA host key and its type where one exists. A key whose source a host lacks (a host
-/// key, `machine_id`, `/proc/cmdline`) is absent there, as it is from the reference.
+/// and the DSA host key and its type where one exists. Then the processor and memory keys of the
+/// `hardware` collector (`flags` where `/proc/cpuinfo` lists them), and the default routes,
+/// address lists and interface names of the `network` collector. A key whose source a host lacks
+/// (a host key, `machine_id`, `/proc/cmdline`, an `ip` command) is absent there, as it is from
+/// the reference.
 pub const NATIVE_FACT_KEYS: &[&str] = &[
+    "ansible_all_ipv4_addresses",
+    "ansible_all_ipv6_addresses",
     "ansible_apparmor",
     "ansible_architecture",
     "ansible_cmdline",
     "ansible_date_time",
+    "ansible_default_ipv4",
+    "ansible_default_ipv6",
     "ansible_distribution",
     "ansible_distribution_file_parsed",
     "ansible_distribution_file_path",
@@ -29,18 +36,29 @@ pub const NATIVE_FACT_KEYS: &[&str] = &[
     "ansible_effective_user_id",
     "ansible_env",
     "ansible_fips",
+    "ansible_flags",
     "ansible_fqdn",
     "ansible_hostname",
+    "ansible_interfaces",
     "ansible_kernel",
     "ansible_kernel_version",
     "ansible_local",
     "ansible_lsb",
     "ansible_machine",
     "ansible_machine_id",
+    "ansible_memfree_mb",
+    "ansible_memory_mb",
+    "ansible_memtotal_mb",
     "ansible_nodename",
     "ansible_os_family",
     "ansible_pkg_mgr",
     "ansible_proc_cmdline",
+    "ansible_processor",
+    "ansible_processor_cores",
+    "ansible_processor_count",
+    "ansible_processor_nproc",
+    "ansible_processor_threads_per_core",
+    "ansible_processor_vcpus",
     "ansible_python",
     "ansible_python_version",
     "ansible_real_group_id",
@@ -56,6 +74,8 @@ pub const NATIVE_FACT_KEYS: &[&str] = &[
     "ansible_ssh_host_key_ed25519_public_keytype",
     "ansible_ssh_host_key_rsa_public",
     "ansible_ssh_host_key_rsa_public_keytype",
+    "ansible_swapfree_mb",
+    "ansible_swaptotal_mb",
     "ansible_system",
     "ansible_system_capabilities",
     "ansible_system_capabilities_enforced",

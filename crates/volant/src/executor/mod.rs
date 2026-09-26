@@ -59,6 +59,8 @@ pub struct RunOptions {
     pub abort: Arc<Abort>,
     /// Which hosts a task of this run rebooted, shared by every host's driver.
     pub reboots: Arc<Reboots>,
+    /// Where the run's timings go, for `--profile` and `VOLANT_PROFILE_JSON`.
+    pub profile: Arc<crate::profile::Profile>,
 }
 
 /// How many times a task of this run has sent each host away, by the name its links are filed

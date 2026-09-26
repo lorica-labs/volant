@@ -162,7 +162,17 @@ def build(name):
     # `validate=True` so a byte that is not base64 raises here rather than being dropped on the
     # way to a zip that then opens short of an entry.
     zip_data = group(ZIP_DATA, built.b_module_data, "zip_data of %r" % name)
-    return base64.b64decode(zip_data, validate=True), facts(built.b_module_data.decode())
+    # Whether the file is ansible-core's own module. Measured on 2.19.12, a `library/stat.py` is
+    # built as `ansible.legacy.stat` and a collection's module under `ansible_collections.`; this
+    # is the controller's own word, whatever a wrapper names a module next.
+    import ansible.modules
+
+    core = os.path.dirname(os.path.realpath(path)) == os.path.dirname(
+        os.path.realpath(ansible.modules.__file__)
+    )
+    found = facts(built.b_module_data.decode())
+    found["core"] = core
+    return base64.b64decode(zip_data, validate=True), found
 
 
 def union(modules):

@@ -1236,12 +1236,7 @@ fn sub_task(
             ..protocol_task(task, item, None)
         });
     }
-    let Some(payload) = union.and_then(|union| {
-        union.modules.get(sub.module).map(|facts| ModulePayload {
-            blob: union.hash.clone(),
-            facts: facts.clone(),
-        })
-    }) else {
+    let Some(payload) = union.and_then(|union| union.payload(sub.module)) else {
         return Err(no_payload(sub.module));
     };
     let interpreter = chosen_interpreter(asked, interpreters)?;
@@ -1263,7 +1258,7 @@ fn sub_task(
                 blob: blob.hash.clone(),
             })
             .collect(),
-        force_python: false,
+        force_python: payload.force_python,
     })
 }
 
@@ -1614,7 +1609,7 @@ pub(super) fn protocol_task(
         // module, and the arguments travel outside the blob.
         payload: python.map(|(module, interpreter)| module.under(interpreter)),
         files: Vec::new(),
-        force_python: false,
+        force_python: python.is_some_and(|(module, _)| module.force_python),
     }
 }
 
@@ -1631,6 +1626,10 @@ pub(super) trait AgentChannel {
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
+    /// Where the batches over this channel leave their timings, when anything reads them.
+    fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
+        None
+    }
 }
 
 /// How a plugin that expects its host to go away gets a link to it again.
@@ -1729,6 +1728,10 @@ impl AgentChannel for AgentLink {
 
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {
         self.cancel(id, grace).await
+    }
+
+    fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
+        Some(self.ledger())
     }
 }
 
@@ -1987,7 +1990,12 @@ pub(super) async fn run_agent_batch<C: AgentChannel>(
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
-    if let Err(err) = blob_preflight(link, host, &tasks, blob, files, logs).await {
+    let started = std::time::Instant::now();
+    let placed = blob_preflight(link, host, &tasks, blob, files, logs).await;
+    if let Some(ledger) = link.timings() {
+        ledger.blob_micros += crate::profile::micros(started);
+    }
+    if let Err(err) = placed {
         return blob_failure(err, tasks.len());
     }
     send_batch(link, host, id, tasks, stop, stop_broken, logs).await
@@ -2010,6 +2018,10 @@ async fn send_batch<C: AgentChannel>(
     if tasks.is_empty() {
         return (received, Ok(BatchOutcome::Completed));
     }
+    let started = std::time::Instant::now();
+    let modules: Vec<String> = tasks.iter().map(|t| t.module.clone()).collect();
+    // The agent's own time, taken off the round trip so what is left is the wire's.
+    let mut agent: u64 = 0;
     if let Err(err) = link.ask(&ToAgent::RunBatch { id, tasks }).await {
         return (received, Err(format!("sending batch: {err}")));
     }
@@ -2027,8 +2039,17 @@ async fn send_batch<C: AgentChannel>(
         };
         match msg {
             Ok(Some(FromAgent::TaskResult {
-                index, mut result, ..
+                index,
+                mut result,
+                ran,
+                ..
             })) => {
+                if let Some(ledger) = link.timings() {
+                    // The host's own figure, so added without trusting it to fit.
+                    agent = agent.saturating_add(ran.as_ref().map_or(0, |r| r.micros));
+                    let module = modules.get(index).cloned().unwrap_or_default();
+                    ledger.ran.push((index, module, ran));
+                }
                 if let Some(slot) = received.get_mut(index) {
                     add_output_lines(&mut result);
                     summarise_exception(&mut result);
@@ -2046,6 +2067,9 @@ async fn send_batch<C: AgentChannel>(
             Err(err) => break Err(format!("reading from the agent: {err}")),
         }
     };
+    if let Some(ledger) = link.timings() {
+        ledger.wire_micros += crate::profile::micros(started).saturating_sub(agent);
+    }
     (received, ended)
 }
 
@@ -2239,7 +2263,13 @@ pub(super) fn record_registered(
     let Some(reg) = &task.register else {
         return;
     };
-    let value = registered_value(task, results);
+    let mut value = registered_value(task, results);
+    // The reference registers a module's result without its `invocation` (`_process_pending_results`
+    // deletes the top-level key, and only that one: a loop's items keep theirs), so a playbook
+    // reading `r.invocation` fails there. `-vvv` still shows it, from the result itself.
+    if let Value::Object(map) = &mut value {
+        map.remove("invocation");
+    }
     for target in targets {
         vars.set_untrusted_fact(target, reg, value.clone());
     }
@@ -3160,6 +3190,7 @@ mod tests {
         /// Whether a fake that has run out of answers holds the line open instead of closing it,
         /// which is what a real agent busy with a batch does.
         hangs_when_empty: bool,
+        ledger: crate::profile::Ledger,
     }
 
     impl FakeAgent {
@@ -3169,6 +3200,7 @@ mod tests {
                 answers: answers.into(),
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
+                ledger: crate::profile::Ledger::default(),
             }
         }
 
@@ -3201,6 +3233,10 @@ mod tests {
         async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
             self.sent.push(ToAgent::Cancel { id });
             true
+        }
+
+        fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
+            Some(&mut self.ledger)
         }
     }
 
@@ -3468,6 +3504,114 @@ mod tests {
                 assert!(!result.contains_key("exception"), "{result:?}");
             }
         }
+    }
+
+    /// The agent's times are the host's words: two tasks reporting `u64::MAX` cannot overflow
+    /// the sum the wire time is taken from.
+    ///
+    /// What would make this red: a plain `+=`, which panics in a debug build.
+    #[tokio::test]
+    async fn a_host_s_times_cannot_overflow_the_wire_time() {
+        let ran = volant_protocol::Ran {
+            path: volant_protocol::ExecPath::Native,
+            reason: None,
+            micros: u64::MAX,
+            fork_micros: None,
+            import_micros: None,
+            module_micros: None,
+        };
+        let answer = |index| FromAgent::TaskResult {
+            batch: 4,
+            index,
+            result: TaskResult(vars(json!({"changed": false}))),
+            ran: Some(ran.clone()),
+        };
+        let mut agent = FakeAgent::answering(vec![
+            answer(0),
+            answer(1),
+            FromAgent::BatchDone {
+                batch: 4,
+                outcome: BatchOutcome::Completed,
+            },
+        ]);
+        let tasks = vec![
+            protocol_task(&task("stat"), &bare_item(), None),
+            protocol_task(&task("stat"), &bare_item(), None),
+        ];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            4,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(received.iter().all(Option::is_some));
+        assert_eq!(agent.ledger.ran.len(), 2);
+        assert_eq!(agent.ledger.wire_micros, 0);
+    }
+
+    /// What the agent says about how it ran each task is kept with the module that was asked
+    /// for, by the task's position in the batch, for the driver to file in the profile.
+    ///
+    /// What would make this red: `ran` dropped where the result is read, or filed under another
+    /// task's module.
+    #[tokio::test]
+    async fn a_batch_keeps_how_the_agent_ran_each_task() {
+        let ran = volant_protocol::Ran {
+            path: volant_protocol::ExecPath::Fallback,
+            reason: Some("validate".into()),
+            micros: 40,
+            fork_micros: None,
+            import_micros: None,
+            module_micros: None,
+        };
+        let mut agent = FakeAgent::answering(vec![
+            FromAgent::TaskResult {
+                batch: 4,
+                index: 1,
+                result: TaskResult(vars(json!({"changed": false}))),
+                ran: Some(ran.clone()),
+            },
+            FromAgent::TaskResult {
+                batch: 4,
+                index: 0,
+                result: TaskResult(vars(json!({"changed": false}))),
+                ran: None,
+            },
+            FromAgent::BatchDone {
+                batch: 4,
+                outcome: BatchOutcome::Completed,
+            },
+        ]);
+        let tasks = vec![
+            protocol_task(&task("command"), &bare_item(), None),
+            protocol_task(&task("stat"), &bare_item(), None),
+        ];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            4,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        assert!(received.iter().all(Option::is_some));
+        assert_eq!(
+            agent.ledger.ran,
+            [
+                (1, "stat".to_string(), Some(ran)),
+                (0, "command".to_string(), None)
+            ]
+        );
     }
 
     /// A result carrying `stdout` or `stderr` comes back with the `_lines` of each, split the way
@@ -4433,6 +4577,20 @@ mod tests {
                 blob: "cd".into(),
             }]
         );
+        assert!(!built.force_python);
+        // A plugin's sub-task follows the run's switch like a task the playbook wrote.
+        let mut off = union.clone();
+        off.natives.enabled = false;
+        let built = sub_task(
+            &task("copy"),
+            &bare_item(),
+            &sub,
+            Some(&off),
+            &python3(),
+            None,
+        )
+        .expect("a sub-task with files travels");
+        assert!(built.force_python, "{built:?}");
         let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
             .expect_err("a module the union lacks is never sent as native");
         assert!(msg(&failure).contains("python payload"), "{failure:?}");
@@ -4632,6 +4790,10 @@ mod tests {
             zip_b64: "UEsDBA==".to_string(),
             modules: BTreeMap::new(),
             refused: BTreeMap::new(),
+            natives: crate::python::Natives {
+                enabled: true,
+                facts: crate::python::Facts::Auto,
+            },
         }
     }
 
@@ -5507,7 +5669,9 @@ mod tests {
                 profile: "legacy".into(),
                 rlimit_nofile: 0,
                 extensions: Map::new(),
+                core: true,
             },
+            force_python: false,
         }
     }
 
@@ -5532,6 +5696,76 @@ mod tests {
         t.register = Some("probe".into());
         let results = vec![(None, TaskResult(vars(value)))];
         record_registered(store, &t, &["h1".to_string()], &results);
+    }
+
+    /// A registered result carries no `invocation`, as the reference registers it - measured on
+    /// ansible-core 2.19.12, `s.invocation` after a registered `stat` fails with `object of type
+    /// 'dict' has no attribute 'invocation'` - while `-vvv` still shows it on the task's line.
+    /// A loop's items keep theirs: the reference deletes the top-level key alone.
+    ///
+    /// What would make this red: the key kept in the registered value, which makes a native
+    /// module and the Python module it stands in for register two different things; or removed
+    /// from the result itself, which takes it off the `-vvv` line.
+    #[test]
+    fn a_registered_result_drops_its_invocation_and_the_line_keeps_it() {
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let result = TaskResult(vars(json!({
+            "changed": false,
+            "invocation": {"module_args": {"path": "/etc/hostname"}},
+            "stat": {"exists": true},
+        })));
+        let mut store = one_host_store();
+        let mut t = task("stat");
+        t.register = Some("s".into());
+        record_registered(
+            &mut store,
+            &t,
+            &["h1".to_string()],
+            &[(None, result.clone())],
+        );
+        let seen = store.for_host("h1", &crate::vars::Scope::default());
+        assert_eq!(
+            seen["s"],
+            json!({"changed": false, "stat": {"exists": true}})
+        );
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut out =
+            crate::render::Renderer::with_writer(Box::new(Sink(buf.clone())), false, 79, 3);
+        out.result(
+            "h1",
+            Outcome::Ok,
+            &result,
+            None,
+            crate::render::Dump::No,
+            false,
+            None,
+        );
+        let line = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(line.contains(r#""invocation": {"module_args""#), "{line}");
+
+        // A loop's items are registered whole.
+        t.loop_items = Some(json!(["a"]));
+        record_registered(
+            &mut store,
+            &t,
+            &["h1".to_string()],
+            &[(Some(json!("a")), result)],
+        );
+        let seen = store.for_host("h1", &crate::vars::Scope::default());
+        assert!(
+            seen["s"]["results"][0].get("invocation").is_some(),
+            "{}",
+            seen["s"]
+        );
     }
 
     /// Everything a Python module returns is untrusted, exactly like a native module's result.
@@ -6616,6 +6850,7 @@ mod tests {
             stop,
             abort: Arc::new(super::super::Abort::new(stop_tx)),
             reboots: Arc::default(),
+            profile: Arc::default(),
         };
         let to_h1 = local_key("h1", None);
         // `h2`'s driver: its link to `h1`, proved alive once this play.

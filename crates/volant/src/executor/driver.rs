@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -17,6 +17,7 @@ use crate::compile::{
 };
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
+use crate::profile::{Phase, Profile, TaskRecord, micros};
 use crate::python::ModulePayload;
 use crate::render::Dump;
 use crate::template::{Templar, TemplateError};
@@ -273,6 +274,8 @@ pub(super) async fn drive_host(
         // for every batch this release runs today, a Python module being refused before the
         // first connection.
         let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
+        // How long each step of the batch took to render, for the profile.
+        let mut prepare_micros: HashMap<usize, u64> = HashMap::new();
         // The escalation every task of the batch shares. A batch is one message to one agent,
         // so it cannot span two target users.
         let mut batch_escalation: Option<Escalation> = None;
@@ -365,7 +368,12 @@ pub(super) async fn drive_host(
                 if !batch.is_empty() {
                     break;
                 }
-                if driver.wait_for_barrier(pos).await.is_none() {
+                let waiting = Instant::now();
+                let waited = driver.wait_for_barrier(pos).await;
+                options
+                    .profile
+                    .phase(Some(&name), Phase::BarrierWait, micros(waiting));
+                if waited.is_none() {
                     break 'run;
                 }
             }
@@ -578,6 +586,7 @@ pub(super) async fn drive_host(
             // reads back as `o.stdout` on h2 as well. Every other step writes for its own host.
             let register_hosts: Vec<String> = fact_targets(task, &name, &live.live_hosts);
             let mut warnings = Vec::new();
+            let preparing = Instant::now();
             let prepared = prepare(
                 step,
                 &name,
@@ -588,6 +597,9 @@ pub(super) async fn drive_host(
                 &options.defaults,
                 &mut warnings,
             );
+            let took = micros(preparing);
+            options.profile.phase(Some(&name), Phase::Prepare, took);
+            prepare_micros.insert(pos, took);
             // Not censored: measured on ansible-core 2.19.12, the one warning `prepare` can
             // raise quotes the playbook's own `environment` source and never a rendered value,
             // and the reference leaves it in plain sight under `no_log`.
@@ -948,7 +960,8 @@ pub(super) async fn drive_host(
                     }
                 }
             }
-            let link = match reuse_or_connect(
+            let connecting = Instant::now();
+            let connected = reuse_or_connect(
                 &mut links,
                 &mut checked,
                 &key,
@@ -956,9 +969,15 @@ pub(super) async fn drive_host(
                 &agents,
                 &options,
             )
-            .await
-            {
-                Ok(l) => l,
+            .await;
+            options
+                .profile
+                .phase(Some(&name), Phase::Connect, micros(connecting));
+            let link = match connected {
+                Ok(l) => {
+                    options.profile.natives(&key.host, l.natives());
+                    l
+                }
                 // The host answered and then refused to escalate, so this is the task failing and
                 // not the host going away. `ignore_errors` is deliberately not honoured: the
                 // batch never ran, and a run reporting success while having quietly skipped every
@@ -1028,6 +1047,9 @@ pub(super) async fn drive_host(
             // day one of them can quote a task this becomes the batch's own `no_log` - exact
             // under the strict barrier, erring towards hiding under `[volant] batching`.
             let mut logs: Vec<String> = Vec::new();
+            // The step each result of a flat batch belongs to, by its position in the batch. The
+            // plugin and retry paths send one step, so an empty list means `batch[0]`.
+            let mut flat_steps: Vec<usize> = Vec::new();
             // First, so a task a plugin backs can never fall into a path below that would send
             // the plugin's own name to the agent as a module.
             let ended = if let Some(PluginBatch {
@@ -1147,6 +1169,17 @@ pub(super) async fn drive_host(
                 }
                 links.insert(key.clone(), owned);
                 if stopped {
+                    if let Some(link) = links.get_mut(&key) {
+                        file_timings(
+                            link,
+                            &options.profile,
+                            &name,
+                            &c,
+                            &[],
+                            batch[0].0,
+                            &prepare_micros,
+                        );
+                    }
                     break 'run;
                 }
                 outcome
@@ -1216,6 +1249,15 @@ pub(super) async fn drive_host(
                             Attempt::Again(left) => lefts[ii].push(left),
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
+                            file_timings(
+                                link,
+                                &options.profile,
+                                &name,
+                                &c,
+                                &[],
+                                batch[0].0,
+                                &prepare_micros,
+                            );
                             break 'run;
                         }
                     }
@@ -1265,8 +1307,20 @@ pub(super) async fn drive_host(
                         received[bi][ii] = result;
                     }
                 }
+                flat_steps = origin.iter().map(|&(bi, _)| batch[bi].0).collect();
                 ended
             };
+            if let Some(link) = links.get_mut(&key) {
+                file_timings(
+                    link,
+                    &options.profile,
+                    &name,
+                    &c,
+                    &flat_steps,
+                    batch[0].0,
+                    &prepare_micros,
+                );
+            }
             // Queued under the batch's first step, in front of the results it belongs with,
             // rather than written as it arrived: the coordinator owns everything a task shows.
             for message in logs.drain(..) {
@@ -1493,6 +1547,37 @@ pub(super) async fn drive_host(
             links: links.into_iter().collect(),
         })
         .await;
+}
+
+/// Files what `link` measured since it was last asked: its blob and wire time, and one record
+/// per result under the step it belongs to. `flat_steps` maps a flat batch's positions to their
+/// steps; the plugin and retry paths send the one step `first`, and leave it empty.
+///
+/// Called on the two ways a stopped run leaves a batch as well as at its end, so a profile
+/// written after an interruption still lists the attempts the run already showed.
+fn file_timings(
+    link: &mut AgentLink,
+    profile: &Profile,
+    host: &str,
+    steps: &Compiled,
+    flat_steps: &[usize],
+    first: usize,
+    prepare_micros: &HashMap<usize, u64>,
+) {
+    let ledger = link.take_ledger();
+    profile.phase(Some(host), Phase::Blob, ledger.blob_micros);
+    profile.phase(Some(host), Phase::Wire, ledger.wire_micros);
+    for (k, module, ran) in ledger.ran {
+        let index = flat_steps.get(k).copied().unwrap_or(first);
+        profile.task(TaskRecord {
+            host: host.to_string(),
+            index,
+            task: steps.steps[index].task.name.clone(),
+            module,
+            ran,
+            prepare_micros: prepare_micros.get(&index).copied().unwrap_or(0),
+        });
+    }
 }
 
 /// The one step of a batch an action plugin backs, or the controller error that ends the host
@@ -1841,6 +1926,33 @@ impl Driver<'_> {
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// The ledger is filed at the end of a batch and on both ways a stopped run leaves one, the
+    /// plugin loop and the retry loop, so an interrupted run's profile keeps the attempts the
+    /// run already showed. Read off this file: the driver has no harness short of a real agent.
+    ///
+    /// What would make this red: a `break 'run` on a stop that leaves the ledger behind.
+    #[test]
+    fn every_way_out_of_a_batch_files_its_timings() {
+        let source = include_str!("driver.rs");
+        let code = &source[..source.find("#[cfg(test)]").expect("a test module")];
+        assert_eq!(
+            code.matches("file_timings(").count(),
+            4,
+            "one definition, three calls"
+        );
+        for stop in [
+            "if stopped {",
+            "if driver.sleep_between(retry.delay).await.is_none() {",
+        ] {
+            let after = code.rfind(stop).expect(stop) + stop.len();
+            let arm = &code[after..after + code[after..].find("break 'run;").expect("a break")];
+            assert!(
+                arm.contains("file_timings("),
+                "{stop} leaves without filing:{arm}"
+            );
+        }
+    }
 
     /// A plugin batch is exactly one step, and anything else ends the host naming the steps.
     ///

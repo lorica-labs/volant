@@ -169,6 +169,8 @@ pub struct AgentLink {
     child: Child,
     blobs: BlobMemory,
     interpreters: Vec<String>,
+    natives: Vec<String>,
+    ledger: crate::profile::Ledger,
 }
 
 /// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
@@ -214,6 +216,8 @@ impl AgentLink {
             child,
             blobs: BlobMemory::default(),
             interpreters: Vec::new(),
+            natives: Vec::new(),
+            ledger: crate::profile::Ledger::default(),
         })
     }
 
@@ -253,6 +257,20 @@ impl AgentLink {
         &self.interpreters
     }
 
+    /// The native modules the agent behind this link reported enabled at the last handshake.
+    pub fn natives(&self) -> &[String] {
+        &self.natives
+    }
+
+    /// What the batches over this link measured since it was last asked.
+    pub fn ledger(&mut self) -> &mut crate::profile::Ledger {
+        &mut self.ledger
+    }
+
+    pub fn take_ledger(&mut self) -> crate::profile::Ledger {
+        std::mem::take(&mut self.ledger)
+    }
+
     fn stdin(&mut self) -> &mut ChildStdin {
         self.stdin.as_mut().expect("stdin is only taken on drop")
     }
@@ -289,12 +307,14 @@ impl AgentLink {
                 Some(FromAgent::Ready {
                     protocol,
                     interpreters,
+                    natives,
                     ..
                 }) if protocol == PROTOCOL_VERSION => {
                     // Taken on every handshake, the liveness check on a kept link included, so a
                     // host whose Python changed under a link that survived a play is read as it
                     // is now rather than as it was when the link was opened.
                     self.interpreters = interpreters;
+                    self.natives = natives;
                     return Ok(());
                 }
                 Some(FromAgent::Ready {

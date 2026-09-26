@@ -821,11 +821,13 @@ mod tests {
                             profile: "legacy".into(),
                             rlimit_nofile: 0,
                             extensions: serde_json::Map::new(),
+                            core: true,
                         },
                     )
                 })
                 .collect(),
             refused: std::collections::BTreeMap::new(),
+            natives: crate::python::Natives::default(),
         };
         check_built(&compiled, Some(&union(&["ansible.posix.sysctl"])))
             .expect("the union holds it");

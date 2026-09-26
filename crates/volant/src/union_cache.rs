@@ -28,7 +28,10 @@ use crate::agent::embedded::create_private;
 use crate::python::{Resolved, Union};
 
 /// The manifest's own version. An entry written in another format is rebuilt, never read.
-const FORMAT: u64 = 1;
+///
+/// 2: each module's facts carry `core`. A format 1 entry has none, and read as `false` it would
+/// keep every native module off for as long as the entry stays valid.
+const FORMAT: u64 = 2;
 
 /// An entry nothing has rewritten for this long is removed by the next store: a module set a
 /// playbook no longer names would otherwise stay on disk for good.
@@ -402,6 +405,7 @@ fn parse(manifest: &[u8], zip: Vec<u8>) -> Option<Entry> {
             zip_b64: volant_protocol::encoding::b64_encode(&zip),
             modules,
             refused,
+            natives: crate::python::Natives::default(),
         },
         sources,
         resolved,
@@ -442,6 +446,7 @@ pub fn store(dir: &Path, key: &CacheKey, entry: &Entry) -> io::Result<()> {
                 "profile": facts.profile,
                 "rlimit_nofile": facts.rlimit_nofile,
                 "extensions": facts.extensions,
+                "core": facts.core,
             });
             (name.clone(), facts)
         })
@@ -630,6 +635,7 @@ mod tests {
                 profile: "legacy".into(),
                 rlimit_nofile: 0,
                 extensions: Map::new(),
+                core: false,
             },
         )]);
         let resolved = BTreeMap::from([
@@ -669,6 +675,7 @@ mod tests {
                 zip_b64: volant_protocol::encoding::b64_encode(bytes),
                 modules,
                 refused: BTreeMap::from([("ns.c.gone".to_string(), "removed".to_string())]),
+                natives: crate::python::Natives::default(),
             },
             sources: [core, files]
                 .iter()
@@ -834,11 +841,43 @@ mod tests {
 
         store(&dir, &key, &stored).unwrap();
         let text = fs::read_to_string(&manifest).unwrap();
-        fs::write(&manifest, text.replace("\"format\":1", "\"format\":2")).unwrap();
+        fs::write(
+            &manifest,
+            text.replace(&format!("\"format\":{FORMAT}"), "\"format\":99"),
+        )
+        .unwrap();
         assert_eq!(load(&dir, &key), None, "another format");
 
         fs::remove_file(&manifest).unwrap();
         assert_eq!(load(&dir, &key), None, "no entry");
+    }
+
+    /// An entry written before the facts carried `core` is a miss, not a union whose modules all
+    /// read as someone else's: the payloads are rebuilt and say what they are.
+    ///
+    /// What would make this red: the format left at 1 when `core` was added.
+    #[test]
+    fn an_entry_from_before_core_is_a_miss() {
+        let root = tempdir();
+        let dir = root.0.join("unions");
+        let key = some_key();
+        let mut stored = entry(&root.0, b"PK zip");
+        stored
+            .union
+            .modules
+            .values_mut()
+            .for_each(|f| f.core = true);
+        store(&dir, &key, &stored).unwrap();
+        assert!(load(&dir, &key).is_some(), "the current format reads back");
+        let manifest = dir.join(format!("{}.json", key.0));
+        let text = fs::read_to_string(&manifest).unwrap();
+        let old = text
+            .replace(&format!("\"format\":{FORMAT}"), "\"format\":1")
+            .replace(",\"core\":true", "")
+            .replace("\"core\":true,", "");
+        assert!(!old.contains("core"), "{old}");
+        fs::write(&manifest, old).unwrap();
+        assert_eq!(load(&dir, &key), None);
     }
 
     /// What would make this red: the zip read back without its hash checked, which hands the

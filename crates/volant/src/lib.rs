@@ -12,6 +12,7 @@ pub mod keywords;
 pub(crate) mod listing;
 pub mod playbook;
 pub mod preflight;
+pub mod profile;
 pub mod python;
 pub(crate) mod render;
 pub(crate) mod roles;

@@ -7,10 +7,14 @@
 //! before anything on the host changed: each native decides first, reading only, and acts
 //! after. The dispatcher in `modules::run` then runs the payload, which does the real work.
 
+// The natives below read and change a Unix host; elsewhere the agent only builds, for the
+// workspace's own checks, and their tasks go to the Python module.
+#[cfg(unix)]
 pub mod common;
 
 mod apt;
 mod copy;
+#[cfg(unix)]
 mod file;
 mod group;
 mod lineinfile;
@@ -36,6 +40,7 @@ pub mod setup {
         2
     }
 }
+#[cfg(unix)]
 mod stat;
 mod systemd;
 mod user;
@@ -79,7 +84,9 @@ pub struct Native {
 /// One entry per native, enabled or not.
 pub const NATIVES: &[Native] = &[
     setup::NATIVE,
+    #[cfg(unix)]
     stat::NATIVE,
+    #[cfg(unix)]
     file::NATIVE,
     copy::NATIVE,
     lineinfile::NATIVE,

@@ -1026,7 +1026,7 @@ mod tests {
             ),
             (
                 "ansible/modules/probe.py",
-                "import json\nfrom ansible.module_utils.uses_third import VALUE\nprint(json.dumps({\"value\": VALUE}))\n",
+                "import json, os\nfrom ansible.module_utils.uses_third import VALUE\nprint(json.dumps({\"value\": VALUE, \"parent\": os.getppid()}))\n",
             ),
         ]);
         let site = tempdir();
@@ -1039,17 +1039,31 @@ mod tests {
             format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
         )
         .unwrap();
-        let environment = BTreeMap::from([(
-            "PYTHONPATH".to_string(),
-            site.path().to_str().unwrap().to_string(),
-        )]);
+        // No bytecode written into the site directory: that would move it, and the server would
+        // be replaced for that reason instead.
+        let environment = BTreeMap::from([
+            (
+                "PYTHONPATH".to_string(),
+                site.path().to_str().unwrap().to_string(),
+            ),
+            ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
+        ]);
         let mut server =
             Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
-        let first = call(&mut server, "ansible.modules.probe");
-        assert_eq!(first.0["value"], "one", "{:?}", first.0);
+        // Two tasks before the change: the server answers the second only once it has done its
+        // imports for the first, so nothing it does races the change.
+        for _ in 0..2 {
+            let before = call(&mut server, "ansible.modules.probe");
+            assert_eq!(before.0["value"], "one", "{:?}", before.0);
+        }
         std::fs::write(&state, "two").unwrap();
-        let second = call(&mut server, "ansible.modules.probe");
-        assert_eq!(second.0["value"], "two", "{:?}", second.0);
+        let after = call(&mut server, "ansible.modules.probe");
+        assert_eq!(after.0["value"], "two", "{:?}", after.0);
+        assert_eq!(
+            after.0["parent"],
+            u64::from(server.child.id()),
+            "the server was replaced"
+        );
     }
 
     /// A dependency that sets up the process for its own later use as it loads - its vendored
@@ -1235,8 +1249,11 @@ print(json.dumps([
         )]);
         let mut server =
             Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
-        let first = call(&mut server, "ansible.modules.probe");
-        assert!(!first.failed(), "{:?}", first.0);
+        // Two tasks before the change, so the server is done with its imports for the first.
+        for _ in 0..2 {
+            let before = call(&mut server, "ansible.modules.probe");
+            assert!(!before.failed(), "{:?}", before.0);
+        }
         std::fs::create_dir(site.path().join("volant_moved")).unwrap();
         std::fs::remove_dir_all(blob.path().join("ansible")).unwrap();
         let failed = call(&mut server, "ansible.modules.probe");
@@ -1372,8 +1389,12 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         )]);
         let mut server =
             Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
+        // Two tasks before the package comes, so the server is done with its imports for the
+        // first: nothing it does races the install.
         let before = call(&mut server, "ansible.modules.probe");
         assert_eq!(before.0["has"], false, "{:?}", before.0);
+        let still = call(&mut server, "ansible.modules.probe");
+        assert_eq!(still.0["has"], false, "{:?}", still.0);
 
         std::fs::create_dir(site.path().join("volant_late")).unwrap();
         std::fs::write(site.path().join("volant_late/__init__.py"), "").unwrap();

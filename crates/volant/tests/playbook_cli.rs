@@ -1028,7 +1028,7 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
         batched, 1,
         "one escalated agent for six tasks with batching:\n{recorded}"
     );
-    let (strict, recorded) = escalations(&[("VOLANT_BATCHING", "0")]);
+    let (strict, recorded) = escalations(&[]);
     assert_eq!(
         strict, 1,
         "one escalated agent for six tasks under the strict default too:\n{recorded}"
@@ -1048,7 +1048,7 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
 /// `hostvars` at.
 #[test]
 fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within_env(
+    let out = volant_within(
         &[
             "playbook",
             "-i",
@@ -1058,7 +1058,6 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
             &fixture("hostvars-barrier.yml"),
         ],
         std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "0")],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1124,7 +1123,7 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
 /// What would make this red: the permit kept in front of a wait at all.
 #[test]
 fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within_env(
+    let out = volant_within(
         &[
             "playbook",
             "-i",
@@ -1134,7 +1133,6 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
             &fixture("handlers/flush-behind-a-register.yml"),
         ],
         std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "0")],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1489,7 +1487,7 @@ fn trace_steps(trace: &Path) -> Vec<(String, String)> {
 fn every_task_is_a_barrier_by_default() {
     let (dir, inventory, trace) = two_hosts_and_a_trace("order-strict");
 
-    let out = volant_within_env(
+    let out = volant_within(
         &[
             "playbook",
             "-i",
@@ -1501,7 +1499,6 @@ fn every_task_is_a_barrier_by_default() {
             &fixture("order/shared-file.yml"),
         ],
         std::time::Duration::from_secs(60),
-        &[("VOLANT_BATCHING", "0")],
     );
     assert_eq!(
         out.status.code(),
@@ -1583,7 +1580,7 @@ fn batching_lets_a_host_run_ahead_when_it_is_asked_for() {
 /// host dropping out of `ansible_play_hosts`.
 #[test]
 fn a_host_reading_hostvars_waits_for_the_others() {
-    let out = volant_within_env(
+    let out = volant_within(
         &[
             "playbook",
             "-i",
@@ -1591,7 +1588,6 @@ fn a_host_reading_hostvars_waits_for_the_others() {
             &fixture("hostvars-barrier.yml"),
         ],
         std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "0")],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -3459,7 +3455,7 @@ fn a_templated_notify_in_an_include_is_refused_by_name() {
 /// on the output can fail on that.
 #[test]
 fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back() {
-    let out = volant_within_env(
+    let out = volant_within(
         &[
             "playbook",
             "-i",
@@ -3469,7 +3465,6 @@ fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back() {
             &fixture("include/fail-then-splice.yml"),
         ],
         PROBE_DEADLINE,
-        &[("VOLANT_BATCHING", "0")],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -7095,7 +7090,7 @@ fn a_task_that_changes_the_connection_opens_its_own_link() {
         ],
         std::time::Duration::from_secs(30),
         Some(&dir.join("bin")),
-        &[("VOLANT_BATCHING", "0")],
+        &[],
     );
     assert!(
         marker.exists(),

@@ -736,9 +736,12 @@ LIVE_KEEP = {"packages": ("bash",), "services": ("cron.service", "systemd-journa
 
 TMP_PLACEHOLDER = "<golden-tmp>"
 HOST_PLACEHOLDER = "<golden-generator-host>"
-# Held around the play: NATIVE_TMP, the accounts, the unit and the package below are the whole
-# machine's, and golden.rs takes the same lock before it replays the play.
-NATIVE_LOCK = "/var/tmp/volant-golden-native.lock"
+# Held from the machine checks to the last read-back: NATIVE_TMP, the accounts, the unit and the
+# package below are the whole machine's, and golden.rs takes the same lock before its own checks.
+# Under the account's own home, where no other account can create it first and keep it from
+# being opened; the runs that share the machine's state are this account's (the lanes of one
+# development machine, one CI job), and another account could not reuse NATIVE_TMP anyway.
+NATIVE_LOCK = os.path.join(os.path.expanduser("~"), ".cache", "volant-golden-native.lock")
 # A unit of the generator's own, so `systemd` can be asked to change something: started from
 # stopped, stopped, restarted, reloaded, enabled and disabled from the opposite state.
 NATIVE_UNIT = "volant-golden"
@@ -748,6 +751,9 @@ NATIVE_UNIT_TEXT = (
     "[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n"
     "[Install]\nWantedBy=multi-user.target\n"
 )
+NATIVE_UNIT_TEXT_EDITED = NATIVE_UNIT_TEXT.replace("throwaway unit", "throwaway unit, edited")
+# What each unit case leaves, read back after it into `_after`.
+UNIT_READ_BACK = f"systemctl show {NATIVE_UNIT} -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
 # A small package in Debian and Ubuntu's main archive, installed and removed by the play: the one
 # `apt` change the cases ask for. A machine that already has it is refused rather than stripped.
 NATIVE_PACKAGE = "hello"
@@ -852,6 +858,10 @@ def natives():
     read as verified.
     """
     t = NATIVE_TMP
+    os.makedirs(os.path.dirname(NATIVE_LOCK), exist_ok=True)
+    # Released when this function returns and the file is closed.
+    lock = open(NATIVE_LOCK, "a")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     sudo = _succeeds("sudo", "-n", "true")
     cron = sudo and _succeeds("systemctl", "is-active", "cron") and _succeeds("systemctl", "is-enabled", "cron")
     if not sudo:
@@ -867,6 +877,8 @@ def natives():
 
     # Case name -> the MACHINE_OUTPUT keys its recording replaces with MACHINE_PLACEHOLDER.
     machine = {}
+    # The unit cases followed by an `after-unit-` read-back.
+    unit_back = set()
 
     def case(name, module, args, branch, expect="native", why="", compare="exact", volatile=(), become=False, output=False):
         if become and not sudo:
@@ -897,6 +909,10 @@ def natives():
                 masked = _replace_in_strings(target, to_placeholder)
                 patterns[backup] = "^" + _literal(masked) + BACKUP_SUFFIX
             read_back[name] = backup
+        if module == "systemd" and args.get("name") == NATIVE_UNIT:
+            # The unit as the case left it: `status` is its state before the action.
+            tasks.append({"name": f"after-unit-{name}", "command": UNIT_READ_BACK})
+            unit_back.add(name)
         index[name] = {
             "module": module,
             "args": _replace_in_strings(args, to_placeholder),
@@ -1118,16 +1134,39 @@ def natives():
         tasks.append(dict(unit_cleanup, name="cleanup-unit-before"))
     setup("copy", {"content": NATIVE_UNIT_TEXT, "dest": NATIVE_UNIT_FILE, "mode": "0644"}, become=True)
     unit_live = {"why": live_status, "compare": "live", "become": True}
-    for name, args in [
-        ("systemd-unit-daemon-reload", {"name": NATIVE_UNIT, "daemon_reload": True}),
-        ("systemd-unit-started", {"name": NATIVE_UNIT, "state": "started"}),
-        ("systemd-unit-stopped", {"name": NATIVE_UNIT, "state": "stopped"}),
-        ("systemd-unit-restarted", {"name": NATIVE_UNIT, "state": "restarted"}),
-        ("systemd-unit-reloaded", {"name": NATIVE_UNIT, "state": "reloaded"}),
-        ("systemd-unit-enabled", {"name": NATIVE_UNIT, "enabled": True}),
-        ("systemd-unit-disabled", {"name": NATIVE_UNIT, "enabled": False}),
-    ]:
-        case(name, "systemd", args, same if name == "systemd-unit-daemon-reload" else changed, **unit_live)
+
+    def unit_case(name, args, branch):
+        case(name, "systemd", dict(args, name=NATIVE_UNIT), branch, **unit_live)
+
+    def probe(var, prop):
+        tasks.append({"name": f"probe-{var}", "command": f"systemctl show {NATIVE_UNIT} -p {prop} --value", "register": var})
+
+    def changed_since(before, after, what):
+        # Without `ignore_errors`: an action that did nothing fails the play, on either side.
+        tasks.append({
+            "name": f"assert-{after}",
+            "assert": {"that": [f"{after}.stdout != {before}.stdout"], "fail_msg": f"{what} left the unit as it was"},
+        })
+
+    unit_case("systemd-unit-started", {"state": "started"}, changed)
+    # On the running unit, where only a new main process tells a restart from a start.
+    probe("pid_before", "MainPID")
+    unit_case("systemd-unit-restarted", {"state": "restarted"}, changed)
+    probe("pid_after", "MainPID")
+    changed_since("pid_before", "pid_after", "restarted")
+    probe("reload_before", "ExecReload")
+    unit_case("systemd-unit-reloaded", {"state": "reloaded"}, changed)
+    probe("reload_after", "ExecReload")
+    changed_since("reload_before", "reload_after", "reloaded")
+    # The unit file edited under systemd: only a daemon reload makes the new Description show and
+    # NeedDaemonReload go back to `no`.
+    setup("copy", {"content": NATIVE_UNIT_TEXT_EDITED, "dest": NATIVE_UNIT_FILE, "mode": "0644"}, become=True)
+    unit_case("systemd-unit-daemon-reload", {"daemon_reload": True}, same)
+    unit_case("systemd-unit-stopped", {"state": "stopped"}, changed)
+    unit_case("systemd-unit-enabled", {"enabled": True}, changed)
+    unit_case("systemd-unit-disabled", {"enabled": False}, changed)
+    # So that what `disabled` did is seen by a case of its own.
+    unit_case("systemd-unit-disabled-same", {"enabled": False}, same)
 
     cache_time = ["cache_update_time"]
     fresh = {"changed": False, "cache_updated": False}
@@ -1239,8 +1278,6 @@ def natives():
         # Same reasoning as python_modules(): naming the interpreter outright skips discovery.
         ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",
     )
-    lock = open(NATIVE_LOCK, "a")
-    fcntl.flock(lock, fcntl.LOCK_EX)
     shutil.rmtree(t, ignore_errors=True)
     os.makedirs(t)
     # Explicit modes throughout, as in python_modules(): `stat-dir` reports the directory's, and a
@@ -1265,7 +1302,6 @@ def natives():
             run = subprocess.run(["ansible-playbook", "-i", "localhost,", playbook], env=env, capture_output=True, text=True)
     finally:
         os.umask(umask)
-        lock.close()
     if sudo:
         left = [f"{db} {who}" for db, who in (("passwd", NATIVE_USER), ("group", NATIVE_GROUP)) if _succeeds("getent", db, who)]
         left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
@@ -1328,6 +1364,8 @@ def natives():
             if read_back[name]:
                 after["backup_content"] = base64.b64decode(outcomes[f"after-backup-{name}"]["content"]).decode()
             result["_after"] = after
+        if name in unit_back:
+            result["_after"] = dict(line.split("=", 1) for line in outcomes[f"after-unit-{name}"]["stdout"].splitlines())
         for key, want in dict({"failed": False}, **spec["branch"]).items():
             got = result.get(key, False if key == "failed" else None)
             if got != want:

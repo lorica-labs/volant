@@ -3,17 +3,17 @@
     "ActiveState": "inactive",
     "Description": "Volant golden throwaway unit, edited",
     "NeedDaemonReload": "no",
-    "UnitFileState": "enabled"
+    "UnitFileState": "disabled"
   },
   "_ansible_no_log": false,
   "action": "systemd",
-  "changed": true,
-  "enabled": true,
+  "changed": false,
+  "enabled": false,
   "invocation": {
     "module_args": {
       "daemon_reexec": false,
       "daemon_reload": false,
-      "enabled": true,
+      "enabled": false,
       "force": null,
       "masked": null,
       "name": "volant-golden",
@@ -25,7 +25,7 @@
   "name": "volant-golden",
   "status": {
     "ActiveState": "inactive",
-    "After": "system.slice sysinit.target basic.target systemd-journald.socket",
+    "After": "sysinit.target systemd-journald.socket system.slice basic.target",
     "Before": "shutdown.target",
     "Conflicts": "shutdown.target",
     "Description": "Volant golden throwaway unit, edited",

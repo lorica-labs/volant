@@ -1081,67 +1081,155 @@
       "become": true
      },
      {
-      "name": "systemd-unit-daemon-reload",
-      "systemd": {
-       "name": "volant-golden",
-       "daemon_reload": true
-      },
-      "register": "last",
-      "become": true
-     },
-     {
       "name": "systemd-unit-started",
       "systemd": {
-       "name": "volant-golden",
-       "state": "started"
+       "state": "started",
+       "name": "volant-golden"
       },
       "register": "last",
       "become": true
      },
      {
-      "name": "systemd-unit-stopped",
-      "systemd": {
-       "name": "volant-golden",
-       "state": "stopped"
-      },
-      "register": "last",
-      "become": true
+      "name": "after-unit-systemd-unit-started",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-pid_before",
+      "command": "systemctl show volant-golden -p MainPID --value",
+      "register": "pid_before"
      },
      {
       "name": "systemd-unit-restarted",
       "systemd": {
-       "name": "volant-golden",
-       "state": "restarted"
+       "state": "restarted",
+       "name": "volant-golden"
       },
       "register": "last",
       "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-restarted",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-pid_after",
+      "command": "systemctl show volant-golden -p MainPID --value",
+      "register": "pid_after"
+     },
+     {
+      "name": "assert-pid_after",
+      "assert": {
+       "that": [
+        "pid_after.stdout != pid_before.stdout"
+       ],
+       "fail_msg": "restarted left the unit as it was"
+      }
+     },
+     {
+      "name": "probe-reload_before",
+      "command": "systemctl show volant-golden -p ExecReload --value",
+      "register": "reload_before"
      },
      {
       "name": "systemd-unit-reloaded",
       "systemd": {
-       "name": "volant-golden",
-       "state": "reloaded"
+       "state": "reloaded",
+       "name": "volant-golden"
       },
       "register": "last",
       "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-reloaded",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "probe-reload_after",
+      "command": "systemctl show volant-golden -p ExecReload --value",
+      "register": "reload_after"
+     },
+     {
+      "name": "assert-reload_after",
+      "assert": {
+       "that": [
+        "reload_after.stdout != reload_before.stdout"
+       ],
+       "fail_msg": "reloaded left the unit as it was"
+      }
+     },
+     {
+      "name": "setup-137",
+      "copy": {
+       "content": "[Unit]\nDescription=Volant golden throwaway unit, edited\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
+       "dest": "/etc/systemd/system/volant-golden.service",
+       "mode": "0644"
+      },
+      "become": true
+     },
+     {
+      "name": "systemd-unit-daemon-reload",
+      "systemd": {
+       "daemon_reload": true,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-daemon-reload",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-stopped",
+      "systemd": {
+       "state": "stopped",
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-stopped",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
      },
      {
       "name": "systemd-unit-enabled",
       "systemd": {
-       "name": "volant-golden",
-       "enabled": true
+       "enabled": true,
+       "name": "volant-golden"
       },
       "register": "last",
       "become": true
      },
      {
+      "name": "after-unit-systemd-unit-enabled",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
       "name": "systemd-unit-disabled",
       "systemd": {
-       "name": "volant-golden",
-       "enabled": false
+       "enabled": false,
+       "name": "volant-golden"
       },
       "register": "last",
       "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-disabled",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
+     },
+     {
+      "name": "systemd-unit-disabled-same",
+      "systemd": {
+       "enabled": false,
+       "name": "volant-golden"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "after-unit-systemd-unit-disabled-same",
+      "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
      },
      {
       "name": "apt-present-installed",

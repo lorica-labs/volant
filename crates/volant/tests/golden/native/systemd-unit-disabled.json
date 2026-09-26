@@ -1,4 +1,10 @@
 {
+  "_after": {
+    "ActiveState": "inactive",
+    "Description": "Volant golden throwaway unit, edited",
+    "NeedDaemonReload": "no",
+    "UnitFileState": "disabled"
+  },
   "_ansible_no_log": false,
   "action": "systemd",
   "changed": true,
@@ -18,11 +24,11 @@
   },
   "name": "volant-golden",
   "status": {
-    "ActiveState": "active",
-    "After": "system.slice basic.target sysinit.target systemd-journald.socket",
+    "ActiveState": "inactive",
+    "After": "basic.target sysinit.target system.slice systemd-journald.socket",
     "Before": "shutdown.target multi-user.target",
     "Conflicts": "shutdown.target",
-    "Description": "Volant golden throwaway unit",
+    "Description": "Volant golden throwaway unit, edited",
     "ExecStart": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
     "ExecStartEx": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
     "FragmentPath": "/etc/systemd/system/volant-golden.service",
@@ -30,7 +36,7 @@
     "LoadState": "loaded",
     "Names": "volant-golden.service",
     "Requires": "system.slice sysinit.target",
-    "SubState": "running",
+    "SubState": "dead",
     "Type": "simple",
     "UnitFileState": "enabled",
     "WantedBy": "multi-user.target"

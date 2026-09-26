@@ -1,4 +1,10 @@
 {
+  "_after": {
+    "ActiveState": "inactive",
+    "Description": "Volant golden throwaway unit, edited",
+    "NeedDaemonReload": "no",
+    "UnitFileState": "disabled"
+  },
   "_ansible_no_log": false,
   "action": "systemd",
   "changed": true,
@@ -19,12 +25,12 @@
   "state": "stopped",
   "status": {
     "ActiveState": "active",
-    "After": "basic.target systemd-journald.socket system.slice sysinit.target",
+    "After": "sysinit.target systemd-journald.socket system.slice basic.target",
     "Before": "shutdown.target",
     "Conflicts": "shutdown.target",
-    "Description": "Volant golden throwaway unit",
-    "ExecStart": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; ignore_errors=no ; start_time=[Sat 2026-09-26 14:11:57 UTC] ; stop_time=[n/a] ; pid=1438057 ; code=(null) ; status=0/0 }",
-    "ExecStartEx": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; flags= ; start_time=[Sat 2026-09-26 14:11:57 UTC] ; stop_time=[n/a] ; pid=1438057 ; code=(null) ; status=0/0 }",
+    "Description": "Volant golden throwaway unit, edited",
+    "ExecStart": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+    "ExecStartEx": "{ path=/bin/sleep ; argv[]=/bin/sleep infinity ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
     "FragmentPath": "/etc/systemd/system/volant-golden.service",
     "Id": "volant-golden.service",
     "LoadState": "loaded",

@@ -1,4 +1,10 @@
 {
+  "_after": {
+    "ActiveState": "active",
+    "Description": "Volant golden throwaway unit",
+    "NeedDaemonReload": "no",
+    "UnitFileState": "disabled"
+  },
   "_ansible_no_log": false,
   "action": "systemd",
   "changed": true,
@@ -19,7 +25,7 @@
   "state": "started",
   "status": {
     "ActiveState": "inactive",
-    "After": "sysinit.target system.slice systemd-journald.socket basic.target",
+    "After": "systemd-journald.socket basic.target sysinit.target system.slice",
     "Before": "shutdown.target",
     "Conflicts": "shutdown.target",
     "Description": "Volant golden throwaway unit",

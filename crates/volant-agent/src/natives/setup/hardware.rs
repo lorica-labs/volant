@@ -73,15 +73,15 @@ fn readable(root: &Root, path: &str) -> bool {
 /// the reference starts from before any id is read.
 type Ids = Vec<(Option<String>, i64)>;
 
-fn set(ids: &mut Ids, id: &Option<String>, value: i64) {
-    match ids.iter_mut().find(|(key, _)| key == id) {
+fn set(ids: &mut Ids, id: Option<&str>, value: i64) {
+    match ids.iter_mut().find(|(key, _)| key.as_deref() == id) {
         Some(entry) => entry.1 = value,
-        None => ids.push((id.clone(), value)),
+        None => ids.push((id.map(str::to_string), value)),
     }
 }
 
-fn has(ids: &Ids, id: &Option<String>) -> bool {
-    ids.iter().any(|(key, _)| key == id)
+fn has(ids: &Ids, id: Option<&str>) -> bool {
+    ids.iter().any(|(key, _)| key.as_deref() == id)
 }
 
 /// `round(a / b)`: true division, then round half to even.
@@ -143,19 +143,19 @@ fn cpu(root: &Root, architecture: &str, nproc: Option<usize>) -> Option<Map<Stri
             i += 1;
         } else if key == "physical id" {
             physid = Some(val.to_string());
-            if !has(&sockets, &physid) {
-                set(&mut sockets, &physid, 1);
+            if !has(&sockets, physid.as_deref()) {
+                set(&mut sockets, physid.as_deref(), 1);
             }
         } else if key == "core id" {
             coreid = Some(val.to_string());
             // The reference looks the core up among the sockets, not the cores.
-            if !has(&sockets, &coreid) {
-                set(&mut cores, &coreid, 1);
+            if !has(&sockets, coreid.as_deref()) {
+                set(&mut cores, coreid.as_deref(), 1);
             }
         } else if key == "cpu cores" {
-            set(&mut sockets, &physid, py_int(val, 10)?);
+            set(&mut sockets, physid.as_deref(), py_int(val, 10)?);
         } else if key == "siblings" {
-            set(&mut cores, &coreid, py_int(val, 10)?);
+            set(&mut cores, coreid.as_deref(), py_int(val, 10)?);
         } else if key == "# processors" {
             zp = py_int(val, 10)?;
         } else if key == "max thread id" {

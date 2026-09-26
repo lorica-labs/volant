@@ -159,7 +159,9 @@ const MIN: &[&str] = &[
 ];
 
 /// The collectors ansible-core 2.19.12 finds for Linux: the name, the fact ids that select it
-/// too, the collectors it requires.
+/// too, the collectors it requires. All but Puppet's, whose name and fact id only ever hand
+/// back: named, it is a collector the native does not run, and as an unknown name it is refused
+/// the same way; negated or brought in by `all`, it changes nothing the native collects.
 const COLLECTORS: &[(&str, &[&str], &[&str])] = &[
     ("apparmor", &[], &[]),
     (
@@ -182,7 +184,6 @@ const COLLECTORS: &[(&str, &[&str], &[&str])] = &[
     ),
     ("dns", &[], &[]),
     ("env", &[], &[]),
-    ("facter", &["facter"], &[]),
     ("fibre_channel_wwn", &[], &[]),
     ("fips", &[], &[]),
     (
@@ -401,7 +402,11 @@ fn gather_subset(value: Option<&Value>) -> Result<(Vec<String>, BTreeSet<&'stati
                 named.insert(subset);
                 added.insert(subset);
             }
-            None => return Err(format!("gather_subset '{subset}' is not a subset")),
+            None => {
+                return Err(format!(
+                    "gather_subset '{subset}' is not a subset the native knows"
+                ));
+            }
         }
     }
     added.retain(|name| !excluded.contains(name) || named.contains(name));
@@ -1147,7 +1152,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             runs(json!(["all", "!network", "default_ipv4"])),
             (true, true)
         );
-        assert_eq!(runs(json!(["all", "!virtual", "!facter"])), (true, true));
+        assert_eq!(runs(json!(["all", "!virtual", "!ohai"])), (true, true));
         assert_eq!(
             gather_subset(None).unwrap().0,
             vec!["all"],
@@ -1155,7 +1160,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         );
         for not_answered in [
             json!(["virtual"]),
-            json!(["min", "facter"]),
+            json!(["min", "ohai"]),
             json!(["mounts"]),
             json!(["!all", "devices"]),
             json!(["dmi"]),

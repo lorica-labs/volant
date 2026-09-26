@@ -171,7 +171,7 @@ pub fn located(candidate: &str) -> Option<PathBuf> {
 }
 
 /// The key of this run's union, read from the process: its environment, its working directory,
-/// and every `ansible.cfg` ansible-core might read ([`configs`]).
+/// and every `ansible.cfg` ansible-core might read (`configs`).
 pub fn key(interpreter: &InterpreterId, modules: &BTreeSet<String>, asked: &[String]) -> CacheKey {
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let cfg = configs(

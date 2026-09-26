@@ -4,8 +4,9 @@
 Preloads module_utils once from the union zip the controller sent, then forks per task. The
 parent never runs a module's own code, so nothing a module does can reach the next one: measured,
 without the fork the second module sees the first one's environment, working directory, sys.path
-and umask. Once a module's child is running, the parent imports what that module imports at its
-top level (see `preimport`), so the module's next child finds it done.
+and umask. Once a module's first result is sent, the parent imports what that module imports
+whenever it loads, from the payload and the standard library only (see `preimport`), so its later
+children find it done.
 
 Preloading is the whole point: measured, forking alone takes a task from 340 ms to 266 ms, and
 preloading takes it to 13 ms. It is safe against a second module only because every module in
@@ -180,48 +181,137 @@ def read_timing(fd):
         os.close(fd)
 
 
-def top_level_imports(tree):
-    """The import statements a module runs when it is loaded: those outside any function or class
-    body, including the ones under an `if` or a `try`."""
-    pending = list(tree.body)
-    while pending:
-        node = pending.pop(0)
+def always_run(body):
+    """The statements of `body` to follow for imports that run whenever it runs: its own import
+    statements, the `try` statements (whose body `preimport` cuts at its first failure) and the
+    bodies of its `with` statements. An `if`, an `except` or an `else` branch may not run - `if
+    TYPE_CHECKING:` never does - so none of theirs are followed, nor any function or class."""
+    for node in body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             yield node
-        elif not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            pending[:0] = [
-                child
-                for child in ast.iter_child_nodes(node)
-                if isinstance(child, (ast.stmt, ast.excepthandler))
-            ]
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            yield from always_run(node.body)
+        elif isinstance(node, ast.Try) or type(node).__name__ == "TryStar":
+            yield node
 
 
-def preimport(module_fqn):
-    """Imports, in this parent, what `module_fqn` imports at its top level, so the children of its
+class Refused(ImportError):
+    """Raised during a preimport for a module outside the payload and the standard library."""
+
+
+class Outside:
+    """A finder at the head of `sys.meta_path` while the parent preimports. It refuses a top-level
+    name found outside the payload and the standard library: a third-party package can read host
+    state as it loads - python-apt's `apt/__init__.py` calls `apt_pkg.init_config()`, which reads
+    `/etc/apt/apt.conf.d` once per process - and a parent that imported it would hand every later
+    child what the host looked like then. Such a package stays cold, imported by each child as the
+    reference imports it. A submodule is found in its package's directory, which was checked with
+    the package."""
+
+    def __init__(self, blob):
+        import importlib.machinery
+        import sysconfig
+
+        self.path_finder = importlib.machinery.PathFinder
+        self.blob = blob
+        self.stdlib = {sysconfig.get_path("stdlib"), sysconfig.get_path("platstdlib")}
+        self.refused = False
+
+    def allowed(self, location):
+        if location.startswith(self.blob + os.sep):
+            return True
+        if any(part.endswith("-packages") for part in location.split(os.sep)):
+            return False
+        return any(root and location.startswith(root + os.sep) for root in self.stdlib)
+
+    def find_spec(self, name, path=None, target=None):
+        if path is not None:
+            return None
+        spec = self.path_finder.find_spec(name)
+        if spec is None:
+            return None
+        if spec.has_location:
+            locations = [spec.origin]
+        else:
+            locations = list(spec.submodule_search_locations or [])
+        if locations and all(self.allowed(location) for location in locations):
+            return None
+        self.refused = True
+        raise Refused("not imported ahead: %s" % name, name=name)
+
+
+def process_state():
+    """What an import can change in this process that a child would inherit and the reference's
+    fresh interpreter would not have: the environment, `sys.path`, `sys.meta_path`, the warning
+    filters, the working directory, the umask, the standard streams, and ansible's own lists of
+    warnings and deprecations, which a module returns with its result."""
+    import warnings
+
+    notes = sys.modules.get("ansible.module_utils.common.warnings")
+    try:
+        here = os.stat(".")
+        here = (here.st_dev, here.st_ino)
+    except OSError:
+        here = None
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return (
+        dict(os.environ),
+        list(sys.path),
+        list(sys.meta_path),
+        list(warnings.filters),
+        here,
+        mask,
+        (sys.stdin, sys.stdout, sys.stderr),
+        {
+            name: dict(getattr(notes, name))
+            for name in ("_global_warnings", "_global_deprecations")
+            if isinstance(getattr(notes, name, None), dict)
+        },
+    )
+
+
+def restore_state(state, cwd):
+    import warnings
+
+    environ, path, meta_path, filters, _, mask, streams, saved_notes = state
+    os.environ.clear()
+    os.environ.update(environ)
+    sys.path[:] = path
+    sys.meta_path[:] = meta_path
+    warnings.filters[:] = filters
+    os.fchdir(cwd)
+    os.umask(mask)
+    sys.stdin, sys.stdout, sys.stderr = streams
+    notes = sys.modules.get("ansible.module_utils.common.warnings")
+    for name, saved in saved_notes.items():
+        live = getattr(notes, name, None)
+        if isinstance(live, dict):
+            live.clear()
+            live.update(saved)
+
+
+def preimport(module_fqn, blob):
+    """Imports, in this parent, what `module_fqn` imports whenever it loads, so the children of its
     later tasks find it done. Measured, `systemd_service` spends 207 ms of its 229 importing.
 
-    Called once the child running the module has been forked: that child imports as it always
-    did, and only the next one gains. The module's own code is not run here - it is read and its
-    import statements are run one by one - so a module without an `if __name__ == "__main__"`
-    guard does not act on the host a second time, without its arguments.
+    Called once the module's first child has ended and its result is sent: that task never waits
+    for it, and the next request waits in the pipe until it is done. The module's own code is not
+    run here - its source is read and its import statements are run one by one - so a module
+    without an `if __name__ == "__main__"` guard does not act on the host a second time.
 
-    What stays behind is what the imports put in `sys.modules`. The process state an import can
-    change - environment, working directory, umask, `sys.path`, the standard streams - is put
-    back, so one module's imports cannot reach another module's task. The imports see /dev/null
-    as their standard streams, as the child does: this parent's own stdin and stdout carry the
-    agent's frames, and a word printed here would break them.
-
-    Any failure is left to the child that needs the import, which fails with its own message;
-    here it only leaves the module cold.
+    Only what the payload and the standard library hold is kept (see `Outside`). An import
+    statement that reached anything else, that failed, or that changed the process state (see
+    `process_state`: a dependency that puts its vendored directory on `sys.path`, or sets a
+    variable for its own later use) has what it added dropped from `sys.modules` and the state put
+    back: that part stays cold, and the child imports it with the setup it needs, as the
+    reference's would. The imports see /dev/null as their standard streams, as the child does:
+    this parent's own stdin and stdout carry the agent's frames.
 
     Returns the module's spec, for `KnownSpec`, or `None` when it could not be found.
     """
     spec = None
-    environ = os.environ.copy()
-    path = list(sys.path)
-    streams = (sys.stdin, sys.stdout, sys.stderr)
-    mask = os.umask(0o022)
-    os.umask(mask)
+    outside = Outside(blob)
     cwd = os.open(".", getattr(os, "O_PATH", os.O_RDONLY))
     sys.stdout.flush()
     sys.stderr.flush()
@@ -230,24 +320,51 @@ def preimport(module_fqn):
     for fd in (0, 1, 2):
         os.dup2(null, fd)
     os.close(null)
+    sys.meta_path.insert(0, outside)
+    state = process_state()
+
+    def load(node, where):
+        """Runs one import statement; False when it failed as it would in the child."""
+        before = set(sys.modules)
+        outside.refused = False
+        failed = False
+        try:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    __import__(alias.name)
+            else:
+                fromlist = [alias.name for alias in node.names]
+                __import__(node.module or "", where, None, fromlist, node.level)
+        except Refused:
+            pass
+        except BaseException:
+            failed = True
+        if failed or outside.refused or process_state() != state:
+            for name in set(sys.modules) - before:
+                del sys.modules[name]
+            restore_state(state, cwd)
+        return not failed
+
+    def walk(body, where):
+        """False when a statement failed: the rest of `body` would not run."""
+        for node in always_run(body):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if not load(node, where):
+                    return False
+            else:
+                walk(node.body, where)
+                if not walk(node.finalbody, where):
+                    return False
+        return True
+
     try:
         spec = importlib.util.find_spec(module_fqn)
         tree = ast.parse(spec.loader.get_source(module_fqn))
-        where = {"__name__": module_fqn, "__package__": module_fqn.rpartition(".")[0]}
-        for node in top_level_imports(tree):
-            try:
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        __import__(alias.name)
-                else:
-                    names = [alias.name for alias in node.names]
-                    __import__(node.module or "", where, None, names, node.level)
-            except BaseException:
-                pass
+        walk(tree.body, {"__name__": module_fqn, "__package__": module_fqn.rpartition(".")[0]})
     except BaseException:
         pass
     finally:
-        for stream in (sys.stdout, sys.stderr) + streams[1:]:
+        for stream in (sys.stdout, sys.stderr, state[6][1], state[6][2]):
             try:
                 stream.flush()
             except Exception:
@@ -255,12 +372,8 @@ def preimport(module_fqn):
         for fd, copy in enumerate(saved):
             os.dup2(copy, fd)
             os.close(copy)
-        sys.stdin, sys.stdout, sys.stderr = streams
-        os.environ.clear()
-        os.environ.update(environ)
-        sys.path[:] = path
-        os.umask(mask)
-        os.fchdir(cwd)
+        restore_state(state, cwd)
+        sys.meta_path.remove(outside)
         os.close(cwd)
     return spec
 
@@ -429,12 +542,6 @@ def main():
         # result frame only arrives once the module is done - which is exactly when it is too
         # late to kill it.
         write_frame(stdout, {"started": pid})
-        # After the fork, while the child runs: the child imports as it did, the next one gains.
-        if request["module_fqn"] not in preimported:
-            preimported.add(request["module_fqn"])
-            spec = preimport(request["module_fqn"])
-            if spec is not None:
-                specs[request["module_fqn"]] = spec
         streams = drain({"stdout": out_r, "stderr": err_r})
         _, status = os.waitpid(pid, 0)
         timing = read_timing(timing_r)
@@ -453,6 +560,12 @@ def main():
                 "timing": timing,
             },
         )
+        # Once the result is sent: the task never waits for it, and its timeout never covers it.
+        if request["module_fqn"] not in preimported:
+            preimported.add(request["module_fqn"])
+            spec = preimport(request["module_fqn"], blob)
+            if spec is not None:
+                specs[request["module_fqn"]] = spec
 
 
 if __name__ == "__main__":

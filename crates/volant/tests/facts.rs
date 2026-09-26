@@ -45,11 +45,11 @@ const PLAY: &str = r#"- name: Gather and write the facts
 "#;
 
 /// Values that move between two gathers a second apart. Each is compared by its JSON type only.
-/// `env._` is the program that launched the module: the agent on the native path, the
-/// interpreter on the Python one, by construction. `SSH_CLIENT`, `SSH_CONNECTION` and
-/// `XDG_SESSION_ID` belong to the ssh session: two runs share one only while the first run's
-/// control master lingers, and measured without it they differ by the client port and the
-/// session number. A `.*` entry covers every key below it.
+/// `SSH_CLIENT`, `SSH_CONNECTION` and `XDG_SESSION_ID` belong to the ssh session: two runs
+/// share one only while the first run's control master lingers, and measured without it they
+/// differ by the client port and the session number. `env._` is not here: both paths start
+/// from the same agent, so it is the same program on both. A `.*` entry covers every key below
+/// it.
 const LIVE: &[&str] = &[
     "date_time.*",
     "memfree_mb",
@@ -60,7 +60,6 @@ const LIVE: &[&str] = &[
     "memory_mb.swap.used",
     "memory_mb.swap.cached",
     "swapfree_mb",
-    "env._",
     "env.SSH_CLIENT",
     "env.SSH_CONNECTION",
     "env.XDG_SESSION_ID",
@@ -354,7 +353,8 @@ fn native_facts_equal_python_facts_on_this_machine() {
 fn live_paths_are_matched_below_their_parent_only() {
     assert!(is_live("date_time.epoch"));
     assert!(is_live("memory_mb.nocache.free"));
-    assert!(is_live("env._"));
+    assert!(is_live("env.SSH_CONNECTION"));
+    assert!(!is_live("env._"));
     assert!(!is_live("date_time"));
     assert!(!is_live("date_timezone"));
     assert!(!is_live("memory_mb.real.total"));

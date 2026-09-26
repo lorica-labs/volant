@@ -582,7 +582,7 @@ mod imp {
         command(env, clock, Path::new("/bin/sh"), &["-c", &line])
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::time::Duration;

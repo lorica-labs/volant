@@ -779,7 +779,7 @@ fn concat(
     Ok(minijinja::Value::from(format!("{left}{right}")))
 }
 
-/// Replaces each `~` in compiled code by a call to [`concat`]. minijinja evaluates `~` in its VM
+/// Replaces each `~` in compiled code by a call to [`concat()`]. minijinja evaluates `~` in its VM
 /// with no hook, and its syntax tree cannot be rewritten in place, so the swap happens on the
 /// bytecode: the concatenation instruction and a two-argument call take the same two operands
 /// off the stack in the same order, so every jump target stays where it was.
@@ -793,7 +793,7 @@ fn route_concat(instructions: &mut Instructions<'_>) {
     }
 }
 
-/// `env.render_named_str`, with `~` routed through [`concat`]. Compiled once per call, as
+/// `env.render_named_str`, with `~` routed through [`concat()`]. Compiled once per call, as
 /// `render_named_str` does, with the environment's own whitespace settings. The only place
 /// that decides auto-escape and syntax: `Environment` has no getter for either, so a setting
 /// changed on the environment does not reach here and has to be made here.
@@ -826,7 +826,7 @@ fn render_str(
     Ok(out)
 }
 
-/// `env.compile_expression(expr)?.eval(ctx)`, with `~` routed through [`concat`].
+/// `env.compile_expression(expr)?.eval(ctx)`, with `~` routed through [`concat()`].
 fn eval_expr(
     env: &Environment<'_>,
     expr: &str,
@@ -1398,7 +1398,7 @@ mod unit {
     /// Measured on ansible-core 2.19.12, each of these fails with `'nope' is undefined`, in a
     /// task argument, around text, inside a block, at the end of a chain, in a `when:` and in a
     /// `template` file. minijinja 2.24 concatenates by `Display` and only checks that neither
-    /// side is undefined itself, so without [`concat`] the list printed as `[1, undefined]`.
+    /// side is undefined itself, so without [`concat()`] the list printed as `[1, undefined]`.
     /// What the reference answers when nothing is undefined stays as it was, and so does `+`,
     /// which the reference lets carry the undefined value to `length`. A variable named like the
     /// global `~` calls does not replace it.

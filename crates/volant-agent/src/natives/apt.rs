@@ -5,11 +5,16 @@
 //!
 //! Read from ansible-core 2.19.12's `apt.py`, whose answers in those three cases are:
 //!
-//! - only a cache check (`update_cache`, or a `cache_valid_time`), the cache fresh:
-//!   `{"changed": false, "cache_updated": false, "cache_update_time": T}`;
+//! - no package, and a fresh cache or no cache check at all:
+//!   `{"changed": false, "cache_updated": false, "cache_update_time": T}` (`{"changed": false}`
+//!   for `state: absent` without a check);
 //! - `state: present`, every package `install ok installed`: the same three keys, after
 //!   `apt-mark manual <packages>`, which the module runs whether or not anything changes;
 //! - `state: absent`, no package installed: `{"changed": false}`.
+//!
+//! One divergence: `apt-mark manual` only changes something for a package marked automatically
+//! installed, so the native runs it only then. With every name already manual the call is a
+//! no-op, and an `apt-mark` that would fail there without changing anything is not reported.
 //!
 //! The native reads files only (`/var/lib/dpkg/status`, `/var/lib/apt/extended_states`, the
 //! cache stamp) and takes no lock. dpkg replaces its status file by renaming a complete new one
@@ -272,8 +277,11 @@ fn plan(
     let request = request(args)?;
     let status = read(root, STATUS)?.ok_or("the dpkg status file is missing")?;
     let status = stanzas(&status);
-    if !is_installed(&status, "python3-apt", None) {
-        return Err("python3-apt is not installed, and the module would install it".into());
+    if !is_installed(&status, "python3-apt", None) || !system_python_has_apt(root) {
+        return Err(
+            "python3-apt is not importable by the system python, and the module would install it"
+                .into(),
+        );
     }
     if std::fs::read_dir(root.path(UPDATES)).is_ok_and(|mut dir| dir.next().is_some()) {
         return Err("dpkg has pending updates in its journal".into());
@@ -287,17 +295,19 @@ fn plan(
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "the clock is before 1970")?;
     let now_seconds = i64::try_from(now.as_secs()).map_err(|_| "the clock is out of range")?;
-    // The module compares naive local times and makes `cache_update_time` with `mktime`: both
-    // equal their UTC counterparts only while the zone keeps one offset around the stamp and
-    // from it to now.
-    let offsets: Option<Vec<libc::c_long>> = [seconds - 3600, seconds, seconds + 3600, now_seconds]
-        .into_iter()
-        .map(utc_offset)
-        .collect();
+    // The module makes `cache_update_time` with `mktime`, and compares the cache's age in naive
+    // local times: each equals its UTC counterpart only while the zone keeps one offset around
+    // the stamp, and, for the age, from it to now.
+    let check = request.update_cache || request.cache_valid_time != 0;
+    let mut instants = vec![seconds - 3600, seconds, seconds + 3600];
+    if check {
+        instants.push(now_seconds);
+    }
+    let offsets: Option<Vec<libc::c_long>> = instants.into_iter().map(utc_offset).collect();
     if !offsets.is_some_and(|o| o.windows(2).all(|w| w[0] == w[1])) {
         return Err("the local time changes offset around the cache stamp".into());
     }
-    if request.update_cache || request.cache_valid_time != 0 {
+    if check {
         let stamp = i128::from(seconds) * 1_000_000 + i128::from(micros);
         let valid = i128::from(request.cache_valid_time) * 1_000_000;
         // `datetime.now()` floors to the microsecond.
@@ -324,11 +334,14 @@ fn plan(
         result.insert("cache_updated".into(), false.into());
         result.insert("cache_update_time".into(), seconds.into());
     };
+    // No package: the module exits after its cache check, or, without one, installs nothing
+    // (the cache keys) or removes nothing (`changed` alone).
     if request.packages.is_empty() {
-        if !request.update_cache && request.cache_valid_time == 0 {
-            return Err("nothing to check, install or remove".into());
+        if check || request.state == State::Present {
+            cache(&mut result);
+        } else {
+            result.insert("changed".into(), false.into());
         }
-        cache(&mut result);
         return Ok(Plan { result, mark: None });
     }
     match request.state {
@@ -358,23 +371,21 @@ fn plan(
             {
                 return Err(format!("{name} is not installed"));
             }
+            let apt_mark = bin_path(task_env, "apt-mark")
+                .ok_or("apt-mark is not on PATH, and the module would warn")?;
+            // `apt-mark manual` changes something only for a name marked automatically
+            // installed; with every name already manual it is skipped (see the module's docs).
             let extended = read(root, EXTENDED_STATES)?.unwrap_or_default();
             let extended = stanzas(&extended);
-            if let Some(name) = request.packages.iter().find(|name| {
+            let any_auto = request.packages.iter().any(|name| {
                 extended
                     .get(name.as_str())
                     .is_some_and(|entries| entries.iter().any(|e| e.auto_installed))
-            }) {
-                return Err(format!(
-                    "{name} is marked automatically installed, and apt-mark would change that"
-                ));
-            }
-            let apt_mark = bin_path(task_env, "apt-mark")
-                .ok_or("apt-mark is not on PATH, and the module would warn")?;
+            });
             cache(&mut result);
             Ok(Plan {
                 result,
-                mark: Some((apt_mark, request.packages)),
+                mark: any_auto.then_some((apt_mark, request.packages)),
             })
         }
     }
@@ -578,12 +589,8 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
     module_args.insert("cache_valid_time".into(), cache_valid_time.into());
 
     let packages = match value("package") {
-        None => {
-            if value("update_cache").is_none() {
-                return Err("neither a package nor update_cache is given".into());
-            }
-            Vec::new()
-        }
+        // `required_one_of` always holds: `autoremove` gets its default before it is checked.
+        None => Vec::new(),
         // `type='list', elements='str'`: a string is split on commas.
         Some(Value::String(text)) => text.split(',').map(str::to_string).collect(),
         Some(Value::Array(items)) => items
@@ -714,6 +721,41 @@ fn is_installed(status: &HashMap<&str, Vec<Stanza>>, name: &str, arch: Option<&s
     }
 }
 
+/// Whether `/usr/bin/python3` (or `/usr/bin/python`) can import python-apt, which is where the
+/// module goes when its own interpreter cannot: a `python3.N` whose `apt_pkg` extension for that
+/// version is in `dist-packages`. A system python of another version (the known
+/// `No module named 'apt_pkg'` breakage), or one this cannot name, is not.
+fn system_python_has_apt(root: &Root) -> bool {
+    let packages = root.path("/usr/lib/python3/dist-packages");
+    if !packages.join("apt/__init__.py").is_file() {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(&packages) else {
+        return false;
+    };
+    let extensions: Vec<String> = entries
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with("apt_pkg.cpython-3") && name.ends_with(".so"))
+        .collect();
+    ["/usr/bin/python3", "/usr/bin/python"]
+        .iter()
+        .any(|python| {
+            let Ok(real) = std::fs::canonicalize(root.path(python)) else {
+                return false;
+            };
+            let Some(minor) = real
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("python3."))
+                .filter(|minor| !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit()))
+            else {
+                return false;
+            };
+            let tag = format!("apt_pkg.cpython-3{minor}-");
+            extensions.iter().any(|name| name.starts_with(&tag))
+        })
+}
+
 /// A file's text, `None` when it does not exist.
 fn read(root: &Root, path: &str) -> Result<Option<String>, String> {
     match std::fs::read_to_string(root.path(path)) {
@@ -780,7 +822,7 @@ fn bin_path(task_env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> 
         })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::fs::{File, FileTimes};
     use std::time::Duration;
@@ -868,7 +910,14 @@ Architecture: amd64
                 )
                 .write(STAMP, "")
                 .mkdir(UPDATES)
-                .mkdir(LISTS);
+                .mkdir(LISTS)
+                .write("/usr/lib/python3/dist-packages/apt/__init__.py", "")
+                .write(
+                    "/usr/lib/python3/dist-packages/apt_pkg.cpython-312-x86_64-linux-gnu.so",
+                    "",
+                )
+                .write("/usr/bin/python3.12", "");
+            std::os::unix::fs::symlink("python3.12", fake.0.join("usr/bin/python3")).unwrap();
             let host = Host { fake };
             host.stamp(STAMP_SECONDS, 700_000_000);
             host.apt_mark("exit 0");
@@ -1004,17 +1053,17 @@ Architecture: amd64
             (
                 "apt-present-installed",
                 json!({"name": "bash", "state": "present"}),
-                Some("manual bash"),
+                None,
             ),
             (
                 "apt-present-list",
                 json!({"name": ["bash", "coreutils"], "state": "present"}),
-                Some("manual bash coreutils"),
+                None,
             ),
             (
                 "apt-present-update-fresh",
                 json!({"cache_valid_time": 86400, "name": "bash", "update_cache": true}),
-                Some("manual bash"),
+                None,
             ),
             (
                 "apt-absent-missing",
@@ -1153,17 +1202,17 @@ Architecture: amd64
     fn apt_mark_runs_as_the_module_runs_it() {
         let host = Host::new("mark");
         host.apt_mark("echo out-line; echo \"E: boom $*\" >&2; exit 3");
-        let result = host.done(&json!({"name": "bash"}));
+        let result = host.done(&json!({"name": "libfoo"}));
         let program = host.fake.0.join("bin/apt-mark").display().to_string();
         assert_eq!(result["failed"], json!(true));
         assert_eq!(
             result["msg"],
             json!(format!(
-                "'{program} manual bash' failed: E: boom manual bash\n"
+                "'{program} manual libfoo' failed: E: boom manual libfoo\n"
             ))
         );
         assert_eq!(result["stdout"], json!("out-line\n"));
-        assert_eq!(result["stderr"], json!("E: boom manual bash\n"));
+        assert_eq!(result["stderr"], json!("E: boom manual libfoo\n"));
         assert_eq!(result["rc"], json!(3));
         assert!(result.contains_key("invocation"));
         assert!(!result.contains_key("cache_update_time"));
@@ -1172,11 +1221,11 @@ Architecture: amd64
         host.apt_mark(
             "[ \"$1\" = manual ] && { echo 'E: Invalid operation manual' >&2; exit 100; }; exit 0",
         );
-        let result = host.done(&json!({"name": ["bash", "tzdata"]}));
+        let result = host.done(&json!({"name": ["bash", "libfoo"]}));
         assert_eq!(result.get("failed"), None, "{result:?}");
         assert_eq!(
             host.calls(),
-            ["manual bash tzdata", "unmarkauto bash tzdata"]
+            ["manual bash libfoo", "unmarkauto bash libfoo"]
         );
     }
 
@@ -1191,7 +1240,7 @@ Architecture: amd64
         let mut context = host.context();
         context.timeout = Some(Duration::from_secs(1));
         let started = Instant::now();
-        let NativeRun::Done(result) = host.answer_at(&json!({"name": "bash"}), &context, soon())
+        let NativeRun::Done(result) = host.answer_at(&json!({"name": "libfoo"}), &context, soon())
         else {
             panic!("not an answer");
         };
@@ -1205,7 +1254,7 @@ Architecture: amd64
         let started = Instant::now();
         let asked = std::cell::Cell::new(0);
         let run = answer(
-            json!({"name": "bash"}).as_object().unwrap(),
+            json!({"name": "libfoo"}).as_object().unwrap(),
             &host.fake.root(),
             &host.context(),
             soon(),
@@ -1258,8 +1307,6 @@ Architecture: amd64
             json!({"name": "bash", "no_such": 1}),
             json!({"name": "bash", "_ansible_check_mode": true}),
             json!({"name": "bash", "pkg": "bash"}),
-            json!({"cache_valid_time": 86400}),
-            json!({"update_cache": false}),
             json!({"update_cache": true, "cache_valid_time": -1}),
             json!({"update_cache": true, "cache_valid_time": "1_000"}),
             // Not in the status file: unknown, or virtual.
@@ -1268,8 +1315,6 @@ Architecture: amd64
             // Two architectures installed, or only a foreign one.
             json!({"name": "libtwo"}),
             json!({"name": "foreign"}),
-            // `apt-mark manual` would change what apt believes.
-            json!({"name": "libfoo"}),
         ] {
             host.hands_back(&args);
         }
@@ -1302,6 +1347,28 @@ Architecture: amd64
             STATUS,
             &STATUS_TEXT.replace("Package: python3-apt\n", "Package: python3-apx\n"),
         );
+        let reason = host.hands_back(&json!({"name": "bash"}));
+        assert!(reason.starts_with("python3-apt"), "{reason}");
+
+        // dpkg has python3-apt, built for 3.12, and the system python is now a 3.13.
+        let host = Host::new("other-python");
+        host.fake.write("/usr/bin/python3.13", "");
+        std::fs::remove_file(host.fake.0.join("usr/bin/python3")).unwrap();
+        std::os::unix::fs::symlink("python3.13", host.fake.0.join("usr/bin/python3")).unwrap();
+        let reason = host.hands_back(&json!({"name": "bash"}));
+        assert!(reason.starts_with("python3-apt"), "{reason}");
+        // The reference tries `/usr/bin/python` next.
+        std::os::unix::fs::symlink("python3.12", host.fake.0.join("usr/bin/python")).unwrap();
+        host.done(&json!({"name": "bash"}));
+
+        // The extension without the package around it.
+        let host = Host::new("no-apt-package");
+        std::fs::remove_file(
+            host.fake
+                .0
+                .join("usr/lib/python3/dist-packages/apt/__init__.py"),
+        )
+        .unwrap();
         let reason = host.hands_back(&json!({"name": "bash"}));
         assert!(reason.starts_with("python3-apt"), "{reason}");
 
@@ -1347,5 +1414,102 @@ Architecture: amd64
         assert_eq!(args["force"], json!(false));
         assert_eq!(args["default_release"], json!(""));
         assert_eq!(args["upgrade"], Value::Null);
+    }
+
+    /// `apt-mark manual` runs only for a name marked automatically installed, the one case where
+    /// it changes something; with every name already manual it is skipped, as ruled.
+    ///
+    /// What would make this red: `apt-mark` spawned on the all-manual path (the fake records every
+    /// call), or skipped for an automatically installed name, which the reference marks manual.
+    #[test]
+    fn apt_mark_runs_only_where_it_changes_something() {
+        let host = Host::new("manual");
+        host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));
+        assert_eq!(host.calls(), Vec::<String>::new());
+        let result = host.done(&json!({"name": ["bash", "libfoo"]}));
+        assert_eq!(host.calls(), ["manual bash libfoo"]);
+        assert_eq!(result["cache_update_time"], json!(STAMP_SECONDS));
+        assert_eq!(result["changed"], json!(false));
+    }
+
+    /// With no package the module answers from its cache check alone, or, without one, from
+    /// installing nothing (the cache keys) or removing nothing (`changed` alone). `required_one_of`
+    /// never stops it: `autoremove` has its default before the check.
+    ///
+    /// What would make this red: `cache_valid_time` alone or `update_cache: false` alone handed
+    /// back, or answered with the wrong keys for `state: absent`.
+    #[test]
+    fn a_task_with_no_package_is_answered_like_the_module() {
+        let host = Host::new("no-package");
+        let three = |result: &Map<String, Value>| {
+            (
+                result.get("changed").cloned(),
+                result.get("cache_updated").cloned(),
+                result.get("cache_update_time").cloned(),
+            )
+        };
+        let expected = (
+            Some(json!(false)),
+            Some(json!(false)),
+            Some(json!(STAMP_SECONDS)),
+        );
+        for args in [
+            json!({"cache_valid_time": 86400}),
+            json!({"cache_valid_time": "86400", "update_cache": false}),
+            json!({"update_cache": false}),
+            json!({}),
+            json!({"cache_valid_time": 86400, "state": "absent"}),
+        ] {
+            assert_eq!(three(&host.done(&args)), expected, "{args}");
+        }
+        let result = host.done(&json!({"state": "absent"}));
+        assert_eq!(three(&result), (Some(json!(false)), None, None));
+        assert_eq!(host.calls(), Vec::<String>::new());
+        let a_day_later = UNIX_EPOCH + Duration::from_secs(STAMP_SECONDS + 86_401);
+        assert!(matches!(
+            host.answer_at(
+                &json!({"cache_valid_time": 86400}),
+                &host.context(),
+                a_day_later
+            ),
+            NativeRun::Fallback(_)
+        ));
+    }
+
+    /// The zone's offset between the stamp and now matters only to a cache check: a stamp from
+    /// summer time read in winter still gives `cache_update_time` for a task without one.
+    ///
+    /// Needs the `Europe/Paris` zone in the system's tz database, and sets `TZ` for this test's
+    /// own process (nextest runs each test in one).
+    ///
+    /// What would make this red: `now` compared on every task, which hands this one back; or not
+    /// compared with a check, which answers an age the module measures an hour differently.
+    #[test]
+    fn only_a_cache_check_needs_the_same_offset_now() {
+        // Safety: set before any thread of this test process reads the environment.
+        unsafe { std::env::set_var("TZ", "Europe/Paris") };
+        let summer = 1_790_276_713_i64; // 2026-09-24, CEST
+        let winter = summer + 45 * 86_400; // 2026-11-08, CET
+        assert_ne!(
+            utc_offset(summer),
+            utc_offset(winter),
+            "this test needs the Europe/Paris zone in the system's tz database"
+        );
+        let host = Host::new("offset");
+        let later = UNIX_EPOCH + Duration::from_secs(winter.unsigned_abs());
+        let NativeRun::Done(result) =
+            host.answer_at(&json!({"name": "bash"}), &host.context(), later)
+        else {
+            panic!("a task without a cache check handed back");
+        };
+        assert_eq!(result.0["cache_update_time"], json!(STAMP_SECONDS));
+        assert!(matches!(
+            host.answer_at(
+                &json!({"name": "bash", "cache_valid_time": 100_000_000}),
+                &host.context(),
+                later
+            ),
+            NativeRun::Fallback(_)
+        ));
     }
 }

@@ -2,7 +2,10 @@
 //! What every native shares with the reference's module machinery.
 // Module-wide: which of these items rustc reports as dead differs between the MSRV and the
 // pinned toolchain, so one expectation covers the file.
-#![cfg_attr(not(test), expect(dead_code, reason = "used by the first native"))]
+#![cfg_attr(
+    all(not(test), not(unix)),
+    expect(dead_code, reason = "used by the natives of a Linux build")
+)]
 
 use serde_json::{Map, Value};
 

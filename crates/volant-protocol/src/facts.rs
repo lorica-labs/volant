@@ -1,8 +1,72 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Facts shared by the controller and the agent's native collector.
 
-/// Every fact key the agent's native `setup` produces. The controller sends `setup` to the native
-/// collector only when every key the play reads is in this list: a key the collector cannot
-/// produce is absent from its answer, never wrong, and a missing key goes unnoticed until
-/// something reads it. Empty until the collector exists.
-pub const NATIVE_FACT_KEYS: &[&str] = &[];
+/// Every fact key the agent's native `setup` produces, spelled as it stands in the module's
+/// `ansible_facts`. The controller sends `setup` to the native collector only when every key the
+/// play reads is in this list: a key the collector cannot produce is absent from its answer,
+/// never wrong, and a missing key goes unnoticed until something reads it.
+///
+/// The 55 keys ansible-core 2.19.12 returns for `gather_subset: min` on Ubuntu 24.04, plus three
+/// the same collectors add on other hosts of the subset: `distribution_minor_version` on Debian,
+/// and the DSA host key and its type where one exists. A key whose source a host lacks (a host
+/// key, `machine_id`, `/proc/cmdline`) is absent there, as it is from the reference.
+pub const NATIVE_FACT_KEYS: &[&str] = &[
+    "ansible_apparmor",
+    "ansible_architecture",
+    "ansible_cmdline",
+    "ansible_date_time",
+    "ansible_distribution",
+    "ansible_distribution_file_parsed",
+    "ansible_distribution_file_path",
+    "ansible_distribution_file_variety",
+    "ansible_distribution_major_version",
+    "ansible_distribution_minor_version",
+    "ansible_distribution_release",
+    "ansible_distribution_version",
+    "ansible_dns",
+    "ansible_domain",
+    "ansible_effective_group_id",
+    "ansible_effective_user_id",
+    "ansible_env",
+    "ansible_fips",
+    "ansible_fqdn",
+    "ansible_hostname",
+    "ansible_kernel",
+    "ansible_kernel_version",
+    "ansible_local",
+    "ansible_lsb",
+    "ansible_machine",
+    "ansible_machine_id",
+    "ansible_nodename",
+    "ansible_os_family",
+    "ansible_pkg_mgr",
+    "ansible_proc_cmdline",
+    "ansible_python",
+    "ansible_python_version",
+    "ansible_real_group_id",
+    "ansible_real_user_id",
+    "ansible_selinux",
+    "ansible_selinux_python_present",
+    "ansible_service_mgr",
+    "ansible_ssh_host_key_dsa_public",
+    "ansible_ssh_host_key_dsa_public_keytype",
+    "ansible_ssh_host_key_ecdsa_public",
+    "ansible_ssh_host_key_ecdsa_public_keytype",
+    "ansible_ssh_host_key_ed25519_public",
+    "ansible_ssh_host_key_ed25519_public_keytype",
+    "ansible_ssh_host_key_rsa_public",
+    "ansible_ssh_host_key_rsa_public_keytype",
+    "ansible_system",
+    "ansible_system_capabilities",
+    "ansible_system_capabilities_enforced",
+    "ansible_user_dir",
+    "ansible_user_gecos",
+    "ansible_user_gid",
+    "ansible_user_id",
+    "ansible_user_shell",
+    "ansible_user_uid",
+    "ansible_userspace_architecture",
+    "ansible_userspace_bits",
+    "gather_subset",
+    "module_setup",
+];

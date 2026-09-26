@@ -700,9 +700,11 @@ LIVE_STATUS = re.compile(
     r"|(Current|Peak)$|^MemoryAvailable$|^IO(Read|Write)(Bytes|Operations)$"
     r"|^IP(Ingress|Egress)(Bytes|Packets)$|^NRestarts$"
 )
-# ExecStart and ExecStartEx hold one `{ path=... ; argv[]=... ; ... }` record per command, whose
-# last fields describe the latest run. Those fields match a regex, the rest stays literal.
-EXEC_STATUS = ("ExecStart", "ExecStartEx")
+# ExecStart, ExecReload and the other `Exec*` properties hold one `{ path=... ; argv[]=... ; ... }`
+# record per command, whose last fields describe the latest run: the reload's too, once the unit
+# was reloaded. Those fields match a regex, the rest stays literal.
+EXEC_STATUS = re.compile(r"^Exec")
+EXEC_RECORD = "{ path="
 EXEC_LIVE_FIELD = re.compile(r"\b(start_time|stop_time)=\[[^\]]*\]|\bpid=-?\d+|\b(code|status)=\S+")
 EXEC_FIELD_REGEX = {"start_time": r"\[[^\]]*\]", "stop_time": r"\[[^\]]*\]", "pid": r"-?\d+"}
 # What the two cron cases keep of `status`. They are compared live, since the full `systemctl show`
@@ -1294,14 +1296,21 @@ def natives():
         for key in machine.get(name, ()):
             if key in result:
                 result[key] = MACHINE_PLACEHOLDER
+        uncut = result
         status = result.get("status")
         if isinstance(status, dict) and status:
             # From the full `status`, before it is cut down: the live comparison meets every key.
             spec["volatile"] += [f"status.{key}" for key in sorted(status) if LIVE_STATUS.search(key)]
             spec["unordered"] = [f"status.{key}" for key in sorted(status) if SET_STATUS.search(key)]
             spec["patterns"].update(
-                {f"status.{key}": _exec_pattern(status[key]) for key in EXEC_STATUS if key in status}
+                {
+                    f"status.{key}": _exec_pattern(value)
+                    for key, value in status.items()
+                    if EXEC_STATUS.search(key) and str(value).startswith(EXEC_RECORD)
+                }
             )
+            # The patterns are checked against the whole status, which the live comparison meets.
+            uncut = dict(result)
             result["status"] = {key: value for key, value in status.items() if key in STATUS_KEEP}
         facts = result.get("ansible_facts", {})
         for key, keep in LIVE_KEEP.items():
@@ -1324,8 +1333,8 @@ def natives():
             if got != want:
                 wrong.append(f"{name}: {key} is {got!r}, not {want!r}")
         for path, pattern in spec["patterns"].items():
-            if not re.search(pattern, str(_at(result, path))):
-                wrong.append(f"{name}: {path} {_at(result, path)!r} does not match {pattern}")
+            if not re.search(pattern, str(_at(uncut, path))):
+                wrong.append(f"{name}: {path} {_at(uncut, path)!r} does not match {pattern}")
         results[name] = result
     if wrong:
         print("cases that did not land on the branch their name claims:", *wrong, sep="\n  ", file=sys.stderr)

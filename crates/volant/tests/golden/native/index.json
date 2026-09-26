@@ -1363,6 +1363,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1422,6 +1424,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1490,6 +1494,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1557,6 +1563,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1624,6 +1632,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1683,6 +1693,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },
@@ -1742,6 +1754,8 @@
     "expect": "native",
     "module": "systemd",
     "patterns": {
+      "status.ExecReload": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
+      "status.ExecReloadEx": "^\\{ path=/bin/true ; argv\\[\\]=/bin/true ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStart": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; ignore_errors=no ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$",
       "status.ExecStartEx": "^\\{ path=/bin/sleep ; argv\\[\\]=/bin/sleep infinity ; flags= ; start_time=\\[[^\\]]*\\] ; stop_time=\\[[^\\]]*\\] ; pid=-?\\d+ ; code=\\S+ ; status=\\S+ \\}$"
     },

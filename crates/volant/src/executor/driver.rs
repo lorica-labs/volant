@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::{arg_bool, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
@@ -22,7 +22,7 @@ use crate::python::ModulePayload;
 use crate::render::Dump;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
-use crate::vars::VarStore;
+use crate::vars::{HostVars, VarStore};
 
 use super::coordinator::{Event, Progress, escalated_links};
 use super::include::{report_include, resolve_include};
@@ -1603,7 +1603,7 @@ struct PluginBatch {
     /// The interpreter the host the module runs on asked for, read off its variables.
     asked: Option<String>,
     /// That host's name and variables, when it is a delegate.
-    delegate: Option<(String, Map<String, Value>)>,
+    delegate: Option<(String, HostVars)>,
 }
 
 /// What became of a `run_once` step, from the point of view of a host that did not run it.

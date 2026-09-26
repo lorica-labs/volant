@@ -516,7 +516,7 @@ mod tests {
         let Value::Object(args) = args else {
             unreachable!()
         };
-        let running = Map::new();
+        let running = HostVars::default();
         let dir = std::env::temp_dir();
         let templar = crate::template::Templar::new(dir.clone());
         let origin = crate::compile::Origin::default();

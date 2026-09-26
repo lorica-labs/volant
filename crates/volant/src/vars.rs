@@ -20,7 +20,9 @@ use crate::yaml;
 pub struct HostVars {
     pub map: Map<String, Value>,
     pub hostvars: Arc<Map<String, Value>>,
-    /// `groups` and the play's host lists, shared for the same reason and in the same way.
+    /// `groups` and the play's host lists, shared for the same reason and in the same way, with
+    /// the host's gathered facts under them: see `VarStore::layered_for_host`. A name is read
+    /// here first, so `map` alone is not the host's variables; `get` is.
     pub shared: Arc<Map<String, Value>>,
     /// Names in `map` that came from a managed host, for this host and this task.
     pub untrusted: BTreeSet<String>,
@@ -147,9 +149,21 @@ pub struct VarStore {
     /// What `ansible_run_tags` and `ansible_skip_tags` report: the run's own tag selection.
     run_tags: Vec<String>,
     skip_tags: Vec<String>,
-    /// Every inventory host's view, as `hostvars` shows it. Built on demand and dropped
-    /// whenever something below it changes, which only a fact or a rebase does.
+    /// Every inventory host's view, as `hostvars` shows it. Built on demand; a write to one host's
+    /// facts marks that host in `stale` and only its entry is rebuilt, while a rebase drops the
+    /// whole map.
     hostvars: Option<Arc<Map<String, Value>>>,
+    /// Hosts whose entry in `hostvars` no longer matches their facts.
+    stale: BTreeSet<String>,
+    /// Per host, its gathered facts laid under the inventory-wide values, handed to templates as
+    /// the one shared map beside the host's own: see `layered_for_host`. Kept with the two
+    /// things it was built from, the inventory-wide map and the gathered names a layer above
+    /// answers for, and dropped when the host gathers again.
+    host_shared: BTreeMap<String, HostShared>,
+    /// How many times each host's `hostvars` entry was built, for the test that proves a write
+    /// on one host leaves the other hosts' entries alone.
+    #[cfg(test)]
+    views_built: BTreeMap<String, usize>,
     /// The same view completed with a host the inventory does not carry - an implicit
     /// `localhost` - one map per such host. There is normally at most one of them in a run.
     hostvars_with: BTreeMap<String, Arc<Map<String, Value>>>,
@@ -164,6 +178,15 @@ pub struct VarStore {
 
 /// The play and batch host lists one `shared` map was built from.
 type SharedKey = (Vec<String>, Vec<String>, Vec<String>);
+
+/// One host's shared map and what it was built from: the inventory-wide map it lies under, and
+/// the gathered names it leaves out because a layer above them answers.
+#[derive(Debug)]
+struct HostShared {
+    inventory_wide: Arc<Map<String, Value>>,
+    shadowed: BTreeSet<String>,
+    map: Arc<Map<String, Value>>,
+}
 
 /// The value Ansible substitutes for `omit`: a parameter equal to it is dropped from the task.
 /// Ansible generates a fresh random suffix per run; a stable one changes nothing for playbooks
@@ -376,6 +399,10 @@ impl VarStore {
             run_tags: vec!["all".to_string()],
             skip_tags: Vec::new(),
             hostvars: None,
+            stale: BTreeSet::new(),
+            host_shared: BTreeMap::new(),
+            #[cfg(test)]
+            views_built: BTreeMap::new(),
             hostvars_with: BTreeMap::new(),
             untrusted_hosts: None,
             shared: None,
@@ -422,7 +449,7 @@ impl VarStore {
             .entry(host.to_string())
             .or_default()
             .insert(key.to_string(), value);
-        self.forget_hostvars();
+        self.forget_host(host);
     }
 
     /// Writes a fact that came from a managed host: a module result, a `register`, a `set_fact`.
@@ -492,7 +519,8 @@ impl VarStore {
             namespace.insert(bare.to_string(), value.clone());
         }
         gathered.insert("ansible_facts".into(), Value::Object(namespace));
-        self.forget_hostvars();
+        self.host_shared.remove(host);
+        self.forget_host(host);
         // The reference's order is a Python set's; name order at least reads the same each run.
         removed.sort();
         removed
@@ -561,6 +589,10 @@ impl VarStore {
     ///
     /// The inventory-wide magic variables are not in this map: `shared_values` builds them, and
     /// a template reads them from there first, which is the place in the order they had here.
+    ///
+    /// The engine reads a host through `layered_for_host`; this whole copy is what that one is
+    /// held to.
+    #[cfg(test)]
     pub fn for_host(&mut self, host: &str, scope: &Scope) -> Map<String, Value> {
         let mut vars = Map::new();
         extend(&mut vars, &scope.role_defaults);
@@ -579,8 +611,89 @@ impl VarStore {
         }
         extend(&mut vars, &scope.role_params);
         extend(&mut vars, &self.extra);
-        self.add_magic(&mut vars, host);
+        extend(&mut vars, &self.magic(host));
         vars
+    }
+
+    /// One host's variables as two maps, which read together exactly like `for_host` laid under
+    /// `shared_values`: the host's own map, and a shared one a template consults first.
+    ///
+    /// The shared map is the inventory-wide values with this host's gathered facts under them,
+    /// less the gathered names some layer above the facts answers for. A gathered name that is
+    /// left in it is therefore the value `for_host` would have answered with, and it is left out
+    /// of the host's own map, so the lower layers that also carry it cannot be read in its place.
+    /// Gathered facts are most of a host's variables once `setup`, `package_facts` or
+    /// `service_facts` has run, and every render copies the host's own map: kept out of it and
+    /// shared, they are copied once per gather rather than several times per task.
+    ///
+    /// Trust does not move with them. `untrusted_of` still names every gathered name that
+    /// answers, and a template reads that set before it looks a name up anywhere.
+    pub fn layered_for_host(
+        &mut self,
+        host: &str,
+        scope: &Scope,
+    ) -> (Map<String, Value>, Arc<Map<String, Value>>) {
+        let inventory_wide = self.shared_values(scope);
+        let magic = self.magic(host);
+        let (shadowed, answering): (BTreeSet<String>, BTreeSet<String>) =
+            match self.gathered.get(host) {
+                None => Default::default(),
+                Some(gathered) => {
+                    let above = [
+                        Some(&scope.play_vars),
+                        Some(&scope.role_vars),
+                        Some(&scope.task_vars),
+                        self.facts.get(host),
+                        Some(&scope.role_params),
+                        Some(&self.extra),
+                        Some(&magic),
+                    ];
+                    gathered.keys().cloned().partition(|name| {
+                        above.iter().flatten().any(|m| m.contains_key(name))
+                            || scope.vars_files.iter().any(|m| m.contains_key(name))
+                    })
+                }
+            };
+        let mut vars = Map::new();
+        extend_except(&mut vars, &scope.role_defaults, &answering);
+        extend_except(&mut vars, &self.host_base(host), &answering);
+        extend(&mut vars, &scope.play_vars);
+        for file in &scope.vars_files {
+            extend(&mut vars, file);
+        }
+        extend(&mut vars, &scope.role_vars);
+        extend(&mut vars, &scope.task_vars);
+        if let Some(facts) = self.facts.get(host) {
+            extend(&mut vars, facts);
+        }
+        extend(&mut vars, &scope.role_params);
+        extend(&mut vars, &self.extra);
+        vars.extend(magic);
+        if answering.is_empty() {
+            return (vars, inventory_wide);
+        }
+        if let Some(kept) = self.host_shared.get(host)
+            && Arc::ptr_eq(&kept.inventory_wide, &inventory_wide)
+            && kept.shadowed == shadowed
+        {
+            return (vars, Arc::clone(&kept.map));
+        }
+        let mut map = Map::new();
+        extend_except(&mut map, &self.gathered[host], &shadowed);
+        // Over the facts, not under them: these were merged into the host's map last.
+        extend(&mut map, &inventory_wide);
+        let map = Arc::new(map);
+        // The inventory-wide map is held here, so the address `ptr_eq` compares cannot be
+        // handed to another map while this entry lives.
+        self.host_shared.insert(
+            host.to_string(),
+            HostShared {
+                inventory_wide,
+                shadowed,
+                map: Arc::clone(&map),
+            },
+        );
+        (vars, map)
     }
 
     /// What a play-level keyword renders against: the play's own `vars:` under the run's extra
@@ -670,8 +783,27 @@ impl VarStore {
     /// to drop `self.shared` too, or the run keeps reading the inventory it started with.
     fn forget_hostvars(&mut self) {
         self.hostvars = None;
+        self.stale.clear();
         self.hostvars_with.clear();
         self.untrusted_hosts = None;
+    }
+
+    /// What a write to one host's facts leaves behind: that host's `hostvars` entry is out of
+    /// date, and nobody else's is. The completed maps of hosts outside the inventory carry every
+    /// host's entry and go whole; there is normally at most one of them.
+    fn forget_host(&mut self, host: &str) {
+        self.stale.insert(host.to_string());
+        self.hostvars_with.clear();
+        self.untrusted_hosts = None;
+    }
+
+    /// `host_view`, counted for the test that proves only the written host's entry is rebuilt.
+    fn view_value(&mut self, host: &str) -> Value {
+        #[cfg(test)]
+        {
+            *self.views_built.entry(host.to_string()).or_default() += 1;
+        }
+        Value::Object(self.host_view(host))
     }
 
     /// The `hostvars` view every host of this run renders against, as one shared map: templates
@@ -680,20 +812,31 @@ impl VarStore {
     /// `host` is the host about to render. An implicit `localhost` belongs to no group, so it is
     /// not in the inventory-wide map, and `hostvars[inventory_hostname]` has to answer for it
     /// all the same: such a host gets its own completed map, kept beside the shared one.
+    ///
+    /// A host whose facts changed since the map was built has its own entry rebuilt, and only
+    /// that one. The map is changed in place when nobody else holds it; a render still holding
+    /// the previous map keeps it whole, which is what it saw when it took it, and the store
+    /// then carries on with a copy.
     pub fn hostvars_shared(&mut self, host: &str) -> Arc<Map<String, Value>> {
-        let base = if let Some(base) = &self.hostvars {
-            Arc::clone(base)
+        let base = if let Some(mut base) = self.hostvars.take() {
+            for name in std::mem::take(&mut self.stale) {
+                if base.contains_key(&name) {
+                    let view = self.view_value(&name);
+                    Arc::make_mut(&mut base).insert(name, view);
+                }
+            }
+            base
         } else {
+            self.stale.clear();
             let names = self.groups["all"].clone();
             let mut map = Map::new();
             for name in names {
-                let view = self.host_view(&name);
-                map.insert(name, Value::Object(view));
+                let view = self.view_value(&name);
+                map.insert(name, view);
             }
-            let base = Arc::new(map);
-            self.hostvars = Some(Arc::clone(&base));
-            base
+            Arc::new(map)
         };
+        self.hostvars = Some(Arc::clone(&base));
         if base.contains_key(host) {
             return base;
         }
@@ -701,7 +844,7 @@ impl VarStore {
             return Arc::clone(completed);
         }
         let mut map = (*base).clone();
-        map.insert(host.to_string(), Value::Object(self.host_view(host)));
+        map.insert(host.to_string(), self.view_value(host));
         let completed = Arc::new(map);
         self.hostvars_with
             .insert(host.to_string(), Arc::clone(&completed));
@@ -754,7 +897,8 @@ impl VarStore {
 
     /// The magic variables that belong to one host. The inventory-wide ones are not here: see
     /// `shared_values`.
-    fn add_magic(&self, vars: &mut Map<String, Value>, host: &str) {
+    fn magic(&self, host: &str) -> Map<String, Value> {
+        let mut vars = Map::new();
         let short = short_name(host);
         let group_names = self.group_names.get(host).cloned().unwrap_or_default();
         vars.insert(
@@ -799,6 +943,7 @@ impl VarStore {
             "volant_version".to_string(),
             Value::String(env!("CARGO_PKG_VERSION").to_string()),
         );
+        vars
     }
 }
 
@@ -818,6 +963,19 @@ pub fn ansible_version() -> Value {
 fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
     for (k, v) in source {
         target.insert(k.clone(), v.clone());
+    }
+}
+
+/// `extend`, leaving out the names in `skip`.
+fn extend_except(
+    target: &mut Map<String, Value>,
+    source: &Map<String, Value>,
+    skip: &BTreeSet<String>,
+) {
+    for (k, v) in source {
+        if !skip.contains(k) {
+            target.insert(k.clone(), v.clone());
+        }
     }
 }
 
@@ -1451,6 +1609,297 @@ mod tests {
             implicit["web1"]["tier"],
             json!("ini"),
             "and it still sees the inventory"
+        );
+    }
+
+    /// What a template reads for each name: the host's own map, with the shared map over it.
+    fn effective(map: &Map<String, Value>, shared: &Map<String, Value>) -> Map<String, Value> {
+        let mut out = map.clone();
+        extend(&mut out, shared);
+        out
+    }
+
+    /// A small xorshift, so the cases are the same on every run and a failure names its seed.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+        /// Names shared between layers on purpose: magic ones, restricted ones, the namespace.
+        fn name(&mut self) -> String {
+            const NAMES: [&str; 14] = [
+                "a",
+                "b",
+                "c",
+                "ansible_x",
+                "ansible_facts",
+                "packages",
+                "inventory_hostname",
+                "omit",
+                "ansible_forks",
+                "groups",
+                "ansible_play_hosts",
+                "play_hosts",
+                "ansible_connection",
+                "ansible_host",
+            ];
+            NAMES[self.below(NAMES.len())].to_string()
+        }
+        fn value(&mut self, depth: u32) -> Value {
+            match self.below(if depth == 0 { 3 } else { 5 }) {
+                0 => json!(self.below(100)),
+                1 => json!(format!("v{}", self.below(100))),
+                2 => json!(null),
+                3 => Value::Object(self.map(depth - 1)),
+                _ => json!([self.value(depth - 1), self.value(depth - 1)]),
+            }
+        }
+        fn map(&mut self, depth: u32) -> Map<String, Value> {
+            (0..self.below(4))
+                .map(|_| (self.name(), self.value(depth)))
+                .collect()
+        }
+        fn hosts(&mut self) -> Vec<String> {
+            ["h1", "h2"]
+                .into_iter()
+                .filter(|_| self.below(2) == 0)
+                .map(String::from)
+                .collect()
+        }
+        fn scope(&mut self) -> Scope {
+            Scope {
+                play_vars: self.map(2),
+                vars_files: (0..self.below(3)).map(|_| self.map(2)).collect(),
+                task_vars: self.map(2),
+                role_defaults: self.map(2),
+                role_vars: self.map(2),
+                role_params: self.map(2),
+                play_hosts: self.hosts(),
+                batch_hosts: self.hosts(),
+                all_play_hosts: vec!["h1".into(), "h2".into()],
+            }
+        }
+        /// A write to the store: a gather, a trusted fact or an untrusted one.
+        fn write(&mut self, store: &mut VarStore) {
+            let host = ["h1", "h2", "localhost"][self.below(3)];
+            match self.below(3) {
+                0 => {
+                    store.gather_facts(host, &self.map(2));
+                }
+                1 => store.set_fact(host, &self.name(), self.value(2)),
+                _ => store.set_untrusted_fact(host, &self.name(), self.value(2)),
+            }
+        }
+    }
+
+    /// The two maps `layered_for_host` hands out read, name for name, like the one merged map
+    /// the store used to build for every task, laid under the inventory-wide values. 500 random
+    /// stores and scopes, every layer drawing its names from one small pool so that they collide
+    /// with each other, with the magic variables and with the restricted names a gather strips.
+    /// Each case reads every host twice around more writes, with the same scope, so a kept
+    /// shared map that should have been rebuilt is read.
+    ///
+    /// What would make this red: two layers merged in the wrong order; a gathered name kept
+    /// in the shared map although a layer above it answers, the host's own magic variables
+    /// among those layers, so a fact named `inventory_hostname` would win; the inventory-wide
+    /// values laid under the facts rather than over them; a kept shared map served after the
+    /// host gathered again.
+    #[test]
+    fn the_layered_view_reads_like_the_merged_one() {
+        let seed = 0x5eed_1a7e_u64;
+        let mut rng = Rng(seed);
+        for case in 0..500 {
+            let inventory = Inventory::parse_ini(
+                [
+                    "[g]\nh1 a=1 ansible_x=inv\nh2 b=2\n",
+                    "h1\nh2 c=3 packages=inv\n",
+                ][case % 2],
+            )
+            .unwrap();
+            let extra = rng.map(1);
+            let mut store = VarStore::new(&inventory, None, Path::new("."), extra).unwrap();
+            let scope = rng.scope();
+            for round in 0..2 {
+                for _ in 0..rng.below(4) {
+                    rng.write(&mut store);
+                }
+                for host in ["h1", "h2", "localhost"] {
+                    let want =
+                        effective(&store.for_host(host, &scope), &store.shared_values(&scope));
+                    let (map, shared) = store.layered_for_host(host, &scope);
+                    assert_eq!(
+                        effective(&map, &shared),
+                        want,
+                        "seed {seed:#x}, case {case}, round {round}, host {host}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Only the host that wrote a fact has its `hostvars` entry built again, and the entry is the
+    /// new one: the other host reads it on its very next task. A render still holding the
+    /// previous map keeps what it saw.
+    ///
+    /// What would make this red: every write dropping the whole map again (the other host's
+    /// entry is rebuilt, and counted); a write that marks nothing (the entry read is stale).
+    #[test]
+    fn a_fact_written_on_one_host_leaves_the_other_hosts_views_alone() {
+        let inventory = Inventory::parse_ini("h1\nh2\n").unwrap();
+        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let built = |store: &VarStore, host: &str| store.views_built.get(host).copied();
+        let first = store.hostvars_shared("h1");
+        assert_eq!(
+            (built(&store, "h1"), built(&store, "h2")),
+            (Some(1), Some(1))
+        );
+
+        store.set_untrusted_fact("h1", "r", json!({"rc": 0}));
+        let second = store.hostvars_shared("h2");
+        assert_eq!(second["h1"]["r"], json!({"rc": 0}), "the write is seen");
+        assert_eq!(
+            (built(&store, "h1"), built(&store, "h2")),
+            (Some(2), Some(1))
+        );
+        assert!(
+            first["h1"].get("r").is_none(),
+            "a held map keeps what it saw"
+        );
+
+        store.gather_facts("h2", json!({"ansible_x": 1}).as_object().unwrap());
+        store.set_fact("h2", "y", json!(2));
+        let third = store.hostvars_shared("h1");
+        assert_eq!(third["h2"]["ansible_x"], json!(1));
+        assert_eq!(third["h2"]["y"], json!(2));
+        assert_eq!(
+            (built(&store, "h1"), built(&store, "h2")),
+            (Some(2), Some(2))
+        );
+        assert!(
+            second["h2"].get("y").is_none(),
+            "a held map keeps what it saw"
+        );
+
+        let fourth = store.hostvars_shared("h2");
+        assert!(
+            Arc::ptr_eq(&third, &fourth),
+            "nothing written, nothing rebuilt"
+        );
+    }
+
+    /// One name per layer, each holding `{{ 1 + 1 }}`, rendered through the view the engine now
+    /// builds and through the merged map it used to build: the same answer and the same set of
+    /// names that are data, for every layer. The gathered name and the untrusted fact stay text;
+    /// a play variable over a gathered name, and one built from a gathered name, behave as
+    /// before.
+    ///
+    /// What would make this red: a gathered name reaching a template without its taint, which
+    /// renders it to `2`; a shadowed gathered name still answering from the shared map.
+    #[test]
+    fn every_layer_keeps_its_trust_through_the_layered_view() {
+        let inventory = Inventory::parse_ini("h1 i=\"{{ 1 + 1 }}\"\n").unwrap();
+        let payload = json!("{{ 1 + 1 }}");
+        let one = |name: &str| -> Map<String, Value> {
+            [(name.to_string(), payload.clone())].into_iter().collect()
+        };
+        let extra = one("e");
+        let mut store = VarStore::new(&inventory, None, Path::new("."), extra).unwrap();
+        store.gather_facts(
+            "h1",
+            json!({"g": "{{ 1 + 1 }}", "gp": "{{ 1 + 1 }}"})
+                .as_object()
+                .unwrap(),
+        );
+        store.set_fact("h1", "sf", payload.clone());
+        store.set_untrusted_fact("h1", "su", payload.clone());
+        let mut play_vars = one("p");
+        play_vars.insert("gp".into(), json!("author"));
+        play_vars.insert("built".into(), json!("{{ g }}"));
+        let scope = Scope {
+            play_vars,
+            vars_files: vec![one("f")],
+            task_vars: one("t"),
+            role_defaults: one("d"),
+            role_vars: one("rv"),
+            role_params: one("rp"),
+            ..scope(&["h1"])
+        };
+        let templar = crate::template::Templar::new(PathBuf::from("."));
+        let untrusted = store.untrusted_of("h1", &scope);
+        let untrusted_hosts = store.untrusted_hosts();
+        let hostvars = store.hostvars_shared("h1");
+        let read = |map: &Map<String, Value>, shared: &Arc<Map<String, Value>>| {
+            let (resolved, soiled) = templar.resolve_vars_tainted(Vars {
+                map,
+                hostvars: Some(&hostvars),
+                shared: Some(shared),
+                untrusted: Some(&untrusted),
+                untrusted_hosts: Some(&untrusted_hosts),
+            });
+            let names = [
+                "d", "i", "g", "gp", "p", "f", "rv", "t", "sf", "su", "rp", "e", "built",
+            ];
+            let answers: Vec<_> = names
+                .iter()
+                .map(|name| {
+                    let text = format!("{{{{ {name} }}}}");
+                    templar
+                        .render(
+                            &text,
+                            Vars {
+                                map: &resolved,
+                                hostvars: Some(&hostvars),
+                                shared: Some(shared),
+                                untrusted: Some(&soiled),
+                                untrusted_hosts: Some(&untrusted_hosts),
+                            },
+                        )
+                        .unwrap()
+                })
+                .collect();
+            (answers, soiled)
+        };
+        let merged = store.for_host("h1", &scope);
+        let inventory_wide = store.shared_values(&scope);
+        let (map, shared) = store.layered_for_host("h1", &scope);
+        let (answers, soiled) = read(&map, &shared);
+        assert_eq!(
+            (answers.clone(), soiled.clone()),
+            read(&merged, &inventory_wide)
+        );
+        let two = json!(2);
+        assert_eq!(
+            answers,
+            [
+                &two,
+                &two,
+                &payload,
+                &json!("author"),
+                &two,
+                &two,
+                &two,
+                &two,
+                &two,
+                &payload,
+                &two,
+                &two,
+                &payload
+            ]
+            .map(Clone::clone)
+        );
+        for name in ["g", "su", "built"] {
+            assert!(soiled.contains(name), "{name} is data");
+        }
+        assert!(
+            !soiled.contains("gp"),
+            "the author's value over a fact is not"
         );
     }
 

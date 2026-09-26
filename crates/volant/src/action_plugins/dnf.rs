@@ -39,7 +39,7 @@ enum State {
 
 pub(super) struct Dnf<'a> {
     args: &'a Map<String, Value>,
-    running_vars: &'a Map<String, Value>,
+    running_vars: &'a crate::vars::HostVars,
     delegated: bool,
     state: State,
     /// What the `setup` answered, which the task's result carries.
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn a_delegated_task_carries_no_pkg_mgr() {
         let args = Map::new();
-        let running = Map::new();
+        let running = crate::vars::HostVars::default();
         for (delegated, facts) in [(false, Some(json!({"pkg_mgr": "dnf5"}))), (true, None)] {
             let mut plugin = Dnf {
                 args: &args,

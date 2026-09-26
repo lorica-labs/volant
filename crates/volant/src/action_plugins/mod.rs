@@ -183,7 +183,7 @@ pub(crate) struct Context<'a> {
     pub args: &'a Map<String, Value>,
     pub args_untrusted: &'a BTreeSet<String>,
     /// The variables of the host the module runs on - the delegate's when there is one.
-    pub running_vars: &'a Map<String, Value>,
+    pub running_vars: &'a HostVars,
     /// Whether that host is a delegate: the facts a result carries are filed under the host the
     /// task was written for, so a plugin that would hand back the delegate's has to know.
     pub delegated: bool,
@@ -245,7 +245,7 @@ fn setup_failed(mut facts: TaskResult, action: &str) -> TaskResult {
 }
 
 /// `ansible_facts.<name>` of the host the module runs on, when it is a string.
-fn fact<'a>(vars: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+fn fact<'a>(vars: &'a HostVars, name: &str) -> Option<&'a str> {
     vars.get("ansible_facts")?.get(name)?.as_str()
 }
 

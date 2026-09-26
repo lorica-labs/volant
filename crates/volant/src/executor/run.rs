@@ -1107,10 +1107,10 @@ pub(super) fn step_tasks(
 /// runs a module on one machine under the Python of another, which is a failure only a path that
 /// does not exist on both would show.
 pub(super) fn running_host_vars<'a>(
-    delegate: Option<&'a (String, Map<String, Value>)>,
+    delegate: Option<&'a (String, HostVars)>,
     items: &'a [Item],
-) -> &'a Map<String, Value> {
-    delegate.map_or(&items[0].vars.map, |(_, vars)| vars)
+) -> &'a HostVars {
+    delegate.map_or(&items[0].vars, |(_, vars)| vars)
 }
 
 /// The interpreter a playbook asked for, if it asked one of them: `ansible_python_interpreter`
@@ -1455,7 +1455,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
 pub(super) struct PluginStart<'a> {
     pub(super) kind: crate::action_plugins::Kind,
     /// The variables of the host the module runs on - the delegate's when there is one.
-    pub(super) running_vars: &'a Map<String, Value>,
+    pub(super) running_vars: &'a HostVars,
     pub(super) delegated: bool,
     /// Whether the task escalates: the link its sub-tasks go over is the escalated one.
     pub(super) escalated: bool,
@@ -3442,7 +3442,7 @@ mod tests {
         );
         let delegate = (
             "build-host".to_string(),
-            vars(json!({"ansible_python_interpreter": "/opt/py311/bin/python"})),
+            hvars(json!({"ansible_python_interpreter": "/opt/py311/bin/python"})),
         );
         assert_eq!(
             requested_interpreter(running_host_vars(Some(&delegate), &items)),
@@ -3853,7 +3853,10 @@ mod tests {
             args: vars(args),
             ..bare_item()
         };
-        let running = vars(running);
+        let running = HostVars {
+            map: vars(running),
+            ..HostVars::default()
+        };
         let templar = Templar::new(PathBuf::from("."));
         let origin = crate::compile::Origin::default();
         let union = union_of("ab", crate::action_plugins::modules_for(kind));
@@ -5244,7 +5247,7 @@ mod tests {
         let templar = Templar::new(PathBuf::from("."));
         let retry = retry_plan(t, Some(&item), &templar).expect("the retry plan renders");
         let origin = crate::compile::Origin::default();
-        let running = Map::new();
+        let running = HostVars::default();
         let union = union_of("ab", crate::action_plugins::modules_for(kind));
         let start = PluginStart {
             kind,

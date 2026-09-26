@@ -883,6 +883,7 @@ mod tests {
             ("to-json", "hostvars[h] | to_json"),
             ("hostvars-alone", "hostvars | dict2items"),
             ("vars", "vars['ansible_' ~ x]"),
+            ("vars-name", "vars[fact_name]"),
             ("lookup", "lookup('vars', 'ansible_' ~ x)"),
             ("query", "query('ansible.builtin.vars', 'y')"),
             ("template", "lookup('template', 'x.j2')"),

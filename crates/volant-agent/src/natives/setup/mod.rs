@@ -1567,6 +1567,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             ("ansible_[!]x", &[]),
             ("ansible_[]]x", &["ansible_]x"]),
             ("ansible_[", &[]),
+            ("*[x", &["ansible_[x"]),
             ("facter*", &["facter_x"]),
             ("ohai*", &[]),
             ("ansible_eth[1-]", &["ansible_eth1", "ansible_eth-"]),

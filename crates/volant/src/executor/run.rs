@@ -1674,29 +1674,20 @@ impl Relink<AgentLink> for Relinker<'_> {
         // again whether or not this try comes up.
         self.reboots.bump(&self.key.host);
         // Closed off-task, as a replaced escalated link is: their agents died with the host.
-        let stale: Vec<LinkKey> = self
-            .links
-            .keys()
-            .filter(|k| k.host == self.key.host)
-            .cloned()
-            .collect();
-        for key in stale {
-            self.checked.remove(&key);
-            if let Some(old) = self.links.remove(&key) {
-                tokio::spawn(old.shutdown());
-            }
+        for old in retire_host_links(self.links, self.checked, &self.key.host) {
+            tokio::spawn(old.shutdown());
         }
         // Checked again by the next batch if this never comes back up: the link left in place is
         // the one the host outlived.
         self.checked.remove(self.key);
-        let fresh = connect(
-            &with_connect_timeout(&self.key.transport, connect_timeout),
-            self.agents,
-            self.defaults,
-            self.escalation,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        // The host's shared connection went down with it, perhaps without a word: a master left
+        // on a dead TCP connection would take this try's session and hold it past any timeout.
+        // Stopped and reopened through the one transport, so both name the same socket.
+        let transport = with_connect_timeout(&self.key.transport, connect_timeout);
+        transport.stop_shared().await;
+        let fresh = connect(&transport, self.agents, self.defaults, self.escalation)
+            .await
+            .map_err(|e| e.to_string())?;
         let old = std::mem::replace(link, fresh);
         tokio::spawn(old.shutdown());
         Ok(())
@@ -2198,25 +2189,18 @@ pub(super) async fn reuse_or_connect<'a>(
     // Why the kept connection was not reused, kept only in case the reconnection below fails
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
-    let mut stale: Option<String> = None;
     let reboots = options.reboots.of(&key.host);
-    if checked.insert(key.clone(), reboots) != Some(reboots)
-        && let Some(mut link) = links.remove(key)
-    {
-        let alive = tokio::time::timeout(options.defaults.connect_timeout, link.handshake()).await;
-        match alive {
-            Ok(Ok(())) => {
-                links.insert(key.clone(), link);
-            }
-            Ok(Err(err)) => {
-                stale = Some(format!("{err:#}"));
-                link.shutdown().await;
-            }
-            Err(_) => {
-                stale = Some("no answer from the kept connection".to_string());
-                link.shutdown().await;
-            }
-        }
+    let (stale, retired) = check_kept(
+        links,
+        checked,
+        key,
+        reboots,
+        options.defaults.connect_timeout,
+    )
+    .await;
+    // Closed off-task, as `Relinker::relink` closes them.
+    for old in retired {
+        tokio::spawn(old.shutdown());
     }
     if !links.contains_key(key) {
         let link = match connect(&key.transport, agents, &options.defaults, escalation).await {
@@ -2319,6 +2303,93 @@ pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<
     } else {
         vec![host.to_string()]
     }
+}
+
+/// What checking a kept link needs of it, so the check can be driven by a fake in tests.
+pub(super) trait KeptLink {
+    async fn handshake(&mut self) -> anyhow::Result<()>;
+    async fn shutdown(self);
+}
+
+impl KeptLink for AgentLink {
+    async fn handshake(&mut self) -> anyhow::Result<()> {
+        AgentLink::handshake(self).await
+    }
+
+    async fn shutdown(self) {
+        AgentLink::shutdown(self).await;
+    }
+}
+
+/// Takes every link kept for `host` out of `links`, and forgets that they were checked, for the
+/// caller to close.
+fn retire_host_links<L>(
+    links: &mut HashMap<LinkKey, L>,
+    checked: &mut HashMap<LinkKey, u64>,
+    host: &str,
+) -> Vec<L> {
+    let keys: Vec<LinkKey> = links.keys().filter(|k| k.host == host).cloned().collect();
+    keys.iter()
+        .filter_map(|k| {
+            checked.remove(k);
+            links.remove(k)
+        })
+        .collect()
+}
+
+/// Checks the link kept for `key` if the host rebooted since it was last proved alive (or it
+/// never was). A link that answers stays in `links`. One that fails, at once or by timing out,
+/// is closed, and then the host's shared connection is stopped and every other link kept for the
+/// host is retired, as `Relinker::relink` does.
+///
+/// Both halves matter. The host's plain and escalated links ride one master, and each is
+/// checked only when it is next used, so the link that was idle through a reboot may still point
+/// at a master long gone while the socket holds a newer one on a connection the host dropped
+/// without a word; failing at once on the old one says nothing about the new one, so the socket
+/// is stopped on every failure. And a sibling left in `links` would be checked in its turn, fail,
+/// and stop the master this reconnection is about to open; retired, it reconnects through that
+/// master instead, unchecked.
+///
+/// Returns why the kept link was not reused, if it failed, and the retired links.
+async fn check_kept<L: KeptLink>(
+    links: &mut HashMap<LinkKey, L>,
+    checked: &mut HashMap<LinkKey, u64>,
+    key: &LinkKey,
+    reboots: u64,
+    timeout: Duration,
+) -> (Option<String>, Vec<L>) {
+    if checked.insert(key.clone(), reboots) == Some(reboots) {
+        return (None, Vec::new());
+    }
+    let Some(mut link) = links.remove(key) else {
+        // No kept link, so nothing to check: this key connects through the socket as it is.
+        // That is safe only if the socket's master was proven alive since the host's last
+        // reboot, by a sibling on the same transport kept and checked (or connected) at this
+        // count; a host this run never rebooted keeps whatever master it has. Otherwise the
+        // master may ride a connection the reboot dropped, and it is stopped first, with the
+        // host's other links retired so none of them later stops the master this key opens.
+        let proven = links
+            .keys()
+            .any(|k| k.transport == key.transport && checked.get(k) == Some(&reboots));
+        if reboots > 0 && key.transport.is_shared() && !proven {
+            let retired = retire_host_links(links, checked, &key.host);
+            key.transport.stop_shared().await;
+            return (None, retired);
+        }
+        return (None, Vec::new());
+    };
+    let stale = match tokio::time::timeout(timeout, link.handshake()).await {
+        Ok(Ok(())) => {
+            links.insert(key.clone(), link);
+            return (None, Vec::new());
+        }
+        Ok(Err(err)) => format!("{err:#}"),
+        Err(_) => "no answer from the kept connection".to_string(),
+    };
+    link.shutdown().await;
+    let retired = retire_host_links(links, checked, &key.host);
+    key.transport.stop_shared().await;
+    (Some(stale), retired)
 }
 
 /// Opens one link, escalated when `escalation` is given. Every way this can fail is a host the
@@ -6676,6 +6747,239 @@ mod tests {
         assert_eq!(with_connect_timeout(&kept, None), kept);
     }
 
+    /// An ssh transport to `h1` sharing its connection under `dir`, with no ssh configuration
+    /// read but the empty one, so the test does not depend on the account it runs under.
+    fn shared_to_h1(dir: &Path) -> Transport {
+        let vars =
+            json!({"ansible_host": "probe-hostname", "ansible_ssh_common_args": "-F /dev/null"});
+        let defaults = ConnectionDefaults {
+            remote_user: None,
+            private_key: None,
+            host_key_checking: true,
+            remote_tmp: "~/.ansible/tmp".to_string(),
+            connect_timeout: Duration::from_secs(10),
+            r#become: false,
+            become_user: "root".to_string(),
+            become_method: "sudo".to_string(),
+            become_password: None,
+        };
+        Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
+            .expect("an ssh transport")
+            .shared(Some(dir), "h1", None)
+    }
+
+    async fn socket_of(transport: &Transport) -> Option<Box<Path>> {
+        match transport {
+            Transport::Ssh(target) => target.resolved().await.control_path,
+            Transport::Local => None,
+        }
+    }
+
+    /// `Relinker::relink` stops the host's master and reconnects under the `reboot` task's own
+    /// `connect_timeout`: both must name one socket, or the stop misses the master the
+    /// reconnection then rides.
+    ///
+    /// What would make this red: `connecttimeout` hashed into the socket name again.
+    #[tokio::test]
+    async fn a_reboot_with_its_own_connect_timeout_stops_and_reopens_one_socket() {
+        let kept = shared_to_h1(Path::new("/run/user/1000/volant-cm"));
+        let socket = socket_of(&kept)
+            .await
+            .expect("shared; ssh -G must run here");
+        let fresh = with_connect_timeout(&kept, Some(Duration::from_secs(5)));
+        assert_ne!(fresh, kept, "the reconnection does carry its own timeout");
+        assert_eq!(socket_of(&fresh).await, Some(socket));
+    }
+
+    /// A kept link in a test: how it answers its check, and a record of whether it was asked.
+    #[cfg(unix)]
+    struct FakeKept {
+        answer: FakeAnswer,
+        asked: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[cfg(unix)]
+    enum FakeAnswer {
+        Alive,
+        /// Its master is gone: end of file at once.
+        Gone,
+        /// Its master rides a connection the host dropped: no answer, ever.
+        Wedged,
+    }
+
+    #[cfg(unix)]
+    impl FakeKept {
+        fn new(answer: FakeAnswer) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+            let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let link = FakeKept {
+                answer,
+                asked: Arc::clone(&asked),
+            };
+            (link, asked)
+        }
+    }
+
+    #[cfg(unix)]
+    impl KeptLink for FakeKept {
+        async fn handshake(&mut self) -> anyhow::Result<()> {
+            self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            match self.answer {
+                FakeAnswer::Alive => Ok(()),
+                FakeAnswer::Gone => anyhow::bail!("the agent closed the connection"),
+                FakeAnswer::Wedged => std::future::pending().await,
+            }
+        }
+
+        async fn shutdown(self) {}
+    }
+
+    /// A listener on the host's socket stands in for its master and counts the `ssh -O exit`
+    /// that reach it, closing each at once so the stop returns.
+    #[cfg(unix)]
+    fn fake_master(socket: &Path) -> Arc<std::sync::atomic::AtomicUsize> {
+        let listener = std::os::unix::net::UnixListener::bind(socket).expect("a socket");
+        let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&stops);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        stops
+    }
+
+    /// The delegate `h1` rebooted twice while its delegating host kept two links to it, which
+    /// share one socket. The escalated link sat idle on the first master (M1, gone); the plain
+    /// one reconnected after the first reboot and rides M2, which the second reboot left on a
+    /// dropped connection. The escalated link is used first: its check fails at once, on M1, and
+    /// M2 must still be stopped, or the reconnection attaches to it and waits on a dead
+    /// connection. And the plain link, retired with it, must reconnect unchecked through the new
+    /// master, not be checked, fail, and stop that master in its turn.
+    ///
+    /// What would make this red: the master stopped only after a check that timed out, or the
+    /// host's other links left in place.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_check_stops_the_master_and_retires_the_hosts_other_links() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = Path::new("/tmp").join(format!("volant-cm-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let transport = shared_to_h1(&dir);
+        let socket = socket_of(&transport)
+            .await
+            .expect("shared; ssh -G must run here");
+        let stops = fake_master(&socket);
+        let key = |become_user: Option<&str>| LinkKey {
+            host: "h1".to_string(),
+            become_user: become_user.map(str::to_string),
+            transport: transport.clone(),
+        };
+        let (escalated, plain) = (key(Some("root")), key(None));
+        let (on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let (on_m2, plain_asked) = FakeKept::new(FakeAnswer::Wedged);
+        let mut links = HashMap::from([(escalated.clone(), on_m1), (plain.clone(), on_m2)]);
+        let mut checked = HashMap::from([(escalated.clone(), 1), (plain.clone(), 1)]);
+        let timeout = Duration::from_millis(200);
+
+        let (stale, retired) = check_kept(&mut links, &mut checked, &escalated, 2, timeout).await;
+        assert!(stale.is_some(), "the escalated link rode M1, gone");
+        assert_eq!(
+            stops.load(SeqCst),
+            1,
+            "M2 is stopped although M1 failed at once"
+        );
+        assert_eq!(retired.len(), 1, "the plain link is retired with it");
+        assert!(!links.contains_key(&plain) && !checked.contains_key(&plain));
+
+        // Both reconnect through the one new master: the escalated link now, the plain one on its
+        // next use, with nothing left to check and nothing stopped.
+        let (fresh, _) = FakeKept::new(FakeAnswer::Alive);
+        links.insert(escalated.clone(), fresh);
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 2, timeout).await;
+        assert!(stale.is_none() && retired.is_empty());
+        assert!(
+            !plain_asked.load(SeqCst),
+            "the retired plain link was never checked"
+        );
+        assert_eq!(stops.load(SeqCst), 1, "the new master was left alone");
+        assert!(
+            links.contains_key(&escalated),
+            "the reopened escalated link is kept"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same two links, one step earlier: after the first reboot the plain link fails its
+    /// check, retires the escalated one and reopens the master as M2. The host reboots again and
+    /// drops M2's connection without a word. The escalated key is used next: it has no kept link
+    /// to check, and its socket was last proven at the first reboot, so M2 is stopped before it
+    /// connects. The plain link, retired then, reconnects through the escalated key's new master
+    /// without a third stop.
+    ///
+    /// What would make this red: a key with no kept link connecting through the socket without
+    /// the socket having been proven at the host's current reboot count.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_key_with_no_kept_link_does_not_ride_a_master_older_than_the_last_reboot() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = Path::new("/tmp").join(format!("volant-cm-unproven-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let transport = shared_to_h1(&dir);
+        let socket = socket_of(&transport)
+            .await
+            .expect("shared; ssh -G must run here");
+        let stops = fake_master(&socket);
+        let key = |become_user: Option<&str>| LinkKey {
+            host: "h1".to_string(),
+            become_user: become_user.map(str::to_string),
+            transport: transport.clone(),
+        };
+        let (escalated, plain) = (key(Some("root")), key(None));
+        let (plain_on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let (escalated_on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let mut links = HashMap::from([
+            (plain.clone(), plain_on_m1),
+            (escalated.clone(), escalated_on_m1),
+        ]);
+        let mut checked = HashMap::from([(plain.clone(), 0), (escalated.clone(), 0)]);
+        let timeout = Duration::from_millis(200);
+
+        // First reboot: the plain link fails, M1 is stopped, the escalated link retired.
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 1, timeout).await;
+        assert!(stale.is_some() && retired.len() == 1);
+        assert_eq!(stops.load(SeqCst), 1);
+        let (plain_on_m2, plain_asked) = FakeKept::new(FakeAnswer::Wedged);
+        links.insert(plain.clone(), plain_on_m2);
+
+        // Second reboot, and the escalated key, with no kept link, is used first.
+        let (stale, retired) = check_kept(&mut links, &mut checked, &escalated, 2, timeout).await;
+        assert!(stale.is_none(), "nothing was kept to fail");
+        assert_eq!(
+            stops.load(SeqCst),
+            2,
+            "M2, proven only at the first reboot, is stopped"
+        );
+        assert_eq!(retired.len(), 1, "the plain link on M2 is retired with it");
+        assert!(!links.contains_key(&plain) && !checked.contains_key(&plain));
+
+        // The escalated key connects and so proves the socket at this count; the plain key then
+        // rides that master, unchecked and without another stop.
+        let (fresh, _) = FakeKept::new(FakeAnswer::Alive);
+        links.insert(escalated.clone(), fresh);
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 2, timeout).await;
+        assert!(stale.is_none() && retired.is_empty());
+        assert!(!plain_asked.load(SeqCst));
+        assert_eq!(
+            stops.load(SeqCst),
+            2,
+            "the master the escalated key opened is left alone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`
     /// under `timeout: 2` whose host never comes back ends at two seconds with the timeout's own
     /// result, not after `reboot_timeout`. Read from ansible-core 2.19.12 `task_executor.py`: the
@@ -6847,6 +7151,7 @@ mod tests {
             forks: 1,
             force_handlers: false,
             batching: false,
+            control_dir: None,
             stop,
             abort: Arc::new(super::super::Abort::new(stop_tx)),
             reboots: Arc::default(),

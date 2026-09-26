@@ -826,7 +826,11 @@ pub(super) async fn drive_host(
                     let target_vars = running_host_vars(delegate.as_ref(), &items);
                     let transport =
                         match Transport::for_vars(&target, target_vars, &options.defaults) {
-                            Ok(transport) => transport,
+                            Ok(transport) => transport.shared(
+                                options.control_dir.as_deref(),
+                                &name,
+                                delegate_name.as_deref(),
+                            ),
                             // The tasks in hand ran under a connection that was resolved; this
                             // one is the next batch's first, where the same failure ends the
                             // host with its own message.

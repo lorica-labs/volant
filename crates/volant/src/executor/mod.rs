@@ -52,6 +52,10 @@ pub struct RunOptions {
     /// between two synchronisation points. Off by default, so the hosts of a batch meet in front
     /// of every task, which is what `linear` means.
     pub batching: bool,
+    /// Where the sockets of the shared `ssh` connections live, from
+    /// [`crate::transport::control_dir`]; `None` when `[volant] ssh_control_master` is off or no
+    /// safe directory exists, and every `ssh` then opens its own connection.
+    pub control_dir: Option<PathBuf>,
     /// Flips to `true` once when the user interrupts the run, or when a host ends it through
     /// [`Abort::raise`].
     pub stop: watch::Receiver<bool>,

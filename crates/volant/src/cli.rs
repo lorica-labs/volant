@@ -102,6 +102,8 @@ pub struct PlaybookArgs {
 
 /// Runs the playbooks and returns the process exit code.
 pub fn run(args: PlaybookArgs) -> i32 {
+    // Before anything opens a descriptor: every host's link takes three of them.
+    crate::transport::raise_open_file_limit();
     let choice = if args.no_color {
         ColorChoice::Never
     } else {
@@ -362,6 +364,10 @@ async fn run_all(
         // force_handlers` are the same request.
         force_handlers: args.force_handlers || config.force_handlers,
         batching: config.batching,
+        control_dir: config
+            .ssh_control_master
+            .then(crate::transport::control_dir)
+            .flatten(),
         stop: stop_rx.clone(),
         abort,
         reboots: Arc::default(),

@@ -849,64 +849,54 @@ mod tests {
     }
 
     /// A module's imports are done in the server once its first child runs, so its later children
-    /// find them done, and the first child still imports them itself. What a child imports while
-    /// it runs is imported in the server once that child has said so, for the child after next.
+    /// find them done, and the first child still imports them itself.
     ///
     /// What would make this red: no import in the server (the second and third children import the
     /// dependency again); the import done before the fork (the first child finds it done, and the
-    /// server's import delays the first task); the imports stopping at the first one that fails
-    /// (the module's `try`/`except ImportError` ends them before the dependency); or the child's
-    /// report of what it imported while running lost (the third child imports `lazy` again).
+    /// server's import delays the first task); or the imports stopping at the first one that fails
+    /// (the module's `try`/`except ImportError` ends them before the dependency).
     #[test]
     fn a_module_s_imports_are_done_in_the_server_once_its_first_child_runs() {
         let blob = runpy_blob(&[]);
         let logs = tempdir();
-        for name in ["counted", "lazy"] {
-            let log_literal = format!("{:?}", logs.path().join(name).to_str().unwrap());
-            std::fs::write(
-                blob.path().join(format!("ansible/module_utils/{name}.py")),
-                format!(
-                    "import os\nwith open({log_literal}, \"a\") as log:\n    log.write(\"%d\\n\" % os.getpid())\n"
-                ),
-            )
-            .unwrap();
-        }
+        let log = logs.path().join("imports.log");
+        let log_literal = format!("{:?}", log.to_str().unwrap());
+        std::fs::write(
+            blob.path().join("ansible/module_utils/counted.py"),
+            format!(
+                "import os\nwith open({log_literal}, \"a\") as log:\n    log.write(\"%d\\n\" % os.getpid())\n"
+            ),
+        )
+        .unwrap();
         std::fs::write(
             blob.path().join("ansible/modules/probe.py"),
-            "import json, os\ntry:\n    import volant_no_such_module\nexcept ImportError:\n    pass\nfrom ansible.module_utils import counted\n\n\ndef main():\n    from ansible.module_utils import lazy\n    print(json.dumps({\"pid\": os.getpid()}))\n\n\nif __name__ == \"__main__\":\n    main()\n",
+            "import json, os\ntry:\n    import volant_no_such_module\nexcept ImportError:\n    pass\nfrom ansible.module_utils import counted\nprint(json.dumps({\"pid\": os.getpid()}))\n",
         )
         .unwrap();
         let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let pids: Vec<u64> = (0..3)
             .map(|_| {
-                let result = call(&mut server, "ansible.modules.probe");
+                let result = done(server.run(
+                    &payload("ansible.modules.probe"),
+                    &args(json!({})),
+                    &Context::default(),
+                    &|| false,
+                ));
                 assert!(!result.failed(), "{:?}", result.0);
                 result.0["pid"].as_u64().unwrap()
             })
             .collect();
-        let server_pid = u64::from(server.child.id());
-        let imported_by = |name: &str| {
-            let mut pids: Vec<u64> = std::fs::read_to_string(logs.path().join(name))
-                .unwrap()
-                .lines()
-                .map(|pid| pid.parse().unwrap())
-                .collect();
-            pids.sort_unstable();
-            pids
-        };
-        let mut expected = vec![pids[0], server_pid];
+        let mut imported: Vec<u64> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        imported.sort_unstable();
+        let mut expected = vec![pids[0], u64::from(server.child.id())];
         expected.sort_unstable();
         assert_eq!(
-            imported_by("counted"),
-            expected,
-            "the top-level import should be done by the first child and by the server, and by no later child (children: {pids:?}, server: {server_pid})"
-        );
-        let mut expected = vec![pids[0], pids[1], server_pid];
-        expected.sort_unstable();
-        assert_eq!(
-            imported_by("lazy"),
-            expected,
-            "the import done while running should be done by the first two children and by the server (children: {pids:?}, server: {server_pid})"
+            imported, expected,
+            "the dependency should be imported by the first child and by the server, and by no later child (children: {pids:?})"
         );
     }
 

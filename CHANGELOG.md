@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) - 2026-09-26
+
+### Added
+
+- *(cli)* add --profile and a switch for native modules ([#236](https://github.com/lorica-labs/volant/pull/236))
+- *(agent)* run a native module and hand the task back to python ([#230](https://github.com/lorica-labs/volant/pull/230))
+- *(template)* add the extract filter ([#222](https://github.com/lorica-labs/volant/pull/222))
+- *(reboot)* reboot the host and wait for a new boot id ([#219](https://github.com/lorica-labs/volant/pull/219))
+- loop with lookups, set the run tags, retry an action plugin ([#216](https://github.com/lorica-labs/volant/pull/216))
+- *(fetch)* write a host's file under dest and nowhere else ([#215](https://github.com/lorica-labs/volant/pull/215))
+- *(dnf)* run dnf through its action plugin ([#213](https://github.com/lorica-labs/volant/pull/213))
+- *(python)* run modules from installed collections ([#211](https://github.com/lorica-labs/volant/pull/211))
+- *(template)* add fileglob, ipwrap and the builtin aliases ([#210](https://github.com/lorica-labs/volant/pull/210))
+- embed the agents in the release controller ([#206](https://github.com/lorica-labs/volant/pull/206))
+- *(template)* add the remaining filters and two lookups ([#193](https://github.com/lorica-labs/volant/pull/193))
+- *(actions)* unarchive a local or remote archive ([#194](https://github.com/lorica-labs/volant/pull/194))
+- *(actions)* render a template on the controller and copy it ([#192](https://github.com/lorica-labs/volant/pull/192))
+- *(actions)* copy a file, sending it only when it differs ([#190](https://github.com/lorica-labs/volant/pull/190))
+- *(template)* add python methods, result and version tests ([#189](https://github.com/lorica-labs/volant/pull/189))
+- *(template)* render a template file once, as the module does ([#188](https://github.com/lorica-labs/volant/pull/188))
+- *(actions)* run package and service through their manager ([#186](https://github.com/lorica-labs/volant/pull/186))
+- *(protocol)* stage files the agent hands to a module ([#183](https://github.com/lorica-labs/volant/pull/183))
+- *(agent)* collect cpu, memory and routes natively ([#242](https://github.com/lorica-labs/volant/pull/242))
+- *(agent)* collect the minimal facts natively ([#237](https://github.com/lorica-labs/volant/pull/237))
+
+### Changed
+
+- *(vars)* read host variables through shared layers ([#239](https://github.com/lorica-labs/volant/pull/239))
+- *(transport)* share one ssh connection per inventory host ([#238](https://github.com/lorica-labs/volant/pull/238))
+- *(controller)* cache the python module union between runs ([#235](https://github.com/lorica-labs/volant/pull/235))
+
+### Fixed
+
+- *(template)* fail a concatenation holding an undefined value ([#234](https://github.com/lorica-labs/volant/pull/234))
+- *(template)* fail a text filter over a container holding undefined ([#229](https://github.com/lorica-labs/volant/pull/229))
+- *(template)* propagate undefined through filters like ansible-core ([#228](https://github.com/lorica-labs/volant/pull/228))
+- *(executor)* count a looped include whose items all skip ([#227](https://github.com/lorica-labs/volant/pull/227))
+- *(executor)* read when before failing on an undefined loop ([#223](https://github.com/lorica-labs/volant/pull/223))
+- *(transport)* reuse a cached agent only if it is the same binary ([#221](https://github.com/lorica-labs/volant/pull/221))
+- *(render)* print a loop's skipping line when every item skipped ([#202](https://github.com/lorica-labs/volant/pull/202))
+- *(executor)* set the search path before a task's own vars resolve ([#200](https://github.com/lorica-labs/volant/pull/200))
+- *(include)* hand a role's keywords to the tasks it includes ([#199](https://github.com/lorica-labs/volant/pull/199))
+- *(vars)* load an empty vars file and render ignore_errors late ([#196](https://github.com/lorica-labs/volant/pull/196))
+- *(agent)* keep a staged file to the connection that sent it ([#191](https://github.com/lorica-labs/volant/pull/191))
+
 ### Added
 
 - Run `copy` as an action plugin: `stat` the destination, then `file` or a staged `copy`, sending nothing when the file already matches.

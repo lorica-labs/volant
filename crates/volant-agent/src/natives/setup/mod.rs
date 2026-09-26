@@ -481,11 +481,12 @@ fn collect(
     // without an answer, and when the cancel arrives while this thread waits for them.
     let halt = AtomicBool::new(false);
     let halted = || halt.load(Ordering::Relaxed);
+    let halted: &(dyn Fn() -> bool + Sync) = &halted;
     let deadline = clock.deadline;
     let (probe, early, early_network) = std::thread::scope(|scope| {
         let early_clock = move || Clock {
             deadline,
-            cancelled: &halted,
+            cancelled: halted,
         };
         let early = guess.as_ref().map(|env| {
             let (sent, answer) = mpsc::channel();

@@ -324,6 +324,12 @@ pub(crate) struct Compiled {
     /// in the recap and lets `--skip-tags always` drop it - and it is left out of the four
     /// listings alone, which is where the reference leaves it out too.
     pub gathers: bool,
+    /// Per step, whether it reads what another host did, so the hosts meet in front of it under
+    /// `[volant] batching`. Filled by the executor's `mark_boundaries` once the list is laid out,
+    /// and again behind every splice, because a role an include brings in brings its own
+    /// variables. A list out of step with `steps` - never filled - makes every step a boundary:
+    /// that costs time, and never lets a host read ahead of the host it reads.
+    pub crosses: Vec<bool>,
 }
 
 impl Compiled {
@@ -347,6 +353,11 @@ impl Compiled {
                     range.end += n;
                 }
             }
+        }
+        // Marked as boundaries until the next `mark_boundaries` says otherwise, so a splice
+        // nobody marks is the strict `linear` and never a host running ahead.
+        if self.crosses.len() == self.steps.len() {
+            self.crosses.splice(at..at, std::iter::repeat_n(true, n));
         }
         self.steps.splice(at..at, steps);
     }
@@ -1226,6 +1237,7 @@ pub(crate) fn compile(
         search: search.clone(),
         selection: selection.clone(),
         gathers,
+        crosses: Vec::new(),
     })
 }
 
@@ -1349,6 +1361,7 @@ pub(crate) fn expand_include(
         // An expansion is spliced into a play that has already gathered, so it never carries a
         // gather step of its own.
         gathers: false,
+        crosses: Vec::new(),
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
     // before anything is spliced, so what a file this release cannot execute gets is the

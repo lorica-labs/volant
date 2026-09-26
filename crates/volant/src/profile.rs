@@ -80,6 +80,7 @@ struct Inner {
     phases: BTreeMap<(Phase, Option<String>), u64>,
     tasks: Vec<TaskRecord>,
     natives: BTreeMap<String, Vec<String>>,
+    facts: Option<String>,
 }
 
 /// The whole run's measurements, shared by every host's driver.
@@ -136,11 +137,19 @@ impl Profile {
             .insert(host.to_string(), natives.to_vec());
     }
 
+    /// Where the run's `setup` gets its facts, and why: `native (keys: 23)`, or `python (...)`.
+    pub fn facts(&self, decision: String) {
+        self.lock().facts = Some(decision);
+    }
+
     /// The table `--profile` prints.
     pub fn render(&self) -> String {
         let inner = self.lock();
         let mut out = String::new();
         let _ = writeln!(out, "PROFILE");
+        if let Some(facts) = &inner.facts {
+            let _ = writeln!(out, "facts: {facts}");
+        }
         let _ = writeln!(out, "{:<14} {:>12}  per host", "phase", "total_us");
         let mut phases: BTreeMap<Phase, (u64, Vec<String>)> = BTreeMap::new();
         for ((phase, host), micros) in &inner.phases {
@@ -211,12 +220,16 @@ impl Profile {
         out
     }
 
-    /// The JSON lines `VOLANT_PROFILE_JSON` names: `{"natives": {host: [...]}}` first, then one
+    /// The JSON lines `VOLANT_PROFILE_JSON` names: `{"natives": {host: [...]}}` first, then
+    /// `{"facts": ...}` once the run has decided it, then one
     /// `{"phase", "host", "micros"}` per phase and host, then one [`TaskRecord`] per task.
     pub fn write_json(&self, path: &Path) -> std::io::Result<()> {
         let inner = self.lock();
         let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
         writeln!(out, "{}", json!({ "natives": inner.natives }))?;
+        if let Some(facts) = &inner.facts {
+            writeln!(out, "{}", json!({ "facts": facts }))?;
+        }
         for ((phase, host), micros) in &inner.phases {
             writeln!(
                 out,

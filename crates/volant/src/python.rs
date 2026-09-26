@@ -51,8 +51,9 @@ pub struct ModuleFacts {
 /// Where `setup` gets its facts: `--facts`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum Facts {
-    /// The native collector when the plays provably read only the keys it produces; until that
-    /// analysis exists, the Python module.
+    /// The native collector when the plays provably read only the keys it produces
+    /// (`facts_read`), the Python module otherwise. Resolved to one of the two others before
+    /// the union is armed; read as `Python` wherever it is not.
     #[default]
     Auto,
     Python,
@@ -261,40 +262,52 @@ pub fn modules_to_build<'a>(
 /// A role file that cannot be read or parsed refuses the run, naming the file: the role is broken.
 /// A literal include target that cannot be is left to the include, which fails the host reaching
 /// it the way the reference does.
-pub(crate) fn modules_for_run(
-    plays: &[&crate::compile::Compiled],
-) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    let mut reach = Reach::default();
-    for play in plays {
-        for step in &play.steps {
-            reach.modules.push(step.task.module.clone());
-            if let Some(role) = &step.origin.role_dir {
-                reach.role(role, &play.search)?;
-            }
-            let origin = &step.origin;
-            reach.statement(
-                &step.task,
-                &origin.file_dir,
-                origin.role_dir.as_deref(),
-                &play.search,
-            )?;
-        }
-        reach
-            .modules
-            .extend(play.handlers.iter().map(|h| h.task.module.clone()));
-    }
-    Ok(modules_to_build(reach.modules.iter().map(String::as_str)))
+pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<String> {
+    modules_to_build(reach.modules.iter().map(String::as_str))
 }
 
-/// The walk behind [`modules_for_run`], with what it has already read so a ring of includes ends.
+/// Every role and task file a run's plays can reach, read once before the first connection: what
+/// [`modules_for_run`] builds the union from, and what `facts_read` reads the facts a run uses
+/// from. It keeps what it has already read, so a ring of includes ends.
 #[derive(Default)]
-struct Reach {
-    roles: std::collections::BTreeSet<std::path::PathBuf>,
+pub(crate) struct Reach {
+    /// The root of every role reached.
+    pub(crate) roles: std::collections::BTreeSet<std::path::PathBuf>,
     files: std::collections::BTreeSet<std::path::PathBuf>,
     modules: Vec<String>,
+    /// Every task read from a file, with that file and where it resolves its relative paths.
+    pub(crate) tasks: Vec<(
+        std::path::PathBuf,
+        crate::compile::Origin,
+        crate::playbook::PlayTask,
+    )>,
 }
 
 impl Reach {
+    /// Walks from every step and handler of `plays`.
+    pub(crate) fn walk(plays: &[&crate::compile::Compiled]) -> anyhow::Result<Reach> {
+        let mut reach = Reach::default();
+        for play in plays {
+            for step in &play.steps {
+                reach.modules.push(step.task.module.clone());
+                if let Some(role) = &step.origin.role_dir {
+                    reach.role(role, &play.search)?;
+                }
+                let origin = &step.origin;
+                reach.statement(
+                    &step.task,
+                    &origin.file_dir,
+                    origin.role_dir.as_deref(),
+                    &play.search,
+                )?;
+            }
+            reach
+                .modules
+                .extend(play.handlers.iter().map(|h| h.task.module.clone()));
+        }
+        Ok(reach)
+    }
+
     fn role(
         &mut self,
         dir: &std::path::Path,
@@ -322,7 +335,13 @@ impl Reach {
                         .map(|h| h.task)
                         .collect()
                 };
-                self.tasks(&tasks, path.parent().unwrap_or(dir), Some(dir), search)?;
+                self.tasks(
+                    &tasks,
+                    &path,
+                    path.parent().unwrap_or(dir),
+                    Some(dir),
+                    search,
+                )?;
             }
         }
         Ok(())
@@ -331,6 +350,7 @@ impl Reach {
     fn tasks(
         &mut self,
         tasks: &[crate::playbook::PlayTask],
+        file: &std::path::Path,
         file_dir: &std::path::Path,
         role_dir: Option<&std::path::Path>,
         search: &crate::roles::RoleSearch,
@@ -338,6 +358,12 @@ impl Reach {
         for task in tasks {
             self.modules.push(task.module.clone());
             self.statement(task, file_dir, role_dir, search)?;
+            let origin = crate::compile::Origin {
+                file_dir: file_dir.to_path_buf(),
+                role_dir: role_dir.map(std::path::Path::to_path_buf),
+                ..crate::compile::Origin::default()
+            };
+            self.tasks.push((file.to_path_buf(), origin, task.clone()));
         }
         Ok(())
     }
@@ -366,7 +392,13 @@ impl Reach {
                 };
                 let mut tasks = Vec::new();
                 flatten(&items, &mut tasks);
-                self.tasks(&tasks, path.parent().unwrap_or(file_dir), role_dir, search)?;
+                self.tasks(
+                    &tasks,
+                    &path,
+                    path.parent().unwrap_or(file_dir),
+                    role_dir,
+                    search,
+                )?;
             }
             "include_role" | "import_role" => {
                 if let Some(Ok(dir)) = literal("name")
@@ -1759,7 +1791,9 @@ mod tests {
         };
         let selection = crate::compile::TagSelection::new(Vec::new(), Vec::new());
         let play = crate::compile::compile(&pb.plays[0], &search, &selection)?;
-        Ok(modules_for_run(&[&play])?.into_iter().collect())
+        Ok(modules_for_run(&Reach::walk(&[&play])?)
+            .into_iter()
+            .collect())
     }
 
     /// A module written only in a file a dynamic include reads goes into the union, and so does

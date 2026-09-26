@@ -1,0 +1,21 @@
+{
+  "_ansible_no_log": false,
+  "action": "systemd",
+  "changed": false,
+  "exception": "(traceback unavailable)",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "daemon_reexec": false,
+      "daemon_reload": false,
+      "enabled": null,
+      "force": null,
+      "masked": null,
+      "name": "volant-no-such-unit",
+      "no_block": false,
+      "scope": "system",
+      "state": "started"
+    }
+  },
+  "msg": "Could not find the requested service volant-no-such-unit: host"
+}

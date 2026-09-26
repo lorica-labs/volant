@@ -1,0 +1,51 @@
+{
+  "_after": {
+    "backup_content": "a=1\nb=2\n",
+    "content": "a=3\nb=2\n",
+    "exists": true,
+    "mode": "0644",
+    "type": "file"
+  },
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "backup": "<golden-tmp>/l.conf.393868.2026-09-24@19:04:47~",
+  "changed": true,
+  "diff": [
+    {
+      "after": "",
+      "after_header": "<golden-tmp>/l.conf (content)",
+      "before": "",
+      "before_header": "<golden-tmp>/l.conf (content)"
+    },
+    {
+      "after_header": "<golden-tmp>/l.conf (file attributes)",
+      "before_header": "<golden-tmp>/l.conf (file attributes)"
+    }
+  ],
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": true,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "a=3",
+      "mode": null,
+      "owner": null,
+      "path": "<golden-tmp>/l.conf",
+      "regexp": "^a=",
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "line replaced"
+}

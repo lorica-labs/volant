@@ -7,4 +7,5 @@ extend-exclude = [
   "docs/dist/",
   "docs/package-lock.json",
   "crates/volant/tests/golden/python-modules/",
+  "crates/volant/tests/golden/native/",
 ]

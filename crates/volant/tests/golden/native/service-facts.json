@@ -1,0 +1,24 @@
+{
+  "_ansible_no_log": false,
+  "action": "service_facts",
+  "ansible_facts": {
+    "services": {
+      "cron.service": {
+        "name": "cron.service",
+        "source": "systemd",
+        "state": "running",
+        "status": "enabled"
+      },
+      "systemd-journald.service": {
+        "name": "systemd-journald.service",
+        "source": "systemd",
+        "state": "running",
+        "status": "static"
+      }
+    }
+  },
+  "changed": false,
+  "invocation": {
+    "module_args": {}
+  }
+}

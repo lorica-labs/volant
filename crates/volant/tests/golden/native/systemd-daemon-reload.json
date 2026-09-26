@@ -1,0 +1,20 @@
+{
+  "_ansible_no_log": false,
+  "action": "systemd",
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "daemon_reexec": false,
+      "daemon_reload": true,
+      "enabled": null,
+      "force": null,
+      "masked": null,
+      "name": null,
+      "no_block": false,
+      "scope": "system",
+      "state": null
+    }
+  },
+  "name": null,
+  "status": {}
+}

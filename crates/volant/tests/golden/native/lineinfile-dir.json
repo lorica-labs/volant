@@ -1,0 +1,39 @@
+{
+  "_after": {
+    "exists": true,
+    "mode": "0755",
+    "type": "directory"
+  },
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "changed": false,
+  "exception": "(traceback unavailable)",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": false,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "x",
+      "mode": null,
+      "owner": null,
+      "path": "<golden-tmp>",
+      "regexp": null,
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "Path <golden-tmp> is a directory !",
+  "rc": 256
+}

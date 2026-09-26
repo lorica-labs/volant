@@ -1,0 +1,63 @@
+{
+  "_ansible_no_log": false,
+  "action": "stat",
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "checksum_algorithm": "sha1",
+      "follow": false,
+      "get_attributes": true,
+      "get_checksum": true,
+      "get_mime": true,
+      "path": "<golden-tmp>/f.txt"
+    }
+  },
+  "stat": {
+    "atime": 1790276655.1101155,
+    "attr_flags": "e",
+    "attributes": [
+      "extents"
+    ],
+    "block_size": 4096,
+    "blocks": 8,
+    "charset": "us-ascii",
+    "checksum": "f572d396fae9206628714fb2ce00f72e94f2258f",
+    "ctime": 1790276655.1102114,
+    "dev": 64512,
+    "device_type": 0,
+    "executable": false,
+    "exists": true,
+    "gid": "<gid>",
+    "gr_name": "<group>",
+    "inode": 2229260,
+    "isblk": false,
+    "ischr": false,
+    "isdir": false,
+    "isfifo": false,
+    "isgid": false,
+    "islnk": false,
+    "isreg": true,
+    "issock": false,
+    "isuid": false,
+    "mimetype": "text/plain",
+    "mode": "0644",
+    "mtime": 1790276655.1102114,
+    "nlink": 1,
+    "path": "<golden-tmp>/f.txt",
+    "pw_name": "<user>",
+    "readable": true,
+    "rgrp": true,
+    "roth": true,
+    "rusr": true,
+    "size": 6,
+    "uid": "<uid>",
+    "version": "682595527",
+    "wgrp": false,
+    "woth": false,
+    "writeable": true,
+    "wusr": true,
+    "xgrp": false,
+    "xoth": false,
+    "xusr": false
+  }
+}

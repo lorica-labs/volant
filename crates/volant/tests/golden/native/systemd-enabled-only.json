@@ -1,0 +1,38 @@
+{
+  "_ansible_no_log": false,
+  "action": "systemd_service",
+  "changed": false,
+  "enabled": true,
+  "invocation": {
+    "module_args": {
+      "daemon_reexec": false,
+      "daemon_reload": false,
+      "enabled": true,
+      "force": null,
+      "masked": null,
+      "name": "cron.service",
+      "no_block": false,
+      "scope": "system",
+      "state": null
+    }
+  },
+  "name": "cron.service",
+  "status": {
+    "ActiveState": "active",
+    "After": "remote-fs.target systemd-journald.socket system.slice nss-user-lookup.target basic.target sysinit.target",
+    "Before": "multi-user.target shutdown.target",
+    "Conflicts": "shutdown.target",
+    "Description": "Regular background program processing daemon",
+    "ExecStart": "{ path=/usr/sbin/cron ; argv[]=/usr/sbin/cron -f -P $EXTRA_OPTS ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+    "ExecStartEx": "{ path=/usr/sbin/cron ; argv[]=/usr/sbin/cron -f -P $EXTRA_OPTS ; flags= ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+    "FragmentPath": "/usr/lib/systemd/system/cron.service",
+    "Id": "cron.service",
+    "LoadState": "loaded",
+    "Names": "cron.service",
+    "Requires": "system.slice sysinit.target",
+    "SubState": "running",
+    "Type": "simple",
+    "UnitFileState": "enabled",
+    "WantedBy": "multi-user.target"
+  }
+}

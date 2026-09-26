@@ -1,0 +1,44 @@
+{
+  "_after": {
+    "exists": true,
+    "mode": "0777",
+    "type": "link"
+  },
+  "_ansible_no_log": false,
+  "action": "file",
+  "changed": true,
+  "dest": "<golden-tmp>/l2",
+  "gid": "<gid>",
+  "group": "<group>",
+  "invocation": {
+    "module_args": {
+      "_diff_peek": null,
+      "_original_basename": null,
+      "access_time": null,
+      "access_time_format": "%Y%m%d%H%M.%S",
+      "attributes": null,
+      "follow": true,
+      "force": false,
+      "group": null,
+      "mode": null,
+      "modification_time": null,
+      "modification_time_format": "%Y%m%d%H%M.%S",
+      "owner": null,
+      "path": "<golden-tmp>/l2",
+      "recurse": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": "<golden-tmp>/f.txt",
+      "state": "link",
+      "unsafe_writes": false
+    }
+  },
+  "mode": "0777",
+  "owner": "<user>",
+  "size": 35,
+  "src": "<golden-tmp>/f.txt",
+  "state": "link",
+  "uid": "<uid>"
+}

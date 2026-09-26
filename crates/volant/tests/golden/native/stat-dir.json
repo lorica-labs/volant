@@ -1,0 +1,62 @@
+{
+  "_ansible_no_log": false,
+  "action": "stat",
+  "changed": false,
+  "invocation": {
+    "module_args": {
+      "checksum_algorithm": "sha1",
+      "follow": false,
+      "get_attributes": true,
+      "get_checksum": true,
+      "get_mime": true,
+      "path": "<golden-tmp>"
+    }
+  },
+  "stat": {
+    "atime": 1790276655.1088579,
+    "attr_flags": "e",
+    "attributes": [
+      "extents"
+    ],
+    "block_size": 4096,
+    "blocks": 8,
+    "charset": "binary",
+    "ctime": 1790276655.1102114,
+    "dev": 64512,
+    "device_type": 0,
+    "executable": true,
+    "exists": true,
+    "gid": "<gid>",
+    "gr_name": "<group>",
+    "inode": 2229258,
+    "isblk": false,
+    "ischr": false,
+    "isdir": true,
+    "isfifo": false,
+    "isgid": false,
+    "islnk": false,
+    "isreg": false,
+    "issock": false,
+    "isuid": false,
+    "mimetype": "inode/directory",
+    "mode": "0755",
+    "mtime": 1790276655.1102114,
+    "nlink": 2,
+    "path": "<golden-tmp>",
+    "pw_name": "<user>",
+    "readable": true,
+    "rgrp": true,
+    "roth": true,
+    "rusr": true,
+    "size": 4096,
+    "uid": "<uid>",
+    "version": "2105035995",
+    "wgrp": false,
+    "woth": false,
+    "writeable": true,
+    "wusr": true,
+    "xgrp": true,
+    "xoth": true,
+    "xusr": true
+  }
+}

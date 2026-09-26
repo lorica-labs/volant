@@ -1,0 +1,37 @@
+{
+  "_after": {
+    "exists": false
+  },
+  "_ansible_no_log": false,
+  "action": "lineinfile",
+  "changed": false,
+  "exception": "(traceback unavailable)",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "attributes": null,
+      "backrefs": false,
+      "backup": false,
+      "create": false,
+      "firstmatch": false,
+      "group": null,
+      "insertafter": null,
+      "insertbefore": null,
+      "line": "a=1",
+      "mode": null,
+      "owner": null,
+      "path": "<golden-tmp>/l.conf",
+      "regexp": null,
+      "search_string": null,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "state": "present",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "Destination <golden-tmp>/l.conf does not exist !",
+  "rc": 257
+}

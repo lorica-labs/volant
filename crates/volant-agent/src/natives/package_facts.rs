@@ -23,7 +23,7 @@ use super::NativeRun;
 pub const NATIVE: Native = Native {
     name: "package_facts",
     aliases: &[],
-    enabled: false,
+    enabled: true,
     run: imp::run,
 };
 

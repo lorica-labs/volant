@@ -21,7 +21,7 @@ use super::NativeRun;
 pub const NATIVE: Native = Native {
     name: "service_facts",
     aliases: &[],
-    enabled: false,
+    enabled: true,
     run: imp::run,
 };
 

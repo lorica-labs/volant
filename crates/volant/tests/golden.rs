@@ -2036,7 +2036,8 @@ fn a_native_module_returns_the_reference_s_own_keys() {
             out.status.code()
         ));
     }
-    for task in play[0]["tasks"][0]["always"]
+    // The recorded play's cleanups, not those of the play Volant was handed.
+    for task in recorded[0]["tasks"][0]["always"]
         .as_array()
         .into_iter()
         .flatten()

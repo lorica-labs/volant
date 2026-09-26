@@ -701,9 +701,10 @@ fn collections_path_env() -> Vec<(&'static str, String)> {
 /// Runs `playbook`, already written under `dir`, against `localhost` over the local connection,
 /// with `flags` (`-v` for the module goldens), and returns once it exits or panics at a deadline.
 ///
-/// `extra_env` is set on the child after every `ANSIBLE_*` variable is stripped from it, so a
-/// caller can forward the one or two names it actually needs (`collections_path_env()`) without
-/// reopening the door to the rest of this process's own `ANSIBLE_*` environment.
+/// `extra_env` is set on the child after every `ANSIBLE_*` and `VOLANT_*` variable is stripped
+/// from it, so a caller can forward the one or two names it actually needs
+/// (`collections_path_env()`) without reopening the door to the rest of this process's own
+/// environment: a `VOLANT_NATIVE_MODULES=0` in the shell would otherwise send every task to Python.
 #[cfg(target_os = "linux")]
 fn run_recorded_play(
     dir: &std::path::Path,
@@ -727,39 +728,48 @@ fn run_recorded_play(
         .arg(dir.join(playbook))
         .env("NO_COLOR", "1")
         .env_remove("COLUMNS")
-        .env("VOLANT_PYTHON", python)
         // The local agent inherits this run's environment and caches the payload under this
-        // directory, so the wipe before the run takes the cache with it rather than leaving it
-        // in the shared one.
-        .env("VOLANT_REMOTE_TMP", &remote_tmp)
+        // directory (`VOLANT_REMOTE_TMP`, set below), so the wipe before the run takes the cache
+        // with it rather than leaving it in the shared one.
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     for (name, _) in std::env::vars() {
-        if name.starts_with("ANSIBLE_") {
+        if name.starts_with("ANSIBLE_") || name.starts_with("VOLANT_") {
             command.env_remove(name);
         }
     }
+    command
+        .env("VOLANT_PYTHON", python)
+        .env("VOLANT_REMOTE_TMP", &remote_tmp);
     for (name, value) in extra_env {
         command.env(name, value);
     }
-    finish_within(command.spawn().expect("volant starts"), "volant")
+    finish_within(&mut command, "volant")
 }
 
-/// Waits for `child`, or kills it and panics at a deadline: a play that cannot reach its host
-/// waits rather than returning, and a hung test says nothing about the results it was written to
-/// compare. The native play, with its `apt` cases, is the longest: 42 s on the development
+/// Starts `command` in a process group of its own and waits for it, or kills the group and panics
+/// at a deadline: a play that cannot reach its host waits rather than returning, and a hung test
+/// says nothing about the results it was written to compare. The whole group, because the local
+/// agent and the modules it starts hold the same pipes, and killing `volant` alone would leave the
+/// wait below blocked on them. The native play is the longest: under a minute on the development
 /// machine.
 #[cfg(target_os = "linux")]
-fn finish_within(child: std::process::Child, what: &str) -> std::process::Output {
+fn finish_within(command: &mut std::process::Command, what: &str) -> std::process::Output {
+    use std::os::unix::process::CommandExt as _;
     let deadline = std::time::Duration::from_secs(300);
+    let child = command
+        .process_group(0)
+        .spawn()
+        .unwrap_or_else(|e| panic!("{what} starts: {e}"));
     let pid = libc::pid_t::try_from(child.id()).expect("a pid fits a pid_t");
     // Read while waiting: a child whose output outgrows the pipe blocks until someone does,
     // which `package_facts` under the JSON callback does.
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || send.send(child.wait_with_output()));
     let Ok(out) = receive.recv_timeout(deadline) else {
-        // Safety: `pid` is the child, which nothing has reaped while the thread waits on it.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
+        // Safety: `-pid` is the child's own process group, which it leads and nothing has
+        // reaped while the thread waits on it.
+        unsafe { libc::kill(-pid, libc::SIGKILL) };
         let out = receive
             .recv()
             .expect("the waiting thread answers")
@@ -1398,12 +1408,34 @@ fn native_play_tasks(play: &Value) -> Vec<&Value> {
 /// play runs it: a recording the index does not name is compared by nothing, and a case the play
 /// never runs has nothing to compare.
 ///
-/// What would make this red: a recording left behind by a renamed case, or an index entry added
-/// by hand.
+/// A floor on the set too: every native candidate, `setup` and each alias included, has a case
+/// that expects the native to answer, and the two `cron` cases are there. `natives()` leaves out
+/// every `become` case on a machine without `sudo -n` and the `cron` ones without cron, and index,
+/// recordings and play would still agree with each other.
+///
+/// What would make this red: a recording left behind by a renamed case, an index entry added by
+/// hand, or a regeneration on a machine that could not record a module's cases.
 #[test]
 fn every_native_recording_is_indexed() {
     let index = native_file("index.json");
     let index = index.as_object().expect("index.json is a mapping");
+    let mut failures = Vec::new();
+    for module in volant_protocol::modules::NATIVE_CANDIDATES {
+        if !index
+            .values()
+            .any(|spec| spec["module"] == *module && spec["expect"] == "native")
+        {
+            failures.push(format!(
+                "{module}: a native candidate with no indexed case that expects the native to \
+                 answer"
+            ));
+        }
+    }
+    for case in ["systemd-started-same", "systemd-enabled-only"] {
+        if !index.contains_key(case) {
+            failures.push(format!("{case}: not indexed (recorded without cron?)"));
+        }
+    }
     let play = native_file("play.json");
     let run: std::collections::BTreeSet<&str> = native_play_tasks(&play)
         .into_iter()
@@ -1420,7 +1452,6 @@ fn every_native_recording_is_indexed() {
         })
         .filter(|file| file != "index.json" && file != "play.json")
         .collect();
-    let mut failures = Vec::new();
     for file in &recorded {
         if !file
             .strip_suffix(".json")
@@ -1449,6 +1480,10 @@ fn every_native_recording_is_indexed() {
 /// directory's `size` are the same on every machine these run on, and are compared by value.
 #[cfg(target_os = "linux")]
 const NATIVE_DIR: &str = "/var/tmp/volant-golden-native";
+
+/// `NATIVE_LOCK` in `generate.py`.
+#[cfg(target_os = "linux")]
+const NATIVE_LOCK: &str = "/var/tmp/volant-golden-native.lock";
 
 #[cfg(target_os = "linux")]
 fn replace_in_strings(value: &mut Value, from: &str, to: &str) {
@@ -1791,36 +1826,42 @@ fn check_native_path(
     }
 }
 
-/// The reference's own results for `tasks`, run now on this machine the way `natives()` runs
-/// them, keyed by task name.
+/// The reference's own results for the recorded `play`, run now on this machine the way
+/// `natives()` runs it, keyed by task name: the whole play, so each `live` case meets the state
+/// the cases before it left, as it did under Volant.
+///
+/// With the environment Volant had: no `ANSIBLE_*` or `VOLANT_*` of this process, and the same
+/// empty `ANSIBLE_CONFIG`.
 #[cfg(target_os = "linux")]
 fn reference_results(
     python: &std::path::Path,
     work: &std::path::Path,
-    tasks: &[&Value],
+    play: &Value,
 ) -> Map<String, Value> {
-    let play = serde_json::json!([{
-        "hosts": "localhost",
-        "gather_facts": false,
-        "connection": "local",
-        "tasks": tasks,
-    }]);
     let path = work.join("reference.yml");
     std::fs::write(&path, play.to_string()).expect("the reference play is written");
-    let child = std::process::Command::new(python)
+    let mut command = std::process::Command::new(python);
+    command
         .args(["-m", "ansible", "playbook", "-i", "localhost,"])
         .arg(&path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (name, _) in std::env::vars() {
+        if name.starts_with("ANSIBLE_") || name.starts_with("VOLANT_") {
+            command.env_remove(name);
+        }
+    }
+    command
+        .env("ANSIBLE_CONFIG", work.join("ansible.cfg"))
         .env("ANSIBLE_STDOUT_CALLBACK", "ansible.builtin.json")
         .env("ANSIBLE_NOCOLOR", "1")
-        .env("ANSIBLE_PYTHON_INTERPRETER", "/usr/bin/python3")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("the reference starts");
-    let out = finish_within(child, "the reference");
+        .env("ANSIBLE_PYTHON_INTERPRETER", "/usr/bin/python3");
+    let out = finish_within(&mut command, "the reference");
     assert!(
         out.status.success(),
-        "the reference failed on the live cases:\n{}\n{}",
+        "the reference failed on the recorded play:
+{}
+{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -1854,26 +1895,35 @@ fn succeeds(probe: &str) -> bool {
 /// Each case's result is its registered value plus the `invocation` of its `-vvv` line (the
 /// reference registers none) and the `_after` read back after it, masked as the generator masks
 /// the recording. It is compared key by key with `native/<case>.json`, or, for a `live` case, with
-/// the reference's own answer, run just after on this machine: `package_facts`, `service_facts`
-/// and a unit's `systemctl show` are the machine's, not the recording's.
+/// the reference's own answer: the reference replays the whole play just after, on this machine,
+/// since `package_facts`, `service_facts` and a unit's `systemctl show` are the machine's, not the
+/// recording's. Both runs get the same scrubbed environment and an empty `ANSIBLE_CONFIG`.
 ///
 /// The path comes from `VOLANT_PROFILE_JSON`. A module among the natives the agent declared must
 /// take the index's path (`native` inside the subset, `fallback` outside it); any other takes
 /// `python`. So on a build with no native enabled every case is held to `python`, and enabling a
-/// native holds each of its cases to the index.
+/// native holds each of its cases to the index. A declared native with no case expecting it to
+/// answer fails, as does a run that exits non-zero or skips its `always` cleanup.
 ///
-/// Needs `sudo -n`, systemd, apt and cron active and enabled, as the recording did. Without
-/// `VOLANT_PYTHON` a missing one skips the test loudly; with it, it fails.
+/// Needs an account other than root, `sudo -n`, systemd, apt, cron active and enabled, and no
+/// `hello` installed, as the recording did. Without `VOLANT_PYTHON` a missing one skips the test
+/// loudly; with it, it fails. Takes the generator's lock for the machine-wide state it changes.
 ///
 /// What would make this red: a native answering a key, a value, a message or a mode the
 /// reference does not; a native leaving the file behind differently (`_after`); a native that
-/// hands back where the index says it answers, or answers where the index says it hands back.
+/// hands back where the index says it answers, or answers where the index says it hands back; a
+/// native that never changes anything (the unit and package cases ask for changes).
 #[cfg(target_os = "linux")]
 #[test]
 fn a_native_module_returns_the_reference_s_own_keys() {
     let Some(python) = reference_python() else {
         return;
     };
+    assert!(
+        identity().uid != Value::from(0),
+        "run as root: the recording's literal `root` would read as the running account's own; run \
+         as an ordinary account with passwordless `sudo -n`"
+    );
     let missing: Vec<&str> = [
         ("sudo -n true", "passwordless `sudo -n`"),
         ("test -d /run/systemd/system", "running systemd"),
@@ -1881,6 +1931,10 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         (
             "systemctl is-active --quiet cron && systemctl is-enabled --quiet cron",
             "cron active and enabled",
+        ),
+        (
+            "test \"$(dpkg-query -W -f='${db:Status-Status}' hello 2>/dev/null)\" != installed",
+            "`hello` not installed (the play installs and removes it)",
         ),
     ]
     .into_iter()
@@ -1890,8 +1944,8 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     if !missing.is_empty() {
         let why = format!(
             "the native cases were recorded with `become`, systemd, apt and cron, and this \
-             machine has no {}",
-            missing.join(" and no ")
+             machine lacks: {}",
+            missing.join(", ")
         );
         assert!(
             std::env::var_os("VOLANT_PYTHON").is_none(),
@@ -1900,11 +1954,22 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         eprintln!("skipped: {why}.");
         return;
     }
+    // The fixture, the accounts, the unit and the package are the machine's: one run at a time,
+    // this test's or the generator's.
+    let lock = std::fs::File::options()
+        .create(true)
+        .append(true)
+        .open(NATIVE_LOCK)
+        .expect("the lock file opens");
+    // Safety: a valid descriptor, held open until the end of the test.
+    let locked = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX) };
+    assert_eq!(locked, 0, "{NATIVE_LOCK} is lockable");
 
     let index = native_file("index.json");
     let index = index.as_object().expect("index.json is a mapping");
-    let mut play = native_file("play.json");
-    replace_in_strings(&mut play, "<golden-tmp>", NATIVE_DIR);
+    let mut recorded = native_file("play.json");
+    replace_in_strings(&mut recorded, "<golden-tmp>", NATIVE_DIR);
+    let mut play = recorded.clone();
     // Volant refuses the `connection` play keyword; the inventory `run_recorded_play` writes
     // says `local` instead.
     play[0]
@@ -1929,27 +1994,17 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         })
         .collect();
 
-    // The generator's fixture, mode for mode: `stat-*` report these, and `copy-module-remote-src`
-    // creates its file under the umask the agent inherits from here.
-    let dir = std::path::Path::new(NATIVE_DIR);
-    let _ = std::fs::remove_dir_all(dir);
-    std::fs::create_dir_all(dir).expect("the recorded directory is writable");
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
-            .expect("the directory's mode is set");
-        std::fs::write(dir.join("f.txt"), "hello\n").expect("the fixture is written");
-        std::fs::set_permissions(dir.join("f.txt"), std::fs::Permissions::from_mode(0o644))
-            .expect("the fixture's mode is set");
-        std::os::unix::fs::symlink("f.txt", dir.join("l")).expect("the link is made");
-    }
     // Safety: nextest runs each test in its own process, and nothing here creates files
     // concurrently.
     unsafe { libc::umask(0o022) };
+    native_fixture();
     // Outside NATIVE_DIR, as in the generator: `stat-dir` reports the directory's link count.
     let work = std::env::temp_dir().join(format!("volant-golden-native-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).expect("the work directory is writable");
+    // Read by both runs instead of the account's own `~/.ansible.cfg`, whose `[volant]
+    // native_modules = false` or `become_user` would change one side's answer.
+    std::fs::write(work.join("ansible.cfg"), "").expect("the empty config is written");
     std::fs::write(
         work.join("natives.yml"),
         serde_json::to_string_pretty(&play).expect("the play serialises"),
@@ -1961,23 +2016,53 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         "natives.yml",
         &python,
         &["-vvv", "--facts", "native"],
-        &[("VOLANT_PROFILE_JSON", profile.display().to_string())],
+        &[
+            ("VOLANT_PROFILE_JSON", profile.display().to_string()),
+            (
+                "ANSIBLE_CONFIG",
+                work.join("ansible.cfg").display().to_string(),
+            ),
+        ],
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
-    let live: Vec<&Value> = native_play_tasks(&play)
+    let mut failures = Vec::new();
+    // Every failing case and every cleanup carries `ignore_errors`, so a sound run exits 0 and
+    // runs its whole `always`: a native that answers its case and then breaks the agent, or ends
+    // the run, is caught here and by no case.
+    if !out.status.success() {
+        failures.push(format!(
+            "volant exited {:?}, where every failure is ignored",
+            out.status.code()
+        ));
+    }
+    for task in play[0]["tasks"][0]["always"]
+        .as_array()
         .into_iter()
-        .filter(|task| {
-            task["name"]
-                .as_str()
-                .and_then(|name| index.get(name))
-                .is_some_and(|spec| spec["compare"] == "live")
-        })
-        .collect();
-    let live = reference_results(&python, &work, &live);
+        .flatten()
+    {
+        let name = task["name"].as_str().unwrap_or_default();
+        if !results.contains_key(name) {
+            failures.push(format!("the cleanup {name} did not run"));
+        }
+    }
+    // The reference replays the whole recorded play from the same fixture, so each live case
+    // meets the state the cases before it left.
+    native_fixture();
+    let live = reference_results(&python, &work, &recorded);
     let masks = NativeMasks::new(format!("{}/tmp/", work.display()));
     let profile = native_profile(&profile);
-    let mut failures = Vec::new();
+    for native in profile.natives.iter().flatten() {
+        if native != "volant_echo"
+            && !index
+                .values()
+                .any(|spec| spec["module"] == *native && spec["expect"] == "native")
+        {
+            failures.push(format!(
+                "the agent declares a {native} native, and no indexed case expects it to answer"
+            ));
+        }
+    }
     for (case, spec) in index {
         let mut ours = match native_result(case, spec, &results) {
             Ok(ours) => ours,
@@ -1994,6 +2079,8 @@ fn a_native_module_returns_the_reference_s_own_keys() {
                     continue;
                 };
                 masks.apply(&mut reference);
+                keep_live(&mut reference);
+                keep_live(&mut ours);
                 reference
             }
             Some("exact" | "keys") => native_file(&format!("{case}.json")),
@@ -2005,8 +2092,9 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         }
         check_native_path(case, spec, &profile, &mut failures);
     }
-    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(NATIVE_DIR);
     let _ = std::fs::remove_dir_all(&work);
+    drop(lock);
     assert!(
         failures.is_empty(),
         "{} difference(s) across {} native case(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
@@ -2015,6 +2103,41 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         failures.join("\n"),
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The generator's fixture under NATIVE_DIR, mode for mode: `stat-*` report these, and
+/// `copy-module-remote-src` creates its file under the umask the caller set.
+#[cfg(target_os = "linux")]
+fn native_fixture() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = std::path::Path::new(NATIVE_DIR);
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).expect("the recorded directory is writable");
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+        .expect("the directory's mode is set");
+    std::fs::write(dir.join("f.txt"), "hello\n").expect("the fixture is written");
+    std::fs::set_permissions(dir.join("f.txt"), std::fs::Permissions::from_mode(0o644))
+        .expect("the fixture's mode is set");
+    std::os::unix::fs::symlink("f.txt", dir.join("l")).expect("the link is made");
+}
+
+/// What `natives()` keeps of `package_facts` and `service_facts` (`LIVE_KEEP`), kept on both
+/// sides of a live comparison: the rest of the machine's packages and units move between the two
+/// runs (the apt hook starts `packagekit`, timers fire) for reasons no native controls.
+#[cfg(target_os = "linux")]
+fn keep_live(result: &mut Value) {
+    let keep: [(&str, &[&str]); 2] = [
+        ("packages", &["bash"]),
+        ("services", &["cron.service", "systemd-journald.service"]),
+    ];
+    for (key, names) in keep {
+        if let Some(Value::Object(map)) = result
+            .get_mut("ansible_facts")
+            .and_then(|facts| facts.get_mut(key))
+        {
+            map.retain(|name, _| names.contains(&name.as_str()));
+        }
+    }
 }
 
 /// `volant_echo` as a Python module ansible-core builds under `ansible.modules`, for

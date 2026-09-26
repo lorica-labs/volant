@@ -595,7 +595,8 @@ mod imp {
         /// `list-units` on an Ubuntu 24.04 host with systemd 255, cut down and sanitised (disk
         /// ids zeroed), plus the lines whose description names a failure state: the reference
         /// reads every word but the last, so `grub-initrd-fallback` and
-        /// `update-notifier-download` come out `failed`, as measured on that host.
+        /// `update-notifier-download` come out `failed`, as measured on that host, while
+        /// `demo-tail` (added here) ends on one and does not.
         const UNITS: &str = r"UNIT                                                          LOAD      ACTIVE   SUB     DESCRIPTION
 apparmor.service                                              loaded    active   exited  Load AppArmor profiles
 apport-autoreport.service                                     loaded    inactive dead    Process error reports when automatic reporting is enabled
@@ -606,6 +607,7 @@ grub-initrd-fallback.service                                  loaded    inactive
 systemd-fsck@dev-disk-by\x2duuid-0000\x2d0000.service         loaded    active   exited  File System Check on /dev/disk/by-uuid/0000-0000
 systemd-journald.service                                      loaded    active   running Journal Service
 update-notifier-download.service                              loaded    inactive dead    Download data for packages that failed at package install time
+demo-tail.service                                             loaded    inactive dead    Retry what failed
 user@1000.service                                             loaded    active   running User Manager for UID 1000
 zfs-mount.service                                             not-found inactive dead    zfs-mount.service
 
@@ -613,7 +615,7 @@ Legend: LOAD   → Reflects whether the unit definition was properly loaded.
         ACTIVE → The high-level unit activation state, i.e. generalization of SUB.
         SUB    → The low-level unit activation state, values depend on unit type.
 
-11 loaded units listed.
+12 loaded units listed.
 To show all installed unit files use 'systemctl list-unit-files'.
 ";
 
@@ -665,7 +667,7 @@ user@.service                                static          -
         /// ansible-core 2.19.12's own `ServiceScanService` and `SystemctlScanService`, run on
         /// the outputs above, merged as `main`
         /// merges them. No warning.
-        const REFERENCE: &str = r#"{"apparmor": {"name": "apparmor", "source": "sysv", "state": "running"}, "apparmor.service": {"name": "apparmor.service", "source": "systemd", "state": "stopped", "status": "enabled"}, "apport-autoreport.service": {"name": "apport-autoreport.service", "source": "systemd", "state": "stopped", "status": "static"}, "auditd.service": {"name": "auditd.service", "source": "systemd", "state": "stopped", "status": "not-found"}, "autovt@.service": {"name": "autovt@.service", "source": "systemd", "state": "unknown", "status": "alias"}, "console-setup.sh": {"name": "console-setup.sh", "source": "sysv", "state": "stopped"}, "cron": {"name": "cron", "source": "sysv", "state": "running"}, "cron.service": {"name": "cron.service", "source": "systemd", "state": "running", "status": "enabled"}, "cryptdisks": {"name": "cryptdisks", "source": "sysv", "state": "stopped"}, "cryptdisks.service": {"name": "cryptdisks.service", "source": "systemd", "state": "inactive", "status": "masked"}, "dbus-org.freedesktop.resolve1.service": {"name": "dbus-org.freedesktop.resolve1.service", "source": "systemd", "state": "active", "status": "alias"}, "dbus-org.freedesktop.timesync1.service": {"name": "dbus-org.freedesktop.timesync1.service", "source": "systemd", "state": "inactive", "status": "bad"}, "fwupd-refresh.service": {"name": "fwupd-refresh.service", "source": "systemd", "state": "stopped", "status": "failed"}, "getty@.service": {"name": "getty@.service", "source": "systemd", "state": "unknown", "status": "enabled"}, "grub-initrd-fallback.service": {"name": "grub-initrd-fallback.service", "source": "systemd", "state": "stopped", "status": "failed"}, "lxd-agent.service": {"name": "lxd-agent.service", "source": "systemd", "state": "inactive", "status": "static"}, "procps": {"name": "procps", "source": "sysv", "state": "running"}, "systemd-fsck@dev-disk-by\\x2duuid-0000\\x2d0000.service": {"name": "systemd-fsck@dev-disk-by\\x2duuid-0000\\x2d0000.service", "source": "systemd", "state": "stopped", "status": "active"}, "systemd-journald.service": {"name": "systemd-journald.service", "source": "systemd", "state": "running", "status": "static"}, "systemd-remount-fs.service": {"name": "systemd-remount-fs.service", "source": "systemd", "state": "inactive", "status": "enabled-runtime"}, "update-notifier-download.service": {"name": "update-notifier-download.service", "source": "systemd", "state": "stopped", "status": "failed"}, "user@.service": {"name": "user@.service", "source": "systemd", "state": "unknown", "status": "static"}, "user@1000.service": {"name": "user@1000.service", "source": "systemd", "state": "running", "status": "active"}, "uuidd": {"name": "uuidd", "source": "sysv", "state": "stopped"}, "zfs-mount.service": {"name": "zfs-mount.service", "source": "systemd", "state": "stopped", "status": "not-found"}}"#;
+        const REFERENCE: &str = r#"{"apparmor": {"name": "apparmor", "source": "sysv", "state": "running"}, "apparmor.service": {"name": "apparmor.service", "source": "systemd", "state": "stopped", "status": "enabled"}, "apport-autoreport.service": {"name": "apport-autoreport.service", "source": "systemd", "state": "stopped", "status": "static"}, "auditd.service": {"name": "auditd.service", "source": "systemd", "state": "stopped", "status": "not-found"}, "autovt@.service": {"name": "autovt@.service", "source": "systemd", "state": "unknown", "status": "alias"}, "console-setup.sh": {"name": "console-setup.sh", "source": "sysv", "state": "stopped"}, "cron": {"name": "cron", "source": "sysv", "state": "running"}, "cron.service": {"name": "cron.service", "source": "systemd", "state": "running", "status": "enabled"}, "cryptdisks": {"name": "cryptdisks", "source": "sysv", "state": "stopped"}, "demo-tail.service": {"name": "demo-tail.service", "source": "systemd", "state": "stopped", "status": "inactive"}, "cryptdisks.service": {"name": "cryptdisks.service", "source": "systemd", "state": "inactive", "status": "masked"}, "dbus-org.freedesktop.resolve1.service": {"name": "dbus-org.freedesktop.resolve1.service", "source": "systemd", "state": "active", "status": "alias"}, "dbus-org.freedesktop.timesync1.service": {"name": "dbus-org.freedesktop.timesync1.service", "source": "systemd", "state": "inactive", "status": "bad"}, "fwupd-refresh.service": {"name": "fwupd-refresh.service", "source": "systemd", "state": "stopped", "status": "failed"}, "getty@.service": {"name": "getty@.service", "source": "systemd", "state": "unknown", "status": "enabled"}, "grub-initrd-fallback.service": {"name": "grub-initrd-fallback.service", "source": "systemd", "state": "stopped", "status": "failed"}, "lxd-agent.service": {"name": "lxd-agent.service", "source": "systemd", "state": "inactive", "status": "static"}, "procps": {"name": "procps", "source": "sysv", "state": "running"}, "systemd-fsck@dev-disk-by\\x2duuid-0000\\x2d0000.service": {"name": "systemd-fsck@dev-disk-by\\x2duuid-0000\\x2d0000.service", "source": "systemd", "state": "stopped", "status": "active"}, "systemd-journald.service": {"name": "systemd-journald.service", "source": "systemd", "state": "running", "status": "static"}, "systemd-remount-fs.service": {"name": "systemd-remount-fs.service", "source": "systemd", "state": "inactive", "status": "enabled-runtime"}, "update-notifier-download.service": {"name": "update-notifier-download.service", "source": "systemd", "state": "stopped", "status": "failed"}, "user@.service": {"name": "user@.service", "source": "systemd", "state": "unknown", "status": "static"}, "user@1000.service": {"name": "user@1000.service", "source": "systemd", "state": "running", "status": "active"}, "uuidd": {"name": "uuidd", "source": "sysv", "state": "stopped"}, "zfs-mount.service": {"name": "zfs-mount.service", "source": "systemd", "state": "stopped", "status": "not-found"}}"#;
 
         /// A host of fake commands under a directory of its own, removed at the end: `systemctl`
         /// and `service` print the outputs above, `locale -a` lists `C.utf8`.
@@ -763,6 +765,28 @@ esac
             assert_eq!(result["invocation"], json!({"module_args": {}}));
         }
 
+        /// `service` exiting 4 on a host without `/etc/init.d` (what RHEL 9 does) is no SysV
+        /// listing at all, and no warning: systemd's units are answered alone.
+        ///
+        /// What would make this red: the exit read as a failure, which hands back, or its
+        /// output read.
+        #[test]
+        fn a_service_tool_without_init_scripts_lists_nothing() {
+            let host = Host::new();
+            host.command(
+                "/usr/sbin/service",
+                "#!/bin/sh\necho ' [ + ]  ghost'\nexit 4\n",
+            );
+            let result = host.answer().unwrap();
+            let services = result["ansible_facts"]["services"].as_object().unwrap();
+            assert!(
+                services
+                    .values()
+                    .all(|service| service["source"] == "systemd")
+            );
+            assert!(services.contains_key("cron.service"));
+        }
+
         /// A unit line naming two failure states: the reference picks one in its set's order,
         /// which its hash seed changes from run to run. The native hands back rather than pick.
         #[test]
@@ -779,8 +803,9 @@ esac
         ///
         /// What would make this red, one each: a unit line too short for the reference's
         /// indexing answered; a one-word unit file line answered (the reference raises); a
-        /// failing `list-units` answered (the reference warns); `chkconfig` ignored; a host
-        /// without systemd's canary answered; an argument accepted (the module takes none).
+        /// failing `list-units` or `service --status-all` answered (the reference warns);
+        /// `chkconfig` ignored; a host without systemd's canary answered; output that is not
+        /// UTF-8 answered; an argument accepted (the module takes none).
         #[test]
         fn a_host_outside_the_subset_hands_back() {
             let host = Host::new();
@@ -802,6 +827,18 @@ esac
             let host = Host::new();
             std::fs::remove_dir_all(host.0.join("run/systemd")).unwrap();
             assert_eq!(host.hands_back(), "the host is not run by systemd");
+
+            let host = Host::new();
+            std::fs::write(
+                host.0.join("fixture/units.txt"),
+                b"bad\xff.service a b c d\n",
+            )
+            .unwrap();
+            assert!(host.hands_back().contains("is not UTF-8"));
+
+            let host = Host::new();
+            host.command("/usr/sbin/service", "#!/bin/sh\nexit 3\n");
+            assert!(host.hands_back().contains("--status-all exited 3"));
 
             let host = Host::new();
             let args = json!({"x": 1});

@@ -41,6 +41,9 @@ print(json.dumps(out))
 /// What would make this red: a package, version, section or origin that python-apt reads
 /// differently from the native, or a native answer on a machine where python-apt, which the
 /// reference needs, is missing.
+///
+/// python-apt is read before and after the native: another run installing or removing a
+/// package in between (the native golden does) makes the attempt void, and it is tried again.
 #[test]
 fn package_facts_answers_as_python_apt_reads_this_machine() {
     let mut agent = common::spawn_agent();
@@ -48,10 +51,22 @@ fn package_facts_answers_as_python_apt_reads_this_machine() {
         eprintln!("this agent does not run package_facts natively: nothing to compare");
         return;
     }
-    let (result, ran) = run_one(&mut agent, task(json!({})));
+    for _ in 0..5 {
+        let before = python_apt();
+        let (result, ran) = run_one(&mut agent, task(json!({})));
+        if python_apt() != before {
+            eprintln!("the packages changed during the attempt: trying again");
+            continue;
+        }
+        return compare(&result, &ran, before);
+    }
+    panic!("the packages of this machine kept changing during every attempt");
+}
+
+fn compare(result: &TaskResult, ran: &Ran, reference: Option<Value>) {
     match ran.path {
         ExecPath::Native => {
-            let reference = python_apt()
+            let reference = reference
                 .expect("the native answered on a machine where python3 cannot import apt");
             let ours = &result.0["ansible_facts"]["packages"];
             let differ: Vec<&String> = reference
@@ -70,7 +85,7 @@ fn package_facts_answers_as_python_apt_reads_this_machine() {
         }
         ExecPath::Fallback => eprintln!(
             "this machine is outside the native package_facts ({}): the Python path ran",
-            ran.reason.unwrap_or_default()
+            ran.reason.as_deref().unwrap_or_default()
         ),
         ExecPath::Python => panic!("an enabled native was not consulted"),
     }

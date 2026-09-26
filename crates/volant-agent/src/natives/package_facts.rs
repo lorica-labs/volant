@@ -1355,10 +1355,11 @@ Description: time zone and daylight-saving time data
         ///
         /// What would make this red, one line each: a list no source names read (a stale list
         /// apt ignores); a compressed list skipped; `apk` ignored under `auto`; `APT_CONFIG`
-        /// or `Dir::State` ignored; a foreign architecture answered; a source whose `deb-src`
-        /// twin sets another `Signed-By` answered (apt refuses the list); python3-apt missing;
-        /// a list whose version differs from the status's in a hashed field, or in text only,
-        /// or two lists disagreeing about one version, answered.
+        /// or `Dir::State` ignored; dpkg's pending updates ignored; a foreign architecture
+        /// answered; a source whose `deb-src` twin sets another `Signed-By` answered (apt
+        /// refuses the list); python3-apt missing; a list whose version differs from the
+        /// status's in a hashed field, or in text only, or two lists disagreeing about one
+        /// version, answered.
         #[test]
         fn a_host_outside_the_subset_hands_back() {
             let cases: Vec<(&str, Box<dyn Fn(&Tree)>)> = vec![
@@ -1471,6 +1472,9 @@ Description: time zone and daylight-saving time data
                 let given = tree.hands_back(json!({}));
                 assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
             }
+            let tree = Tree::new(HOST);
+            tree.write("/var/lib/dpkg/updates/0001", "");
+            assert!(tree.hands_back(json!({})).contains("dpkg has updates"));
             let tree = Tree::new(HOST);
             let given = match tree.answer_with(json!({}), &[("APT_CONFIG", "/srv/apt.conf")]) {
                 Err(Stop::HandBack(reason)) => reason,

@@ -53,9 +53,6 @@ fn parse(out: &str) -> (&'static str, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
-    use super::super::tests::{FakeRoot, probe};
     use super::*;
 
     /// Root with every capability, an unprivileged user (measured: `Current: =` gives `['']`),
@@ -84,6 +81,17 @@ mod tests {
             )
         );
         assert_eq!(parse("nothing"), ("NA", vec![]));
+    }
+
+    /// `capsh` missing, failing, then answering, under a fake root. Linux only: the native runs
+    /// nowhere else, and `capsh` is a Linux tool. On the macOS runner the stub read as an answer
+    /// without its `Current:` line; that platform never runs the collector.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn capsh_missing_failing_or_answering() {
+        use serde_json::json;
+
+        use super::super::tests::{FakeRoot, probe};
 
         let fake = FakeRoot::new("caps");
         let (root, probe) = (fake.root(), probe());

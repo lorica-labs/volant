@@ -8,6 +8,9 @@
 //! runs a real stub module instead, to see what it was given.
 #![cfg(unix)]
 
+#[cfg(target_os = "linux")]
+mod setup_exits;
+
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -198,12 +201,13 @@ fn a_native_that_panics_hands_the_task_back() {
 /// with the `changed: false` a module result gets, and the default subset handed to the payload
 /// with the reason.
 ///
-/// Runs on the machine's own facts, so it needs what the native needs: Linux, Debian or Ubuntu,
-/// `/usr/bin/python3`, and the node name in `/etc/hosts`. A machine without them fails on the
-/// first assertion, naming the reason the native gave.
+/// Runs on the machine's own facts. On a host outside the native's subset (a runner with
+/// `/usr/bin/rpm`) the first task hands back, and the test asserts the reason is one of those
+/// hosts' and checks the answer no further; the second task's hand-back is decided by the
+/// arguments alone and is checked everywhere.
 ///
 /// What would make this red: the native given no interpreter (the dispatcher's context left
-/// empty), or a subset outside `min` answered.
+/// empty, which hands back for a reason no host gives), or a subset outside `min` answered.
 #[test]
 #[cfg(target_os = "linux")]
 fn setup_answers_min_and_hands_the_default_subset_back() {
@@ -216,15 +220,18 @@ fn setup_answers_min_and_hands_the_default_subset_back() {
         task
     };
     let (result, ran) = agent.run_one(1, with_python(json!({"gather_subset": ["min"]})));
-    assert_eq!(
-        ran.path,
-        ExecPath::Native,
-        "the native setup handed back on this machine, which lacks what it needs: {:?}",
-        ran.reason
-    );
-    assert_eq!(result.0["changed"], false);
-    assert_eq!(result.0["ansible_facts"]["module_setup"], true);
-    assert_eq!(result.0["ansible_facts"]["ansible_pkg_mgr"], "apt");
+    if ran.path == ExecPath::Native {
+        assert_eq!(result.0["changed"], false);
+        assert_eq!(result.0["ansible_facts"]["module_setup"], true);
+        assert_eq!(result.0["ansible_facts"]["ansible_pkg_mgr"], "apt");
+    } else {
+        let reason = ran.reason.as_deref().unwrap_or_default();
+        assert!(
+            ran.path == ExecPath::Fallback && setup_exits::is_host_exit(reason),
+            "the native setup did not answer, and not for a host outside its subset: {ran:?}"
+        );
+        eprintln!("this machine is outside the native setup's subset ({reason})");
+    }
 
     let (result, ran) = agent.run_one(2, with_python(json!({})));
     assert_eq!(ran.path, ExecPath::Fallback);

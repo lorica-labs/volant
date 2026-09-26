@@ -23,53 +23,30 @@ fn agent(args: &[&str]) -> std::process::Output {
         .expect("the agent runs")
 }
 
-/// What the test needs from the machine, checked first so a machine outside the native's subset
-/// fails naming the missing prerequisite rather than with a key list. The tests that call it are
-/// Linux only: the native answers nowhere else, and elsewhere it has nothing to check.
 #[cfg(target_os = "linux")]
-fn check_the_machine() {
-    let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let id = os_release
-        .lines()
-        .find_map(|line| line.strip_prefix("ID="))
-        .map(|id| id.trim_matches('"'));
+mod setup_exits;
+
+/// The native's answer to `gather_subset: min` on this machine, or `None` once it has handed
+/// back for a host outside its subset, which is asserted and printed. Any other hand-back, or a
+/// failure, is red. Linux only: the native answers nowhere else.
+#[cfg(target_os = "linux")]
+fn answer_here() -> Option<Value> {
+    let out = agent(&["--native-facts", "min", "python3"]);
+    if out.status.success() {
+        return Some(serde_json::from_slice(&out.stdout).expect("the answer is JSON"));
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let reason = stderr
+        .trim()
+        .strip_prefix("volant-agent: the native setup hands back: ")
+        .unwrap_or_else(|| panic!("the native setup failed without handing back: {stderr}"));
     assert!(
-        matches!(id, Some("ubuntu" | "debian")),
-        "the native setup answers on Debian and Ubuntu only, and this machine is {id:?}"
+        setup_exits::is_host_exit(reason),
+        "the native setup handed back on this machine for a reason other than a host outside \
+         its subset: {reason}"
     );
-    assert!(
-        Command::new("python3").arg("-c").arg("").status().is_ok(),
-        "the native setup needs python3 for the python facts, and this machine has none on PATH"
-    );
-    let nsswitch = std::fs::read_to_string("/etc/nsswitch.conf").unwrap_or_default();
-    let files_first = nsswitch
-        .lines()
-        .find_map(|line| line.trim_start().strip_prefix("hosts:"))
-        .and_then(|sources| sources.split_whitespace().next())
-        == Some("files");
-    let node = String::from_utf8(
-        Command::new("uname")
-            .arg("-n")
-            .output()
-            .expect("uname runs")
-            .stdout,
-    )
-    .unwrap_or_default();
-    let node = node.trim();
-    let hosts = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
-    let listed = hosts.lines().any(|line| {
-        line.split('#')
-            .next()
-            .unwrap_or_default()
-            .split_whitespace()
-            .skip(1)
-            .any(|name| name.eq_ignore_ascii_case(node))
-    });
-    assert!(
-        files_first && listed,
-        "the native setup reads the fqdn from /etc/hosts, and on this machine `hosts:` does not \
-         start with `files` ({files_first}) or /etc/hosts does not name the node {node} ({listed})"
-    );
+    eprintln!("this machine is outside the native setup's subset ({reason}): nothing to compare");
+    None
 }
 
 /// The keys whose source this machine lacks, which the reference leaves out as well.
@@ -125,19 +102,15 @@ fn absent_here() -> BTreeSet<&'static str> {
 ///
 /// What would make this red: a key the collector writes and the list does not name, which the
 /// controller would never know it can rely on; a key the list names and the collector never
-/// writes, which a play reading it would find missing; or the native handing back on a machine
-/// inside its subset, which the message names.
+/// writes, which a play reading it would find missing; or the native handing back for anything
+/// but a host outside its subset. On such a host (a runner with `/usr/bin/rpm`) it asserts the
+/// hand-back's reason and compares nothing.
 #[test]
 #[cfg(target_os = "linux")]
 fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
-    check_the_machine();
-    let out = agent(&["--native-facts", "min", "python3"]);
-    assert!(
-        out.status.success(),
-        "the native setup handed back: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let result: Value = serde_json::from_slice(&out.stdout).expect("the answer is JSON");
+    let Some(result) = answer_here() else {
+        return;
+    };
     let produced: BTreeSet<&str> = result["ansible_facts"]
         .as_object()
         .expect("the facts are an object")
@@ -175,23 +148,17 @@ fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
     );
 }
 
-/// The time zone names come from the C library here and from Python's `time` module in the
-/// reference, and the live comparison leaves `date_time` out because its values move. Compared
-/// here against the interpreter on the same machine instead.
+/// The live comparison leaves `date_time` out because its values move, so its zone fields are
+/// compared here against Python's `time` module on the same machine, where the native answers.
 ///
 /// What would make this red: `tz_dst` read from the current offset rather than the zone's
 /// daylight name, or `tz_offset` printed without the sign and four digits of `%z`.
 #[test]
 #[cfg(target_os = "linux")]
 fn the_time_zone_names_match_python_on_this_machine() {
-    check_the_machine();
-    let out = agent(&["--native-facts", "min", "python3"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let result: Value = serde_json::from_slice(&out.stdout).expect("the answer is JSON");
+    let Some(result) = answer_here() else {
+        return;
+    };
     let date_time = &result["ansible_facts"]["ansible_date_time"];
     let python = Command::new("python3")
         .arg("-c")

@@ -4,7 +4,7 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 use tokio::sync::{Semaphore, mpsc, watch};
@@ -17,8 +17,9 @@ use crate::playbook::Play;
 use crate::render::{Dump, Renderer};
 use crate::stats::{Outcome, Stats};
 use crate::template::Templar;
+use crate::vars::VarStore;
 
-use super::driver::drive_host;
+use super::driver::{Definitions, drive_host, mark_boundaries};
 use super::include::IncludeGroup;
 use super::prepare::{PlayPlan, host_vars};
 use super::{LinkKey, RunOptions, RunState};
@@ -137,6 +138,13 @@ pub(super) enum Event {
     },
     /// Every result of task `index` on `host` has been sent.
     TaskDone { host: String, index: usize },
+    /// The templated name of step `index`, rendered by `host`'s driver when it reached the step:
+    /// what the banner shows when `host` is the one it is printed for. See `task_name`.
+    Named {
+        host: String,
+        index: usize,
+        name: String,
+    },
     /// This host reached step `index` and has no result to show for it. It is the one event
     /// that prints a header of its own every time: measured on ansible-core 2.19.12, a `meta`
     /// shows one `TASK [meta]` banner per live host with nothing underneath, two banners in a
@@ -190,7 +198,24 @@ pub(super) async fn run_batch(
     // the sender; every driver reads through its own receiver. One copy per batch: the handlers
     // a batch splices in behind a flush point belong to that batch alone, and the next one starts
     // from the list the compiler produced.
-    let (plan_tx, plan_rx) = watch::channel(Arc::new(compiled.clone()));
+    //
+    // Marked here rather than at compile time because what a variable name can read depends on
+    // the inventory, the play's `vars` and `vars_files`, which the compiler never sees; and per
+    // batch because each batch starts again from the compiler's list.
+    let mut definitions = Definitions::default();
+    let playbook_dir = {
+        let store = state.vars.lock().expect("vars lock");
+        store.static_maps().for_each(|m| definitions.add(m));
+        store.playbook_dir().to_path_buf()
+    };
+    definitions.add(&play.vars);
+    vars_files
+        .values()
+        .flatten()
+        .for_each(|m| definitions.add(m));
+    let mut first = compiled.clone();
+    mark_boundaries(&mut first, &definitions, &playbook_dir);
+    let (plan_tx, plan_rx) = watch::channel(Arc::new(first));
     let plan = Arc::new(PlayPlan {
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
@@ -282,6 +307,8 @@ pub(super) async fn run_batch(
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
     let mut done: HashSet<(String, usize)> = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
+    // The templated names the drivers rendered at their own step, by host and step.
+    let mut names: HashMap<(String, usize), String> = HashMap::new();
     // What each host asked for at each include step, in arrival order. Keyed by index because a
     // host reports its request and then blocks, which it may do while this loop is still holding
     // an earlier index for a slower host.
@@ -304,7 +331,12 @@ pub(super) async fn run_batch(
                         let banner = matches!(event, Event::Banner { .. });
                         if banner || (!header_shown && shows_a_line(&event)) {
                             let live = progress_tx.borrow().clone();
-                            header(&step, &task_name(&step, host, &plan, &live, state), out);
+                            let spoken = names.get(&(host.clone(), index));
+                            header(
+                                &step,
+                                &task_name(&step, host, &plan, &live, state, spoken),
+                                out,
+                            );
                             header_shown = true;
                         }
                         report_result(event, stats, out);
@@ -379,6 +411,9 @@ pub(super) async fn run_batch(
                     }) => {
                         includes.entry(index).or_default().push((host, groups));
                     }
+                    Some(Event::Named { host, index, name }) => {
+                        names.insert((host, index), name);
+                    }
                     Some(Event::TaskDone { host, index }) => {
                         coordinator.finished(&mut done, &host, index);
                         // `or_insert` keeps the verdict of the host that ran the task, which is
@@ -425,7 +460,12 @@ pub(super) async fn run_batch(
                     }) => {
                         if !header_shown {
                             let live = progress_tx.borrow().clone();
-                            header(&step, &task_name(&step, &host, &plan, &live, state), out);
+                            let spoken = names.get(&(host.clone(), index));
+                            header(
+                                &step,
+                                &task_name(&step, &host, &plan, &live, state, spoken),
+                                out,
+                            );
                             header_shown = true;
                         }
                         stats.unreachable(&host);
@@ -495,7 +535,12 @@ pub(super) async fn run_batch(
                     if !header_shown {
                         let live = progress_tx.borrow().clone();
                         let against = hosts.first().map(String::as_str).unwrap_or_default();
-                        header(&step, &task_name(&step, against, &plan, &live, state), out);
+                        let spoken = names.get(&(against.to_string(), index));
+                        header(
+                            &step,
+                            &task_name(&step, against, &plan, &live, state, spoken),
+                            out,
+                        );
                         header_shown = true;
                     }
                     out.included(&what, &hosts, label.as_deref());
@@ -507,6 +552,9 @@ pub(super) async fn run_batch(
                     }
                 }
             }
+            // What was spliced in is marked with the rest, and a role it brought carries
+            // variables that can change the mark of a step further down.
+            mark_boundaries(&mut next, &definitions, &playbook_dir);
             plan_tx.send_replace(Arc::new(next));
 
             // The splice moved every index past this point, so an election decided for the step
@@ -555,6 +603,9 @@ pub(super) async fn run_batch(
                 keep_links(&mut state.links, links, failed).await;
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
+            Event::Named { host, index, name } => {
+                names.insert((host, index), name);
+            }
             Event::TaskDone { host, index } => {
                 coordinator.finished(&mut done, &host, index);
                 // A host already in `failed_hosts` is walking the rest of the play for its
@@ -575,7 +626,7 @@ pub(super) async fn run_batch(
             // its host entered `gone` before that task's `TaskDone`. Report it rather than drop
             // it: a task missing from the recap is the one failure this file cannot afford.
             Event::Banner { index, .. } => {
-                header_for(index, &plan, &play_hosts, &progress_tx, state, out);
+                header_for(index, &plan, &play_hosts, &progress_tx, state, &names, out);
             }
             // An include whose request arrives here is one the step loop will never reach: it
             // has already ended, because every host of the batch has left it. There is nothing
@@ -595,7 +646,7 @@ pub(super) async fn run_batch(
     for (_, events) in leftover {
         for event in events {
             if let Event::Banner { index, .. } = &event {
-                header_for(*index, &plan, &play_hosts, &progress_tx, state, out);
+                header_for(*index, &plan, &play_hosts, &progress_tx, state, &names, out);
                 continue;
             }
             report_result(event, stats, out);
@@ -639,6 +690,7 @@ fn header_for(
     play_hosts: &[String],
     progress_tx: &watch::Sender<Progress>,
     state: &RunState,
+    names: &HashMap<(String, usize), String>,
     out: &mut Renderer,
 ) {
     let compiled = plan.steps();
@@ -649,7 +701,12 @@ fn header_for(
         return;
     };
     let live = progress_tx.borrow().clone();
-    header(step, &task_name(step, host, plan, &live, state), out);
+    let spoken = names.get(&(host.clone(), index));
+    header(
+        step,
+        &task_name(step, host, plan, &live, state, spoken),
+        out,
+    );
 }
 
 /// The banner one step gets: a handler says so, measured - `RUNNING HANDLER [second handler]`
@@ -885,46 +942,66 @@ fn take_links(links: &mut HashMap<LinkKey, AgentLink>, host: &str) -> Vec<(LinkK
 ///
 /// Measured on ansible-core 2.19.12: a task of a role shows as `TASK [base : base task]`, and an
 /// unnamed one shows the module name behind the same prefix (`TASK [inner : debug]`).
+///
+/// A templated name comes from `spoken`, the name `host`'s driver rendered when it reached the
+/// step (`Event::Named`), whenever there is one. Rendering it here instead reads the host's
+/// variables as they stand when the banner prints, and a host that has run ahead of the others
+/// has already changed them: `Deploy {{ release }}` in front of `set_fact: release=2` would say
+/// `Deploy 2` where the reference, which renders it as the step is queued, says `Deploy 1`.
 fn task_name(
     step: &Step,
     host: &str,
     plan: &PlayPlan,
     live: &Progress,
     state: &RunState,
+    spoken: Option<&String>,
 ) -> String {
-    let task = &step.task;
-    let name = if Templar::is_template(&task.name) {
-        let playbook_dir = state
-            .vars
-            .lock()
-            .expect("vars lock")
-            .playbook_dir()
-            .to_path_buf();
-        let vars = host_vars(
-            host,
-            plan,
-            &task.vars,
-            step.role,
-            step.include_params.as_deref(),
-            live,
-            state.templar.as_ref(),
-            &state.vars,
-            &step.origin,
-            &playbook_dir,
-        );
-        state
-            .templar
-            .render(&task.name, &vars)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_else(|| task.name.clone())
-    } else {
-        task.name.clone()
+    let name = match spoken {
+        Some(name) => name.clone(),
+        None => render_name(step, host, plan, live, &state.templar, &state.vars),
     };
     match step.role.and_then(|i| plan.steps().roles.get(i).cloned()) {
         Some(role) => format!("{} : {name}", role.name),
         None => name,
     }
+}
+
+/// A step's own name, rendered against `host`'s variables as they stand now when it is a
+/// template, and as written otherwise. A name that does not render is shown as written.
+pub(super) fn render_name(
+    step: &Step,
+    host: &str,
+    plan: &PlayPlan,
+    live: &Progress,
+    templar: &Templar,
+    store: &Mutex<VarStore>,
+) -> String {
+    let task = &step.task;
+    if !Templar::is_template(&task.name) {
+        return task.name.clone();
+    }
+    let playbook_dir = store
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    let vars = host_vars(
+        host,
+        plan,
+        &task.vars,
+        step.role,
+        step.include_params.as_deref(),
+        live,
+        templar,
+        store,
+        &step.origin,
+        &playbook_dir,
+    );
+    templar
+        .render(&task.name, &vars)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| task.name.clone())
 }
 
 #[cfg(test)]

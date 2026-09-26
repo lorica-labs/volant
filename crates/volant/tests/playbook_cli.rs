@@ -1567,6 +1567,140 @@ fn batching_lets_a_host_run_ahead_when_it_is_asked_for() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A templated task name shows what it rendered to when the step ran, not what the host's
+/// variables say by the time the banner prints. Under batching `alpha` runs past the banner's
+/// step and through the `set_fact` behind it while `beta` sleeps, and the coordinator cannot
+/// print that step before `beta` is done with the one in front of it.
+///
+/// What would make this red: the banner rendered at print time, which reads `release` after
+/// `alpha`'s `set_fact` and prints `Deploy 2` where the reference prints `Deploy 1`.
+#[test]
+fn a_banner_shows_the_name_as_it_rendered_at_its_step() {
+    let (dir, inventory, _) = two_hosts_and_a_trace("banner-at-its-step");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  vars:\n    release: 1\n  tasks:\n\
+         \x20   - name: Beta is slow\n      command: sleep 2\n      when: inventory_hostname == 'beta'\n\
+         \x20   - name: \"Deploy {{ release }}\"\n      debug:\n        msg: deploying\n\
+         \x20   - set_fact:\n        release: 2\n",
+    )
+    .expect("a playbook");
+    let out = volant_within_env(
+        &["playbook", "-i", &inventory, play.to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_BATCHING", "1")],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("TASK [Deploy 1]"), "{stdout}");
+    assert!(!stdout.contains("Deploy 2"), "{stdout}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A lookup reads the controller when its task renders, and every task of a batch is rendered
+/// before the batch goes out, so a task calling one starts its own batch. Here the `shell` in
+/// front of it rewrites the file the lookup reads.
+///
+/// What would make this red: the lookup rendered in the same batch as the `shell`, which reads
+/// the file before the `shell` ran and writes `old`.
+#[test]
+fn a_lookup_reads_the_controller_after_the_tasks_in_front_of_it() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("volant-lookup-cut-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("key"), "old\n").expect("a file");
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - shell: \"echo new > {{ dir }}/key\"\n\
+         \x20   - shell: \"echo {{ lookup('file', dir ~ '/key') }} > {{ dir }}/out\"\n",
+    )
+    .expect("a playbook");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("dir={}", dir.display()),
+            play.to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_BATCHING", "1"), ("VOLANT_PYTHON", &python)],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let written = std::fs::read_to_string(dir.join("out")).expect("the shell wrote its file");
+    assert_eq!(written.trim(), "new");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every task of a batch is rendered before the batch goes out, so a task that writes facts
+/// ends its batch. Here the second `setup` reads a custom fact the `copy` in front of it just
+/// changed, and the `shell` behind it writes what it rendered; in one batch with the `setup`,
+/// it would render the fact the first `setup` gathered.
+///
+/// What would make this red: the batch not ending behind a fact-writing module, which writes
+/// `old`.
+#[test]
+fn a_task_behind_a_fact_writing_module_renders_the_new_facts() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("volant-facts-cut-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("facts.d")).expect("a facts directory");
+    std::fs::write(dir.join("facts.d/probe.fact"), "{\"v\": \"old\"}\n").expect("a fact");
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - setup:\n        gather_subset: ['!all', '!min', 'local']\n        fact_path: \"{{ dir }}/facts.d\"\n\
+         \x20   - copy:\n        content: '{\"v\": \"new\"}'\n        dest: \"{{ dir }}/facts.d/probe.fact\"\n\
+         \x20   - setup:\n        gather_subset: ['!all', '!min', 'local']\n        fact_path: \"{{ dir }}/facts.d\"\n\
+         \x20   - shell: \"echo {{ ansible_local.probe.v }} > {{ dir }}/out\"\n",
+    )
+    .expect("a playbook");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            "-e",
+            &format!("dir={}", dir.display()),
+            // The Python `setup`: `fact_path` is its own, and the native collector hands back
+            // on it or leaves `ansible_local` out.
+            "--facts",
+            "python",
+            play.to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_BATCHING", "1"), ("VOLANT_PYTHON", &python)],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let written = std::fs::read_to_string(dir.join("out")).expect("the shell wrote its file");
+    assert_eq!(written.trim(), "new");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Measured against the reference: `beta` reads the stamp `alpha` registered at the previous
 /// task, and both hosts see each other in the play's live list.
 ///

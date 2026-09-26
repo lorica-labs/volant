@@ -236,7 +236,7 @@ pub const NATIVE_CANDIDATES: &[&str] = &[
 /// The candidates this release's agent runs natively, aliases included: what the modules page
 /// says of them. The agent checks its own table against this list, so the page cannot promise a
 /// native the agent does not have, nor miss one it has.
-pub const NATIVE_ENABLED: &[&str] = &["stat", "file"];
+pub const NATIVE_ENABLED: &[&str] = &["setup", "stat", "file"];
 
 const fn honoured(name: &'static str) -> ModuleArg {
     ModuleArg {

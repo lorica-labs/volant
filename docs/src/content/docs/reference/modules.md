@@ -86,7 +86,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `script` | not supported yet: needs the `script` action plugin |
 | `service_facts` | Python module |
 | `set_stats` | not supported yet: needs the `set_stats` action plugin |
-| `setup` | Python module |
+| `setup` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `slurp` | Python module |
 | `stat` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `subversion` | Python module |

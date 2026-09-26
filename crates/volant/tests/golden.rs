@@ -9,6 +9,11 @@ use volant::yaml;
 #[path = "common/collections.rs"]
 mod collections;
 
+/// The reasons the native `setup` hands back for a host outside its subset, the agent's own list.
+#[cfg(target_os = "linux")]
+#[path = "../../volant-agent/tests/setup_exits/mod.rs"]
+mod setup_exits;
+
 fn expected() -> Vec<Value> {
     serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses")
 }
@@ -1831,6 +1836,40 @@ fn native_profile(path: &std::path::Path) -> NativeProfile {
     NativeProfile { natives, tasks }
 }
 
+/// A `setup` handed back for a host outside the native's subset is said and passes; handed back
+/// for anything else, it is red. Checked on made-up profile lines: the machines these run on
+/// answer, except the CI runner, which has `/usr/bin/rpm`.
+///
+/// What would make this red: the host exception widened to every hand-back, or to every module.
+#[cfg(target_os = "linux")]
+#[test]
+fn only_a_host_outside_the_native_setup_excuses_its_hand_back() {
+    let spec = serde_json::json!({"module": "setup", "expect": "native"});
+    let judge = |module: &str, reason: &str| {
+        let profile = NativeProfile {
+            natives: Some(vec!["setup".into(), "stat".into()]),
+            tasks: vec![serde_json::json!({
+                "host": "localhost", "task": "c", "module": module, "path": "fallback", "reason": reason,
+            })],
+        };
+        let mut spec = spec.clone();
+        spec["module"] = module.into();
+        let mut failures = Vec::new();
+        check_native_path("c", &spec, &profile, &mut failures);
+        failures
+    };
+    let host = "/usr/bin/rpm exists, and the reference asks it about apt-get";
+    assert_eq!(judge("setup", host), Vec::<String>::new());
+    assert_eq!(
+        judge("setup", "a filter is outside the native setup"),
+        vec!["case c: path fallback (a filter is outside the native setup), index says native"]
+    );
+    assert_eq!(
+        judge("stat", host),
+        vec![format!("case c: path fallback ({host}), index says native")]
+    );
+}
+
 /// The path the case's own module took, against the one it must take: the index's when the agent
 /// declared a native for the module, `python` otherwise. A plugin's sub-tasks (`copy`'s `stat`)
 /// have lines of their own under the same task and are not the case's.
@@ -1877,11 +1916,34 @@ fn check_native_path(
     };
     for line in own {
         let got = line["path"].as_str().unwrap_or("unreported");
+        // The reason a native gave for handing back, which is what a red here is about.
+        let why = line["reason"]
+            .as_str()
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
+        // A host outside the native setup's subset (a runner with `/usr/bin/rpm`, measured) hands
+        // `setup` back wherever it runs: said, and not held against the native. The result is
+        // then the Python module's, compared all the same.
+        if native
+            && module == "setup"
+            && got == "fallback"
+            && line["reason"]
+                .as_str()
+                .is_some_and(setup_exits::is_host_exit)
+        {
+            eprintln!(
+                "case {case}: this host is outside the native setup's subset{why}: compared on \
+                 the Python answer"
+            );
+            continue;
+        }
         if got != want {
             failures.push(if native {
-                format!("case {case}: path {got}, index says {want}")
+                format!("case {case}: path {got}{why}, index says {want}")
             } else {
-                format!("case {case}: path {got}, and {module} is no native of this agent: python")
+                format!(
+                    "case {case}: path {got}{why}, and {module} is no native of this agent: python"
+                )
             });
         }
     }
@@ -1914,9 +1976,14 @@ fn reference_results(
     }
     command
         .env("ANSIBLE_CONFIG", work.join("ansible.cfg"))
-        .env("ANSIBLE_STDOUT_CALLBACK", "ansible.builtin.json")
-        .env("ANSIBLE_NOCOLOR", "1")
-        .env("ANSIBLE_PYTHON_INTERPRETER", "/usr/bin/python3");
+        // The recorder's own callback: `ansible.builtin.json` is `ansible.posix`'s in
+        // ansible-core 2.19, which a runner with ansible-core alone does not have.
+        .env(
+            "ANSIBLE_CALLBACK_PLUGINS",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/callback_plugins"),
+        )
+        .env("ANSIBLE_STDOUT_CALLBACK", "golden_json")
+        .env("ANSIBLE_NOCOLOR", "1");
     let out = finish_within(&mut command, "the reference");
     assert!(
         out.status.success(),

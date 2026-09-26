@@ -200,6 +200,15 @@ ssh-test: agent-musl
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
     VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    just facts-compare
+
+# Gather facts twice on one host, through the native setup and through the Python one, and
+# compare them key by key. Without a host it is localhost over the ssh-test key; with one, the
+# host is reached through your own ssh configuration (never in CI). The test's output is shown
+# either way: it names the machine, and a native that hands back says why and compares nothing.
+facts-compare host="": agent-musl
+    "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
+    VOLANT_FACTS_HOST='{{host}}' VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run -p volant --run-ignored ignored-only --no-tests=fail --no-capture -E 'test(=native_facts_equal_python_facts_on_this_machine)'
 
 # The commit the bench corpus is pinned to, so the thing being timed cannot change under the
 # recipe. Refreshed by hand with `git ls-remote https://github.com/ansible-lockdown/UBUNTU22-CIS

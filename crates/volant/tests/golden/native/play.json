@@ -3,6 +3,9 @@
   "hosts": "localhost",
   "gather_facts": false,
   "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
   "tasks": [
    {
     "block": [
@@ -1364,6 +1367,15 @@
       "register": "last"
      },
      {
+      "name": "setup-min",
+      "setup": {
+       "gather_subset": [
+        "min"
+       ]
+      },
+      "register": "last"
+     },
+     {
       "name": "cleanup-user-before",
       "user": {
        "name": "volantshape",
@@ -1375,6 +1387,14 @@
       "name": "cleanup-group-before",
       "group": {
        "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
+      "name": "cleanup-home-before",
+      "file": {
+       "path": "/nonexistent-volantshape",
        "state": "absent"
       },
       "become": true
@@ -1440,7 +1460,8 @@
       "name": "user-password",
       "user": {
        "name": "volantshape",
-       "password": "!"
+       "password": "!",
+       "create_home": false
       },
       "register": "last",
       "become": true
@@ -1487,6 +1508,15 @@
       "name": "cleanup-group",
       "group": {
        "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-home",
+      "file": {
+       "path": "/nonexistent-volantshape",
        "state": "absent"
       },
       "become": true,

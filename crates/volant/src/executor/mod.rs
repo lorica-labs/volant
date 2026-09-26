@@ -49,8 +49,8 @@ pub struct RunOptions {
     /// the handlers it notified. A play saying so itself speaks over this.
     pub force_handlers: bool,
     /// `[volant] batching`, or `VOLANT_BATCHING`: whether a host may carry on through the tasks
-    /// between two synchronisation points. On by default; off, the hosts of a batch meet in front
-    /// of every task, the strict `linear`.
+    /// between two synchronisation points. Off by default, so the hosts of a batch meet in front
+    /// of every task, which is what `linear` means.
     pub batching: bool,
     /// Where the sockets of the shared `ssh` connections live, from
     /// [`crate::transport::control_dir`]; `None` when `[volant] ssh_control_master` is off or no

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
-use volant_protocol::modules::{arg_bool, short_name};
+use volant_protocol::modules::{arg_bool, is_builtin, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
 use crate::action_plugins::Kind;
@@ -25,7 +25,7 @@ use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::{HostVars, VarStore};
 
-use super::coordinator::{Event, Progress, escalated_links};
+use super::coordinator::{Event, Progress, escalated_links, render_name};
 use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
@@ -75,18 +75,69 @@ fn strict(batching: bool, store: &Mutex<VarStore>) -> bool {
     !batching || store.lock().expect("vars lock").templated_facts()
 }
 
-/// Whether a remote task's module writes this host's facts: `setup`, the `*_facts` modules and
-/// `getent`, the ones that answer with `ansible_facts`. A batch ends behind one, because every
-/// task after it in the same batch is rendered before it runs.
-///
-/// A name, not a promise: any module may return `ansible_facts`, and one outside this list that
-/// does is read by a later task of its batch as it stood before. A task whose render fails for
-/// want of it is rendered again behind the batch rather than failed, which covers the fact that
-/// did not exist yet, and not the fact that changed.
+/// The builtin modules of ansible-core 2.19.12 that answer with `ansible_facts`: every file of
+/// `ansible/modules/` and `ansible/plugins/action/` that sets the key, read off the source with
+/// `grep -l ansible_facts` and checked one by one (the `dnf` action writes `pkg_mgr`; `package`,
+/// `service`, `reboot` and `wait_for_connection` only read facts). `set_fact` and `include_vars`
+/// run on the controller and never join a batch; they are here because they write facts all the
+/// same.
+const FACT_MODULES: [&str; 10] = [
+    "dnf",
+    "gather_facts",
+    "getent",
+    "hostname",
+    "include_vars",
+    "mount_facts",
+    "package_facts",
+    "service_facts",
+    "set_fact",
+    "setup",
+];
+
+/// Whether a remote task's module can write this host's facts, so that a batch ends behind it:
+/// every task after it in the same batch is rendered before it runs, and would read the facts
+/// as they stood before. A builtin answers from [`FACT_MODULES`]; any other module - a
+/// collection's, a role's `library/` - may return `ansible_facts`, so it ends its batch too.
 fn writes_facts(task: &PlayTask) -> bool {
-    let module = short_name(&task.module);
-    let module = module.rsplit('.').next().unwrap_or(module);
-    matches!(module, "setup" | "gather_facts" | "getent") || module.ends_with("_facts")
+    !is_builtin(&task.module) || FACT_MODULES.contains(&short_name(&task.module))
+}
+
+/// Whether rendering a task calls a lookup: `lookup`, `query` or `q` in an expression, or a
+/// `with_<lookup>` loop. A lookup reads the controller, a file or a command's output, at the
+/// moment it renders.
+fn calls_lookup(task: &PlayTask) -> bool {
+    let (text, bare) = task_strings(task);
+    let mut read = BTreeSet::new();
+    for s in &text {
+        for expr in expressions(s) {
+            words(expr, &mut read);
+        }
+    }
+    for s in &bare {
+        words(s, &mut read);
+    }
+    task.loop_with.is_some() || ["lookup", "query", "q"].iter().any(|w| read.contains(*w))
+}
+
+/// Whether a task reads a file on the controller: a module that sends one (`copy`, `template`,
+/// `unarchive`, `assemble`, `script`), or a lookup.
+fn reads_controller_files(task: &PlayTask) -> bool {
+    matches!(
+        short_name(&task.module),
+        "copy" | "template" | "unarchive" | "assemble" | "script"
+    ) || calls_lookup(task)
+}
+
+/// Whether a task can write a file on the controller: `fetch`, or a task run somewhere other
+/// than its own host - `delegate_to` (which may name the controller), or task variables setting
+/// `ansible_connection: local`.
+fn writes_controller_files(task: &PlayTask) -> bool {
+    short_name(&task.module) == "fetch"
+        || task.delegate_to.is_some()
+        || task
+            .vars
+            .get("ansible_connection")
+            .is_some_and(|c| c.as_str() != Some("ssh"))
 }
 
 /// Whether a text names one of [`CROSS_HOST_NAMES`].
@@ -160,6 +211,10 @@ fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
         .chain(&task.until)
         .map(String::as_str)
         .collect();
+    // A templated `ignore_errors` renders per item like a condition.
+    if let Some(crate::playbook::Flag::Template(text)) = &task.ignore_errors {
+        bare.push(text);
+    }
     let module = short_name(&task.module);
     for (key, value) in &task.args {
         if (module == "debug" && key == "var") || (module == "assert" && key == "that") {
@@ -256,8 +311,17 @@ impl Definitions {
 /// expression of it reads a variable by a name only known at render time ([`DYNAMIC_READS`]);
 /// when it names a variable whose static definition reads another host, however deep
 /// ([`Definitions::crossing`] over `base`, the play's roles and their parameters); when it is a
-/// `template` whose file does any of that, or whose file cannot be read here; or when it comes
-/// behind a task that writes its facts onto the host it delegated to.
+/// `template` whose file does any of that, or whose file cannot be read here; when it runs on
+/// another host (`delegate_to`); when it reads a controller file behind a task that can write
+/// one; from the first task that writes its facts onto the host it delegated to on; and when it
+/// is the step a host reaches next after any of those.
+///
+/// The last rule is the other half of the fence. A boundary makes the reader wait until every
+/// host is past the step before it; nothing yet stops the host being read from running on past
+/// the reader and changing what the reader is about to read. The strict `linear` has a barrier
+/// behind the reader as well, and so does this: every step a host can go to from a marked one
+/// (the next step, the one past a rescue, the rescue and the `always` a failure leads to) waits
+/// until every host is done with the marked one.
 pub(super) fn mark_boundaries(c: &mut Compiled, base: &Definitions, playbook_dir: &Path) {
     let mut defs = base.clone();
     for role in c.roles.iter().chain([&c.exported]) {
@@ -267,20 +331,44 @@ pub(super) fn mark_boundaries(c: &mut Compiled, base: &Definitions, playbook_dir
     }
     let crossing = defs.crossing();
     // A delegated task with `delegate_facts` writes into another host's variables, and that host
-    // reads them as its own, through a name no scan can tie back to the writer. Every step
-    // behind the first such task is a boundary, so no host can run past the write.
+    // reads them as its own, through a name no scan can tie back to the writer. The writer and
+    // every step behind it are boundaries, so no host can write before the others have read what
+    // came before, nor run past the write.
     let writes_elsewhere = c
         .steps
         .iter()
         .position(|s| s.task.delegates_facts() && s.task.delegate_to.is_some());
-    c.crosses = c
+    // A file one host fetched, or wrote on the controller, is read by the others from the
+    // controller: every task behind the first writer that reads a controller file waits for it.
+    let controller_written = c
+        .steps
+        .iter()
+        .position(|s| writes_controller_files(&s.task));
+    let marked: Vec<bool> = c
         .steps
         .iter()
         .enumerate()
         .map(|(i, step)| {
-            writes_elsewhere.is_some_and(|w| i > w) || step_crosses(step, &crossing, playbook_dir)
+            writes_elsewhere.is_some_and(|w| i >= w)
+                || step.task.barrier()
+                || step.task.delegate_to.is_some()
+                || (controller_written.is_some_and(|w| i > w) && reads_controller_files(&step.task))
+                || step_crosses(step, &crossing, playbook_dir)
         })
         .collect();
+    let mut crosses = marked.clone();
+    for (k, _) in marked.iter().enumerate().filter(|(_, m)| **m) {
+        let failure = after_failure(c, k).map(|(next, _)| next);
+        for next in [Some(k + 1), Some(after(c, k)), rescue_target(c, k), failure]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(slot) = crosses.get_mut(next) {
+                *slot = true;
+            }
+        }
+    }
+    c.crosses = crosses;
 }
 
 fn step_crosses(step: &Step, crossing: &BTreeSet<String>, playbook_dir: &Path) -> bool {
@@ -408,8 +496,6 @@ pub(super) async fn drive_host(
         pos += grown;
     }
     let mut batch_id: u64 = 0;
-    // The step whose render warnings were last sent, so a step rendered twice says them once.
-    let mut warned: Option<usize> = None;
     // The handlers this host has asked for and not yet run, as indices into `compiled.handlers`.
     // Never twice: measured, a handler notified by two tasks runs once.
     let mut notified: Vec<usize> = Vec::new();
@@ -848,6 +934,25 @@ pub(super) async fn drive_host(
             // measured on ansible-core 2.19.12, `register: o` under `run_once: true` on h1
             // reads back as `o.stdout` on h2 as well. Every other step writes for its own host.
             let register_hosts: Vec<String> = fact_targets(task, &name, &live.live_hosts);
+            // A step calling a lookup starts its own batch. Every step of a batch is rendered
+            // before the batch goes out, so a lookup rendered behind a batch in hand would read
+            // the controller before the tasks in front of it had run - a file one of them
+            // writes, a command's output - where the strict `linear` reads it after them.
+            if !batch.is_empty() && calls_lookup(task) {
+                break;
+            }
+            // The banner's name, rendered here, at the step's own point, against the variables
+            // this host has now; the coordinator prints it rather than rendering its own later.
+            if Templar::is_template(&task.name) {
+                let spoken = render_name(step, &name, &plan, &live, &templar, &store);
+                let _ = tx
+                    .send(Event::Named {
+                        host: name.clone(),
+                        index: pos,
+                        name: spoken,
+                    })
+                    .await;
+            }
             let mut warnings = Vec::new();
             let preparing = Instant::now();
             let prepared = prepare(
@@ -866,28 +971,17 @@ pub(super) async fn drive_host(
             // Not censored: measured on ansible-core 2.19.12, the one warning `prepare` can
             // raise quotes the playbook's own `environment` source and never a rendered value,
             // and the reference leaves it in plain sight under `no_log`.
-            //
-            // Once per step: a step rendered behind a batch in hand is often rendered again once
-            // that batch has run (see the `Err` arm below), and its warning is said once.
-            if warned != Some(pos) {
-                for message in warnings {
-                    let _ = tx
-                        .send(Event::Warning {
-                            host: name.clone(),
-                            index: pos,
-                            message,
-                            censored: false,
-                        })
-                        .await;
-                }
+            for message in warnings {
+                let _ = tx
+                    .send(Event::Warning {
+                        host: name.clone(),
+                        index: pos,
+                        message,
+                        censored: false,
+                    })
+                    .await;
             }
-            warned = Some(pos);
             match prepared {
-                // Rendered behind a batch in hand, against variables that batch has not written
-                // yet: a fact the batch's `setup` gathers, say. Not this step's failure - the
-                // batch goes out and the step is rendered again behind it, where the strict
-                // `linear` would have rendered it.
-                Err(_) if !batch.is_empty() => break,
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;
@@ -1131,8 +1225,6 @@ pub(super) async fn drive_host(
                     }
                     let retry = match retry_plan(task, items.first(), &templar) {
                         Ok(retry) => retry,
-                        // As for a render that failed: rendered again behind the batch in hand.
-                        Err(_) if !batch.is_empty() => break,
                         Err(err) => {
                             deferred_error = Some((pos, err));
                             break;
@@ -2290,6 +2382,11 @@ mod tests {
         let mut t = task("command");
         t.environment = vec![json!({"PEER": "{{ hostvars['a'].ip }}"})];
         assert!(reads_across_hosts(&t), "environment");
+        let mut t = task("command");
+        t.ignore_errors = Some(crate::playbook::Flag::Template(
+            "{{ hostvars[groups.primary[0]].degraded | default(false) }}".into(),
+        ));
+        assert!(reads_across_hosts(&t), "a templated ignore_errors");
     }
 
     /// `ansible_play_hosts_all` never changes once the play starts, so a task mentioning it and
@@ -2328,10 +2425,10 @@ mod tests {
     ///
     /// What would make this red: the `barrier` flag dropped from the table, which lets a
     /// `run_once` step be reported by a host while another is still behind it, so the verdict
-    /// the waiting hosts read arrives before the runner has run; the textual
-    /// scan dropped, which lets a `hostvars` read run ahead of the host it reads; or
-    /// `delegate_to` made a boundary, which would serialise every delegated task on a wait that
-    /// buys nothing.
+    /// the waiting hosts read arrives before the runner has run; or the textual scan dropped,
+    /// which lets a `hostvars` read run ahead of the host it reads. That a delegated task is a
+    /// boundary under `batching` all the same - it acts on a host that may not have got there
+    /// yet - is `mark_boundaries`' business, not the keyword table's.
     #[test]
     fn a_boundary_is_either_declared_by_a_keyword_or_found_in_the_text() {
         let mut t = task("command");
@@ -2351,7 +2448,7 @@ mod tests {
         t.delegate_facts = Some(true);
         assert!(
             !t.barrier() && !reads_across_hosts(&t),
-            "a delegated task shares nothing: its driver opens its own link to the delegate"
+            "a delegated task is neither declared a barrier nor spells a cross-host name"
         );
 
         let mut t = task("command");
@@ -2381,34 +2478,67 @@ mod tests {
         assert_eq!(boundaries(&c), [false, true, true]);
     }
 
-    /// Every task of a batch is rendered before the batch goes out, so a task that writes facts
-    /// has to be the last of its batch: the next one may read them.
+    /// Every task of a batch is rendered before the batch goes out, so a task that can write
+    /// facts has to be the last of its batch: the next one may read them. `hostname` is the
+    /// shape that bites: `lineinfile` writing `{{ ansible_fqdn }}` into `/etc/hosts` right behind
+    /// it would write the old name.
     ///
-    /// What would make this red: `setup` dropped from the list. The roles proof's first role
-    /// then renders its `include_vars: "{{ ansible_facts.os_family }}.yml"` in the same batch
-    /// as the play's fact gathering, before the facts exist, and fails it on both hosts.
+    /// What would make this red: a builtin that answers with `ansible_facts` missing from
+    /// `FACT_MODULES`, or a module this release cannot vouch for - a collection's - let through.
     #[test]
     fn a_task_that_writes_facts_ends_its_batch() {
         for module in [
             "setup",
             "ansible.builtin.setup",
+            "ansible.legacy.hostname",
+            "hostname",
             "gather_facts",
+            "dnf",
+            "mount_facts",
             "package_facts",
             "ansible.builtin.service_facts",
-            "community.general.listen_ports_facts",
             "getent",
+            "community.general.listen_ports_facts",
+            "kubernetes.core.k8s",
+            "my_role_library_module",
         ] {
             assert!(writes_facts(&task(module)), "{module}");
         }
-        for module in [
-            "apt",
-            "ansible.builtin.stat",
-            "template",
-            "command",
-            "facts",
-        ] {
+        for module in ["apt", "ansible.builtin.stat", "template", "command"] {
             assert!(!writes_facts(&task(module)), "{module}");
         }
+        for module in FACT_MODULES {
+            assert!(is_builtin(module), "{module} is not a builtin");
+        }
+    }
+
+    /// A lookup reads the controller when its task renders, so the task starts its own batch.
+    ///
+    /// What would make this red: a spelling of a lookup the scan misses, which renders it behind
+    /// a batch in hand - before a task in front of it wrote the file it reads.
+    #[test]
+    fn a_lookup_is_found_wherever_the_task_calls_it() {
+        let with = |key: &str, value: &str| {
+            let mut t = task("lineinfile");
+            t.args.insert(key.into(), json!(value));
+            t
+        };
+        assert!(calls_lookup(&with(
+            "line",
+            "{{ lookup('file', '/tmp/k.pub') }}"
+        )));
+        assert!(calls_lookup(&with(
+            "line",
+            "{{ query('pipe', 'date') | first }}"
+        )));
+        assert!(calls_lookup(&with("line", "{{ q('env', 'HOME') }}")));
+        let mut t = task("debug");
+        t.when = vec!["lookup('env', 'CI') == ''".into()];
+        assert!(calls_lookup(&t), "a bare condition");
+        let mut t = task("debug");
+        t.loop_with = Some("fileglob".into());
+        assert!(calls_lookup(&t), "a with_ loop");
+        assert!(!calls_lookup(&with("line", "{{ lookup_table }} lookup q")));
     }
 
     fn step(task: PlayTask) -> Step {
@@ -2516,8 +2646,8 @@ mod tests {
         let tree = Tree::new("template");
         role(
             &tree,
-            "- name: nft\n  ansible.builtin.template:\n    src: k3s.nft.j2\n    dest: /etc/nftables.d/k3s.nft\n\
-             - name: plain\n  template:\n    src: plain.j2\n    dest: /etc/plain\n\
+            "- name: plain\n  template:\n    src: plain.j2\n    dest: /etc/plain\n\
+             - name: nft\n  ansible.builtin.template:\n    src: k3s.nft.j2\n    dest: /etc/nftables.d/k3s.nft\n\
              - name: missing\n  template:\n    src: missing.j2\n    dest: /etc/missing\n\
              - name: rendered src\n  template:\n    src: \"{{ flavour }}.j2\"\n    dest: /etc/x\n\
              - name: pulls another in\n  template:\n    src: pulls.j2\n    dest: /etc/y\n",
@@ -2553,6 +2683,9 @@ mod tests {
     /// inventory's `api_endpoint` in a role's `defaults/`; the inventory one is the same line
     /// where the k3s proof writes it.
     ///
+    /// Each task under test sits behind a `gap` step, so the fence behind a marked step (see
+    /// `a_step_behind_a_cross_host_read_waits_for_it`) never marks it for another reason.
+    ///
     /// What would make this red: the definitions left unread (every task here spells no
     /// cross-host name of its own), or the reading stopped short of a fixed point, which loses
     /// `a`: it reaches `api_url` through `b` and `c`, and every definition is pooled twice (the
@@ -2563,12 +2696,16 @@ mod tests {
         let tree = Tree::new("definition");
         role(
             &tree,
-            "- name: direct\n  debug:\n    msg: \"{{ api_url }}\"\n\
+            "- name: plain\n  debug:\n    msg: \"{{ plain }}\"\n\
+             - name: direct\n  debug:\n    msg: \"{{ api_url }}\"\n\
+             - name: gap 1\n  debug:\n    msg: gap\n\
              - name: chained\n  debug:\n    msg: \"{{ a }}\"\n\
+             - name: gap 2\n  debug:\n    msg: gap\n\
              - name: bare\n  debug:\n    msg: ok\n  when: api_url is defined\n\
+             - name: gap 3\n  debug:\n    msg: gap\n\
              - name: from the inventory\n  command: \"curl {{ api_endpoint }}\"\n\
-             - name: in a template\n  template:\n    src: conf.j2\n    dest: /etc/conf\n\
-             - name: plain\n  debug:\n    msg: \"{{ plain }}\"\n",
+             - name: gap 4\n  debug:\n    msg: gap\n\
+             - name: in a template\n  template:\n    src: conf.j2\n    dest: /etc/conf\n",
         );
         tree.file(
             "roles/prereq/defaults/main.yml",
@@ -2688,10 +2825,12 @@ mod tests {
     }
 
     /// `delegate_facts` writes into the delegate's variables, which the delegate reads as its
-    /// own under a name no scan ties to the writer. Nothing behind the writer may run before it.
+    /// own under a name no scan ties to the writer. The writer waits for everybody to be done
+    /// with what came before (it is a delegated task, which is a boundary on its own), and
+    /// nothing behind it may run before it.
     ///
     /// What would make this red: the rule dropped, which lets the delegate read its own `peer`
-    /// before the writer wrote it.
+    /// two steps later before the writer wrote it.
     #[test]
     fn a_task_writing_facts_onto_another_host_holds_every_step_behind_it() {
         let mut writer = task("set_fact");
@@ -2700,11 +2839,103 @@ mod tests {
         writer.delegate_facts = Some(true);
         let mut reader = task("debug");
         reader.args.insert("msg".into(), json!("{{ peer }}"));
-        let c = marked(vec![task("debug"), writer.clone(), reader.clone()]);
-        assert_eq!(boundaries(&c), [false, false, true]);
+        let c = marked(vec![
+            task("debug"),
+            writer.clone(),
+            task("debug"),
+            reader.clone(),
+        ]);
+        assert_eq!(boundaries(&c), [false, true, true, true]);
         writer.delegate_facts = Some(false);
-        let c = marked(vec![task("debug"), writer, reader]);
-        assert_eq!(boundaries(&c), [false, false, false]);
+        let c = marked(vec![task("debug"), writer, task("debug"), reader]);
+        assert_eq!(boundaries(&c), [false, true, true, false]);
+    }
+
+    /// The barrier holds on both sides of a read. In front of the reader, every host is done
+    /// with the step before; behind it, no host runs on until every host is done with the read -
+    /// otherwise `n1` runs `set_fact: state=active` before `n2` has rendered the `extract` over
+    /// `n1`'s `state`, and `n2` reads a value from the future. The strict `linear` fences both
+    /// sides, and so does this, on every way out of the reader: the next step, the step past a
+    /// rescue when it succeeds, the rescue when it fails.
+    ///
+    /// What would make this red: the fence behind a marked step dropped.
+    #[test]
+    fn a_step_behind_a_cross_host_read_waits_for_it() {
+        let mut standby = task("set_fact");
+        standby.args.insert("state".into(), json!("standby"));
+        let mut reader = task("debug");
+        reader.args.insert(
+            "msg".into(),
+            json!("{{ groups.all | map('extract', hostvars, 'state') | list }}"),
+        );
+        let mut active = task("set_fact");
+        active.args.insert("state".into(), json!("active"));
+        let c = marked(vec![standby, reader, active, task("debug")]);
+        assert_eq!(boundaries(&c), [false, true, true, false]);
+
+        let tree = Tree::new("fence");
+        role(
+            &tree,
+            "- block:\n\
+             \x20   - name: reader\n      debug:\n        msg: \"{{ hostvars['n1'].state }}\"\n\
+             \x20 rescue:\n\
+             \x20   - name: rescued\n      debug:\n        msg: r\n\
+             - name: past the block\n  debug:\n    msg: p\n\
+             - name: further on\n  debug:\n    msg: f\n",
+        );
+        let marks = tree.marked(&Definitions::default());
+        assert!(named(&marks, "reader"), "{marks:?}");
+        assert!(named(&marks, "rescued"), "where a failure goes: {marks:?}");
+        assert!(
+            named(&marks, "past the block"),
+            "where success goes: {marks:?}"
+        );
+        assert!(!named(&marks, "further on"), "{marks:?}");
+    }
+
+    /// A delegated task acts on another host, which may not have got there yet: `web` running
+    /// `postgresql_user` on `db` before `db` installed PostgreSQL. It is a boundary.
+    ///
+    /// What would make this red: `delegate_to` left out of the marks.
+    #[test]
+    fn a_delegated_task_is_a_boundary() {
+        let mut delegated = task("command");
+        delegated.delegate_to = Some("{{ groups.db[0] }}".into());
+        let c = marked(vec![task("debug"), delegated, task("debug"), task("debug")]);
+        assert_eq!(boundaries(&c), [false, true, true, false]);
+    }
+
+    /// A file one host puts on the controller is read by the others from the controller: `ca`
+    /// fetches its certificate, every host copies it out. A task reading a controller file
+    /// behind the first task that can write one waits for it, and one in front of it does not.
+    ///
+    /// What would make this red: the rule dropped, which lets a host copy last run's certificate
+    /// while `ca` is still fetching this one.
+    #[test]
+    fn a_controller_file_read_behind_a_fetch_is_a_boundary() {
+        let copy = |src: &str| {
+            let mut t = task("copy");
+            t.args.insert("src".into(), json!(src));
+            t
+        };
+        let mut read = task("lineinfile");
+        read.args
+            .insert("line".into(), json!("{{ lookup('file', 'files/ca.crt') }}"));
+        let c = marked(vec![
+            copy("files/motd"),
+            task("fetch"),
+            task("debug"),
+            copy("files/ca.crt"),
+            task("debug"),
+            read,
+        ]);
+        assert_eq!(boundaries(&c), [false, false, false, true, true, true]);
+        let mut local = task("command");
+        local
+            .vars
+            .insert("ansible_connection".into(), json!("local"));
+        let c = marked(vec![local, task("debug"), copy("out.txt")]);
+        assert_eq!(boundaries(&c), [false, false, true]);
     }
 
     /// Steps a splice puts in are boundaries until the list is marked again, and the marks of
@@ -2718,13 +2949,13 @@ mod tests {
         reader
             .args
             .insert("msg".into(), json!("{{ hostvars['h2'].x }}"));
-        let mut c = marked(vec![task("debug"), reader, task("debug")]);
-        assert_eq!(boundaries(&c), [false, true, false]);
-        c.splice(1, vec![step(task("debug"))]);
+        let mut c = marked(vec![task("debug"), reader, task("debug"), task("debug")]);
         assert_eq!(boundaries(&c), [false, true, true, false]);
+        c.splice(1, vec![step(task("debug"))]);
+        assert_eq!(boundaries(&c), [false, true, true, true, false]);
         mark_boundaries(&mut c, &Definitions::default(), Path::new("."));
-        assert_eq!(boundaries(&c), [false, false, true, false]);
+        assert_eq!(boundaries(&c), [false, false, true, true, false]);
         c.crosses.clear();
-        assert_eq!(boundaries(&c), [true; 4]);
+        assert_eq!(boundaries(&c), [true; 5]);
     }
 }

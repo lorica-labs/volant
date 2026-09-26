@@ -1273,7 +1273,10 @@ def natives():
     # both Volant and the reference the same way.
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_")}
     env.update(
-        ANSIBLE_STDOUT_CALLBACK="ansible.builtin.json",
+        # callback_plugins/golden_json.py, which golden.rs also loads: `ansible.builtin.json` is
+        # `ansible.posix`'s in ansible-core 2.19, and the replay must not need that collection.
+        ANSIBLE_CALLBACK_PLUGINS=os.path.join(HERE, "callback_plugins"),
+        ANSIBLE_STDOUT_CALLBACK="golden_json",
         ANSIBLE_NOCOLOR="1",
         # Same reasoning as python_modules(): naming the interpreter outright skips discovery.
         ANSIBLE_PYTHON_INTERPRETER="/usr/bin/python3",

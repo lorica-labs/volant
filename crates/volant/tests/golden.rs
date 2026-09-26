@@ -1877,11 +1877,18 @@ fn check_native_path(
     };
     for line in own {
         let got = line["path"].as_str().unwrap_or("unreported");
+        // The reason a native gave for handing back, which is what a red here is about.
+        let why = line["reason"]
+            .as_str()
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
         if got != want {
             failures.push(if native {
-                format!("case {case}: path {got}, index says {want}")
+                format!("case {case}: path {got}{why}, index says {want}")
             } else {
-                format!("case {case}: path {got}, and {module} is no native of this agent: python")
+                format!(
+                    "case {case}: path {got}{why}, and {module} is no native of this agent: python"
+                )
             });
         }
     }
@@ -1914,7 +1921,13 @@ fn reference_results(
     }
     command
         .env("ANSIBLE_CONFIG", work.join("ansible.cfg"))
-        .env("ANSIBLE_STDOUT_CALLBACK", "ansible.builtin.json")
+        // The recorder's own callback: `ansible.builtin.json` is `ansible.posix`'s in
+        // ansible-core 2.19, which a runner with ansible-core alone does not have.
+        .env(
+            "ANSIBLE_CALLBACK_PLUGINS",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/callback_plugins"),
+        )
+        .env("ANSIBLE_STDOUT_CALLBACK", "golden_json")
         .env("ANSIBLE_NOCOLOR", "1")
         .env("ANSIBLE_PYTHON_INTERPRETER", "/usr/bin/python3");
     let out = finish_within(&mut command, "the reference");

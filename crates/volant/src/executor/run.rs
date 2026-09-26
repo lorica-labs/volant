@@ -2362,6 +2362,20 @@ async fn check_kept<L: KeptLink>(
         return (None, Vec::new());
     }
     let Some(mut link) = links.remove(key) else {
+        // No kept link, so nothing to check: this key connects through the socket as it is.
+        // That is safe only if the socket's master was proven alive since the host's last
+        // reboot, by a sibling on the same transport kept and checked (or connected) at this
+        // count; a host this run never rebooted keeps whatever master it has. Otherwise the
+        // master may ride a connection the reboot dropped, and it is stopped first, with the
+        // host's other links retired so none of them later stops the master this key opens.
+        let proven = links
+            .keys()
+            .any(|k| k.transport == key.transport && checked.get(k) == Some(&reboots));
+        if reboots > 0 && key.transport.is_shared() && !proven {
+            let retired = retire_host_links(links, checked, &key.host);
+            key.transport.stop_shared().await;
+            return (None, retired);
+        }
         return (None, Vec::new());
     };
     let stale = match tokio::time::timeout(timeout, link.handshake()).await {
@@ -6893,6 +6907,75 @@ mod tests {
         assert!(
             links.contains_key(&escalated),
             "the reopened escalated link is kept"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same two links, one step earlier: after the first reboot the plain link fails its
+    /// check, retires the escalated one and reopens the master as M2. The host reboots again and
+    /// drops M2's connection without a word. The escalated key is used next: it has no kept link
+    /// to check, and its socket was last proven at the first reboot, so M2 is stopped before it
+    /// connects. The plain link, retired then, reconnects through the escalated key's new master
+    /// without a third stop.
+    ///
+    /// What would make this red: a key with no kept link connecting through the socket without
+    /// the socket having been proven at the host's current reboot count.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_key_with_no_kept_link_does_not_ride_a_master_older_than_the_last_reboot() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let dir = std::env::temp_dir().join(format!("volant-cm-unproven-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let transport = shared_to_h1(&dir);
+        let socket = socket_of(&transport)
+            .await
+            .expect("shared; ssh -G must run here");
+        let stops = fake_master(&socket);
+        let key = |become_user: Option<&str>| LinkKey {
+            host: "h1".to_string(),
+            become_user: become_user.map(str::to_string),
+            transport: transport.clone(),
+        };
+        let (escalated, plain) = (key(Some("root")), key(None));
+        let (plain_on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let (escalated_on_m1, _) = FakeKept::new(FakeAnswer::Gone);
+        let mut links = HashMap::from([
+            (plain.clone(), plain_on_m1),
+            (escalated.clone(), escalated_on_m1),
+        ]);
+        let mut checked = HashMap::from([(plain.clone(), 0), (escalated.clone(), 0)]);
+        let timeout = Duration::from_millis(200);
+
+        // First reboot: the plain link fails, M1 is stopped, the escalated link retired.
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 1, timeout).await;
+        assert!(stale.is_some() && retired.len() == 1);
+        assert_eq!(stops.load(SeqCst), 1);
+        let (plain_on_m2, plain_asked) = FakeKept::new(FakeAnswer::Wedged);
+        links.insert(plain.clone(), plain_on_m2);
+
+        // Second reboot, and the escalated key, with no kept link, is used first.
+        let (stale, retired) = check_kept(&mut links, &mut checked, &escalated, 2, timeout).await;
+        assert!(stale.is_none(), "nothing was kept to fail");
+        assert_eq!(
+            stops.load(SeqCst),
+            2,
+            "M2, proven only at the first reboot, is stopped"
+        );
+        assert_eq!(retired.len(), 1, "the plain link on M2 is retired with it");
+        assert!(!links.contains_key(&plain) && !checked.contains_key(&plain));
+
+        // The escalated key connects and so proves the socket at this count; the plain key then
+        // rides that master, unchecked and without another stop.
+        let (fresh, _) = FakeKept::new(FakeAnswer::Alive);
+        links.insert(escalated.clone(), fresh);
+        let (stale, retired) = check_kept(&mut links, &mut checked, &plain, 2, timeout).await;
+        assert!(stale.is_none() && retired.is_empty());
+        assert!(!plain_asked.load(SeqCst));
+        assert_eq!(
+            stops.load(SeqCst),
+            2,
+            "the master the escalated key opened is left alone"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

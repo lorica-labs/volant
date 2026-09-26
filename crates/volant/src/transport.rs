@@ -245,6 +245,11 @@ impl Transport {
         }
     }
 
+    /// Whether this transport's `ssh` runs share a connection, through [`Transport::shared`].
+    pub fn is_shared(&self) -> bool {
+        matches!(self, Transport::Ssh(target) if target.control_path.is_some())
+    }
+
     /// Makes the master of this host's shared connection exit, if there is one, so the next
     /// `ssh` opens a fresh connection instead of riding one the host may have dropped without a
     /// word. Used before reconnecting to a host that went away.
@@ -661,6 +666,11 @@ const CONTROL_PERSIST: &str = "30s";
 /// and exit 255, which would report the host unreachable.
 const CONTROL_PATH_MAX: usize = 104 - 1 - 17;
 
+/// `ServerAliveInterval` and `ServerAliveCountMax` of a shared connection: a master whose host
+/// stopped answering exits after 3 probes 5 seconds apart.
+const SERVER_ALIVE_INTERVAL: u32 = 5;
+const SERVER_ALIVE_COUNT_MAX: u32 = 3;
+
 /// The client every connection runs.
 const SSH_PROGRAM: &str = "ssh";
 
@@ -879,6 +889,22 @@ impl SshTarget {
                 "-o".into(),
                 format!("ControlPersist={CONTROL_PERSIST}"),
             ]);
+            // A master left on a connection its host dropped without a word exits on its own
+            // after three unanswered probes, about 15 seconds, instead of holding every new
+            // session until TCP gives up. The operator's own keepalive, if they set one, wins.
+            if !self
+                .common_args
+                .iter()
+                .chain(&self.extra_args)
+                .any(|word| word.to_ascii_lowercase().contains("serveralive"))
+            {
+                argv.extend([
+                    "-o".into(),
+                    format!("ServerAliveInterval={SERVER_ALIVE_INTERVAL}"),
+                    "-o".into(),
+                    format!("ServerAliveCountMax={SERVER_ALIVE_COUNT_MAX}"),
+                ]);
+            }
         }
         if !self.host_key_checking {
             argv.extend([
@@ -2339,6 +2365,38 @@ mod tests {
             .position(|w| w == "ProxyJump=bastion")
             .expect("the operator's option");
         assert!(at < user, "{argv:?}");
+    }
+
+    /// A shared connection carries a keepalive, so its master exits by itself once its host
+    /// stops answering; an operator's own keepalive is left to win, and a connection Volant
+    /// does not share gets none from Volant.
+    ///
+    /// What would make this red: the two options dropped, or added over the operator's own.
+    #[test]
+    fn a_shared_connection_keeps_itself_alive_or_dies() {
+        let argv = ssh_target("web1", json!({}), SHARED).ssh_argv("true");
+        let block = [
+            "-o".to_string(),
+            "ServerAliveInterval=5".into(),
+            "-o".into(),
+            "ServerAliveCountMax=3".into(),
+        ];
+        assert!(argv.windows(block.len()).any(|w| w == block), "{argv:?}");
+        for (vars, why) in [
+            (json!({}), "not shared"),
+            (
+                json!({"ansible_ssh_common_args": "-o ControlPath=/x"}),
+                "the operator's own sharing",
+            ),
+            (
+                json!({"ansible_ssh_extra_args": "-o ServerAliveInterval=60"}),
+                "the operator's own keepalive",
+            ),
+        ] {
+            let dir = if why == "not shared" { None } else { SHARED };
+            let text = ssh_target("web1", vars, dir).ssh_argv("true").join(" ");
+            assert!(!text.contains("ServerAliveInterval=5"), "{why}: {text}");
+        }
     }
 
     /// Review focus: an operator who already set up connection sharing keeps theirs, whichever

@@ -1,0 +1,39 @@
+{
+  "_after": {
+    "exists": false
+  },
+  "_ansible_no_log": false,
+  "action": "copy",
+  "changed": false,
+  "checksum": "141b3ea3f03f5b011095f59a650c8883b9e56b44",
+  "diff": [],
+  "exception": "(traceback unavailable)",
+  "expected_checksum": "0000",
+  "failed": true,
+  "invocation": {
+    "module_args": {
+      "_original_basename": ".u34ezl1g",
+      "attributes": null,
+      "backup": false,
+      "checksum": "0000",
+      "content": null,
+      "dest": "<golden-tmp>/k.txt",
+      "directory_mode": null,
+      "follow": false,
+      "force": true,
+      "group": null,
+      "local_follow": null,
+      "mode": null,
+      "owner": null,
+      "remote_src": false,
+      "selevel": null,
+      "serole": null,
+      "setype": null,
+      "seuser": null,
+      "src": "<golden-staged-path>",
+      "unsafe_writes": false,
+      "validate": null
+    }
+  },
+  "msg": "Copied file does not match the expected checksum. Transfer failed."
+}

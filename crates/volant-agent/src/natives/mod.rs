@@ -26,7 +26,20 @@ mod apt {
         run: |_, _, _| NativeRun::Fallback("the native apt reads a Linux host".into()),
     };
 }
+#[cfg(unix)]
 mod copy;
+/// The native `copy` moves files on a Linux host; elsewhere the task goes to the Python module.
+#[cfg(not(unix))]
+mod copy {
+    use crate::natives::{Native, NativeRun};
+
+    pub const NATIVE: Native = Native {
+        name: "copy",
+        aliases: &[],
+        enabled: false,
+        run: |_, _, _| NativeRun::Fallback("the native copy moves files on a Linux host".into()),
+    };
+}
 #[cfg(unix)]
 mod file;
 mod group;

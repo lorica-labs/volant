@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Finding the agent binary and talking to a running agent.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use anyhow::{Context, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
-use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
+use volant_protocol::{BlobEncoding, FromAgent, PROTOCOL_VERSION, ToAgent};
 
 pub(crate) mod embedded;
 
@@ -83,9 +83,7 @@ impl AgentSource {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Arc<AgentFile>>> {
-        self.read
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.read.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn local(&self) -> anyhow::Result<PathBuf> {
@@ -171,6 +169,124 @@ pub struct AgentLink {
     interpreters: Vec<String>,
     natives: Vec<String>,
     ledger: crate::profile::Ledger,
+}
+
+/// A blob as it goes on the wire in the frame after its `put_blob`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobFrame {
+    /// The decoded length, which the `put_blob` announces.
+    pub len: u64,
+    pub encoding: BlobEncoding,
+    pub bytes: Vec<u8>,
+}
+
+impl BlobFrame {
+    /// `raw` as it is.
+    pub fn raw(raw: Vec<u8>) -> BlobFrame {
+        BlobFrame {
+            len: raw.len() as u64,
+            encoding: BlobEncoding::Raw,
+            bytes: raw,
+        }
+    }
+
+    /// `deflated` when it is shorter than `raw`, whose deflated form it is, and `raw` otherwise:
+    /// the agent refuses a frame longer than the blob, so a deflate that grew is never sent.
+    pub fn smaller(raw: Vec<u8>, deflated: Vec<u8>) -> BlobFrame {
+        if deflated.len() < raw.len() {
+            BlobFrame {
+                len: raw.len() as u64,
+                encoding: BlobEncoding::Deflate,
+                bytes: deflated,
+            }
+        } else {
+            BlobFrame::raw(raw)
+        }
+    }
+
+    /// `raw`, deflated first when it is past 4 KiB and that makes it shorter. Under that, the
+    /// deflate costs more than the bytes it saves. Past 64 KiB, the first 64 KiB are deflated
+    /// alone first, and bytes whose sample does not shrink by a tenth (an archive, an image, a
+    /// binary) go raw without paying a deflate of the whole file.
+    pub fn packed(raw: Vec<u8>) -> BlobFrame {
+        const SAMPLE: usize = 64 * 1024;
+        if raw.len() <= 4096 {
+            return BlobFrame::raw(raw);
+        }
+        if raw.len() > SAMPLE
+            && volant_protocol::encoding::deflate(&raw[..SAMPLE]).len() > SAMPLE / 10 * 9
+        {
+            return BlobFrame::raw(raw);
+        }
+        #[cfg(test)]
+        DEFLATED.fetch_add(raw.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let deflated = volant_protocol::encoding::deflate(&raw);
+        BlobFrame::smaller(raw, deflated)
+    }
+}
+
+/// How many bytes [`BlobFrame::packed`] deflated whole, so a test can tell a deflate that ran
+/// from one that was skipped or shared.
+#[cfg(test)]
+static DEFLATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One blob's frame, made by the first caller that needs it while the others wait for it.
+type Slot = Arc<OnceLock<Result<Arc<BlobFrame>, String>>>;
+
+/// The frame each blob this process sends goes up in, by the blake3 of its content: the union's,
+/// kept by the union cache when it stores or loads the entry, and each staged file's, made on its
+/// first send. So a blob sent to every host of a run is decoded and deflated once, not once per
+/// host.
+///
+/// Keyed by the content hash alone, so an entry here can never be stale: other bytes are another
+/// key.
+static FRAMES: Mutex<BTreeMap<String, Slot>> = Mutex::new(BTreeMap::new());
+
+/// Keeps `frame` as the one the blob named `hash` goes up in.
+pub fn keep_frame(hash: &str, frame: BlobFrame) {
+    FRAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(
+            hash.to_string(),
+            Arc::new(OnceLock::from(Ok(Arc::new(frame)))),
+        );
+}
+
+/// Forgets every frame this process kept, as a new run starts with none.
+#[cfg(test)]
+pub fn forget_frames() {
+    FRAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+}
+
+/// The frame the blob named `hash`, whose bytes are `b64`, goes up in: the one kept for it, or
+/// made now from `b64` by [`BlobFrame::packed`], once for the whole process however many hosts
+/// ask at the same moment, and on a blocking thread rather than on an async worker.
+pub async fn frame(hash: &str, b64: &str) -> Result<Arc<BlobFrame>, String> {
+    let slot = Arc::clone(
+        FRAMES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(hash.to_string())
+            .or_default(),
+    );
+    if let Some(made) = slot.get() {
+        return made.clone();
+    }
+    let (named, b64) = (hash.to_string(), b64.to_string());
+    tokio::task::spawn_blocking(move || {
+        slot.get_or_init(|| {
+            volant_protocol::encoding::b64_decode(&b64)
+                .map(|raw| Arc::new(BlobFrame::packed(raw)))
+                .map_err(|err| format!("decoding the blob {named}: {err}"))
+        })
+        .clone()
+    })
+    .await
+    .map_err(|err| format!("framing the blob {hash}: {err}"))?
 }
 
 /// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
@@ -276,9 +392,14 @@ impl AgentLink {
     }
 
     pub async fn send(&mut self, msg: &ToAgent) -> std::io::Result<()> {
-        let payload = serde_json::to_vec(msg)?;
-        self.stdin().write_all(&header(payload.len())?).await?;
-        self.stdin().write_all(&payload).await?;
+        self.send_bytes(&serde_json::to_vec(msg)?).await
+    }
+
+    /// Writes `bytes` as one frame, as they are: a message's JSON, or the blob a `put_blob` is
+    /// followed by.
+    pub async fn send_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.stdin().write_all(&header(bytes.len())?).await?;
+        self.stdin().write_all(bytes).await?;
         self.stdin().flush().await
     }
 
@@ -563,6 +684,108 @@ mod tests {
             .spawn()
             .expect("cat is on PATH");
         AgentLink::new(child).expect("a link over it")
+    }
+
+    /// A frame goes deflated only past 4 KiB and only when that is shorter.
+    ///
+    /// What would make this red: a deflate kept when it grew, which the agent refuses as a frame
+    /// longer than its blob; or every small file deflated, for nothing.
+    #[test]
+    fn a_blob_is_deflated_only_when_it_is_large_and_that_is_shorter() {
+        let small = BlobFrame::packed(vec![0; 4096]);
+        assert_eq!(small, BlobFrame::raw(vec![0; 4096]));
+        let large = BlobFrame::packed(vec![0; 4097]);
+        assert_eq!((large.len, large.encoding), (4097, BlobEncoding::Deflate));
+        assert!(large.bytes.len() < 100);
+        let noise: Vec<u8> = (0..256u32)
+            .flat_map(|n| *blake3::hash(&n.to_le_bytes()).as_bytes())
+            .collect();
+        let grew = volant_protocol::encoding::deflate(&noise);
+        assert!(grew.len() >= noise.len(), "{} bytes", grew.len());
+        assert_eq!(BlobFrame::packed(noise.clone()), BlobFrame::raw(noise));
+    }
+
+    /// Bytes whose first 64 KiB do not compress go raw without a deflate of the whole of them.
+    ///
+    /// What would make this red: the sample check removed, which deflates a 40 MiB archive at
+    /// level 6 on every first send only to throw the result away.
+    #[test]
+    fn bytes_whose_sample_does_not_shrink_skip_the_whole_deflate() {
+        let noise: Vec<u8> = (0..32 * 1024u32)
+            .flat_map(|n| *blake3::hash(&n.to_le_bytes()).as_bytes())
+            .collect();
+        assert_eq!(BlobFrame::packed(noise.clone()), BlobFrame::raw(noise));
+        assert_eq!(DEFLATED.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let text = b"a log line that repeats\n".repeat(40_000);
+        let packed = BlobFrame::packed(text.clone());
+        assert_eq!(packed.encoding, BlobEncoding::Deflate);
+        assert_eq!(
+            DEFLATED.load(std::sync::atomic::Ordering::Relaxed),
+            text.len() as u64
+        );
+    }
+
+    /// A blob asked for by many hosts at once is framed once, and every host gets that frame.
+    ///
+    /// What would make this red: the frames not kept by content hash, or the lookup and the
+    /// keeping in two separate steps with the deflate between them, either of which deflates the
+    /// same file once per host.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_blob_sent_to_many_hosts_is_framed_once() {
+        let text = b"a log line that repeats\n".repeat(40_000);
+        let hash = blake3::hash(&text).to_hex().to_string();
+        let b64 = volant_protocol::encoding::b64_encode(&text);
+        let hosts: Vec<_> = (0..8)
+            .map(|_| {
+                let (hash, b64) = (hash.clone(), b64.clone());
+                tokio::spawn(async move { frame(&hash, &b64).await.unwrap() })
+            })
+            .collect();
+        let mut frames = Vec::new();
+        for host in hosts {
+            frames.push(host.await.unwrap());
+        }
+        assert!(frames.iter().all(|f| Arc::ptr_eq(f, &frames[0])));
+        assert_eq!(frames[0].encoding, BlobEncoding::Deflate);
+        assert_eq!(
+            DEFLATED.load(std::sync::atomic::Ordering::Relaxed),
+            text.len() as u64
+        );
+    }
+
+    /// An agent that speaks the protocol before this one is refused at the handshake with the
+    /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
+    ///
+    /// What would make this red: the version check dropped from `handshake`, or the version left
+    /// at 5, where this agent would be accepted and then take the first blob frame for a
+    /// malformed message.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_agent_that_speaks_protocol_five_is_refused_at_the_handshake() {
+        let ready = br#"{"type":"ready","protocol":5,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;
+        let len = u32::try_from(ready.len()).unwrap().to_be_bytes();
+        let mut octal = String::new();
+        for byte in len.iter().chain(ready.iter()) {
+            std::fmt::Write::write_fmt(&mut octal, format_args!("\\{byte:03o}")).unwrap();
+        }
+        let child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '{octal}'; cat > /dev/null"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("sh is on PATH");
+        let err = AgentLink::new(child)
+            .unwrap()
+            .handshake()
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "agent 0.1.0-alpha.7 speaks protocol 5, this controller speaks 6"
+        );
     }
 
     /// What a link was told about a payload dies with that link, so a connection lost and

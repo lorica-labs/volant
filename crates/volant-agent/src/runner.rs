@@ -13,7 +13,7 @@ use crate::modules::{self, Run};
 pub fn run_batch<F>(
     id: u64,
     tasks: &[Task],
-    control: &Receiver<io::Result<ToAgent>>,
+    control: &Receiver<io::Result<crate::blobs::Incoming>>,
     send: &mut F,
 ) -> io::Result<()>
 where
@@ -65,7 +65,7 @@ where
 /// forwarded stdin read error also ends it, but is not a deliberate cancel: `stop` reports
 /// it as a logged error instead of `BatchOutcome::Cancelled`.
 fn is_cancelled<F>(
-    control: &Receiver<io::Result<ToAgent>>,
+    control: &Receiver<io::Result<crate::blobs::Incoming>>,
     id: u64,
     broken: &Cell<Option<io::Error>>,
     remote_tmp: &str,
@@ -75,13 +75,13 @@ where
     F: FnMut(&FromAgent) -> io::Result<()>,
 {
     match control.try_recv() {
-        Ok(Ok(ToAgent::Cancel { id: cancelled })) => cancelled == id,
-        Ok(Ok(other)) => {
+        Ok(Ok((ToAgent::Cancel { id: cancelled }, _))) => cancelled == id,
+        Ok(Ok((other, frame))) => {
             // A blob message is answered here rather than dropped: the controller waits for a
             // `BlobState` after every `put_blob`, and one that arrived mid-batch used to be
             // logged to a stderr it only sometimes sees and then discarded, leaving it waiting
             // for a state that never came.
-            match crate::blobs::answer(remote_tmp, &other, &mut *send.borrow_mut()) {
+            match crate::blobs::answer(remote_tmp, &other, &frame, &mut *send.borrow_mut()) {
                 Ok(true) => return false,
                 Ok(false) => {}
                 Err(err) => {

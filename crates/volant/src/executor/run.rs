@@ -11,7 +11,7 @@ use tokio::sync::watch;
 use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
-use crate::agent::{AgentLink, AgentSource, BlobMemory};
+use crate::agent::{AgentLink, AgentSource, BlobFrame, BlobMemory};
 use crate::compile::{Compiled, Step};
 use crate::playbook::PlayTask;
 use crate::preflight::PROMPT_REFUSED;
@@ -1625,6 +1625,8 @@ pub(super) fn protocol_task(
 pub(super) trait AgentChannel {
     fn memory(&mut self) -> &mut BlobMemory;
     async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()>;
+    /// Sends the blob frame a `put_blob` is followed by.
+    async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()>;
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
@@ -1715,6 +1717,10 @@ impl AgentChannel for AgentLink {
         self.send(msg).await
     }
 
+    async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.send_bytes(bytes).await
+    }
+
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
         self.recv().await
     }
@@ -1746,7 +1752,9 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
     if let Some(seen) = link.memory().seen(hash) {
         return seen;
     }
-    let state = match place_blob(link, host, hash, zip_b64, false, logs).await {
+    // Deflated once per run, when the union cache stored or loaded the entry.
+    let frame = crate::agent::frame(hash, zip_b64);
+    let state = match place_blob(link, host, hash, frame, false, logs).await {
         Ok(true) => Ok(()),
         // The agent logs why on its way to saying no, and that line is already in `logs`.
         Ok(false) => Err(format!(
@@ -1759,7 +1767,7 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
 }
 
 /// Asks whether the agent holds `hash`, and sends it when it does not: whether it holds it now.
-/// A `staged` file is sent without asking.
+/// A `staged` file is sent without asking. `frame` is only awaited when the blob goes up.
 ///
 /// Remembers nothing. That is [`ensure_blob`]'s to do for a payload, and is never done for a
 /// file a sub-task stages: the agent takes that one out of its cache to hand it to the module,
@@ -1770,20 +1778,22 @@ async fn place_blob<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
-    b64: &str,
+    frame: impl Future<Output = Result<std::sync::Arc<BlobFrame>, String>>,
     staged: bool,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
     let has = ToAgent::HasBlob { hash: hash.into() };
-    if !staged && blob_state(link, host, hash, &has, logs).await? {
+    if !staged && blob_state(link, host, hash, &has, None, logs).await? {
         return Ok(true);
     }
+    let frame = frame.await?;
     let put = ToAgent::PutBlob {
         hash: hash.into(),
-        zip_b64: b64.into(),
+        len: frame.len,
+        encoding: frame.encoding,
         staged,
     };
-    blob_state(link, host, hash, &put, logs).await
+    blob_state(link, host, hash, &put, Some(&frame.bytes), logs).await
 }
 
 /// Puts on the host every file a sub-task stages, whatever the link put there before: the
@@ -1797,7 +1807,9 @@ async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        let placed_now = place_blob(link, host, &blob.hash, &blob.b64, true, logs)
+        // Framed once for every host that is sent the same bytes.
+        let frame = crate::agent::frame(&blob.hash, &blob.b64);
+        let placed_now = place_blob(link, host, &blob.hash, frame, true, logs)
             .await
             .map_err(|err| format!("staging the file for '{arg}': {err}"))?;
         if !placed_now {
@@ -1832,11 +1844,17 @@ async fn blob_state<C: AgentChannel>(
     host: &str,
     hash: &str,
     msg: &ToAgent,
+    frame: Option<&[u8]>,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
     link.ask(msg)
         .await
         .map_err(|err| format!("asking the agent about the blob {hash}: {err}"))?;
+    if let Some(frame) = frame {
+        link.ask_bytes(frame)
+            .await
+            .map_err(|err| format!("sending the blob {hash}: {err}"))?;
+    }
     loop {
         match link.answer().await {
             Ok(Some(FromAgent::BlobState {
@@ -3258,6 +3276,8 @@ mod tests {
     /// An agent that answers what the test scripted, and remembers what a link remembers.
     struct FakeAgent {
         sent: Vec<ToAgent>,
+        /// Each blob frame, with the count of messages sent before it.
+        frames: Vec<(usize, Vec<u8>)>,
         answers: std::collections::VecDeque<FromAgent>,
         memory: BlobMemory,
         /// Whether a fake that has run out of answers holds the line open instead of closing it,
@@ -3270,6 +3290,7 @@ mod tests {
         fn answering(answers: Vec<FromAgent>) -> Self {
             FakeAgent {
                 sent: Vec::new(),
+                frames: Vec::new(),
                 answers: answers.into(),
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
@@ -3292,6 +3313,11 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.sent.push(msg.clone());
+            Ok(())
+        }
+
+        async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            self.frames.push((self.sent.len(), bytes.to_vec()));
             Ok(())
         }
 
@@ -3343,6 +3369,84 @@ mod tests {
             .await
             .expect("the agent already holds it");
         assert_eq!(held.puts(), 0, "{:?}", held.sent);
+    }
+
+    /// The union goes up as a `put_blob` announcing its decoded length, then one frame holding
+    /// its deflated form, in that order.
+    ///
+    /// What would make this red: the frame written before its `put_blob` (the agent would take
+    /// it for a message); the length of the deflated form announced (the agent would refuse
+    /// the frame as longer than the blob); the zip sent raw.
+    #[tokio::test]
+    async fn the_union_goes_up_deflated_in_the_frame_after_its_put_blob() {
+        let zip = b"PK\x03\x04 a stored zip ".repeat(1000);
+        let hash = blake3::hash(&zip).to_hex().to_string();
+        let b64 = volant_protocol::encoding::b64_encode(&zip);
+        let mut agent = FakeAgent::answering(vec![state(&hash, false), state(&hash, true)]);
+        ensure_blob(&mut agent, "h1", &hash, &b64, &mut Vec::new())
+            .await
+            .expect("the agent stored it");
+        assert_eq!(
+            agent.sent,
+            [
+                ToAgent::HasBlob { hash: hash.clone() },
+                ToAgent::PutBlob {
+                    hash: hash.clone(),
+                    len: zip.len() as u64,
+                    encoding: volant_protocol::BlobEncoding::Deflate,
+                    staged: false,
+                },
+            ]
+        );
+        assert_eq!(agent.frames.len(), 1);
+        let (after, bytes) = &agent.frames[0];
+        assert_eq!(*after, 2, "the frame follows its put_blob");
+        assert!(bytes.len() < zip.len() / 10, "{} bytes", bytes.len());
+        assert_eq!(
+            volant_protocol::encoding::inflate(bytes, zip.len()).unwrap(),
+            zip
+        );
+    }
+
+    /// A staged file of 100 bytes goes up raw, in the frame after its `put_blob`.
+    #[tokio::test]
+    async fn a_small_staged_file_goes_up_raw_after_its_put_blob() {
+        let bytes = [7u8; 100];
+        let blob = crate::action_plugins::files::blob_of("small", &bytes).expect("it fits");
+        let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
+        stage_files(
+            &mut agent,
+            "h1",
+            &[("src".into(), blob.clone())],
+            &mut Vec::new(),
+        )
+        .await
+        .expect("the agent stored it");
+        assert_eq!(
+            agent.sent,
+            [ToAgent::PutBlob {
+                hash: blob.hash.clone(),
+                len: 100,
+                encoding: volant_protocol::BlobEncoding::Raw,
+                staged: true,
+            }]
+        );
+        assert_eq!(agent.frames, [(1, bytes.to_vec())]);
+    }
+
+    /// An agent that answers `present: false` after the blob went up fails the batch with the
+    /// sentence it has always failed with.
+    #[tokio::test]
+    async fn a_blob_the_agent_does_not_keep_fails_with_the_same_sentence() {
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
+        let err = ensure_blob(&mut agent, "h1", "ab", "UEsDBA==", &mut Vec::new())
+            .await
+            .expect_err("the agent refused it");
+        assert_eq!(
+            err,
+            "the agent refused the module payload ab; it holds no payload to run this task from"
+        );
+        assert_eq!(agent.frames, [(2, b"PK\x03\x04".to_vec())]);
     }
 
     /// A payload the agent refuses fails the batch, and the next batch of that host does not
@@ -5212,6 +5316,10 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.agent.ask(msg).await
+        }
+
+        async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            self.agent.ask_bytes(bytes).await
         }
 
         async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {

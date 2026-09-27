@@ -10,12 +10,115 @@
 //! cache directory is refused unless this agent owns it and nobody else can write it, and a name
 //! that is not 64 hex characters never reaches the filesystem at all.
 
+use std::borrow::Cow;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use volant_protocol::{FromAgent, LogLevel, ToAgent};
+use volant_protocol::encoding::{BLOB_LIMIT, inflate};
+use volant_protocol::frame::payload_len;
+use volant_protocol::{BlobEncoding, FromAgent, LogLevel, ToAgent};
+
+/// A message from the controller, with the frame that follows it when it is a `put_blob`: the
+/// frame's bytes, or why they were skipped. Empty for every other message.
+pub type Incoming = (ToAgent, Result<Vec<u8>, String>);
+
+/// Reads one message and, after a `put_blob`, the blob frame that always follows it, so the
+/// stream never falls out of step: a frame longer than the announced `len` is read through and
+/// dropped without being held, and answered as a refusal. `Ok(None)` at a clean end of stream.
+///
+/// A message that does not read is `Some(Err(why))`: the caller logs and drops it, as it always
+/// has. A `put_blob` that does not read (an encoding this agent does not know) still has its
+/// blob frame after it, which is read through without being held, never taken for the next
+/// message; when it names its hash it is answered as a refused blob.
+pub fn read_incoming<R: Read>(mut input: R) -> io::Result<Option<Result<Incoming, String>>> {
+    let Some(bytes) = volant_protocol::frame::read_frame(&mut input)? else {
+        return Ok(None);
+    };
+    let msg = match serde_json::from_slice::<ToAgent>(&bytes) {
+        Ok(msg) => msg,
+        Err(err) => return unreadable(&mut input, &bytes, &err.to_string()),
+    };
+    let blob = match &msg {
+        ToAgent::PutBlob { len, .. } => read_blob_frame(&mut input, *len)?,
+        _ => Ok(Vec::new()),
+    };
+    Ok(Some(Ok((msg, blob))))
+}
+
+/// A message that did not read, after its frame: the blob frame behind a `put_blob` is read
+/// through, and a `put_blob` naming its hash comes back as one whose blob is refused, so the
+/// controller waiting for its `BlobState` gets one.
+fn unreadable<R: Read>(
+    mut input: R,
+    bytes: &[u8],
+    why: &str,
+) -> io::Result<Option<Result<Incoming, String>>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    if value.get("type").and_then(|t| t.as_str()) != Some("put_blob") {
+        return Ok(Some(Err(why.to_string())));
+    }
+    // Announced as 0 bytes, any frame is longer and read through without being held.
+    let _skipped = read_blob_frame(&mut input, 0)?;
+    let Some(hash) = value.get("hash").and_then(|h| h.as_str()) else {
+        return Ok(Some(Err(why.to_string())));
+    };
+    let refused = ToAgent::PutBlob {
+        hash: hash.to_string(),
+        len: 0,
+        encoding: BlobEncoding::Raw,
+        staged: value.get("staged").and_then(serde_json::Value::as_bool) == Some(true),
+    };
+    Ok(Some(Ok((
+        refused,
+        Err(format!("the put_blob does not read: {why}")),
+    ))))
+}
+
+/// The frame after a `put_blob` announcing `len` decoded bytes. Neither encoding makes a blob
+/// longer than `len` on the wire (the controller deflates only when that is shorter), so a
+/// longer frame, or any frame after a `len` past [`BLOB_LIMIT`], is read through without being
+/// held and refused. The end of the stream in its place is an error: the controller went away
+/// mid-blob.
+fn read_blob_frame<R: Read>(mut input: R, len: u64) -> io::Result<Result<Vec<u8>, String>> {
+    let mut header = [0u8; 4];
+    input.read_exact(&mut header)?;
+    let size = payload_len(header)?;
+    if size as u64 > len || len > BLOB_LIMIT as u64 {
+        io::copy(&mut input.take(size as u64), &mut io::sink())?;
+        return Ok(Err(if len > BLOB_LIMIT as u64 {
+            format!("{len} bytes is past the {BLOB_LIMIT} byte limit")
+        } else {
+            format!("the blob's frame is {size} bytes, longer than the {len} bytes it decodes to")
+        }));
+    }
+    let mut bytes = vec![0u8; size];
+    input.read_exact(&mut bytes)?;
+    Ok(Ok(bytes))
+}
+
+/// The blob a `put_blob`'s frame carries, decoded: refused when `len` is past [`BLOB_LIMIT`],
+/// when a raw frame is not `len` bytes, when a deflated one does not inflate to exactly `len`
+/// bytes (truncated, damaged, or a bomb stopped at `len`).
+fn decoded(len: u64, encoding: BlobEncoding, frame: &[u8]) -> io::Result<Cow<'_, [u8]>> {
+    let invalid = |why: String| io::Error::new(io::ErrorKind::InvalidData, why);
+    let len = usize::try_from(len)
+        .ok()
+        .filter(|len| *len <= BLOB_LIMIT)
+        .ok_or_else(|| invalid(format!("{len} bytes is past the {BLOB_LIMIT} byte limit")))?;
+    let bytes = match encoding {
+        BlobEncoding::Raw => Cow::Borrowed(frame),
+        BlobEncoding::Deflate => Cow::Owned(inflate(frame, len).map_err(invalid)?),
+    };
+    if bytes.len() != len {
+        return Err(invalid(format!(
+            "the blob decoded to {} bytes where {len} were announced",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
 
 /// Where the agent keeps payloads, and where it reads `remote_tmp` from.
 ///
@@ -293,7 +396,14 @@ pub fn holds(remote_tmp: &str, hash: &str) -> io::Result<bool> {
 /// both have to answer: a controller that sent `put_blob` waits for a `BlobState`, so one
 /// logged and dropped mid-batch left it waiting for a state that never came. `Ok(false)` says
 /// the message was not a blob message and is still the caller's to handle.
-pub fn answer<F>(remote_tmp: &str, msg: &ToAgent, send: &mut F) -> io::Result<bool>
+///
+/// `frame` is what [`read_incoming`] read after a `put_blob`.
+pub fn answer<F>(
+    remote_tmp: &str,
+    msg: &ToAgent,
+    frame: &Result<Vec<u8>, String>,
+    send: &mut F,
+) -> io::Result<bool>
 where
     F: FnMut(&FromAgent) -> io::Result<()>,
 {
@@ -319,9 +429,15 @@ where
         // reason survives.
         ToAgent::PutBlob {
             hash,
-            zip_b64,
+            len,
+            encoding,
             staged,
-        } => match store(remote_tmp, hash, zip_b64, *staged) {
+        } => match frame
+            .as_ref()
+            .map_err(|why| io::Error::new(io::ErrorKind::InvalidData, why.clone()))
+            .and_then(|frame| decoded(*len, *encoding, frame))
+            .and_then(|bytes| store(remote_tmp, hash, &bytes, *staged))
+        {
             Ok(_) => send(&FromAgent::BlobState {
                 hash: hash.clone(),
                 present: true,
@@ -345,17 +461,17 @@ where
     Ok(true)
 }
 
-/// Decodes, hashes, refuses a mismatch, then writes atomically under the hash.
+/// Hashes the decoded bytes, refuses a mismatch, then writes atomically under the hash.
 ///
-/// The hash is checked on the decoded bytes **before** anything is written, so a mismatch never
+/// The hash is checked **before** anything is written, so a mismatch never
 /// leaves a file behind under any name, nor even the cache directory. The temporary name carries
 /// the pid so two agents racing on one host cannot interleave into a file of exactly the right
 /// length.
 ///
 /// A `staged` blob lands in this connection's own directory rather than the shared cache: see
 /// [`stage_dir`].
-pub fn store(remote_tmp: &str, hash: &str, zip_b64: &str, staged: bool) -> io::Result<PathBuf> {
-    store_with(free_bytes, remote_tmp, hash, zip_b64, staged)
+pub fn store(remote_tmp: &str, hash: &str, zip: &[u8], staged: bool) -> io::Result<PathBuf> {
+    store_with(free_bytes, remote_tmp, hash, zip, staged)
 }
 
 /// [`store`] with the free-space reader handed in, so a test can drive the guard's call site
@@ -364,12 +480,10 @@ fn store_with(
     free: impl Fn(&Path) -> io::Result<u64>,
     remote_tmp: &str,
     hash: &str,
-    zip_b64: &str,
+    zip: &[u8],
     staged: bool,
 ) -> io::Result<PathBuf> {
-    let zip = volant_protocol::encoding::b64_decode(zip_b64)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    let actual = blake3::hash(&zip).to_hex().to_string();
+    let actual = blake3::hash(zip).to_hex().to_string();
     if actual != hash {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -395,7 +509,7 @@ fn store_with(
     }
     let tmp = dir.join(format!("{hash}.tmp.{}", std::process::id()));
     let mut file = fs::File::create(&tmp)?;
-    if let Err(err) = file.write_all(&zip).and_then(|()| file.sync_all()) {
+    if let Err(err) = file.write_all(zip).and_then(|()| file.sync_all()) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
@@ -574,7 +688,7 @@ mod tests {
 
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use volant_protocol::encoding::b64_encode as b64;
+    use volant_protocol::encoding::deflate;
 
     /// A payload whose bytes do not hash to the name it arrived under never lands, and the error
     /// says both hashes so an operator can tell a corrupted transfer from a wrong name.
@@ -587,7 +701,7 @@ mod tests {
         let dir = tempdir();
         let zip = b"not really a zip";
         let wrong = "0".repeat(64);
-        let err = store(dir.path().to_str().unwrap(), &wrong, &b64(zip), false).unwrap_err();
+        let err = store(dir.path().to_str().unwrap(), &wrong, zip, false).unwrap_err();
         assert!(err.to_string().contains(&wrong), "{err}");
         assert!(err.to_string().contains(&hash_of(zip)), "{err}");
         assert!(!path(dir.path().to_str().unwrap(), &wrong).unwrap().exists());
@@ -604,7 +718,7 @@ mod tests {
         let dir = tempdir();
         let zip = b"pretend this is a zip";
         let h = hash_of(zip);
-        let at = store(dir.path().to_str().unwrap(), &h, &b64(zip), false).unwrap();
+        let at = store(dir.path().to_str().unwrap(), &h, zip, false).unwrap();
         assert_eq!(fs::read(&at).unwrap(), zip);
         assert_eq!(at, path(dir.path().to_str().unwrap(), &h).unwrap());
     }
@@ -633,7 +747,7 @@ mod tests {
             "the bytes are not the payload"
         );
 
-        let landed = store(remote_tmp, &h, &b64(zip), false).unwrap();
+        let landed = store(remote_tmp, &h, zip, false).unwrap();
         assert_eq!(landed, at);
         assert_eq!(
             fs::read(&at).unwrap(),
@@ -658,9 +772,9 @@ mod tests {
         let remote_tmp = dir.path().to_str().unwrap();
         let zip = b"pretend this is a zip";
         let h = hash_of(zip);
-        let at = store(remote_tmp, &h, &b64(zip), false).unwrap();
+        let at = store(remote_tmp, &h, zip, false).unwrap();
         let first = fs::metadata(&at).unwrap().ino();
-        let again = store(remote_tmp, &h, &b64(zip), false).unwrap();
+        let again = store(remote_tmp, &h, zip, false).unwrap();
         assert_eq!(again, at);
         assert_eq!(
             fs::metadata(&at).unwrap().ino(),
@@ -688,7 +802,7 @@ mod tests {
             .create(dir(remote_tmp))
             .unwrap();
         let zip = b"pretend this is a zip";
-        let err = store(remote_tmp, &hash_of(zip), &b64(zip), false).unwrap_err();
+        let err = store(remote_tmp, &hash_of(zip), zip, false).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
         assert!(err.to_string().contains("755"), "{err}");
         assert!(holds(remote_tmp, &hash_of(zip)).is_err());
@@ -708,12 +822,7 @@ mod tests {
         let zip = b"pretend this is a zip";
         // SAFETY: nextest runs each test in its own process, so this reaches no other test.
         let previous = unsafe { libc::umask(0o022) };
-        let stored = store(
-            dir.path().to_str().unwrap(),
-            &hash_of(zip),
-            &b64(zip),
-            false,
-        );
+        let stored = store(dir.path().to_str().unwrap(), &hash_of(zip), zip, false);
         // SAFETY: as above, and the value put back is the one just taken.
         unsafe { libc::umask(previous) };
         stored.unwrap();
@@ -746,46 +855,134 @@ mod tests {
                 "{name}"
             );
             assert!(holds(remote_tmp, name).is_err(), "{name}");
-            assert!(
-                store(remote_tmp, name, &b64(b"zip"), false).is_err(),
-                "{name}"
-            );
+            assert!(store(remote_tmp, name, b"zip", false).is_err(), "{name}");
         }
     }
 
-    /// Base64 the agent cannot decode is refused as invalid data, before anything is written and
-    /// with the offset that broke it.
+    /// A raw frame is the blob only at exactly the announced length, and a deflated one only
+    /// when it inflates to exactly that length.
     ///
-    /// What would make this red: a decoder that skips what it does not recognise, which turns a
-    /// truncated transfer into bytes that hash to something and land under a name no later run
-    /// can tell from a good one.
+    /// What would make this red: the length check after decoding removed, which takes a frame
+    /// cut short on the controller's side for the whole blob and leaves only the hash to notice.
     #[test]
-    fn a_payload_that_is_not_base64_is_refused_before_it_lands() {
-        let dir = tempdir();
-        let err = store(
-            dir.path().to_str().unwrap(),
-            &"0".repeat(64),
-            "UEsD!BA==",
-            false,
-        )
-        .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("offset 4"), "{err}");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    fn a_blob_is_decoded_only_at_its_announced_length() {
+        let zip = b"PK\x03\x04 and the rest of the zip".repeat(50);
+        let len = zip.len() as u64;
+        assert_eq!(&*decoded(len, BlobEncoding::Raw, &zip).unwrap(), &zip[..]);
+        let packed = deflate(&zip);
+        assert_eq!(
+            &*decoded(len, BlobEncoding::Deflate, &packed).unwrap(),
+            &zip[..]
+        );
+
+        let short = decoded(len, BlobEncoding::Raw, &zip[..zip.len() - 1]).unwrap_err();
+        assert!(short.to_string().contains("where"), "{short}");
+        let fewer = decoded(len + 1, BlobEncoding::Deflate, &packed).unwrap_err();
+        assert!(fewer.to_string().contains("where"), "{fewer}");
+        let cut = decoded(len, BlobEncoding::Deflate, &packed[..packed.len() / 2]).unwrap_err();
+        assert!(cut.to_string().contains("does not inflate"), "{cut}");
+        let past = decoded(BLOB_LIMIT as u64 + 1, BlobEncoding::Raw, b"").unwrap_err();
+        assert!(past.to_string().contains("byte limit"), "{past}");
     }
 
-    /// `store` names a blob by the hash of the bytes it decoded, so the decoder it calls is pinned
-    /// here through `store` itself, on the zip magic the controller sends first.
+    /// The frame after a `put_blob` is read as bytes, whatever they look like, and the message
+    /// after it is read as a message again: the stream stays in step through a refused frame.
     ///
-    /// What would make this red: `store` decoding with anything but the shared decoder, or that
-    /// decoder dropping the second byte of a one-`=` tail - every payload would then arrive
-    /// under a hash its bytes do not have.
+    /// What would make this red: the read of the blob frame skipped (the frame is taken for the
+    /// next message), or a frame longer than `len` refused without being read through.
     #[test]
-    fn store_decodes_the_zip_magic_it_names() {
-        let dir = tempdir();
-        let h = hash_of(b"PK\x03\x04");
-        let at = store(dir.path().to_str().unwrap(), &h, "UEsDBA==", false).unwrap();
-        assert_eq!(fs::read(at).unwrap(), b"PK\x03\x04");
+    fn a_blob_frame_is_read_as_bytes_and_the_stream_stays_in_step() {
+        use volant_protocol::frame::write_frame;
+        let put = |len: u64| ToAgent::PutBlob {
+            hash: "ab".into(),
+            len,
+            encoding: BlobEncoding::Raw,
+            staged: false,
+        };
+        let json = |msg: &ToAgent| serde_json::to_vec(msg).unwrap();
+        let has = ToAgent::HasBlob { hash: "ab".into() };
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &json(&put(24))).unwrap();
+        write_frame(&mut wire, br#"{"type":"cancel","id":1}"#).unwrap();
+        write_frame(&mut wire, &json(&put(2))).unwrap();
+        write_frame(&mut wire, b"longer than two").unwrap();
+        write_frame(&mut wire, &json(&has)).unwrap();
+        let mut input = io::Cursor::new(wire);
+        let mut next = || read_incoming(&mut input).unwrap().unwrap().unwrap();
+
+        let (msg, frame) = next();
+        assert_eq!(msg, put(24));
+        assert_eq!(frame.unwrap(), br#"{"type":"cancel","id":1}"#);
+        let (msg, frame) = next();
+        assert_eq!(msg, put(2));
+        let why = frame.unwrap_err();
+        assert!(why.contains("longer than the 2 bytes"), "{why}");
+        assert_eq!(next(), (has, Ok(Vec::new())));
+        assert!(read_incoming(&mut input).unwrap().is_none());
+    }
+
+    /// A `put_blob` that does not read still has its frame read through, never taken for the
+    /// next message, and is answered as a refused blob; a `len` past the limit is refused
+    /// without the frame being held.
+    ///
+    /// What would make this red: a `put_blob` with an unknown encoding dropped whole, which
+    /// leaves its frame to be read as a message (here a `cancel`) and the controller waiting for
+    /// a `BlobState`; or the limit left to `decoded`, after the frame is in memory.
+    #[test]
+    fn a_put_blob_that_does_not_read_never_leaves_its_frame_behind() {
+        use volant_protocol::frame::write_frame;
+        let mut wire = Vec::new();
+        write_frame(
+            &mut wire,
+            br#"{"type":"put_blob","hash":"ab","len":24,"encoding":"zstd","staged":true}"#,
+        )
+        .unwrap();
+        write_frame(&mut wire, br#"{"type":"cancel","id":1}"#).unwrap();
+        let past = ToAgent::PutBlob {
+            hash: "cd".into(),
+            len: BLOB_LIMIT as u64 + 1,
+            encoding: BlobEncoding::Raw,
+            staged: false,
+        };
+        write_frame(&mut wire, &serde_json::to_vec(&past).unwrap()).unwrap();
+        write_frame(&mut wire, br#"{"type":"cancel","id":2}"#).unwrap();
+        write_frame(&mut wire, br#"{"type":"has_blob","hash":"ab"}"#).unwrap();
+        let mut input = io::Cursor::new(wire);
+        let mut next = || read_incoming(&mut input).unwrap().unwrap().unwrap();
+
+        let (msg, frame) = next();
+        assert_eq!(
+            msg,
+            ToAgent::PutBlob {
+                hash: "ab".into(),
+                len: 0,
+                encoding: BlobEncoding::Raw,
+                staged: true
+            }
+        );
+        let why = frame.unwrap_err();
+        assert!(why.contains("zstd"), "{why}");
+        let (msg, frame) = next();
+        assert_eq!(msg, past);
+        let why = frame.unwrap_err();
+        assert!(why.contains("byte limit"), "{why}");
+        assert_eq!(next().0, ToAgent::HasBlob { hash: "ab".into() });
+    }
+
+    /// A controller gone mid-blob is a broken stream, never a blob of the bytes that came.
+    #[test]
+    fn a_blob_frame_cut_by_the_end_of_the_stream_is_an_error() {
+        let put = ToAgent::PutBlob {
+            hash: "ab".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
+            staged: false,
+        };
+        let mut wire = Vec::new();
+        volant_protocol::frame::write_frame(&mut wire, &serde_json::to_vec(&put).unwrap()).unwrap();
+        wire.extend_from_slice(&[0, 0, 0, 4, b'P', b'K']);
+        let err = read_incoming(io::Cursor::new(wire)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     /// A payload larger than what the filesystem has left is refused with both figures and the
@@ -830,7 +1027,7 @@ mod tests {
         let dir = tempdir();
         let remote_tmp = dir.path().to_str().unwrap();
         let zip = b"pretend this is a zip";
-        let err = store_with(|_| Ok(0), remote_tmp, &hash_of(zip), &b64(zip), false).unwrap_err();
+        let err = store_with(|_| Ok(0), remote_tmp, &hash_of(zip), zip, false).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::StorageFull, "{err}");
         assert_eq!(
             fs::read_dir(dir.path()).unwrap().count(),
@@ -848,7 +1045,7 @@ mod tests {
         let occupied = dir.path().join("occupied");
         fs::write(&occupied, b"").unwrap();
         let zip = b"pretend this is a zip";
-        let err = store(occupied.to_str().unwrap(), &hash_of(zip), &b64(zip), false).unwrap_err();
+        let err = store(occupied.to_str().unwrap(), &hash_of(zip), zip, false).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotADirectory, "{err}");
     }
 

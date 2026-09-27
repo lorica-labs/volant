@@ -1458,12 +1458,27 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                         // would swallow the next sub-task and leave it unanswered. Cancelled, or,
                         // when the agent does not say it stopped, the link replaced like one the
                         // host outlived.
-                        if *batch_id != sent_before
-                            && !link.stop_batch(*batch_id, CANCEL_GRACE).await
-                        {
-                            relink.relink(link, attempt).await.map_err(|why| {
-                                Err(format!("replacing a link busy with a probe: {why}"))
-                            })?;
+                        // Both waits past the deadline still give way to an interruption.
+                        if *batch_id != sent_before {
+                            let id = *batch_id;
+                            let mut watcher = stop.clone();
+                            let stopped = async move {
+                                if watcher.wait_for(|stopped| *stopped).await.is_err() {
+                                    std::future::pending::<()>().await;
+                                }
+                            };
+                            let settle = async {
+                                if link.stop_batch(id, CANCEL_GRACE).await {
+                                    return Ok(());
+                                }
+                                relink.relink(link, attempt).await
+                            };
+                            tokio::select! {
+                                settled = settle => settled.map_err(|why| {
+                                    Err(format!("replacing a link busy with a probe: {why}"))
+                                })?,
+                                () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                            }
                         }
                         gone(&format!("no answer after {} seconds", left.as_secs_f64()))
                     }
@@ -6885,9 +6900,10 @@ mod tests {
         /// The `connect_timeout` each try was given.
         connect_timeouts: Vec<Option<Duration>>,
         retired: Vec<FakeAgent>,
-        /// Raised a tenth of a second after the first try starts, for a test of the run being
-        /// interrupted while it waits.
+        /// Raised a tenth of a second after try number `stop_on` starts, for a test of the run
+        /// being interrupted while it waits.
         stop: Option<watch::Sender<bool>>,
+        stop_on: usize,
         /// A millisecond in place of the reference's seconds, so the schedule's shape is tested
         /// without its length (`the_pause_doubles_from_one_second_up_to_twelve`), unless a test
         /// needs a pause long enough to be interrupted.
@@ -6903,6 +6919,7 @@ mod tests {
                 connect_timeouts: Vec::new(),
                 retired: Vec::new(),
                 stop: None,
+                stop_on: 1,
                 pause: Duration::from_millis(1),
             }
         }
@@ -6916,7 +6933,9 @@ mod tests {
         ) -> Result<(), String> {
             self.attempts += 1;
             self.connect_timeouts.push(connect_timeout);
-            if let Some(stop) = self.stop.take() {
+            if self.attempts == self.stop_on
+                && let Some(stop) = self.stop.take()
+            {
                 // A moment later, so that it lands inside whatever wait follows this try.
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -7617,6 +7636,8 @@ mod tests {
             .await
             .expect("the item ran to its end");
             assert_eq!(result, TaskResult::timed_out(2), "{confirms}");
+            // A confirmed cancel keeps the link; an unconfirmed one replaces it.
+            assert_eq!(relink.attempts, if confirms { 1 } else { 2 }, "{confirms}");
             let next = vec![protocol_task(&task("command"), &bare_item(), None)];
             let (received, _) = tokio::time::timeout(
                 Duration::from_secs(10),
@@ -7637,6 +7658,36 @@ mod tests {
             let answered = received[0].clone().expect("a result").0;
             assert_eq!(answered["stdout"], json!("next\n"), "{confirms}");
         }
+    }
+
+    /// An interruption ends the waits an abandoned probe leaves behind it: the cancel that goes
+    /// unconfirmed, then the reconnection that replaces the busy link, which here never comes up.
+    /// The stop is raised once that reconnection has started, so it lands in that wait.
+    ///
+    /// What would make this red: the reconnection awaited without watching the stop, which waits
+    /// for as long as it takes (the item's thirty-second bound).
+    #[tokio::test]
+    async fn an_interrupt_ends_the_wait_behind_an_abandoned_probe() {
+        let (raise, mut stop) = watch::channel(false);
+        let mut agent = before_the_reboot(None);
+        let probing = FakeAgent::busy(vec![None], false);
+        let mut relink = Scripted::new(vec![Try::Up(probing), Try::Hangs]);
+        relink.stop = Some(raise);
+        relink.stop_on = 2;
+        let ran = reboot_item_under(
+            Some(2),
+            json!({}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await;
+        assert!(
+            matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
+            "{ran:?}"
+        );
+        assert_eq!(relink.attempts, 2);
     }
 
     /// A `shutdown` that answered and then took the link down reports its answer: a refusal

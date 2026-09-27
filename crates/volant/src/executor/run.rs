@@ -2052,6 +2052,10 @@ async fn send_batch<C: AgentChannel>(
             }
         };
         match msg {
+            // A frame of another batch is a late answer to one this link gave up on, and
+            // belongs to nothing awaited here.
+            Ok(Some(FromAgent::TaskResult { batch, .. } | FromAgent::BatchDone { batch, .. }))
+                if batch != id => {}
             Ok(Some(FromAgent::TaskResult {
                 index,
                 mut result,
@@ -3910,6 +3914,61 @@ mod tests {
     }
 
     /// What the agent answers for a batch of one task that ran to its end.
+    /// A batch reads only the frames of its own id. A probe abandoned at a deadline after a
+    /// reconnection can still answer on the link, and those late frames reach the next batch
+    /// first; filed there, they become its first sub-task's result, and their `BatchDone` ends
+    /// it before its own answer arrives.
+    ///
+    /// What would make this red: the batch id of `TaskResult` or `BatchDone` not compared with
+    /// the one awaited, which returns the stale `probe` result for batch 2.
+    #[tokio::test]
+    async fn a_batch_ignores_the_frames_of_another_batch() {
+        let mut stop = watch::channel(false).1;
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut answers = one_result(1, json!({"msg": "probe"})).to_vec();
+        answers.extend(one_result(2, json!({"msg": "mine"})));
+        let mut agent = FakeAgent::answering(answers);
+        let tasks = vec![protocol_task(&task("ping"), &bare_item(), None)];
+        let (received, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            2,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert!(matches!(ended, Ok(BatchOutcome::Completed)), "{ended:?}");
+        let result = received[0].clone().expect("a result").0;
+        assert_eq!(result["msg"], json!("mine"));
+
+        // Batch 2 ends without a result of its own: the stale one is not taken for it.
+        let mut answers = one_result(1, json!({"msg": "probe"})).to_vec();
+        answers.push(FromAgent::BatchDone {
+            batch: 2,
+            outcome: BatchOutcome::Completed,
+        });
+        let mut agent = FakeAgent::answering(answers);
+        let tasks = vec![protocol_task(&task("ping"), &bare_item(), None)];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            2,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert!(received[0].is_none(), "{received:?}");
+    }
+
     fn one_result(batch: u64, result: Value) -> [FromAgent; 2] {
         [
             FromAgent::TaskResult {

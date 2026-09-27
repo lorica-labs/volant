@@ -696,6 +696,7 @@ dependencies = [
  "blake3",
  "libc",
  "serde_json",
+ "sha1_smol",
  "shlex",
  "volant-agent",
  "volant-protocol",

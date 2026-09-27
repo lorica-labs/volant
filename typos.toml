@@ -9,3 +9,8 @@ extend-exclude = [
   "crates/volant/tests/golden/python-modules/",
   "crates/volant/tests/golden/native/",
 ]
+
+[default.extend-words]
+# Keys of the reference's `stat` result, which the native `stat` returns under the same names.
+woth = "woth"
+writeable = "writeable"

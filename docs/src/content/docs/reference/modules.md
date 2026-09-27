@@ -44,6 +44,8 @@ The controller runs these itself, so they need no connection to the host.
 
 Every other module ansible-core ships is a Python module, and Volant runs it as one. The host needs a Python 3 interpreter, and the controller needs ansible-core to build the payload. [The warm Python path](/internals/python/) explains how it works.
 
+Some of these modules also have a native version in the agent. It answers when the task's arguments stay within what it implements. Otherwise, before it changes anything on the host, it hands the task to the Python module. The table below says which modules have one.
+
 Modules from collections installed on the controller run the same way. The controller's ansible-core resolves each name before the first connection, and Volant never installs a collection. If a play or one of its roles names a module from a collection that is not installed, the run stops before it reaches a host and prints the `ansible-galaxy collection install` command that fixes it. Volant refuses, by name, a module that its collection runs through an action plugin, because it does not run a collection's action plugins. A module that only a dynamic include brings in is refused when a host reaches the include, which then fails for that host. Volant keeps a collection's module under its full name, so that module never stands in for a builtin module or for another collection's module with the same short name.
 
 The exceptions are the modules ansible-core runs through an action plugin that Volant does not have yet. What the playbook asks for lives in the plugin, not in the module, so sending the module alone would do something else and call it a success. Those modules are not supported yet: Volant names them before the run reaches a host. Fact gathering still works: a play's `gather_facts` runs the `setup` module directly.
@@ -51,7 +53,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | Module | How it runs |
 |---|---|
 | `add_host` | not supported yet: needs the `add_host` action plugin |
-| `apt` | Python module |
+| `apt` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `apt_key` | Python module |
 | `apt_repository` | Python module |
 | `assemble` | not supported yet: needs the `assemble` action plugin |
@@ -63,7 +65,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `dnf5` | Python module |
 | `dpkg_selections` | Python module |
 | `expect` | Python module |
-| `file` | Python module |
+| `file` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `find` | Python module |
 | `gather_facts` | not supported yet: needs the `gather_facts` action plugin |
 | `get_url` | Python module |
@@ -84,9 +86,9 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `script` | not supported yet: needs the `script` action plugin |
 | `service_facts` | Python module |
 | `set_stats` | not supported yet: needs the `set_stats` action plugin |
-| `setup` | Python module |
+| `setup` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `slurp` | Python module |
-| `stat` | Python module |
+| `stat` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `subversion` | Python module |
 | `systemd` | Python module |
 | `systemd_service` | Python module |

@@ -42,11 +42,7 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     let mut agent = Agent::spawn(&scratch.0);
     assert_eq!(
         agent.hello(),
-        vec![
-            "setup".to_string(),
-            "apt".to_string(),
-            "volant_echo".to_string()
-        ]
+        ["setup", "stat", "file", "apt", "volant_echo"]
     );
 
     let (result, ran) = agent.run_one(1, task("ansible.modules.volant_echo", json!({"x": 1})));
@@ -75,7 +71,13 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     assert_eq!(ran.path, ExecPath::Python, "{ran:?}");
     assert_python_ran(&result);
 
-    let (result, ran) = agent.run_one(4, task("ansible.modules.stat", json!({"path": "/"})));
+    let (result, ran) = agent.run_one(
+        4,
+        task(
+            "ansible.modules.lineinfile",
+            json!({"path": "/x", "line": "y"}),
+        ),
+    );
     assert_eq!(
         ran.path,
         ExecPath::Python,

@@ -1080,10 +1080,7 @@ mod linux {
             )
             .unwrap();
             assert!(Path::new(&bare).is_dir());
-            assert_eq!(
-                setting("HOME_MODE 0789", "HOME_MODE").unwrap().is_err(),
-                true
-            );
+            assert!(setting("HOME_MODE 0789", "HOME_MODE").unwrap().is_err());
             assert!(setting("HOME_MODES 0700", "HOME_MODE").is_none());
         }
 

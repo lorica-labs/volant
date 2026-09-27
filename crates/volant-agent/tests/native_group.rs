@@ -14,7 +14,7 @@
 mod common;
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, json};
@@ -22,7 +22,8 @@ use volant_protocol::{
     BatchOutcome, ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Task, TaskResult, ToAgent,
 };
 
-/// A directory holding a `groupadd` that hangs, first on the agent's `PATH`; removed at the end.
+/// A directory holding a `groupadd` that marks it started and hangs, first on the agent's `PATH`;
+/// removed at the end.
 struct Hung(PathBuf);
 
 impl Hung {
@@ -35,7 +36,11 @@ impl Hung {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let groupadd = dir.join("groupadd");
-        std::fs::write(&groupadd, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        let script = format!(
+            "#!/bin/sh\ntouch {}/started\nexec sleep 60\n",
+            dir.display()
+        );
+        std::fs::write(&groupadd, script).unwrap();
         std::fs::set_permissions(&groupadd, std::fs::Permissions::from_mode(0o755)).unwrap();
         Hung(dir)
     }
@@ -57,6 +62,15 @@ impl Hung {
         }
         agent
     }
+
+    /// Waits, at most 20 seconds, until the fake command has started.
+    fn started(&self) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.0.join("started").exists() {
+            assert!(Instant::now() < deadline, "the hung command never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 impl Drop for Hung {
@@ -65,16 +79,59 @@ impl Drop for Hung {
     }
 }
 
-/// Only a Debian or Ubuntu host reaches `groupadd`; elsewhere the native hands back first.
-fn debian_here() -> bool {
-    let here = std::fs::read_to_string("/etc/os-release").is_ok_and(|text| {
-        text.lines()
-            .any(|line| matches!(line, "ID=debian" | "ID=ubuntu"))
+/// Whether this host is one the native answers for, by the native's own gate: the last `ID=` of
+/// `/etc/os-release` (quotes stripped) is Debian or Ubuntu, SELinux is off, and `nsswitch.conf`
+/// asks `files` first for accounts and groups.
+fn in_subset() -> bool {
+    let id = std::fs::read_to_string("/etc/os-release")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.strip_prefix("ID="))
+        .next_back()
+        .map(|id| id.trim_matches(['"', '\'']).to_lowercase());
+    let conf = std::fs::read_to_string("/etc/nsswitch.conf").ok();
+    let files_first = |db: &str| {
+        conf.as_deref().is_none_or(|conf| {
+            conf.lines()
+                .filter_map(|line| line.split('#').next()?.trim().strip_prefix(db))
+                .find_map(|rest| rest.trim_start().strip_prefix(':'))
+                .is_none_or(|sources| {
+                    matches!(sources.split_whitespace().next(), Some("files" | "compat"))
+                })
+        })
+    };
+    matches!(id.as_deref(), Some("debian" | "ubuntu"))
+        && !Path::new("/sys/fs/selinux/enforce").exists()
+        && files_first("passwd")
+        && files_first("group")
+}
+
+/// Runs one task and returns its result and how the agent ran it.
+fn run_one(agent: &mut common::Agent, task: Task) -> (TaskResult, volant_protocol::Ran) {
+    agent.send(&ToAgent::RunBatch {
+        id: 1,
+        tasks: vec![task],
     });
-    if !here {
-        eprintln!("this machine is neither Debian nor Ubuntu: the native hands back first");
+    loop {
+        match agent.recv() {
+            Some(FromAgent::TaskResult { result, ran, .. }) => break (result, ran.unwrap()),
+            Some(FromAgent::Log { .. }) => {}
+            other => panic!("expected a task result, got {other:?}"),
+        }
     }
-    here
+}
+
+/// On a host outside the subset the native hands the task back before `groupadd`, which this
+/// checks instead; `true` when it did.
+fn handed_back_here(hung: &Hung) -> bool {
+    if in_subset() {
+        return false;
+    }
+    let (_, ran) = run_one(&mut hung.agent(), task());
+    assert_eq!(ran.path, ExecPath::Fallback, "{:?}", ran.reason);
+    assert!(!hung.0.join("started").exists(), "groupadd ran");
+    eprintln!("this host is outside the native's subset: {:?}", ran.reason);
+    true
 }
 
 /// A task whose `groupadd` outlives its `timeout` gets the Python path's answer for it, on the
@@ -84,26 +141,19 @@ fn debian_here() -> bool {
 /// whole sleep, past the test's own limit), or a result other than the timeout's.
 #[test]
 fn a_hung_groupadd_ends_at_the_task_timeout() {
-    if !debian_here() {
+    let hung = Hung::new("timeout");
+    if handed_back_here(&hung) {
         return;
     }
-    let hung = Hung::new("timeout");
     let mut agent = hung.agent();
     let started = Instant::now();
-    agent.send(&ToAgent::RunBatch {
-        id: 1,
-        tasks: vec![Task {
+    let (result, ran) = run_one(
+        &mut agent,
+        Task {
             timeout: Some(2),
             ..task()
-        }],
-    });
-    let (result, ran) = loop {
-        match agent.recv() {
-            Some(FromAgent::TaskResult { result, ran, .. }) => break (result, ran.unwrap()),
-            Some(FromAgent::Log { .. }) => {}
-            other => panic!("expected a task result, got {other:?}"),
-        }
-    };
+        },
+    );
     assert_eq!(ran.path, ExecPath::Native, "{:?}", ran.reason);
     assert_eq!(result, TaskResult::timed_out(2));
     assert!(
@@ -112,23 +162,24 @@ fn a_hung_groupadd_ends_at_the_task_timeout() {
     );
 }
 
-/// The controller's cancel stops the native while `groupadd` hangs.
+/// The controller's cancel stops the native while `groupadd` hangs: sent once the command has
+/// started, so it reaches the command, not the task before it.
 ///
 /// What would make this red: the cancel not asked while the command runs, which leaves the
 /// batch running until the sleep ends.
 #[test]
 fn a_cancel_stops_a_hung_groupadd() {
-    if !debian_here() {
+    let hung = Hung::new("cancel");
+    if handed_back_here(&hung) {
         return;
     }
-    let hung = Hung::new("cancel");
     let mut agent = hung.agent();
     let started = Instant::now();
     agent.send(&ToAgent::RunBatch {
         id: 7,
         tasks: vec![task()],
     });
-    std::thread::sleep(Duration::from_millis(500));
+    hung.started();
     agent.send(&ToAgent::Cancel { id: 7 });
     let outcome = loop {
         match agent.recv() {

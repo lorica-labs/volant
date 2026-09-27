@@ -54,8 +54,14 @@ mod linux {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> NativeRun {
-        native_run(answer(args, context, clock(context, cancelled)), context)
+        native_run(
+            answer(args, context, clock(context, cancelled), NSSWITCH),
+            context,
+        )
     }
+
+    /// Where the C library reads which sources answer for accounts and groups.
+    pub const NSSWITCH: &str = "/etc/nsswitch.conf";
 
     /// `group`'s `argument_spec` in ansible-core 2.19.12.
     const SPEC: &[ArgSpec] = &[
@@ -172,8 +178,10 @@ mod linux {
     }
 
     /// The host checks made before anything else: a Debian or Ubuntu host, where the module
-    /// takes its generic `User` and its `Linux` group class, with SELinux off.
-    pub fn host_gate() -> Result<(), String> {
+    /// takes its generic `User` and its `Linux` group class, with SELinux off, whose `nsswitch`
+    /// (the file `nsswitch`) asks `files` first for accounts and groups: another source first
+    /// answers `pwd` and `grp` with entries the commands, which edit the files, never see.
+    pub fn host_gate(nsswitch: &str) -> Result<(), String> {
         let os_release = std::fs::read_to_string("/etc/os-release")
             .map_err(|err| format!("reading /etc/os-release: {err}"))?;
         let id = os_release
@@ -187,7 +195,30 @@ mod linux {
         if crate::natives::common::selinux_enabled() {
             return Err("SELinux is on".into());
         }
+        let conf = std::fs::read_to_string(nsswitch).ok();
+        for db in ["passwd", "group"] {
+            if !files_first(conf.as_deref(), db) {
+                return Err(format!(
+                    "nsswitch.conf asks another source before files for {db}"
+                ));
+            }
+        }
         Ok(())
+    }
+
+    /// Whether `conf`, the text of `nsswitch.conf` if there is one, asks `files` first for `db`.
+    /// glibc's default without the file is `files` first as well. The rule of
+    /// `common::lookup`, which keeps its own copy private.
+    pub fn files_first(conf: Option<&str>, db: &str) -> bool {
+        let Some(conf) = conf else {
+            return true;
+        };
+        conf.lines()
+            .filter_map(|line| line.split('#').next()?.trim().strip_prefix(db))
+            .find_map(|rest| rest.trim_start().strip_prefix(':'))
+            .is_none_or(|sources| {
+                matches!(sources.split_whitespace().next(), Some("files" | "compat"))
+            })
     }
 
     /// `module.get_bin_path(name, required=True)` along the module's `PATH`. A missing command
@@ -297,11 +328,12 @@ mod linux {
         args: &Map<String, Value>,
         context: &Context,
         clock: Clock,
+        nsswitch: &str,
     ) -> Result<Map<String, Value>, Stop> {
         let invocation = invocation(SPEC, args);
         let params = invocation["module_args"].as_object().unwrap();
         let request = request(args, params)?;
-        host_gate()?;
+        host_gate(nsswitch)?;
         let found = find_group(request.name, clock)?;
         let name = request.name;
         // Decided, and the command found, before anything runs.
@@ -405,6 +437,43 @@ mod linux {
                 Fakes { scratch, context }
             }
 
+            /// A fake `name` running `body` (`sh`), recording nothing.
+            pub fn script(&self, name: &str, body: &str) {
+                use std::os::unix::fs::PermissionsExt;
+                let path = self.scratch.path(&format!("fakes/{name}"));
+                std::fs::write(
+                    &path,
+                    format!(
+                        "#!/bin/sh
+{body}
+"
+                    ),
+                )
+                .unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+
+            /// Forgets that `name` ran.
+            pub fn clear(&self, name: &str) {
+                let _ = std::fs::remove_file(self.scratch.path(&format!("fakes/{name}.argv")));
+            }
+
+            /// On a host outside the natives' subset (not Debian or Ubuntu, SELinux on, another
+            /// name service before `files`), checks the documented hand-back through `ask` and
+            /// says so: the caller then stops, having checked what this host allows.
+            pub fn outside(&self, ask: Ask) -> bool {
+                let Err(reason) = host_gate(NSSWITCH) else {
+                    return false;
+                };
+                let answer = ask(&args(json!({"name": "root"})), &self.context);
+                assert!(
+                    matches!(&answer, Err(Stop::HandBack(why)) if *why == reason),
+                    "a host outside the subset ({reason}) must hand back"
+                );
+                eprintln!("this host is outside the natives' subset: {reason}");
+                true
+            }
+
             /// The arguments `name` was run with, or `None` when it never ran.
             pub fn argv(&self, name: &str) -> Option<Vec<String>> {
                 let text =
@@ -412,6 +481,13 @@ mod linux {
                         .ok()?;
                 Some(text.lines().map(str::to_string).collect())
             }
+        }
+
+        /// A native's answer to a task on this host's own `nsswitch.conf`.
+        pub type Ask = fn(&Map<String, Value>, &Context) -> Result<Map<String, Value>, Stop>;
+
+        fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, Stop> {
+            answer(args, context, unbounded(), NSSWITCH)
         }
 
         fn bin_of(context: &Context, name: &str) -> String {
@@ -435,23 +511,26 @@ mod linux {
         #[test]
         fn groupadd_takes_the_module_s_arguments_in_its_order() {
             let fakes = Fakes::new("groupadd", &["groupadd"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantg");
-            let answer = answer(
+            let mut answer = ask(
                 &args(json!({"name": name, "gid": 64998, "system": true})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(
                 fakes.argv("groupadd").unwrap(),
                 ["-g", "64998", "-r", name.as_str()]
             );
-            assert_eq!(answer["changed"], true);
-            assert_eq!(answer["stdout"], "out\n");
-            assert_eq!(answer["stderr"], "err\n");
-            assert_eq!(answer["state"], "present");
-            assert!(!answer.contains_key("gid") && !answer.contains_key("system"));
             assert_eq!(answer["invocation"]["module_args"]["gid_min"], Value::Null);
+            answer.remove("invocation");
+            assert_eq!(
+                Value::Object(answer),
+                json!({"name": name, "state": "present", "changed": true,
+                       "stdout": "out\n", "stderr": "err\n"})
+            );
         }
 
         /// A group already holding the gid asked for runs nothing; another gid runs
@@ -462,33 +541,25 @@ mod linux {
         #[test]
         fn an_existing_group_is_modified_only_where_it_differs() {
             let fakes = Fakes::new("groupmod", &["groupmod", "groupdel"], 0);
-            let same = answer(
-                &args(json!({"name": "root", "gid": 0})),
-                &fakes.context,
-                unbounded(),
-            )
-            .unwrap();
+            if fakes.outside(ask) {
+                return;
+            }
+            let same = ask(&args(json!({"name": "root", "gid": 0})), &fakes.context).unwrap();
             assert_eq!(fakes.argv("groupmod"), None);
             assert_eq!(same["changed"], false);
             assert_eq!(same["gid"], 0);
             assert_eq!(same["system"], false);
             assert!(!same.contains_key("stdout"));
 
-            let moved = answer(
-                &args(json!({"name": "root", "gid": 5})),
-                &fakes.context,
-                unbounded(),
-            )
-            .unwrap();
+            let moved = ask(&args(json!({"name": "root", "gid": 5})), &fakes.context).unwrap();
             assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
             assert_eq!(moved["changed"], true);
             // Read back after the command, which here changed nothing.
             assert_eq!(moved["gid"], 0);
 
-            let gone = answer(
+            let gone = ask(
                 &args(json!({"name": "root", "state": "absent"})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(fakes.argv("groupdel").unwrap(), ["root"]);
@@ -496,18 +567,24 @@ mod linux {
             assert_eq!(gone["state"], "absent");
         }
 
-        /// A command that fails is the module's failure: `name` and the error output as `msg`.
+        /// A command that fails is the module's failure: `name` and the error output as `msg`,
+        /// and nothing else: no `rc`, no `changed`, no output.
         ///
-        /// What would make this red: a failure answered as a change, or with the output as `msg`.
+        /// What would make this red: a failure answered as a change, with the output as `msg`,
+        /// or with keys `group.py`'s `fail_json(name=..., msg=err)` does not give.
         #[test]
         fn a_failing_groupadd_is_the_module_s_failure() {
             let fakes = Fakes::new("groupadd-fails", &["groupadd"], 9);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantf");
-            let answer = answer(&args(json!({"name": name})), &fakes.context, unbounded()).unwrap();
-            assert_eq!(answer["failed"], true);
-            assert_eq!(answer["msg"], "err\n");
-            assert_eq!(answer["name"], name.as_str());
-            assert!(!answer.contains_key("changed"));
+            let mut answer = ask(&args(json!({"name": name})), &fakes.context).unwrap();
+            assert!(answer.remove("invocation").is_some());
+            assert_eq!(
+                Value::Object(answer),
+                json!({"failed": true, "name": name, "msg": "err\n"})
+            );
         }
 
         /// Every argument outside `name`, `state`, `gid` and `system` hands back before any
@@ -527,7 +604,7 @@ mod linux {
             ] {
                 let mut given = args(json!({"name": name, "gid": 64997}));
                 given.insert(key.into(), value);
-                let answer = answer(&given, &fakes.context, unbounded());
+                let answer = ask(&given, &fakes.context);
                 assert!(
                     matches!(answer, Err(Stop::HandBack(_))),
                     "{key} was answered"
@@ -544,17 +621,16 @@ mod linux {
         #[test]
         fn a_group_only_the_name_service_knows_hands_back() {
             let fakes = Fakes::new("group-nss", &["groupadd", "groupdel"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantn");
             fake_getent(
                 &fakes.scratch,
                 &format!("[ \"$2\" = {name} ] && echo '{name}:x:5000:' && exit 0; exit 2"),
             );
             for state in ["present", "absent"] {
-                let answer = answer(
-                    &args(json!({"name": name, "state": state})),
-                    &fakes.context,
-                    unbounded(),
-                );
+                let answer = ask(&args(json!({"name": name, "state": state})), &fakes.context);
                 assert!(
                     matches!(answer, Err(Stop::HandBack(_))),
                     "{state} was answered"
@@ -562,6 +638,43 @@ mod linux {
             }
             assert_eq!(fakes.argv("groupadd"), None);
             assert_eq!(fakes.argv("groupdel"), None);
+        }
+
+        /// A host whose `nsswitch.conf` puts another source before `files` for accounts or
+        /// groups hands back before any command; `files` or `compat` first does not, nor does a
+        /// host without the file.
+        ///
+        /// What would make this red: the gate not reading `nsswitch.conf`, which lets `groupmod`
+        /// edit a file entry that `grp`, asking the directory first, does not answer with.
+        #[test]
+        fn another_name_service_before_files_hands_back() {
+            let fakes = Fakes::new("group-nsswitch", &["groupmod"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
+            let conf = fakes.scratch.path("nsswitch.conf");
+            for text in [
+                "passwd: files\ngroup: sss files\n",
+                "passwd: sss files\ngroup: files\n",
+            ] {
+                std::fs::write(&conf, text).unwrap();
+                let answer = answer(
+                    &args(json!({"name": "root", "gid": 5})),
+                    &fakes.context,
+                    unbounded(),
+                    &conf,
+                );
+                assert!(
+                    matches!(answer, Err(Stop::HandBack(_))),
+                    "{text:?} was answered"
+                );
+            }
+            assert_eq!(fakes.argv("groupmod"), None);
+            std::fs::write(&conf, "# sss\npasswd: compat\ngroup:\tfiles systemd\n").unwrap();
+            let args = args(json!({"name": "root", "gid": 5}));
+            answer(&args, &fakes.context, unbounded(), &conf).unwrap();
+            assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
+            assert!(files_first(None, "group"));
         }
     }
 }

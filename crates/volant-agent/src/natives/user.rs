@@ -45,11 +45,11 @@ mod linux {
     use crate::modules::Context;
     use crate::natives::common::{
         ArgSpec, Clock, Stop, access, bool_param, check_names, clock, invocation, lookup_user,
-        native_run, path_param, str_param,
+        native_run, path_param, str_param, strerror,
     };
     use crate::natives::group::{
-        bin, entry, failure, host_gate, id_param, outcome, outside_subset, plain_name, present,
-        resolve_group, run_command,
+        NSSWITCH, bin, entry, failure, host_gate, id_param, outcome, outside_subset, plain_name,
+        present, resolve_group, run_command,
     };
     use crate::natives::setup::py_strip;
 
@@ -58,7 +58,10 @@ mod linux {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> NativeRun {
-        native_run(answer(args, context, clock(context, cancelled)), context)
+        native_run(
+            answer(args, context, clock(context, cancelled), NSSWITCH),
+            context,
+        )
     }
 
     const fn arg(name: &'static str, default: fn() -> Value) -> ArgSpec {
@@ -175,7 +178,8 @@ mod linux {
         let name = str_param(params, "name")?
             .filter(|name| plain_name(name))
             .ok_or("the module reads this account name differently")?;
-        // `type='list', elements='str'`: the module also splits a string and converts numbers.
+        // `type='list', elements='str'`, a string already split by `answer`: the module also
+        // converts numbers.
         let groups = match &params["groups"] {
             Value::Null => None,
             Value::Array(items) => Some(
@@ -420,15 +424,156 @@ mod linux {
         Ok(Some((usermod, argv)))
     }
 
+    /// Python's `str()` of the `OSError` an `os` call on the text path `path` raises.
+    fn os_error(err: &std::io::Error, path: &Path) -> String {
+        let errno = err.raw_os_error().unwrap_or(0);
+        let text = strerror(errno).map_or_else(|| err.to_string(), str::to_string);
+        format!("[Errno {errno}] {text}: '{}'", path.display())
+    }
+
+    /// `create_homedir` then `chown_homedir`, for a home `useradd -m` left missing: the skeleton
+    /// copied as `shutil.copytree(symlinks=True)` copies it (or the directory made when there is
+    /// no skeleton), its mode from `login.defs`, then the account given the home and everything
+    /// in it.
+    fn create_home(
+        skel: &Path,
+        login_defs: &Path,
+        home: &Path,
+        uid: u32,
+        gid: u32,
+    ) -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        if skel.exists() {
+            copy_tree(skel, home)?;
+        } else {
+            std::fs::create_dir_all(home).map_err(|err| os_error(&err, home))?;
+        }
+        if login_defs.exists() {
+            let defs =
+                std::fs::read_to_string(login_defs).map_err(|err| os_error(&err, login_defs))?;
+            // Neither set: `useradd`'s own UMASK of 022.
+            let mut mode = 0o755;
+            for line in defs.split('\n') {
+                if let Some(value) = setting(line, "HOME_MODE") {
+                    mode = value?;
+                    break;
+                }
+                if let Some(value) = setting(line, "UMASK") {
+                    mode = 0o777 & !value?;
+                }
+            }
+            std::fs::set_permissions(home, std::fs::Permissions::from_mode(mode))
+                .map_err(|err| os_error(&err, home))?;
+        }
+        let chown = |path: &Path| {
+            std::os::unix::fs::chown(path, Some(uid), Some(gid)).map_err(|err| os_error(&err, path))
+        };
+        chown(home)?;
+        chown_tree(home, &chown)
+    }
+
+    /// `re.match(r'^<name>\s+(\d+)$', line)`, the digits read by `int(_, 8)`.
+    fn setting(line: &str, name: &str) -> Option<Result<u32, String>> {
+        let rest = line.strip_prefix(name)?;
+        let digits = rest.trim_start();
+        if digits.len() == rest.len() || digits.is_empty() || !digits.chars().all(char::is_numeric)
+        {
+            return None;
+        }
+        Some(
+            u32::from_str_radix(digits, 8)
+                .map_err(|_| format!("invalid literal for int() with base 8: '{digits}'")),
+        )
+    }
+
+    /// `shutil.copytree(src, dst, symlinks=True)`: a link copied as a link with its times, a
+    /// file with its content, mode and times (`copy2`), a directory's mode and times set once it
+    /// is filled. Extended attributes, which `copy2` also copies, are not.
+    fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dst).map_err(|err| os_error(&err, dst))?;
+        for entry in std::fs::read_dir(src).map_err(|err| os_error(&err, src))? {
+            let entry = entry.map_err(|err| os_error(&err, src))?;
+            let (from, to) = (entry.path(), dst.join(entry.file_name()));
+            let meta = std::fs::symlink_metadata(&from).map_err(|err| os_error(&err, &from))?;
+            if meta.file_type().is_symlink() {
+                let target = std::fs::read_link(&from).map_err(|err| os_error(&err, &from))?;
+                std::os::unix::fs::symlink(&target, &to).map_err(|err| os_error(&err, &to))?;
+                copy_stat(&meta, &to, false)?;
+            } else if meta.is_dir() {
+                copy_tree(&from, &to)?;
+            } else {
+                std::fs::copy(&from, &to).map_err(|err| os_error(&err, &from))?;
+                copy_stat(&meta, &to, true)?;
+            }
+        }
+        let meta = std::fs::metadata(src).map_err(|err| os_error(&err, src))?;
+        copy_stat(&meta, dst, true)
+    }
+
+    /// `shutil.copystat` without extended attributes: the mode (not for a link, which Linux
+    /// cannot `chmod`), and the access and modification times to the nanosecond.
+    fn copy_stat(meta: &std::fs::Metadata, to: &Path, follow: bool) -> Result<(), String> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if follow {
+            std::fs::set_permissions(to, std::fs::Permissions::from_mode(meta.mode() & 0o7777))
+                .map_err(|err| os_error(&err, to))?;
+        }
+        let times = [
+            libc::timespec {
+                tv_sec: meta.atime(),
+                tv_nsec: meta.atime_nsec(),
+            },
+            libc::timespec {
+                tv_sec: meta.mtime(),
+                tv_nsec: meta.mtime_nsec(),
+            },
+        ];
+        let flags = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
+        let path = std::ffi::CString::new(to.as_os_str().as_encoded_bytes())
+            .map_err(|_| format!("{} holds a NUL byte", to.display()))?;
+        if unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), flags) } != 0 {
+            return Err(os_error(&std::io::Error::last_os_error(), to));
+        }
+        Ok(())
+    }
+
+    /// The loop of `chown_homedir` over `os.walk(home)`: every directory, a link to one
+    /// included (and followed), and every file that is not a link. A directory that cannot be
+    /// listed is skipped, as `os.walk` skips it.
+    fn chown_tree(dir: &Path, chown: &dyn Fn(&Path) -> Result<(), String>) -> Result<(), String> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Ok(());
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let link = entry.file_type().is_ok_and(|kind| kind.is_symlink());
+            if std::fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                chown(&path)?;
+                if !link {
+                    chown_tree(&path, chown)?;
+                }
+            } else if !link {
+                chown(&path)?;
+            }
+        }
+        Ok(())
+    }
+
     fn answer(
         args: &Map<String, Value>,
         context: &Context,
         clock: Clock,
+        nsswitch: &str,
     ) -> Result<Map<String, Value>, Stop> {
-        let invocation = invocation(SPEC, args);
+        let mut invocation = invocation(SPEC, args);
+        // `type='list'` splits a string on commas, and `invocation` shows the list.
+        if let Some(Value::String(groups)) = invocation["module_args"].get("groups").cloned() {
+            invocation["module_args"]["groups"] =
+                Value::from(groups.split(',').collect::<Vec<_>>());
+        }
         let params = invocation["module_args"].as_object().unwrap();
         let r = request(args, params)?;
-        host_gate()?;
+        host_gate(nsswitch)?;
         for file in ["/etc/redhat-release", "/etc/SuSE-release"] {
             if Path::new(file).exists() {
                 return Err(format!("{file} changes the module's useradd arguments").into());
@@ -491,12 +636,20 @@ mod linux {
                     if let Some(groups) = &r.groups {
                         result.insert("groups".into(), Value::from(groups.as_str()));
                     }
-                    // Ruled out before a `usermod`; `useradd -m` creates the home or fails.
+                    // Ruled out before a `usermod`, which hands back; after `useradd -m`, which
+                    // creates the home or fails, the module's own creation.
                     if r.create_home && !Path::new(&home).exists() {
-                        let msg = format!(
-                            "{home} is missing after useradd, which the native does not create"
+                        let made = create_home(
+                            Path::new("/etc/skel"),
+                            Path::new("/etc/login.defs"),
+                            Path::new(&home),
+                            account.uid,
+                            account.gid,
                         );
-                        return Ok(failure(invocation.clone(), &[("msg", Value::from(msg))]));
+                        if let Err(msg) = made {
+                            return Ok(failure(invocation.clone(), &[("msg", Value::from(msg))]));
+                        }
+                        result.insert("changed".into(), Value::Bool(true));
                     }
                 }
                 Ok(None) => {}
@@ -518,6 +671,10 @@ mod linux {
         use crate::natives::group::tests::{Fakes, args, scratch_name};
         use crate::natives::setup::unbounded;
 
+        fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, Stop> {
+            answer(args, context, unbounded(), NSSWITCH)
+        }
+
         /// An account the host does not have is created with the module's `useradd` arguments
         /// in the module's order, and answered with the module's keys.
         ///
@@ -527,15 +684,17 @@ mod linux {
         #[test]
         fn useradd_takes_the_module_s_arguments_in_its_order() {
             let fakes = Fakes::new("useradd", &["useradd"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantu");
-            let created = answer(
+            let mut created = ask(
                 &args(json!({
-                    "name": name, "uid": 64998, "group": "root", "groups": ["root"],
+                    "name": name, "uid": 64998, "group": "root", "groups": "root",
                     "comment": "c", "home": "/nonexistent-volant", "shell": "/bin/sh",
                     "create_home": false, "system": true,
                 })),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(
@@ -558,15 +717,20 @@ mod linux {
                     name.as_str(),
                 ]
             );
-            assert_eq!(created["changed"], true);
-            assert_eq!(created["system"], true);
-            assert_eq!(created["create_home"], false);
-            assert_eq!(created["stdout"], "out\n");
-            assert_eq!(created["stderr"], "err\n");
-            assert!(!created.contains_key("uid") && !created.contains_key("append"));
+            // A string `groups` is split, and shown as the list.
+            assert_eq!(
+                created["invocation"]["module_args"]["groups"],
+                json!(["root"])
+            );
+            created.remove("invocation");
+            assert_eq!(
+                Value::Object(created),
+                json!({"name": name, "state": "present", "changed": true, "system": true,
+                       "create_home": false, "stdout": "out\n", "stderr": "err\n"})
+            );
 
             // `users` is a group on Debian and Ubuntu, and no account.
-            answer(&args(json!({"name": "users"})), &fakes.context, unbounded()).unwrap();
+            ask(&args(json!({"name": "users"})), &fakes.context).unwrap();
             assert_eq!(fakes.argv("useradd").unwrap(), ["-N", "-m", "users"]);
         }
 
@@ -578,29 +742,33 @@ mod linux {
         #[test]
         fn usermod_takes_only_what_differs_in_the_module_s_order() {
             let fakes = Fakes::new("usermod", &["usermod"], 0);
-            let same = answer(
+            if fakes.outside(ask) {
+                return;
+            }
+            // The account is in no group's member list.
+            fakes.script("getent", "[ \"$1\" = group ] && echo 'root:x:0:'");
+            let mut same = ask(
                 &args(json!({"name": "root", "uid": 0, "group": "root", "home": "/root", "create_home": false})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(fakes.argv("usermod"), None);
-            assert_eq!(same["changed"], false);
-            assert_eq!(same["append"], false);
-            assert_eq!(same["move_home"], false);
-            assert_eq!(same["uid"], 0);
-            assert_eq!(same["group"], 0);
-            assert_eq!(same["home"], "/root");
-            assert!(!same.contains_key("create_home") && !same.contains_key("stdout"));
+            same.remove("invocation");
+            let shell = same["shell"].clone();
+            assert_eq!(
+                Value::Object(same),
+                json!({"name": "root", "state": "present", "changed": false, "append": false,
+                       "move_home": false, "uid": 0, "group": 0, "comment": "root",
+                       "home": "/root", "shell": shell})
+            );
 
-            let changed = answer(
+            let changed = ask(
                 &args(json!({
                     "name": "root", "uid": 1, "group": "daemon", "groups": ["root"],
                     "comment": "c", "home": "/root", "shell": "/bin/volant-none",
                     "create_home": false,
                 })),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(
@@ -622,13 +790,47 @@ mod linux {
             assert_eq!(changed["changed"], true);
             assert_eq!(changed["groups"], "root");
 
-            answer(
+            ask(
                 &args(json!({"name": "root", "groups": ["root"], "append": true, "create_home": false})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(fakes.argv("usermod").unwrap(), ["-a", "-G", "root", "root"]);
+        }
+
+        /// The membership cases where the account already belongs to groups: without `append`,
+        /// a group given fewer is `-G` with those left, and `[]` is `-G ""`; with `append`, a
+        /// difference that is only a removal runs nothing, nor does `[]`.
+        ///
+        /// What would make this red: a removal ignored without `append`, or acted on with it;
+        /// `[]` read as "no change" without `append`, or as a clearing with it.
+        #[test]
+        fn a_membership_only_removed_follows_append() {
+            let fakes = Fakes::new("usermod-members", &["usermod"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
+            fakes.script(
+                "getent",
+                "[ \"$1\" = group ] && printf 'root:x:0:root\\ndaemon:x:1:bin,root\\n'",
+            );
+            for (groups, append, argv) in [
+                (json!(["root"]), false, Some(vec!["-G", "root", "root"])),
+                (json!([]), false, Some(vec!["-G", "", "root"])),
+                (json!(["root"]), true, None),
+                (json!([]), true, None),
+            ] {
+                fakes.clear("usermod");
+                let given = json!({"name": "root", "groups": groups, "append": append, "create_home": false});
+                let answer = ask(&args(given), &fakes.context).unwrap();
+                assert_eq!(
+                    fakes.argv("usermod"),
+                    argv.clone()
+                        .map(|argv| argv.into_iter().map(String::from).collect()),
+                    "groups {groups}, append {append}"
+                );
+                assert_eq!(answer["changed"], argv.is_some());
+            }
         }
 
         /// `absent` runs `userdel <name>` for an account that exists and nothing otherwise.
@@ -638,43 +840,57 @@ mod linux {
         #[test]
         fn userdel_runs_only_for_an_existing_account() {
             let fakes = Fakes::new("userdel", &["userdel"], 0);
-            let gone = answer(
+            if fakes.outside(ask) {
+                return;
+            }
+            let mut gone = ask(
                 &args(json!({"name": "root", "state": "absent"})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
             assert_eq!(fakes.argv("userdel").unwrap(), ["root"]);
-            assert_eq!(gone["changed"], true);
-            assert_eq!(gone["force"], false);
-            assert_eq!(gone["remove"], false);
+            gone.remove("invocation");
+            assert_eq!(
+                Value::Object(gone),
+                json!({"name": "root", "state": "absent", "changed": true, "force": false,
+                       "remove": false, "stdout": "out\n", "stderr": "err\n"})
+            );
 
             let name = scratch_name("volantm");
-            let missing = answer(
+            let mut missing = ask(
                 &args(json!({"name": name, "state": "absent"})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
-            assert_eq!(missing["changed"], false);
-            assert!(!missing.contains_key("force"));
+            missing.remove("invocation");
+            assert_eq!(
+                Value::Object(missing),
+                json!({"name": name, "state": "absent", "changed": false})
+            );
         }
 
-        /// A command that fails is the module's failure: `name`, the error output as `msg`, `rc`.
+        /// A command that fails is the module's failure: `name`, the error output as `msg`, `rc`,
+        /// and nothing else.
+        ///
+        /// What would make this red: a failure answered as a change, with the outputs, or
+        /// without `rc`.
         #[test]
         fn a_failing_useradd_is_the_module_s_failure() {
             let fakes = Fakes::new("useradd-fails", &["useradd"], 9);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantf");
-            let answer = answer(
+            let mut answer = ask(
                 &args(json!({"name": name, "create_home": false})),
                 &fakes.context,
-                unbounded(),
             )
             .unwrap();
-            assert_eq!(answer["failed"], true);
-            assert_eq!(answer["msg"], "err\n");
-            assert_eq!(answer["rc"], 9);
-            assert!(!answer.contains_key("changed"));
+            assert!(answer.remove("invocation").is_some());
+            assert_eq!(
+                Value::Object(answer),
+                json!({"failed": true, "name": name, "msg": "err\n", "rc": 9})
+            );
         }
 
         /// Every argument outside the subset hands back before any command runs.
@@ -721,7 +937,7 @@ mod linux {
                         let mut given =
                             args(json!({"name": who, "state": state, "create_home": false}));
                         given.insert(key.into(), value.clone());
-                        let answer = answer(&given, &fakes.context, unbounded());
+                        let answer = ask(&given, &fakes.context);
                         assert!(
                             matches!(answer, Err(Stop::HandBack(_))),
                             "{key} was answered"
@@ -742,6 +958,9 @@ mod linux {
         #[test]
         fn an_account_only_the_name_service_knows_hands_back() {
             let fakes = Fakes::new("user-nss", &["useradd", "userdel"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
             let name = scratch_name("volantn");
             fake_getent(
                 &fakes.scratch,
@@ -750,10 +969,9 @@ mod linux {
                 ),
             );
             for state in ["present", "absent"] {
-                let answer = answer(
+                let answer = ask(
                     &args(json!({"name": name, "state": state, "create_home": false})),
                     &fakes.context,
-                    unbounded(),
                 );
                 assert!(
                     matches!(answer, Err(Stop::HandBack(_))),
@@ -772,22 +990,101 @@ mod linux {
         #[test]
         fn a_home_the_module_creates_itself_hands_back() {
             let fakes = Fakes::new("user-home", &["useradd", "usermod"], 0);
+            if fakes.outside(ask) {
+                return;
+            }
             let missing = format!("/nonexistent-volant-{}", std::process::id());
             let name = scratch_name("volanth");
-            let parent = answer(
+            let parent = ask(
                 &args(json!({"name": name, "home": format!("{missing}/home")})),
                 &fakes.context,
-                unbounded(),
             );
             assert!(matches!(parent, Err(Stop::HandBack(_))));
-            let home = answer(
+            let home = ask(
                 &args(json!({"name": "root", "home": missing})),
                 &fakes.context,
-                unbounded(),
             );
             assert!(matches!(home, Err(Stop::HandBack(_))));
             assert_eq!(fakes.argv("useradd"), None);
             assert_eq!(fakes.argv("usermod"), None);
+        }
+
+        /// A home `useradd -m` left missing is made as `create_homedir` makes it: the skeleton
+        /// copied with its links, modes and times, the mode `login.defs` gives (`HOME_MODE` over
+        /// `UMASK`), and every entry given to the account.
+        ///
+        /// What would make this red: a link copied as its target, a file's mode or time lost, the
+        /// mode from `UMASK` where `HOME_MODE` is set, or a mode other than 0755 without either.
+        #[test]
+        fn a_missing_home_is_made_from_the_skeleton() {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let fakes = Fakes::new("user-skel", &[], 0);
+            let skel = fakes.scratch.path("skel");
+            std::fs::create_dir_all(format!("{skel}/sub")).unwrap();
+            std::fs::write(format!("{skel}/.profile"), "p\n").unwrap();
+            std::fs::set_permissions(
+                format!("{skel}/.profile"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(".profile", format!("{skel}/link")).unwrap();
+            std::fs::set_permissions(
+                format!("{skel}/sub"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+            let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+            let defs = fakes.scratch.path("login.defs");
+            for (text, mode) in [
+                ("UMASK\t\t027\nHOME_MODE\t0750\n", 0o750),
+                ("UMASK 077\n", 0o700),
+                ("# HOME_MODE 0700\nUMASK 022 \n", 0o755),
+            ] {
+                let home = fakes.scratch.path("home");
+                let _ = std::fs::remove_dir_all(&home);
+                std::fs::write(&defs, text).unwrap();
+                create_home(
+                    Path::new(&skel),
+                    Path::new(&defs),
+                    Path::new(&home),
+                    uid,
+                    gid,
+                )
+                .unwrap();
+                let meta = std::fs::metadata(&home).unwrap();
+                assert_eq!(meta.mode() & 0o7777, mode, "{text:?}");
+                assert_eq!(meta.uid(), uid);
+                let profile = std::fs::metadata(format!("{home}/.profile")).unwrap();
+                let original = std::fs::metadata(format!("{skel}/.profile")).unwrap();
+                assert_eq!(profile.mode() & 0o7777, 0o600);
+                assert_eq!(
+                    (profile.mtime(), profile.mtime_nsec()),
+                    (original.mtime(), original.mtime_nsec())
+                );
+                assert_eq!(
+                    std::fs::read_link(format!("{home}/link")).unwrap(),
+                    Path::new(".profile")
+                );
+                let sub = std::fs::metadata(format!("{home}/sub")).unwrap();
+                assert_eq!(sub.mode() & 0o7777, 0o700);
+            }
+            let bare = fakes.scratch.path("bare");
+            let no_skel = fakes.scratch.path("no-skel");
+            let no_defs = fakes.scratch.path("no-defs");
+            create_home(
+                Path::new(&no_skel),
+                Path::new(&no_defs),
+                Path::new(&bare),
+                uid,
+                gid,
+            )
+            .unwrap();
+            assert!(Path::new(&bare).is_dir());
+            assert_eq!(
+                setting("HOME_MODE 0789", "HOME_MODE").unwrap().is_err(),
+                true
+            );
+            assert!(setting("HOME_MODES 0700", "HOME_MODE").is_none());
         }
 
         /// `invocation` holds every argument of the module with its default, as recorded.

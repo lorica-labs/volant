@@ -229,14 +229,29 @@ fn invalid(msg: impl Into<String>) -> Error {
 }
 
 /// `default(value, other='', boolean=False)`: `other` when `value` is undefined, or when
-/// `boolean` is set and `value` is false-y.
-fn default(value: Value, other: Option<Value>, boolean: Option<bool>) -> Value {
-    let other = other.unwrap_or_else(|| Value::from(""));
-    if value.is_undefined() || (boolean.unwrap_or(false) && !truthy(&json(&value))) {
-        other
-    } else {
-        value
-    }
+/// `boolean` is set and `value` is false-y. The arguments are read as they were passed, so that
+/// `default(none)` gives `None` (measured on ansible-core 2.19.12) where `Option` would read
+/// "not given".
+fn default(value: Value, args: Rest<Value>, kwargs: Kwargs) -> Result<Value, Error> {
+    kwargs.assert_all_used()?;
+    let (other, boolean) = match args.as_slice() {
+        [] => (Value::from(""), false),
+        [other] => (other.clone(), false),
+        [other, boolean] => (other.clone(), boolean.is_true()),
+        _ => {
+            return Err(Error::new(
+                ErrorKind::TooManyArguments,
+                "default() takes at most 2 arguments",
+            ));
+        }
+    };
+    Ok(
+        if value.is_undefined() || (boolean && !truthy(&json(&value))) {
+            other
+        } else {
+            value
+        },
+    )
 }
 
 /// The `bool` filter's own set of spellings, which is **not** PyYAML's (see
@@ -414,12 +429,17 @@ fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 /// Python's `json.dumps` default separators: `", "` and `": "`, keys in insertion order.
 /// Measured against ansible-core 2.19.12: `{b: 1, a: 2, c: 3} | to_json` gives
 /// `{"b": 1, "a": 2, "c": 3}`, so `to_json` keeps the order the mapping was written in.
-fn to_json(value: Value) -> Result<Value, Error> {
+///
+/// Both filters keep `json.dumps`'s `ensure_ascii=True` unless told otherwise: measured,
+/// `{'é': 1} | to_json` gives `{"é": 1}`.
+fn to_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
+    let ensure_ascii = ensure_ascii(&kwargs)?;
+    kwargs.assert_all_used()?;
     Ok(Value::from(python_json(
         &data(&value)?,
         None,
         false,
-        false,
+        ensure_ascii,
         0,
     )))
 }
@@ -428,14 +448,19 @@ fn to_json(value: Value) -> Result<Value, Error> {
 /// `sort_keys=True`, and the same mapping comes back as `{"a": 2, "b": 1, "c": 3}`.
 fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let indent: usize = kwargs.get::<Option<usize>>("indent")?.unwrap_or(4);
+    let ensure_ascii = ensure_ascii(&kwargs)?;
     kwargs.assert_all_used()?;
     Ok(Value::from(python_json(
         &data(&value)?,
         Some(indent),
         true,
-        false,
+        ensure_ascii,
         0,
     )))
+}
+
+fn ensure_ascii(kwargs: &Kwargs) -> Result<bool, Error> {
+    Ok(kwargs.get::<Option<bool>>("ensure_ascii")?.unwrap_or(true))
 }
 
 /// Python's `json.dumps`, the one imitation of it in this crate: `", "` between items without an
@@ -1538,5 +1563,53 @@ mod tests {
             .unwrap(),
             serde_json::json!(true)
         );
+    }
+}
+
+#[cfg(test)]
+mod reference_parity {
+    use serde_json::json;
+
+    fn render(text: &str) -> Result<serde_json::Value, String> {
+        super::super::Templar::new(std::env::temp_dir())
+            .render(text, &serde_json::Map::new())
+            .map_err(|e| e.0)
+    }
+
+    /// Measured on ansible-core 2.19.12: both filters keep `json.dumps`'s `ensure_ascii=True`,
+    /// `{'é': 1, 'b': 'ü'} | to_json` giving `{"\u00e9": 1, "b": "\u00fc"}`, and
+    /// `ensure_ascii=False` writes the characters as they are.
+    #[test]
+    fn to_json_escapes_non_ascii_like_json_dumps() {
+        assert_eq!(
+            render("{{ {'é': 1, 'b': 'ü'} | to_json }}"),
+            Ok(json!(r#"{"\u00e9": 1, "b": "\u00fc"}"#))
+        );
+        assert_eq!(
+            render("{{ {'é': 1} | to_nice_json }}"),
+            Ok(json!(concat!("{\n    \"", r"\u00e9", "\": 1\n}")))
+        );
+        assert_eq!(
+            render("{{ {'é': 1} | to_json(ensure_ascii=False) }}"),
+            Ok(json!(r#"{"é": 1}"#))
+        );
+        assert_eq!(
+            render("{{ {'é': 1} | to_nice_json(ensure_ascii=False) }}"),
+            Ok(json!("{\n    \"é\": 1\n}"))
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12: `nope | default(none) is none` is true. `none` given is
+    /// not the same as nothing given, which stays the empty string.
+    #[test]
+    fn default_none_gives_none_not_the_empty_string() {
+        assert_eq!(
+            render("{{ (nope | default(none)) is none }}"),
+            Ok(json!(true))
+        );
+        assert_eq!(render("{{ nope | default(none) }}"), Ok(json!(null)));
+        assert_eq!(render("{{ nope | default }}"), Ok(json!("")));
+        assert_eq!(render("{{ '' | default('x', true) }}"), Ok(json!("x")));
+        assert_eq!(render("{{ '' | default('x') }}"), Ok(json!("")));
     }
 }

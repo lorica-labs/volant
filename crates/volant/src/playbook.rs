@@ -1303,34 +1303,25 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         // A collection's module, or a name a `library/` may hold, read as the reference's
         // `parse_kv` reads it: a word without `=` is kept in `_raw_params`, and a string that
         // does not split is kept whole, for the pre-flight to refuse once the name resolved.
-        // Refused here instead, a role's file for
-        // another platform - read only to build the union - would refuse a run no host of which
-        // reaches it.
+        // Refused here instead, a role's file for another platform - read only to build the
+        // union - would refuse a run no host of which reaches it.
         Yaml::Value(Scalar::String(s)) if crate::python::is_resolved_name(module) => {
-            let mut raw = Vec::new();
-            match shlex::split(s) {
-                Some(words) => {
-                    for word in words {
-                        match word.split_once('=') {
-                            Some((k, v)) => {
-                                args.insert(k.to_string(), Value::String(v.to_string()));
-                            }
-                            None => raw.push(word),
-                        }
-                    }
-                }
-                None => raw.push(s.to_string()),
+            let (options, raw) =
+                crate::splitter::parse_kv(s).unwrap_or((Vec::new(), Some(s.to_string())));
+            for (k, v) in options {
+                args.insert(k, Value::String(v));
             }
-            if !raw.is_empty() {
-                args.insert("_raw_params".into(), Value::String(raw.join(" ")));
+            if let Some(raw) = raw {
+                args.insert("_raw_params".into(), Value::String(raw));
             }
         }
         Yaml::Value(Scalar::String(s)) => {
-            for word in shlex::split(s).ok_or_else(|| anyhow!("unbalanced quotes in '{s}'"))? {
-                let (k, v) = word
-                    .split_once('=')
-                    .ok_or_else(|| anyhow!("expected key=value, found '{word}'"))?;
-                args.insert(k.to_string(), Value::String(v.to_string()));
+            let (options, raw) = crate::splitter::parse_kv(s)?;
+            if let Some(word) = raw {
+                bail!("expected key=value, found '{word}'");
+            }
+            for (k, v) in options {
+                args.insert(k, Value::String(v));
             }
         }
         Yaml::Value(Scalar::Null) => {}
@@ -1669,8 +1660,8 @@ mod tests {
             ),
             (
                 "ns.coll.mod",
-                "port={{ x }}",
-                &[("port", "{{"), ("_raw_params", "x }}")][..],
+                "port={{ x }} {{ a b }}",
+                &[("port", "{{ x }}"), ("_raw_params", "{{ a b }}")][..],
             ),
             (
                 "ns.coll.mod",
@@ -1696,6 +1687,21 @@ mod tests {
             got.sort();
             assert_eq!(got, want, "{module}: {text}");
         }
+    }
+
+    /// Measured on ansible-core 2.19.12: `set_fact: a={{ base ~ '/x' }}` sets `a` to `/tmp/x`,
+    /// the block kept whole although it holds spaces, and `i=u"v w"` keeps its inner quotes.
+    #[test]
+    fn a_builtin_module_keeps_a_jinja_block_with_spaces_whole() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - copy: dest={{ base ~ '/x' }} mode=0644 content=u\"v w\"\n",
+            "x.yml",
+        )
+        .unwrap();
+        let args = &first(&pb).args;
+        assert_eq!(args["dest"], "{{ base ~ '/x' }}");
+        assert_eq!(args["mode"], "0644");
+        assert_eq!(args["content"], "u\"v w\"");
     }
 
     #[test]

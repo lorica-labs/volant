@@ -17,6 +17,7 @@ pub mod profile;
 pub mod python;
 pub(crate) mod render;
 pub(crate) mod roles;
+pub mod splitter;
 pub(crate) mod stats;
 pub mod template;
 pub mod transport;

@@ -6,7 +6,7 @@ description: How Volant runs ansible-core's Python modules without starting an i
 import { Aside } from '@astrojs/starlight/components';
 import BarChart from '../../../components/BarChart.astro';
 
-Most Ansible modules are Python programs. Volant runs them unchanged, but it does not start a new interpreter for each task.
+Most Ansible modules are Python programs. Volant runs them unchanged, but it does not start a new interpreter for each task. For the most common modules it often does not run Python at all: the agent has [native versions](#native-modules) that answer when a task's arguments allow it.
 
 ## How it works
 
@@ -20,12 +20,14 @@ flowchart TB
   class B,S key
 ```
 
-1. The controller asks a helper process to build ansible-core's payload for every module the run needs.
+1. The controller asks a helper process to build ansible-core's payload for every module the run needs, unless the [cache](#the-union-cache) already holds the result.
 2. Volant merges them into one zip, the union blob, with every `module_utils` file they import. The blob is named by the BLAKE3 hash of its contents.
 3. The blob is sent to each host once and cached there. The agent checks the hash before using it, and a host that already has it receives nothing.
-4. The agent starts one Python server per target user. The server loads the shared code from the blob once, then forks a child for each task. The child runs the module and writes its JSON result back over a pipe.
+4. The agent starts one Python server per target user, the first time a task needs Python. The server loads the shared code from the blob once, then forks a child for each task. The child runs the module and writes its JSON result back over a pipe. While the child runs, the server imports that module into itself, so the next child of the same module starts with it already loaded.
 
 The union is built before the first connection, so it has to hold every module a host might reach. It carries the modules the plays name, those of every task and handler file of the roles in play (their `meta/main.yml` dependencies included), and those of any file an include names literally. A module named only in a file for another platform, such as `setup-RedHat.yml` next to `setup-Debian.yml`, is in it too, so an `include_tasks: setup-{{ ansible_os_family }}.yml` finds its module whichever file a host picks. A name there that no module answers to is left out, and fails by name only if a host reaches it.
+
+Since protocol version 6 the blob travels as raw bytes, compressed with deflate, and the agent checks the hash of the decompressed bytes.
 
 Module results are untrusted and are never rendered as controller templates. See [Trusted and untrusted values](/variables/trust/). As ansible-core does on the controller, Volant adds `stdout_lines` and `stderr_lines` to a result that has `stdout` or `stderr` without them, split with Python's `splitlines()` rules.
 
@@ -120,7 +122,38 @@ Some ansible-core modules only work together with an action plugin that runs on 
 
 Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` run on the controller as a short sequence of sub-tasks, each an ordinary Python module or a bare command sent over the host's existing connection. [Action plugins](/reference/action-plugins/) describes each one. The modules whose plugin Volant does not have yet, such as `uri` and `script`, are not supported yet: Volant names them before the first connection.
 
-`assert`, `fail` and `pause` have action plugins too, but none of them calls a module, so Volant runs them on the controller. `setup` runs as an ordinary module, so fact gathering works.
+`assert`, `fail` and `pause` have action plugins too, but none of them calls a module, so Volant runs them on the controller. `setup` runs as an ordinary module, natively or in Python, so fact gathering works.
+
+## The union cache
+
+Building the union costs a Python start, an ansible-core import and a build of every module: 3.8 seconds on the four Galaxy roles of the [performance page](/project/performance/). The controller keeps the result under `$XDG_CACHE_HOME/volant/unions/`, or `~/.cache/volant/unions/`, in a directory private to your account.
+
+An entry is looked up by everything the build read that is not a file: the Volant version, the interpreter, the modules and collections asked for, the `ANSIBLE_*` and `PYTHON*` environment, the `ansible.cfg` ansible-core would read, and the working directory. It also lists every source file the helper read, with its size and modification time. A run reuses the entry only if each of those files is unchanged and the zip still has its recorded hash. Upgrading ansible-core or a collection in place therefore rebuilds the union, and checking the roughly 150 files takes about a millisecond.
+
+A cache that cannot be read, is corrupt or cannot be written never fails a run: the union is rebuilt, and a directory that cannot be written prints one warning per run. To clear it, remove the directory.
+
+## Native modules
+
+The agent carries Rust versions of these modules:
+
+| Module | Answered natively when |
+|---|---|
+| `setup` | on Debian and Ubuntu, for the facts listed under [Facts](/variables/facts/#native-facts) |
+| `stat` | the path is plain and absolute, and the checksum is SHA-1 |
+| `file` | `state` is `file`, `directory` or `absent`, or unset |
+| `apt` | nothing needs doing: the cache is fresh, and the packages asked for are already installed or already absent |
+| `systemd`, `systemd_service` | `name`, `state`, `enabled` and `daemon_reload` on the system scope |
+| `lineinfile` | the regular expression means the same in Rust as in Python, and `backrefs` is off |
+| `copy` | the module that the `copy` action plugin runs, for a file staged from the controller |
+| `package_facts` | the manager is apt and every package is in a settled state |
+| `service_facts` | the host runs systemd |
+| `user`, `group` | on Debian and Ubuntu, for the common arguments |
+
+Anything outside that goes to ansible-core's Python module, as it did before. A task `environment`, SELinux, extended attributes, `remote_src`, a regular expression only Python understands, or a package half installed all hand back, among other cases. `dnf` and every other module always run in Python.
+
+A native module receives the arguments the Python module would have received. It first decides, by reading only, whether it can give the answer the reference would give. If it cannot, it hands the task back before touching the host, and the Python module does the real work. Its result, `invocation` included, is the one the reference module returns, key for key, and a test compares them for every case the module covers. The result comes back as untrusted data, through the same path as a Python module's.
+
+Set `[volant] native_modules = false`, or `VOLANT_NATIVE_MODULES=0`, to send every task to Python. `--profile` shows which path each task took and, for a hand-back, the reason. See [Command line](/reference/cli/#run-and-output).
 
 <Aside type="note">
 The [modules reference](/reference/modules/) always lists what the current release runs, since it is generated from the engine's own tables.

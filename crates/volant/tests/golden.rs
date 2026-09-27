@@ -1520,8 +1520,8 @@ fn only_a_host_outside_the_native_setup_excuses_its_hand_back() {
 /// runner's `mirror+file:`) is said and passes; handed back for anything else, it is red, so a
 /// host whose sources are all http(s) still has to be answered natively.
 ///
-/// What would make this red: the exception widened to every hand-back, to an http(s) source, or
-/// to another module.
+/// What would make this red: the exception widened to every hand-back, to an http(s) source, to
+/// a scheme the native does not name, or to another module.
 #[cfg(target_os = "linux")]
 #[test]
 fn only_a_source_scheme_excuses_a_package_facts_hand_back() {
@@ -1538,8 +1538,8 @@ fn only_a_source_scheme_excuses_a_package_facts_hand_back() {
         failures
     };
     for scheme in [
-        "the source mirror+file:/etc/apt/apt-mirrors.txt is not http or https",
-        "the source mirror://mirrors.example.org/list is not http or https",
+        "the source scheme mirror+file is not http or https",
+        "the source scheme mirror is not http or https",
     ] {
         assert_eq!(judge("package_facts", scheme), Vec::<String>::new());
         assert_eq!(
@@ -1550,10 +1550,11 @@ fn only_a_source_scheme_excuses_a_package_facts_hand_back() {
         );
     }
     for other in [
-        "the source http://archive.example.org/ubuntu is not http or https",
+        "a source whose scheme is not http or https",
+        "the source scheme  is not http or https",
         "x_Packages is a list no configured source names",
         "python3-apt is not installed for /usr/bin/python3",
-        "the source https://archive.example.org/ubuntu/ is not a plain URI",
+        "a source URI is not a plain one",
     ] {
         assert_eq!(
             judge("package_facts", other),

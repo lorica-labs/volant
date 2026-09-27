@@ -241,15 +241,16 @@ pub fn native_profile(path: &std::path::Path, host: &str) -> NativeProfile {
 }
 
 /// Whether a `package_facts` hand-back is the host's apt sources naming a scheme other than
-/// http(s), which the native does not read (`the source scheme <scheme> is not http or https`,
-/// or `the source URI is not http or https` when the part before `:` is not a plain scheme),
-/// rather than the native failing on a host it should answer.
+/// http(s) that apt knows, which the native does not read
+/// (`the source scheme <scheme> is not http or https`, the scheme from the native's own list),
+/// rather than the native failing on a host it should answer. A scheme off that list is not
+/// named (`a source whose scheme is not http or https`) and stays red.
 #[cfg(target_os = "linux")]
 pub fn package_facts_host_exit(reason: &str) -> bool {
-    reason.starts_with("the source ")
-        && reason.ends_with(" is not http or https")
-        && !reason.starts_with("the source http://")
-        && !reason.starts_with("the source https://")
+    reason
+        .strip_prefix("the source scheme ")
+        .and_then(|rest| rest.strip_suffix(" is not http or https"))
+        .is_some_and(|scheme| !scheme.is_empty() && !scheme.contains(' '))
 }
 
 /// The path the case's own module took, against the one it must take: the index's when the agent

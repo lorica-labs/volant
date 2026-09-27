@@ -36,6 +36,10 @@ pub const NATIVE: Native = Native {
     run: |_, _, _| NativeRun::Fallback("the native package_facts reads a Linux host".into()),
 };
 
+/// The reason guard's cases, for `natives::tests`.
+#[cfg(all(test, target_os = "linux"))]
+pub(super) use imp::tests::secret_probes;
+
 #[cfg(unix)]
 mod imp {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -700,6 +704,22 @@ mod imp {
         Ok(())
     }
 
+    /// The schemes other than http(s) apt's methods take, named when a source uses one.
+    const OTHER_SCHEMES: &[&str] = &[
+        "mirror",
+        "mirror+file",
+        "mirror+http",
+        "mirror+https",
+        "file",
+        "cdrom",
+        "copy",
+        "ftp",
+        "tor+http",
+        "tor+https",
+        "rsh",
+        "ssh",
+    ];
+
     /// apt's `URItoFileName` of `<uri>/dists/<suite>/`: the URI without its scheme, `/` turned
     /// into `_`. Only plain http(s) URIs and suites, which it leaves otherwise alone.
     pub(super) fn prefix(uri: &str, suite: &str) -> Result<String, String> {
@@ -707,20 +727,12 @@ mod imp {
             .strip_prefix("http://")
             .or_else(|| uri.strip_prefix("https://"))
             .ok_or_else(|| {
-                // The scheme alone, in the characters a scheme may hold: whatever follows it can
-                // carry credentials.
-                let scheme = uri
-                    .split_once(':')
-                    .map(|(scheme, _)| scheme)
-                    .filter(|scheme| {
-                        !scheme.is_empty()
-                            && scheme
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
-                    });
-                match scheme {
-                    Some(scheme) => format!("the source scheme {scheme} is not http or https"),
-                    None => "the source URI is not http or https".to_string(),
+                // Only a scheme on this list, which the code owns, is named: whatever the file
+                // holds past it, or in its place, can carry credentials.
+                let scheme = uri.split_once(':').map(|(scheme, _)| scheme);
+                match OTHER_SCHEMES.iter().find(|known| Some(**known) == scheme) {
+                    Some(known) => format!("the source scheme {known} is not http or https"),
+                    None => "a source whose scheme is not http or https".to_string(),
                 }
             })?;
         let plain = |text: &str, extra: &str| {
@@ -963,7 +975,7 @@ mod imp {
     }
 
     #[cfg(test)]
-    mod tests {
+    pub(super) mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::time::Duration;
 
@@ -971,6 +983,147 @@ mod imp {
 
         use super::*;
         use crate::natives::setup::unbounded;
+
+        /// The reason guard's cases (`natives::tests`): apt sources and a `PATH` whose every
+        /// field the native hands back on holds a secret-looking value.
+        #[cfg(target_os = "linux")]
+        pub(in crate::natives) fn secret_probes() -> Vec<crate::natives::tests::Probe> {
+            let example = "/etc/apt/sources.list.d/example.list";
+            let line = "deb [signed-by=/usr/share/keyrings/example.gpg] \
+                        https://repo.example.org/debian stable main";
+            let edited = |from: &str, to: &str| {
+                let tree = Tree::new(HOST);
+                tree.edit(example, from, to);
+                tree
+            };
+            let written = |path: &str, content: &str| {
+                let tree = Tree::new(HOST);
+                tree.write(path, content);
+                tree
+            };
+            let cases = vec![
+                (
+                    "package_facts scheme",
+                    "K3S0SECRET1A",
+                    edited("https://repo.", "K3S0SECRET1A:repo."),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts user info",
+                    "K3S0SECRET1B",
+                    edited("https://repo.", "https://user:K3S0SECRET1B@repo."),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts suite",
+                    "K3S0SECRET1C",
+                    edited("stable main", "sta~K3S0SECRET1C main"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts component",
+                    "K3S0SECRET1D",
+                    edited("stable main", "stable ma!nK3S0SECRET1D"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts incomplete line",
+                    "K3S0SECRET1E",
+                    written(
+                        "/etc/apt/sources.list",
+                        "deb http://K3S0SECRET1E.example.org/debian\n",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts line type",
+                    "K3S0SECRET1F",
+                    written(
+                        "/etc/apt/sources.list",
+                        "deb-K3S0SECRET1F http://archive.example.org/debian stable main\n",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts option",
+                    "K3S0SECRET1G",
+                    edited("deb [signed-by=", "deb [target=K3S0SECRET1G signed-by="),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts option +",
+                    "K3S0SECRET1H",
+                    edited("deb [signed-by=", "deb [arch+=K3S0SECRET1H signed-by="),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts no component",
+                    "k3s0secret1i",
+                    edited(
+                        "https://repo.example.org/debian stable main",
+                        "https://k3s0secret1i.example.org/debian stable",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts two Signed-By",
+                    "k3s0secret1j",
+                    written(
+                        example,
+                        &format!(
+                            "{}\n{}\n",
+                            line.replace("stable", "k3s0secret1j"),
+                            line.replace("stable", "k3s0secret1j")
+                                .replace("example.gpg", "other.gpg"),
+                        ),
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts Enabled",
+                    "K3S0SECRET1K",
+                    {
+                        let tree = Tree::new(HOST);
+                        let path = "/etc/apt/sources.list.d/ubuntu.sources";
+                        let full = tree.0.join(path.trim_start_matches('/'));
+                        let text = std::fs::read_to_string(&full).unwrap();
+                        std::fs::write(full, format!("{text}Enabled: K3S0SECRET1K\n")).unwrap();
+                        tree
+                    },
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts deb822 type",
+                    "K3S0SECRET1L",
+                    {
+                        let tree = Tree::new(HOST);
+                        tree.edit(
+                            "/etc/apt/sources.list.d/ubuntu.sources",
+                            "Types: deb\n",
+                            "Types: K3S0SECRET1L\n",
+                        );
+                        tree
+                    },
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts PATH",
+                    "K3S0SECRET1M",
+                    Tree::new(HOST),
+                    "K3S0SECRET1M:/usr/bin",
+                ),
+            ];
+            cases
+                .into_iter()
+                .map(|(case, secret, tree, path)| {
+                    let reason = match tree.answer_with(json!({}), &[("PATH", path)]) {
+                        Err(Stop::HandBack(reason)) => Some(reason),
+                        _ => None,
+                    };
+                    (case, secret, reason)
+                })
+                .collect()
+        }
 
         /// A host as files: `=== <path>` starts each file, the lines up to the next header are its
         /// content. `/usr/bin/python3` stands for the interpreter the reference respawns under.

@@ -701,7 +701,7 @@ fn bin_path(task_env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> 
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+pub(super) mod tests {
     use std::fs::{File, FileTimes};
     use std::time::Duration;
 
@@ -709,6 +709,50 @@ mod tests {
 
     use super::super::setup::tests::FakeRoot;
     use super::*;
+
+    /// The reason guard's cases (`natives::tests`): a package with a secret-looking name,
+    /// installed and marked automatically installed, removed, kept, asked for and misnamed.
+    pub(in crate::natives) fn secret_probes() -> Vec<crate::natives::tests::Probe> {
+        let host = Host::new("secret");
+        host.fake
+            .write(
+                STATUS,
+                &format!(
+                    "{STATUS_TEXT}\nPackage: k3s0secret0r\nStatus: install ok installed\n\
+                     Architecture: amd64\nVersion: 1\n"
+                ),
+            )
+            .write(
+                EXTENDED_STATES,
+                "Package: k3s0secret0r\nArchitecture: amd64\nAuto-Installed: 1\n",
+            );
+        let reason = |args: Value| match host.answer(&args) {
+            NativeRun::Fallback(reason) => Some(reason),
+            _ => None,
+        };
+        vec![
+            (
+                "apt absent",
+                "k3s0secret0r",
+                reason(json!({"name": "k3s0secret0r", "state": "absent"})),
+            ),
+            (
+                "apt auto-installed",
+                "k3s0secret0r",
+                reason(json!({"name": "k3s0secret0r"})),
+            ),
+            (
+                "apt not installed",
+                "k3s0secret0s",
+                reason(json!({"name": "k3s0secret0s"})),
+            ),
+            (
+                "apt inexact name",
+                "k3s0secret0t",
+                reason(json!({"name": ["k3s0secret0t!"]})),
+            ),
+        ]
+    }
 
     /// Seconds of the stamp the tests set; its fraction is `.7`, which a rounding would push up.
     const STAMP_SECONDS: u64 = 1_790_276_713;

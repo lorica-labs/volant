@@ -11,7 +11,7 @@ use tokio::sync::watch;
 use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
-use crate::agent::{AgentLink, AgentSource, BlobMemory};
+use crate::agent::{AgentLink, AgentSource, BlobFrame, BlobMemory};
 use crate::compile::{Compiled, Step};
 use crate::playbook::PlayTask;
 use crate::preflight::PROMPT_REFUSED;
@@ -1752,7 +1752,9 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
     if let Some(seen) = link.memory().seen(hash) {
         return seen;
     }
-    let state = match place_blob(link, host, hash, zip_b64, false, logs).await {
+    // Deflated once per run, when the union cache stored or loaded the entry, never here.
+    let frame = || crate::union_cache::frame(hash, zip_b64);
+    let state = match place_blob(link, host, hash, frame, false, logs).await {
         Ok(true) => Ok(()),
         // The agent logs why on its way to saying no, and that line is already in `logs`.
         Ok(false) => Err(format!(
@@ -1765,7 +1767,7 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
 }
 
 /// Asks whether the agent holds `hash`, and sends it when it does not: whether it holds it now.
-/// A `staged` file is sent without asking.
+/// A `staged` file is sent without asking. `frame` is only called when the blob goes up.
 ///
 /// Remembers nothing. That is [`ensure_blob`]'s to do for a payload, and is never done for a
 /// file a sub-task stages: the agent takes that one out of its cache to hand it to the module,
@@ -1776,7 +1778,7 @@ async fn place_blob<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
-    b64: &str,
+    frame: impl FnOnce() -> Result<std::sync::Arc<BlobFrame>, String>,
     staged: bool,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
@@ -1784,15 +1786,14 @@ async fn place_blob<C: AgentChannel>(
     if !staged && blob_state(link, host, hash, &has, None, logs).await? {
         return Ok(true);
     }
-    let bytes = volant_protocol::encoding::b64_decode(b64)
-        .map_err(|err| format!("decoding the blob {hash}: {err}"))?;
+    let frame = frame()?;
     let put = ToAgent::PutBlob {
         hash: hash.into(),
-        len: bytes.len() as u64,
-        encoding: volant_protocol::BlobEncoding::Raw,
+        len: frame.len,
+        encoding: frame.encoding,
         staged,
     };
-    blob_state(link, host, hash, &put, Some(&bytes), logs).await
+    blob_state(link, host, hash, &put, Some(&frame.bytes), logs).await
 }
 
 /// Puts on the host every file a sub-task stages, whatever the link put there before: the
@@ -1806,7 +1807,13 @@ async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        let placed_now = place_blob(link, host, &blob.hash, &blob.b64, true, logs)
+        // A staged file has no cache entry to keep a deflated form in: packed as it goes.
+        let frame = || {
+            volant_protocol::encoding::b64_decode(&blob.b64)
+                .map(|raw| std::sync::Arc::new(BlobFrame::packed(raw)))
+                .map_err(|err| format!("decoding the file {}: {err}", blob.hash))
+        };
+        let placed_now = place_blob(link, host, &blob.hash, frame, true, logs)
             .await
             .map_err(|err| format!("staging the file for '{arg}': {err}"))?;
         if !placed_now {
@@ -3366,6 +3373,84 @@ mod tests {
             .await
             .expect("the agent already holds it");
         assert_eq!(held.puts(), 0, "{:?}", held.sent);
+    }
+
+    /// The union goes up as a `put_blob` announcing its decoded length, then one frame holding
+    /// its deflated form, in that order.
+    ///
+    /// What would make this red: the frame written before its `put_blob` (the agent would take
+    /// it for a message); the length of the deflated form announced (the agent would refuse
+    /// the frame as longer than the blob); the zip sent raw.
+    #[tokio::test]
+    async fn the_union_goes_up_deflated_in_the_frame_after_its_put_blob() {
+        let zip = b"PK\x03\x04 a stored zip ".repeat(1000);
+        let hash = blake3::hash(&zip).to_hex().to_string();
+        let b64 = volant_protocol::encoding::b64_encode(&zip);
+        let mut agent = FakeAgent::answering(vec![state(&hash, false), state(&hash, true)]);
+        ensure_blob(&mut agent, "h1", &hash, &b64, &mut Vec::new())
+            .await
+            .expect("the agent stored it");
+        assert_eq!(
+            agent.sent,
+            [
+                ToAgent::HasBlob { hash: hash.clone() },
+                ToAgent::PutBlob {
+                    hash: hash.clone(),
+                    len: zip.len() as u64,
+                    encoding: volant_protocol::BlobEncoding::Deflate,
+                    staged: false,
+                },
+            ]
+        );
+        assert_eq!(agent.frames.len(), 1);
+        let (after, bytes) = &agent.frames[0];
+        assert_eq!(*after, 2, "the frame follows its put_blob");
+        assert!(bytes.len() < zip.len() / 10, "{} bytes", bytes.len());
+        assert_eq!(
+            volant_protocol::encoding::inflate(bytes, zip.len()).unwrap(),
+            zip
+        );
+    }
+
+    /// A staged file of 100 bytes goes up raw, in the frame after its `put_blob`.
+    #[tokio::test]
+    async fn a_small_staged_file_goes_up_raw_after_its_put_blob() {
+        let bytes = [7u8; 100];
+        let blob = crate::action_plugins::files::blob_of("small", &bytes).expect("it fits");
+        let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
+        stage_files(
+            &mut agent,
+            "h1",
+            &[("src".into(), blob.clone())],
+            &mut Vec::new(),
+        )
+        .await
+        .expect("the agent stored it");
+        assert_eq!(
+            agent.sent,
+            [ToAgent::PutBlob {
+                hash: blob.hash.clone(),
+                len: 100,
+                encoding: volant_protocol::BlobEncoding::Raw,
+                staged: true,
+            }]
+        );
+        assert_eq!(agent.frames, [(1, bytes.to_vec())]);
+    }
+
+    /// An agent that answers `present: false` after the blob went up fails the batch with the
+    /// sentence it has always failed with.
+    #[tokio::test]
+    async fn a_blob_the_agent_does_not_keep_fails_with_the_same_sentence() {
+        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
+        let err = ensure_blob(&mut agent, "h1", "ab", "UEsDBA==", &mut Vec::new())
+            .await
+            .expect_err("the agent refused it");
+        assert_eq!(
+            err,
+            "the agent refused the module payload ab; it holds no payload to run this task from"
+        );
+        assert_eq!(agent.frames, [(2, b"PK\x03\x04".to_vec())]);
     }
 
     /// A payload the agent refuses fails the batch, and the next batch of that host does not

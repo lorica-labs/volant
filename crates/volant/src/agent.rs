@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
-use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
+use volant_protocol::{BlobEncoding, FromAgent, PROTOCOL_VERSION, ToAgent};
 
 pub(crate) mod embedded;
 
@@ -171,6 +171,51 @@ pub struct AgentLink {
     interpreters: Vec<String>,
     natives: Vec<String>,
     ledger: crate::profile::Ledger,
+}
+
+/// A blob as it goes on the wire in the frame after its `put_blob`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobFrame {
+    /// The decoded length, which the `put_blob` announces.
+    pub len: u64,
+    pub encoding: BlobEncoding,
+    pub bytes: Vec<u8>,
+}
+
+impl BlobFrame {
+    /// `raw` as it is.
+    pub fn raw(raw: Vec<u8>) -> BlobFrame {
+        BlobFrame {
+            len: raw.len() as u64,
+            encoding: BlobEncoding::Raw,
+            bytes: raw,
+        }
+    }
+
+    /// `deflated` when it is shorter than `raw`, whose deflated form it is, and `raw` otherwise:
+    /// the agent refuses a frame longer than the blob, so a deflate that grew is never sent.
+    pub fn smaller(raw: Vec<u8>, deflated: Vec<u8>) -> BlobFrame {
+        if deflated.len() < raw.len() {
+            BlobFrame {
+                len: raw.len() as u64,
+                encoding: BlobEncoding::Deflate,
+                bytes: deflated,
+            }
+        } else {
+            BlobFrame::raw(raw)
+        }
+    }
+
+    /// `raw`, deflated first when it is past 4 KiB and that makes it shorter. Under that, the
+    /// deflate costs more than the bytes it saves.
+    pub fn packed(raw: Vec<u8>) -> BlobFrame {
+        if raw.len() > 4096 {
+            let deflated = volant_protocol::encoding::deflate(&raw);
+            BlobFrame::smaller(raw, deflated)
+        } else {
+            BlobFrame::raw(raw)
+        }
+    }
 }
 
 /// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
@@ -570,6 +615,25 @@ mod tests {
         AgentLink::new(child).expect("a link over it")
     }
 
+    /// A frame goes deflated only past 4 KiB and only when that is shorter.
+    ///
+    /// What would make this red: a deflate kept when it grew, which the agent refuses as a frame
+    /// longer than its blob; or every small file deflated, for nothing.
+    #[test]
+    fn a_blob_is_deflated_only_when_it_is_large_and_that_is_shorter() {
+        let small = BlobFrame::packed(vec![0; 4096]);
+        assert_eq!(small, BlobFrame::raw(vec![0; 4096]));
+        let large = BlobFrame::packed(vec![0; 4097]);
+        assert_eq!((large.len, large.encoding), (4097, BlobEncoding::Deflate));
+        assert!(large.bytes.len() < 100);
+        let noise: Vec<u8> = (0..256u32)
+            .flat_map(|n| *blake3::hash(&n.to_le_bytes()).as_bytes())
+            .collect();
+        let grew = volant_protocol::encoding::deflate(&noise);
+        assert!(grew.len() >= noise.len(), "{} bytes", grew.len());
+        assert_eq!(BlobFrame::packed(noise.clone()), BlobFrame::raw(noise));
+    }
+
     /// An agent that speaks the protocol before this one is refused at the handshake with the
     /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
     ///
@@ -581,11 +645,10 @@ mod tests {
     async fn an_agent_that_speaks_protocol_five_is_refused_at_the_handshake() {
         let ready = br#"{"type":"ready","protocol":5,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;
         let len = u32::try_from(ready.len()).unwrap().to_be_bytes();
-        let octal: String = len
-            .iter()
-            .chain(ready.iter())
-            .map(|byte| format!("\\{byte:03o}"))
-            .collect();
+        let mut octal = String::new();
+        for byte in len.iter().chain(ready.iter()) {
+            std::fmt::Write::write_fmt(&mut octal, format_args!("\\{byte:03o}")).unwrap();
+        }
         let child = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(format!("printf '{octal}'; cat > /dev/null"))

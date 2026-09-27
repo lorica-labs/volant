@@ -1006,12 +1006,12 @@
       "changed": false
     },
     "compare": "exact",
-    "expect": "fallback",
+    "expect": "native",
     "module": "setup",
     "patterns": {},
     "unordered": [],
     "volatile": [],
-    "why": "a filter is outside the native setup"
+    "why": ""
   },
   "setup-service-mgr": {
     "args": {
@@ -1027,12 +1027,12 @@
       "changed": false
     },
     "compare": "exact",
-    "expect": "fallback",
+    "expect": "native",
     "module": "setup",
     "patterns": {},
     "unordered": [],
     "volatile": [],
-    "why": "a filter is outside the native setup"
+    "why": ""
   },
   "stat-bare": {
     "args": {

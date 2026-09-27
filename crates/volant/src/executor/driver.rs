@@ -149,7 +149,7 @@ fn mentions(s: &str) -> bool {
 }
 
 /// Every string in `value`, keys included, at any depth.
-fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+pub(crate) fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
     match value {
         Value::String(s) => out.push(s),
         Value::Array(items) => items.iter().for_each(|v| strings(v, out)),
@@ -165,7 +165,7 @@ fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
 
 /// What sits between `{{ }}` and between `{% %}` in a text. An opening nothing closes runs to the
 /// end, which reads more rather than less.
-fn expressions(text: &str) -> Vec<&str> {
+pub(crate) fn expressions(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(at) = rest.find('{') {
@@ -199,7 +199,7 @@ fn words(text: &str, out: &mut BTreeSet<String>) {
 /// Every string of a task that is rendered before it runs: the templated text, and apart from it
 /// the bare expressions (`when` and its kin, `debug`'s `var`, `assert`'s `that`), which render
 /// without braces.
-fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
+pub(crate) fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
     let mut text: Vec<&str> = vec![&task.name];
     let mut bare: Vec<&str> = task
         .when

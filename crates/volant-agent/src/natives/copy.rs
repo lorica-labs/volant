@@ -863,11 +863,22 @@ mod tests {
         scratch
     }
 
-    /// `content` staged as the agent stages a task's file, in a file of its own, `0600`.
+    /// `content` staged as the agent stages a task's file, in a file of its own, `0600`, and
+    /// dated long ago, so that only `atomic_move`'s `utime` can give a replaced file the time now.
     fn stage(scratch: &Scratch, content: &str) -> String {
         let src = scratch.path("s/src");
         write(&src, content, 0o600);
+        set_old_time(&src);
         src
+    }
+
+    fn set_old_time(path: &str) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(978_307_200))
+            .unwrap();
     }
 
     fn write(path: &str, content: &str, mode: u32) {
@@ -1069,7 +1080,8 @@ mod tests {
     /// `checksum`, a link as `dest` without and with `follow` (with a backup), a dangling link,
     /// the same content with another mode, `force: false`, a directory as `dest` with and
     /// without its slash, an unknown owner, `validate` without `%s`, a file replaced, and an
-    /// invalid mode. `invocation` is held to the reference by the recorded cases.
+    /// invalid mode. A failure gets the `changed: false` ansible-core's task executor adds, as
+    /// the dispatcher adds it; `invocation` is held to the reference by the recorded cases.
     ///
     /// What would make this red: a link written through instead of replaced, the backup of a
     /// followed link named after the link, the same content moved anyway (the staged source
@@ -1100,7 +1112,7 @@ mod tests {
             "checksum-wrong",
             "one\n",
             json!({"dest": "<t>/c.txt", "checksum": "0000"}),
-            r#"{"checksum": "c7059bb19433cc3cabaa6236c83d56668a843dd2", "expected_checksum": "0000", "failed": true, "msg": "Copied file does not match the expected checksum. Transfer failed."}"#,
+            r#"{"changed": false, "checksum": "c7059bb19433cc3cabaa6236c83d56668a843dd2", "expected_checksum": "0000", "failed": true, "msg": "Copied file does not match the expected checksum. Transfer failed."}"#,
         );
         let checksum_left = after(&path("c.txt"), None);
 
@@ -1169,7 +1181,7 @@ mod tests {
             "owner-unknown",
             "o\n",
             json!({"dest": "<t>/o.txt", "owner": "volant-no-such-user"}),
-            r#"{"path": "<golden-tmp>/o.txt", "failed": true, "msg": "chown failed: failed to look up user volant-no-such-user", "uid": "<uid>", "gid": "<gid>", "owner": "<user>", "group": "<group>", "mode": "0644", "state": "file", "size": 2}"#,
+            r#"{"changed": false, "path": "<golden-tmp>/o.txt", "failed": true, "msg": "chown failed: failed to look up user volant-no-such-user", "uid": "<uid>", "gid": "<gid>", "owner": "<user>", "group": "<group>", "mode": "0644", "state": "file", "size": 2}"#,
         );
         let owner_left = after(&path("o.txt"), None);
 
@@ -1177,18 +1189,12 @@ mod tests {
             "validate-no-pct",
             "v\n",
             json!({"dest": "<t>/v.txt", "validate": "true"}),
-            r#"{"failed": true, "msg": "validate must contain %s: true"}"#,
+            r#"{"changed": false, "failed": true, "msg": "validate must contain %s: true"}"#,
         );
         let validate_left = after(&path("v.txt"), None);
 
         write(&path("e.txt"), "old\n", 0o604);
-        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(978_307_200);
-        fs::File::options()
-            .write(true)
-            .open(path("e.txt"))
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
+        set_old_time(&path("e.txt"));
         let started = SystemTime::now() - Duration::from_secs(1);
         case(
             "existing",
@@ -1202,9 +1208,27 @@ mod tests {
             "mode-invalid",
             "m\n",
             json!({"dest": "<t>/m.txt", "mode": "u=zz"}),
-            r#"{"path": "<golden-tmp>/m.txt", "details": "bad symbolic permission for mode: u=zz", "failed": true, "msg": "mode must be in octal or symbolic form", "uid": "<uid>", "gid": "<gid>", "owner": "<user>", "group": "<group>", "mode": "0644", "state": "file", "size": 2}"#,
+            r#"{"changed": false, "path": "<golden-tmp>/m.txt", "details": "bad symbolic permission for mode: u=zz", "failed": true, "msg": "mode must be in octal or symbolic form", "uid": "<uid>", "gid": "<gid>", "owner": "<user>", "group": "<group>", "mode": "0644", "state": "file", "size": 2}"#,
         );
         let mode_left = after(&path("m.txt"), None);
+
+        fs::create_dir(path("ro")).unwrap();
+        fs::set_permissions(path("ro"), fs::Permissions::from_mode(0o555)).unwrap();
+        case(
+            "not-writable",
+            "x\n",
+            json!({"dest": "<t>/ro/x.txt"}),
+            r#"{"changed": false, "failed": true, "msg": "Destination <golden-tmp>/ro not writable"}"#,
+        );
+        fs::create_dir_all(path("nox/in")).unwrap();
+        fs::set_permissions(path("nox"), fs::Permissions::from_mode(0o600)).unwrap();
+        case(
+            "not-accessible",
+            "x\n",
+            json!({"dest": "<t>/nox/in/x.txt"}),
+            r#"{"changed": false, "failed": true, "msg": "Destination directory <golden-tmp>/nox/in is not accessible"}"#,
+        );
+        fs::set_permissions(path("nox"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let file = |content: &str, mode: &str| json!({"exists": true, "mode": mode, "type": "file", "content": content});
         let followed = json!({
@@ -1248,6 +1272,9 @@ mod tests {
         let t = scratch.0.clone();
         let file = scratch.fixture();
         fs::create_dir_all(scratch.path("d/sub.txt")).unwrap();
+        // Searchable, so that only its kind tells it from a directory.
+        let exe = scratch.path("exe");
+        write(&exe, "", 0o755);
         let src = stage(&scratch, "new\n");
         let mut found = Vec::new();
         let mut hand_back = |name: &str, extra: Value, context: &Context| {
@@ -1286,7 +1313,7 @@ mod tests {
                 "directories to create",
                 json!({"dest": format!("{t}/new/"), "_original_basename": "n.txt"}),
             ),
-            ("parent a file", json!({"dest": format!("{file}/x")})),
+            ("parent a file", json!({"dest": format!("{exe}/x")})),
             (
                 "dest a directory",
                 json!({"dest": format!("{t}/d"), "_original_basename": "sub.txt"}),

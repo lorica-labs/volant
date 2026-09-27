@@ -808,10 +808,8 @@ mod tests {
         assert_eq!(load(&dir, &some_key()), None);
     }
 
-    /// Every input that is not a file has its own key.
+    /// A rebuilt controller gets its own key.
     ///
-    /// What would make this red: `ANSIBLE_MODULE_COMPRESSION` or `ANSIBLE_COLLECTIONS_PATH`
-    /// left out, which serves a union built under another configuration.
     /// What would make this red: the key reading only the version number, so a rebuilt
     /// controller whose refusals or fact keys changed gets the entry the previous build wrote.
     #[test]
@@ -841,6 +839,10 @@ mod tests {
         assert_ne!(with(&build(1)), with(&longer), "another size");
     }
 
+    /// Every input that is not a file has its own key.
+    ///
+    /// What would make this red: `ANSIBLE_MODULE_COMPRESSION` or `ANSIBLE_COLLECTIONS_PATH`
+    /// left out, which serves a union built under another configuration.
     #[test]
     fn an_ansible_environment_change_is_another_key() {
         let modules = BTreeSet::from(["ping".to_string()]);

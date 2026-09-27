@@ -243,6 +243,7 @@ impl Host<'_> {
                 failure.insert("stdout".into(), Value::from(""));
                 failure.insert("stderr".into(), Value::from(""));
                 failure.insert("cmd".into(), Value::from(clean_args(&words)));
+                failure.insert("exception".into(), popen_error(errno, &program));
                 Err(Exit::Failed(failure))
             }
         }
@@ -557,6 +558,38 @@ fn clean_args(words: &[&str]) -> String {
         .map(|word| shlex_quote(word))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The `exception` `fail_json(exception=ex)` sends for the `OSError` `Popen` raised, measured on
+/// ansible-core 2.19.12 (tracebacks off, the default): an error summary whose chained event is
+/// `str(ex)`. That text is Python's `[Errno N] strerror`, with the program as bytes when `exec`
+/// failed; a failed `fork` (`EAGAIN`, `ENOMEM`) names no file. The wording comes from this libc,
+/// so the chained message is not byte for byte the host Python's for every errno.
+fn popen_error(errno: i32, program: &str) -> Value {
+    let text = std::io::Error::from_raw_os_error(errno).to_string();
+    let strerror = match super::common::strerror(errno) {
+        Some(strerror) => strerror,
+        None => text.split(" (os error").next().unwrap_or(&text),
+    };
+    let cause = if errno == libc::EAGAIN || errno == libc::ENOMEM {
+        format!("[Errno {errno}] {strerror}")
+    } else {
+        format!("[Errno {errno}] {strerror}: b'{program}'")
+    };
+    serde_json::json!({
+        "__ansible_type": "ErrorSummary",
+        "event": {
+            "__ansible_type": "Event",
+            "msg": "Error executing command.",
+            "chain": {
+                "__ansible_type": "EventChain",
+                "msg_reason": "<<< caused by >>>",
+                "traceback_reason": "The above exception was the direct cause of the following error:",
+                "follow": true,
+                "event": {"__ansible_type": "Event", "msg": cause},
+            },
+        },
+    })
 }
 
 /// `shlex.quote`.
@@ -1243,13 +1276,33 @@ esac"#,
     /// `run_command` does when `Popen` raises, instead of handing a half-done task back.
     ///
     /// What would make this red: the hand-back kept after an effect, which runs the reload
-    /// again under Python; a wrong `rc`, `cmd` or missing `stdout`/`stderr`.
+    /// again under Python; a wrong `rc`, `cmd`, missing `stdout`/`stderr`, or no `exception`,
+    /// whose summary the reference's callback prints as an `[ERROR]` line at any verbosity.
     #[test]
     fn a_systemctl_that_cannot_start_after_a_change_fails_like_the_module() {
         let fake = Fake::new("vanishes", r#"[ "$1" = daemon-reload ] && rm -f "$0""#);
         let task = json!({"name": "u", "state": "started", "daemon_reload": true});
-        let answer = fake.answer(task.clone()).unwrap();
+        let mut answer = fake.answer(task.clone()).unwrap();
         let systemctl = format!("{}/bin/systemctl", fake.0);
+        // `exception` as the module sends it (measured, tracebacks off). The chained `OSError`
+        // text comes from this libc, so it is checked for its errno and file only.
+        let mut exception = answer
+            .remove("exception")
+            .expect("the module sends an exception");
+        let cause = exception["event"]["chain"]["event"]["msg"].take();
+        assert_eq!(
+            cause,
+            format!("[Errno 2] No such file or directory: b'{systemctl}'")
+        );
+        assert_eq!(
+            exception,
+            json!({"__ansible_type": "ErrorSummary", "event": {
+                "__ansible_type": "Event", "msg": "Error executing command.",
+                "chain": {"__ansible_type": "EventChain", "msg_reason": "<<< caused by >>>",
+                    "traceback_reason":
+                        "The above exception was the direct cause of the following error:",
+                    "follow": true, "event": {"__ansible_type": "Event", "msg": null}}}})
+        );
         assert_eq!(
             Value::Object(answer),
             json!({

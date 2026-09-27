@@ -377,6 +377,36 @@ fn retries_are_rendered_per_item() {
     check(&text, &["plugin"], 1);
 }
 
+/// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller
+/// side alike, and the play goes on. Measured on ansible-core 2.19.12 with this fixture: both
+/// items of the `command` loop fail with `Task failed: Timeout 9223372036854775807 is invalid,
+/// it must be between 0 and 100000000.`, the `debug` with the same sentence for 100000001, and
+/// `after` runs.
+///
+/// What would make this red: the timeout taken as it stands, whose deadline overflows and
+/// panics the agent (the host then reads unreachable), or runs the `debug`.
+#[test]
+fn a_timeout_out_of_range_fails_the_task() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/timeout-out-of-range.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches(r#""msg": "Task failed: Timeout 9223372036854775807 is invalid, it must be between 0 and 100000000.""#)
+            .count(),
+        2,
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""msg": "Task failed: Timeout 100000001 is invalid, it must be between 0 and 100000000.""#),
+        "{text}"
+    );
+    assert!(!text.contains(r#""msg": "x""#), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+}
+
 /// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
 /// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
 /// registered result has no `warnings` key. The driver shows every result's `warnings` that way,

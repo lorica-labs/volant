@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - command: "true"
+      loop: [1, 2]
+      timeout: 9223372036854775807
+      ignore_errors: true
+    - debug: {msg: x}
+      timeout: 100000001
+      ignore_errors: true
+    - debug: msg=after

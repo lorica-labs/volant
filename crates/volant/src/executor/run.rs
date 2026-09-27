@@ -950,7 +950,9 @@ pub(super) fn retry_plan(
         // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`.
         Some(raw) => match number(raw, "delay")? {
             d if d < 0.0 => Duration::from_secs(1),
-            d => Duration::from_secs_f64(d),
+            // Past what a `Duration` holds the wait never ends, rather than the controller
+            // panicking on the conversion.
+            d => Duration::try_from_secs_f64(d).unwrap_or(Duration::MAX),
         },
         None => Duration::from_secs(5),
     };
@@ -961,9 +963,12 @@ pub(super) fn retry_plan(
     }))
 }
 
-/// One item's retry plan, or the failed result it reports when its `retries` or `delay` did not
-/// render.
+/// One item's retry plan, or the failed result it reports instead of running: its `retries` or
+/// `delay` did not render, or the task's `timeout` is out of range.
 pub(super) type ItemRetry = Result<Option<Retry>, TaskResult>;
+
+/// The largest `timeout` the reference accepts (`_alarm_timeout.py`, `_MAX_TIMEOUT`).
+const MAX_TIMEOUT: u64 = 100_000_000;
 
 /// Each item's retry plan, rendered against its own variables: the reference post-validates
 /// `retries` and `delay` once per item. An item whose render fails reports that failure and the
@@ -972,16 +977,31 @@ pub(super) type ItemRetry = Result<Option<Retry>, TaskResult>;
 /// third alone with `Task failed: Error processing keyword 'retries': The value 'x' could not be
 /// converted to 'int'.`, and runs the fourth once with no `attempts`. A skipped item renders
 /// nothing.
+///
+/// A `timeout` over [`MAX_TIMEOUT`] fails each item that runs, after the retry plan rendered, as
+/// the reference's alarm refuses it at the first attempt: measured on ansible-core 2.19.12,
+/// `timeout: 100000001` fails every item of a loop with `Task failed: Timeout 100000001 is
+/// invalid, it must be between 0 and 100000000.` and runs nothing. Every deadline behind this
+/// point is then a sum that fits.
 pub(super) fn retry_plans(task: &PlayTask, items: &[Item], templar: &Templar) -> Vec<ItemRetry> {
+    let failed = |msg: String| {
+        let mut failed = TaskResult::failed_with(format!("Task failed: {msg}"));
+        failed.0.insert("changed".into(), json!(false));
+        failed
+    };
     items
         .iter()
-        .map(|item| match item.skipped {
-            Some(_) => Ok(None),
-            None => retry_plan(task, Some(item), templar).map_err(|e| {
-                let mut failed = TaskResult::failed_with(format!("Task failed: {}", e.0));
-                failed.0.insert("changed".into(), json!(false));
-                failed
-            }),
+        .map(|item| {
+            if item.skipped.is_some() {
+                return Ok(None);
+            }
+            let plan = retry_plan(task, Some(item), templar).map_err(|e| failed(e.0))?;
+            match task.timeout {
+                Some(t) if t > MAX_TIMEOUT => Err(failed(format!(
+                    "Timeout {t} is invalid, it must be between 0 and {MAX_TIMEOUT}."
+                ))),
+                _ => Ok(plan),
+            }
         })
         .collect()
 }
@@ -1303,7 +1323,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
     // action: every sub-task, every wait for the host to come back. Past it, the item's result is
     // the timeout's, never whatever the plugin would have made of the time it had left.
     let limit = task.timeout.filter(|t| *t > 0);
-    let ends = limit.map(|t| Instant::now() + Duration::from_secs(t));
+    let ends = limit.and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
     let expired = || ends.is_some_and(|e| Instant::now() >= e);
     let capped =
         |d: Duration| ends.map_or(d, |e| d.min(e.saturating_duration_since(Instant::now())));
@@ -1574,7 +1594,9 @@ pub(super) async fn wait_or_stop(
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
 ) -> Option<()> {
-    let deadline = tokio::time::Instant::now() + delay;
+    // `sleep` rather than a sum with `now`, which would overflow for a delay that large.
+    let sleep = tokio::time::sleep(delay);
+    tokio::pin!(sleep);
     loop {
         if *stop.borrow() {
             return None;
@@ -1583,7 +1605,7 @@ pub(super) async fn wait_or_stop(
             return Some(());
         }
         tokio::select! {
-            () = tokio::time::sleep_until(deadline) => return Some(()),
+            () = &mut sleep => return Some(()),
             res = stop.changed(), if !*stop_broken => {
                 if res.is_err() {
                     *stop_broken = true;
@@ -5728,6 +5750,47 @@ mod tests {
     ///
     /// What would make this red: a negative delay clamped to zero, which retries a flapping
     /// service in a tight loop where the reference paces it.
+    /// A `delay` past what a `Duration` holds, and a wait that long, never panic the
+    /// controller: the plan holds the longest wait there is, and the wait still ends on the
+    /// run's stop.
+    ///
+    /// What would make this red: `Duration::from_secs_f64` on `1e20`, or a sum of that wait
+    /// with the present instant, either of which panics.
+    #[tokio::test]
+    async fn an_enormous_delay_does_not_panic() {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut t = task("command");
+        t.retries = Some(json!(1));
+        t.delay = Some(json!(1e20));
+        let retry = retry_plan(&t, Some(&bare_item()), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        assert_eq!(retry.delay, Duration::MAX);
+        let (tx, mut stop) = watch::channel(false);
+        tx.send(true).expect("the run stops");
+        assert_eq!(wait_or_stop(retry.delay, &mut stop, &mut false).await, None);
+    }
+
+    /// An item deadline past what an `Instant` holds is no deadline, not a panic. The driver
+    /// refuses such a `timeout` before the item starts; this is the plugin loop on its own.
+    ///
+    /// What would make this red: the deadline summed with the present instant unchecked.
+    #[tokio::test]
+    async fn an_item_deadline_that_overflows_is_no_deadline() {
+        let mut stop = watch::channel(false).1;
+        let mut t = task("copy");
+        t.timeout = Some(u64::MAX);
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+            ]
+            .concat(),
+        );
+        let _ = copy_attempts(&t, copy_args("/tmp/v/far"), &mut agent, &mut stop).await;
+        assert_eq!(modules_sent(&agent)[0], "stat");
+    }
+
     #[test]
     fn a_negative_delay_waits_one_second() {
         let templar = Templar::new(PathBuf::from("."));

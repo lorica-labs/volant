@@ -125,7 +125,7 @@ impl Place {
         let interpreter = interpreter_without_running(explicit.as_deref(), virtual_env.as_deref())?;
         Some(Place {
             dir: cache_dir()?,
-            key: key(&interpreter, modules, asked, plugin_dirs),
+            key: key(&interpreter, modules, asked, plugin_dirs)?,
             interpreter: interpreter.path,
             real: interpreter.real,
         })
@@ -182,54 +182,84 @@ pub fn located(candidate: &str) -> Option<PathBuf> {
 }
 
 /// The key of this run's union, read from the process: its environment, its working directory,
-/// every `ansible.cfg` ansible-core might read (`configs`), and what the playbooks' and roles'
-/// plugin directories hold (`plugin_files`).
+/// every `ansible.cfg` ansible-core might read (`configs`), and the files the playbooks' and
+/// roles' plugin directories hold (`plugin_files`). `None` when one of those files is too recent
+/// to vouch for: the run then builds and keeps nothing, as it does without a cache directory.
 pub fn key(
     interpreter: &InterpreterId,
     modules: &BTreeSet<String>,
     asked: &[String],
     plugin_dirs: &[PathBuf],
-) -> CacheKey {
+) -> Option<CacheKey> {
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let mut files = configs(
         std::env::var_os("ANSIBLE_CONFIG").as_deref(),
         std::env::var_os("HOME").as_deref().map(Path::new),
     );
-    files.extend(plugin_files(plugin_dirs));
+    files.extend(plugin_files(plugin_dirs, SystemTime::now())?);
     let cwd = std::env::current_dir().unwrap_or_default();
-    key_from(interpreter, modules, asked, &env, &files, &cwd)
+    Some(key_from(interpreter, modules, asked, &env, &files, &cwd))
 }
 
-/// Each directory of `dirs`, then every file under its `library/` and `module_utils/` with its
-/// contents: which module a name finds, and what its `module_utils` import reads, is decided
-/// there. The sources an entry keeps cannot see it: a `library/` created after the entry was
-/// written has no mtime in them, and a module shadowing one of ansible-core's would go unseen.
-fn plugin_files(dirs: &[PathBuf]) -> Vec<(PathBuf, Vec<u8>)> {
+/// Each directory of `dirs`, then every file under its `library/` and `module_utils/`: which
+/// module a name finds, and what its `module_utils` import reads, is decided there. The sources
+/// an entry keeps cannot see it: a `library/` created after the entry was written has no mtime in
+/// them, and a module shadowing one of ansible-core's would go unseen.
+///
+/// A file is stamped, not read: the real path it leads to, its size and its mtime, the same
+/// check a kept source gets, so a warm run over a large `module_utils/` tree stats it rather
+/// than reading every byte. A link to a directory is followed, and a directory reached a second
+/// time is not walked again, which ends a loop of links.
+///
+/// `None` when a file changed less than two seconds before `now`, the helper's racy-timestamp
+/// rule (`sources`): rewritten within the same tick of a coarse clock, it would keep its size
+/// and mtime and the key would still name the union built from what it held before.
+fn plugin_files(dirs: &[PathBuf], now: SystemTime) -> Option<Vec<(PathBuf, Vec<u8>)>> {
     let mut out = Vec::new();
+    let mut walked = BTreeSet::new();
     for dir in dirs {
         out.push((dir.clone(), Vec::new()));
         for sub in ["library", "module_utils"] {
-            files_under(&dir.join(sub), &mut out);
+            files_under(&dir.join(sub), &mut walked, &mut out);
         }
     }
-    out
+    let now_ns = i128::try_from(now.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()?;
+    let recent = out.iter().any(|(_, stamp)| {
+        stamp
+            .rchunks_exact(16)
+            .next()
+            .and_then(|mtime| mtime.try_into().ok())
+            .is_some_and(|mtime| i128::from_le_bytes(mtime) > now_ns - 2_000_000_000)
+    });
+    (!recent).then_some(out)
 }
 
-/// Every file under `dir`, at any depth, in a stable order. A link to a directory is not
-/// followed, so a loop of links ends.
-fn files_under(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+/// Every file under `dir`, at any depth, in a stable order, each with its stamp: the real path,
+/// then the size and the mtime in nanoseconds, little-endian, the mtime last.
+fn files_under(dir: &Path, walked: &mut BTreeSet<PathBuf>, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+    let Ok(real) = fs::canonicalize(dir) else {
+        return;
+    };
+    if !walked.insert(real) {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    let mut entries: Vec<fs::DirEntry> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(fs::DirEntry::path);
-    for entry in entries {
-        let path = entry.path();
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            files_under(&path, out);
-        } else if let Ok(bytes) = fs::read(&path) {
-            out.push((path, bytes));
+    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            files_under(&path, walked, out);
+            continue;
         }
+        let (Ok(real), Ok(source)) = (fs::canonicalize(&path), Source::now(&path)) else {
+            continue;
+        };
+        let mut stamp = real.as_os_str().as_encoded_bytes().to_vec();
+        stamp.extend_from_slice(&source.len.to_le_bytes());
+        stamp.extend_from_slice(&source.mtime_ns.to_le_bytes());
+        out.push((path, stamp));
     }
 }
 
@@ -896,45 +926,95 @@ mod tests {
         }
     }
 
+    /// Writes `text` to `path` and sets its mtime `ago` seconds back, old enough to vouch for.
+    fn written(path: &Path, text: &str, ago: u64) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+        let file = fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(ago))
+            .unwrap();
+    }
+
+    /// The key over `dirs` and nothing else, the plugin files read as `key` reads them.
+    fn plugin_key(dirs: &[PathBuf]) -> CacheKey {
+        key_from(
+            &interpreter(),
+            &BTreeSet::from(["stat".to_string()]),
+            &[],
+            &[],
+            &plugin_files(dirs, SystemTime::now() + Duration::from_secs(3))
+                .expect("nothing recent"),
+            Path::new("/work"),
+        )
+    }
+
     /// A module written, or rewritten in place, in a playbook's `library/` or `module_utils/`
     /// is another key, and so is a playbook directory named in another place of the list.
     ///
     /// What would make this red: the key leaving the plugin directories out, which serves the
     /// union built before a `library/stat.py` existed, with ansible-core's own `stat`, since no
-    /// source it kept names a directory that was not there.
+    /// source it kept names a directory that was not there; or a rewrite of the same size keeping
+    /// the key, which the mtime in each file's stamp is there to catch.
     #[test]
     fn a_module_written_in_a_playbook_s_library_is_another_key() {
         let root = tempdir();
         let (play, role) = (root.0.join("play"), root.0.join("role"));
         fs::create_dir_all(&play).unwrap();
         fs::create_dir_all(&role).unwrap();
-        let key = |dirs: &[PathBuf]| {
-            key_from(
-                &interpreter(),
-                &BTreeSet::from(["stat".to_string()]),
-                &[],
-                &[],
-                &plugin_files(dirs),
-                Path::new("/work"),
-            )
-        };
         let both = [play.clone(), role.clone()];
-        let mut seen = vec![key(&both)];
-        assert_ne!(key(&[role.clone(), play.clone()]), seen[0], "the order");
-        fs::create_dir_all(play.join("library")).unwrap();
-        fs::write(play.join("library").join("stat.py"), "one").unwrap();
-        seen.push(key(&both));
-        fs::write(play.join("library").join("stat.py"), "two").unwrap();
-        seen.push(key(&both));
-        fs::create_dir_all(role.join("module_utils").join("net")).unwrap();
-        fs::write(role.join("module_utils").join("net").join("a.py"), "").unwrap();
-        seen.push(key(&both));
+        let mut seen = vec![plugin_key(&both)];
+        assert_ne!(
+            plugin_key(&[role.clone(), play.clone()]),
+            seen[0],
+            "the order"
+        );
+        let stat = play.join("library").join("stat.py");
+        written(&stat, "one", 100);
+        seen.push(plugin_key(&both));
+        written(&stat, "two", 50);
+        seen.push(plugin_key(&both));
+        written(&role.join("module_utils").join("net").join("a.py"), "", 100);
+        seen.push(plugin_key(&both));
         for (i, one) in seen.iter().enumerate() {
             for other in &seen[i + 1..] {
                 assert_ne!(one, other);
             }
         }
-        assert_eq!(key(&both), seen[3], "nothing changed since");
+        assert_eq!(plugin_key(&both), seen[3], "nothing changed since");
+    }
+
+    /// A plugin file changed less than two seconds ago gives no key, so nothing is kept.
+    ///
+    /// What would make this red: the racy-timestamp rule left out, which files a union under the
+    /// stamp of a file that can still change without moving its size or its mtime.
+    #[test]
+    fn a_plugin_file_too_recent_gives_no_key() {
+        let root = tempdir();
+        fs::create_dir_all(root.0.join("library")).unwrap();
+        fs::write(root.0.join("library").join("m.py"), "x").unwrap();
+        let dirs = [root.0.clone()];
+        assert!(plugin_files(&dirs, SystemTime::now()).is_none());
+        assert!(plugin_files(&dirs, SystemTime::now() + Duration::from_secs(3)).is_some());
+    }
+
+    /// An edit behind a linked directory in `module_utils/` is another key, and a link back to an
+    /// ancestor is walked no further.
+    ///
+    /// What would make this red: a link to a directory read as a file and dropped, which leaves
+    /// everything behind it out of the key.
+    #[cfg(unix)]
+    #[test]
+    fn an_edit_behind_a_linked_directory_is_another_key() {
+        let root = tempdir();
+        let (role, shared) = (root.0.join("role"), root.0.join("shared"));
+        written(&shared.join("m.py"), "one", 100);
+        let utils = role.join("module_utils");
+        fs::create_dir_all(&utils).unwrap();
+        std::os::unix::fs::symlink(&shared, utils.join("shared")).unwrap();
+        std::os::unix::fs::symlink(&utils, utils.join("again")).unwrap();
+        let before = plugin_key(std::slice::from_ref(&role));
+        written(&shared.join("m.py"), "three", 100);
+        assert_ne!(plugin_key(std::slice::from_ref(&role)), before);
     }
 
     /// An entry that does not read whole is rebuilt, not trusted.

@@ -798,12 +798,12 @@ fn with_lookup_items(
             Value::String(format!("{subdir}s")),
         );
     }
-    let found = templar.evaluate(&format!("lookup({lookup:?}, *{TERMS})"), &scope)?;
-    // `wantlist=True` for the two lookups this runs: `lookup()` answers no result with an empty
-    // string and one result bare, and neither of them can find an empty name.
+    let found = templar.evaluate(
+        &format!("lookup({lookup:?}, *{TERMS}, wantlist=True)"),
+        &scope,
+    )?;
     let list = match found {
         Value::Array(list) => list,
-        Value::String(s) if s.is_empty() => Vec::new(),
         one => vec![one],
     };
     Ok((list, tainted))
@@ -1910,10 +1910,15 @@ mod tests {
         assert_eq!(bound(&step, &store).unwrap(), [(json!(one), false)]);
         let first = dir.write("images-1.tar.gz");
         dir.write("images.txt");
-        assert_eq!(
-            bound(&step, &store).unwrap(),
-            [(json!(first), false), (json!(one), false)]
-        );
+        // Directory-listing order, as `glob.glob` answers: no sort.
+        let listed: Vec<(Value, bool)> = std::fs::read_dir(&dir.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().path().display().to_string())
+            .filter(|path| *path == first || *path == one)
+            .map(|path| (json!(path), false))
+            .collect();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(bound(&step, &store).unwrap(), listed);
 
         let undefined = loaded(&task("{{ nosuch }}/*.rpm"), Origin::default());
         let err = bound(&undefined, &store).expect_err("an undefined term fails fileglob");

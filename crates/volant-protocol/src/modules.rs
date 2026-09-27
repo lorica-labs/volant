@@ -245,6 +245,7 @@ pub const NATIVE_ENABLED: &[&str] = &[
     "apt",
     "package_facts",
     "service_facts",
+    "lineinfile",
 ];
 
 const fn honoured(name: &'static str) -> ModuleArg {

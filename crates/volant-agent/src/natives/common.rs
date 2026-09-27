@@ -13,8 +13,9 @@ use std::ffi::CString;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 
@@ -68,6 +69,28 @@ pub struct ArgSpec {
     pub aliases: &'static [&'static str],
     /// The reference's default, `Value::Null` where it has none.
     pub default: fn() -> Value,
+}
+
+/// An argument without a default.
+pub const fn null(name: &'static str) -> ArgSpec {
+    ArgSpec {
+        name,
+        aliases: &[],
+        default: || Value::Null,
+    }
+}
+
+/// A `type='bool'` argument and its default.
+pub const fn flag(name: &'static str, default: bool) -> ArgSpec {
+    ArgSpec {
+        name,
+        aliases: &[],
+        default: if default {
+            || Value::Bool(true)
+        } else {
+            || Value::Bool(false)
+        },
+    }
 }
 
 /// The `invocation` a native returns: `{"module_args": ...}` holding every argument of `spec`,
@@ -411,7 +434,7 @@ fn perm_bits(user: char, perm: char, prev: u32, is_dir: bool) -> u32 {
 
 /// The process umask, read without setting it (`/proc/self/status`, Linux 4.7 and later): the
 /// agent's threads would see a temporary `umask(0)`.
-fn umask() -> Result<u32, ModeError> {
+pub fn umask() -> Result<u32, ModeError> {
     fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {
@@ -442,6 +465,29 @@ pub fn set_fs_attributes(
     group: Option<&Account>,
     mode: Option<&Value>,
 ) -> Result<bool, FsError> {
+    set_fs_attributes_diff(path, owner, group, mode, &mut Map::new())
+}
+
+/// `set_fs_attributes`, filling `diff` as the reference fills its `diff` argument: `before` and
+/// `after` maps holding the `owner` and `group` ids and the `mode` text of each attribute about
+/// to change, written before the change is tried.
+pub fn set_fs_attributes_diff(
+    path: &str,
+    owner: Option<&Account>,
+    group: Option<&Account>,
+    mode: Option<&Value>,
+    diff: &mut Map<String, Value>,
+) -> Result<bool, FsError> {
+    let mut record = |key: &str, before: Value, after: Value| {
+        for (side, value) in [("before", before), ("after", after)] {
+            if let Value::Object(map) = diff
+                .entry(side)
+                .or_insert_with(|| Value::Object(Map::new()))
+            {
+                map.insert(key.to_string(), value);
+            }
+        }
+    };
     let mut changed = false;
     let lstat = |changed: bool| {
         fs::symlink_metadata(path).map_err(|err| FsError::Raised(os_error(&err, path), changed))
@@ -456,6 +502,7 @@ pub fn set_fs_attributes(
             }
         };
         if current != uid {
+            record("owner", current.into(), uid.into());
             std::os::unix::fs::lchown(path, Some(uid), None)
                 .map_err(|_| FsError::Failed(failure(path, "chown failed".into())))?;
             changed = true;
@@ -470,6 +517,7 @@ pub fn set_fs_attributes(
             }
         };
         if current != gid {
+            record("group", current.into(), gid.into());
             std::os::unix::fs::lchown(path, None, Some(gid))
                 .map_err(|_| FsError::Failed(failure(path, "chgrp failed".into())))?;
             changed = true;
@@ -488,6 +536,11 @@ pub fn set_fs_attributes(
             Err(ModeError::Unsupported(why)) => return Err(FsError::Raised(why, changed)),
         };
         if prev != mode {
+            record(
+                "mode",
+                format!("0{prev:03o}").into(),
+                format!("0{mode:03o}").into(),
+            );
             // Python's chmod of a link goes through it and puts the target back; no native
             // sets a mode on a link.
             if meta.file_type().is_symlink() {
@@ -663,6 +716,110 @@ pub fn realpath(path: &str) -> Result<String, String> {
         .ok()
         .and_then(|real| real.to_str().map(str::to_string))
         .ok_or_else(|| format!("{path} does not resolve"))
+}
+
+/// Backups this agent has named so far.
+static BACKUPS: AtomicU64 = AtomicU64::new(0);
+
+/// Why `backup_local` made no backup.
+#[derive(Debug)]
+pub enum BackupError {
+    /// A file already has the backup's name. Nothing was written: a native hands back.
+    Exists(String),
+    /// The reference's exception text; the backup may be partly written.
+    Failed(String),
+}
+
+/// `backup_local`: a copy of `path` named `<path>.<number>.<%Y-%m-%d@%H:%M:%S>~`, with the
+/// file's mode, times and owner (`preserved_copy`).
+///
+/// The reference's number is its module's pid, new for every task. A native runs inside the
+/// agent, whose pid every task shares, so two backups of one file in the same second would
+/// share a name. The number here is the agent's pid followed by a sequence number of this run,
+/// at least four digits, never reused; and a name some file already has is never overwritten.
+pub fn backup_local(path: &str) -> Result<String, BackupError> {
+    let seq = BACKUPS.fetch_add(1, Ordering::Relaxed) + 1;
+    let name = format!("{path}.{}{seq:04}.{}", std::process::id(), local_stamp());
+    backup_copy(path, &name)?;
+    Ok(name)
+}
+
+/// `preserved_copy(path, name)` into a file created for it, never over one that exists.
+pub fn backup_copy(path: &str, name: &str) -> Result<(), BackupError> {
+    let failed = |_: io::Error| {
+        BackupError::Failed(format!("Could not make backup of '{path}' to '{name}'."))
+    };
+    let meta = fs::metadata(path).map_err(failed)?;
+    let mut source = fs::File::open(path).map_err(failed)?;
+    let mut copy = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(name)
+    {
+        Ok(copy) => copy,
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(BackupError::Exists(name.to_string()));
+        }
+        Err(err) => return Err(failed(err)),
+    };
+    io::copy(&mut source, &mut copy).map_err(failed)?;
+    drop(copy);
+    fs::set_permissions(name, fs::Permissions::from_mode(meta.mode() & 0o7777)).map_err(failed)?;
+    set_times(name, &meta).map_err(failed)?;
+    chown_if_permitted(name, &meta).map_err(failed)?;
+    Ok(())
+}
+
+/// `time.strftime("%Y-%m-%d@%H:%M:%S~", time.localtime())`.
+fn local_stamp() -> String {
+    // SAFETY: `time` accepts a null pointer; `tm` is plain data that `localtime_r` fills.
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&raw const now, &raw mut tm) };
+    format!(
+        "{:04}-{:02}-{:02}@{:02}:{:02}:{:02}~",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
+/// `shutil.copystat`'s times: `meta`'s access and modification times, to the nanosecond.
+fn set_times(path: &str, meta: &fs::Metadata) -> io::Result<()> {
+    let path = CString::new(path).map_err(io::Error::other)?;
+    let times = [
+        libc::timespec {
+            tv_sec: meta.atime() as _,
+            tv_nsec: meta.atime_nsec() as _,
+        },
+        libc::timespec {
+            tv_sec: meta.mtime() as _,
+            tv_nsec: meta.mtime_nsec() as _,
+        },
+    ];
+    // SAFETY: `times` holds the two entries `utimensat` reads.
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// `os.chown(path, uid, gid)` of `meta`'s owner when it differs, a refusal ignored.
+pub fn chown_if_permitted(path: &str, meta: &fs::Metadata) -> io::Result<()> {
+    let now = fs::metadata(path)?;
+    if (now.uid(), now.gid()) == (meta.uid(), meta.gid()) {
+        return Ok(());
+    }
+    match std::os::unix::fs::chown(path, Some(meta.uid()), Some(meta.gid())) {
+        Err(err) if err.raw_os_error() != Some(libc::EPERM) => Err(err),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -1044,11 +1201,22 @@ pub mod golden {
                 *value = placeholder.into();
                 continue;
             }
-            match value {
-                Value::String(text) => *text = text.replace(&scratch.0, "<golden-tmp>"),
-                Value::Object(inner) => mask(inner, scratch),
-                _ => {}
+            mask_value(value, scratch);
+        }
+    }
+
+    /// The scratch directory written `<golden-tmp>` in a value, inside lists (`lineinfile`'s
+    /// `diff`) as well as maps.
+    fn mask_value(value: &mut Value, scratch: &Scratch) {
+        match value {
+            Value::String(text) => *text = text.replace(&scratch.0, "<golden-tmp>"),
+            Value::Object(inner) => mask(inner, scratch),
+            Value::Array(items) => {
+                for item in items {
+                    mask_value(item, scratch);
+                }
             }
+            _ => {}
         }
     }
 

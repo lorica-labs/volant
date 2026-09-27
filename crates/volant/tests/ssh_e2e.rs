@@ -1329,7 +1329,12 @@ fn ssh_fetch_writes_under_dest_and_nowhere_else() {
 #[cfg(target_os = "linux")]
 enum Machine {
     Named(String),
-    Localhost,
+    /// The test key and the account, read once here, so nothing that runs later, a cleanup
+    /// during a panic's unwind included, has a lookup left that could panic.
+    Localhost {
+        key: String,
+        user: String,
+    },
 }
 
 #[cfg(target_os = "linux")]
@@ -1348,7 +1353,10 @@ impl Machine {
              throwaway host; localhost is used only on a GitHub Actions runner whose workflow \
              sets VOLANT_NATIVE_TESTS_ON_LOCALHOST=1 (opt-in {opted_in}, GITHUB_ACTIONS {runner})"
         );
-        Self::Localhost
+        Self::Localhost {
+            key: key(),
+            user: user(),
+        }
     }
 
     /// One inventory line: `name` reaching this machine, with its agent under `remote_tmp`.
@@ -1357,54 +1365,49 @@ impl Machine {
             Self::Named(host) => {
                 format!("{name} ansible_host={host} ansible_remote_tmp={remote_tmp}")
             }
-            Self::Localhost => format!(
-                "{name} ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} ansible_remote_tmp={remote_tmp} ansible_ssh_common_args='-F /dev/null'",
-                user(),
-                key()
+            Self::Localhost { key, user } => format!(
+                "{name} ansible_host=127.0.0.1 ansible_user={user} ansible_ssh_private_key_file={key} ansible_remote_tmp={remote_tmp} ansible_ssh_common_args='-F /dev/null'"
             ),
         }
     }
 
-    /// `script` run on the machine by the login shell, over an `ssh` of its own.
-    fn run(&self, script: &str) -> Output {
+    /// `ssh` to the machine, ready for its remote command.
+    fn ssh(&self) -> Command {
         let mut ssh = Command::new("ssh");
         ssh.args(["-o", "BatchMode=yes"]);
         match self {
             Self::Named(host) => ssh.arg(host),
-            Self::Localhost => ssh
+            Self::Localhost { key, user } => ssh
                 .args(["-F", "/dev/null", "-o", "StrictHostKeyChecking=no"])
-                .args(["-o", "UserKnownHostsFile=/dev/null", "-i", &key()])
-                .arg(format!("{}@127.0.0.1", user())),
+                .args(["-o", "UserKnownHostsFile=/dev/null", "-i", key])
+                .arg(format!("{user}@127.0.0.1")),
         };
-        ssh.arg(script).output().unwrap()
+        ssh
     }
 
-    /// `script` run by `sh` as root on the machine, fed on its standard input.
-    fn run_as_root(&self, script: &str) -> Output {
+    /// `script` run on the machine by the login shell, over an `ssh` of its own.
+    fn run(&self, script: &str) -> Output {
+        self.ssh().arg(script).output().unwrap()
+    }
+
+    /// `script` run by `sh` as root on the machine, fed on its standard input. Every failure is
+    /// returned, none panics: [`Cleanup`] calls this while a panic may be unwinding.
+    fn run_as_root(&self, script: &str) -> std::io::Result<Output> {
         use std::io::Write as _;
-        let mut ssh = Command::new("ssh");
-        ssh.args(["-o", "BatchMode=yes"]);
-        match self {
-            Self::Named(host) => ssh.arg(host),
-            Self::Localhost => ssh
-                .args(["-F", "/dev/null", "-o", "StrictHostKeyChecking=no"])
-                .args(["-o", "UserKnownHostsFile=/dev/null", "-i", &key()])
-                .arg(format!("{}@127.0.0.1", user())),
-        };
-        let mut child = ssh
+        let mut child = self
+            .ssh()
             .arg("sudo -n sh -s")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
+            .spawn()?;
+        // Dropped once written, so the remote `sh` reads the end of its script.
+        let written = child
             .stdin
             .take()
-            .unwrap()
-            .write_all(script.as_bytes())
-            .unwrap();
-        child.wait_with_output().unwrap()
+            .map_or(Ok(()), |mut stdin| stdin.write_all(script.as_bytes()));
+        let out = child.wait_with_output()?;
+        written.map(|()| out)
     }
 
     /// `script`, run as root on the machine when the returned guard drops: on every way out of
@@ -1436,15 +1439,35 @@ struct Cleanup<'a> {
 #[cfg(target_os = "linux")]
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
-        let out = self.machine.run_as_root(&self.script);
-        if !out.status.success() {
-            eprintln!(
+        match self.machine.run_as_root(&self.script) {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => eprintln!(
                 "the cleanup on the machine failed, exit {:?}: {}",
                 out.status.code(),
                 both(&out)
-            );
+            ),
+            Err(e) => eprintln!("the cleanup on the machine could not run: {e}"),
         }
     }
+}
+
+/// A cleanup whose `ssh` cannot even start returns from its drop, saying so, rather than
+/// panicking, which during a panic's unwind would abort the test before its message is shown.
+///
+/// What would make this red: any `unwrap` or `expect` back on the cleanup's path.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cleanup_that_cannot_run_returns_from_its_drop() {
+    // Safety: nextest runs each test in a process of its own, and nothing else here reads the
+    // environment concurrently.
+    unsafe { std::env::set_var("PATH", "/volant-no-such-directory") };
+    let machine = Machine::Named("volant-no-such-host".into());
+    assert!(
+        machine.run_as_root("true").is_err(),
+        "ssh cannot start without a PATH that holds it"
+    );
+    let returned = std::panic::catch_unwind(|| drop(machine.cleanup("true".into())));
+    assert!(returned.is_ok(), "the cleanup's drop panicked");
 }
 
 /// What the native play needs, checked before anything runs so a missing piece fails here, by

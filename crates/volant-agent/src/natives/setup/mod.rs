@@ -833,7 +833,7 @@ impl Host<'_> {
 
 /// `module.get_bin_path(name)`: the first executable file of that name along `PATH`, with
 /// `/sbin`, `/usr/sbin` and `/usr/local/sbin` added when missing.
-fn bin_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
+pub fn bin_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
     let mut dirs: Vec<String> = env
         .get("PATH")
         .map(String::as_str)
@@ -873,6 +873,19 @@ pub fn run(
     program: &Path,
     args: &[&str],
 ) -> Result<Option<(i32, String)>, Stop> {
+    Ok(run_output(env, clock, program, args)?
+        .ok()
+        .map(|(rc, stdout, _)| (rc, stdout)))
+}
+
+/// [`run`], with the standard error as well, and, for a program that could not be started, the
+/// `errno` Python's `OSError` would carry.
+pub fn run_output(
+    env: &BTreeMap<String, String>,
+    clock: Clock,
+    program: &Path,
+    args: &[&str],
+) -> Result<Result<(i32, String, String), i32>, Stop> {
     let timeout = match clock.deadline {
         Some(deadline) => Some(
             deadline
@@ -895,14 +908,18 @@ pub fn run(
         Run::Cancelled => Err(Stop::Cancelled),
         Run::Done(result) if result.0.contains_key("timedout") => Err(Stop::TimedOut),
         // Only a command that started has a `start`.
-        Run::Done(result) if result.0.contains_key("start") => Ok(Some((
+        Run::Done(result) if result.0.contains_key("start") => Ok(Ok((
             result.0["rc"]
                 .as_i64()
                 .and_then(|rc| i32::try_from(rc).ok())
                 .unwrap_or(-1),
             result.0["stdout"].as_str().unwrap_or_default().to_string(),
+            result.0["stderr"].as_str().unwrap_or_default().to_string(),
         ))),
-        Run::Done(_) => Ok(None),
+        Run::Done(result) => Ok(Err(result.0["rc"]
+            .as_i64()
+            .and_then(|rc| i32::try_from(rc).ok())
+            .unwrap_or(1))),
     }
 }
 
@@ -957,7 +974,7 @@ fn is_executable_file(path: &Path) -> bool {
 
 /// Python's `str.isspace` for one character: Rust's whitespace plus the four separators
 /// `\x1c`-`\x1f`.
-fn py_space(c: char) -> bool {
+pub fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
 }
 

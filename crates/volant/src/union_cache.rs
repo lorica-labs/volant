@@ -186,7 +186,18 @@ pub fn key(interpreter: &InterpreterId, modules: &BTreeSet<String>, asked: &[Str
         std::env::var_os("HOME").as_deref().map(Path::new),
     );
     let cwd = std::env::current_dir().unwrap_or_default();
-    key_from(interpreter, modules, asked, &env, &cfg, &cwd)
+    let controller = std::env::current_exe()
+        .and_then(|exe| Source::now(&exe))
+        .ok();
+    key_from(
+        controller.as_ref(),
+        interpreter,
+        modules,
+        asked,
+        &env,
+        &cfg,
+        &cwd,
+    )
 }
 
 /// Every configuration file ansible-core's `find_ini_config_file` may pick, with its contents:
@@ -265,8 +276,11 @@ fn expanded(text: &str, home: Option<&Path>, var: impl Fn(&str) -> Option<String
 /// The environment is `ANSIBLE_*` (every setting ansible-core reads there), `PYTHON*` (which
 /// ansible-core the interpreter imports) and `HOME` (where `~` puts the collections). The working
 /// directory is in because a relative path in either the environment or a relative
-/// `ANSIBLE_CONFIG` is read against it.
+/// `ANSIBLE_CONFIG` is read against it. The controller's own binary (`controller`, its size and
+/// mtime) is in because the code that reads an entry back, refusals and fact keys, can change
+/// between two builds that share a version number.
 fn key_from(
+    controller: Option<&Source>,
     interpreter: &InterpreterId,
     modules: &BTreeSet<String>,
     asked: &[String],
@@ -282,6 +296,13 @@ fn key_from(
     };
     field(&FORMAT.to_le_bytes());
     field(env!("CARGO_PKG_VERSION").as_bytes());
+    match controller {
+        Some(exe) => {
+            field(&exe.len.to_le_bytes());
+            field(&exe.mtime_ns.to_le_bytes());
+        }
+        None => field(b"no controller binary"),
+    }
     field(crate::python::HELPER.as_bytes());
     field(interpreter.path.as_os_str().as_encoded_bytes());
     field(interpreter.real.as_os_str().as_encoded_bytes());
@@ -727,6 +748,7 @@ mod tests {
 
     fn some_key() -> CacheKey {
         key_from(
+            None,
             &interpreter(),
             &BTreeSet::from(["ns.c.m".to_string()]),
             &["ns.c.m".to_string()],
@@ -786,6 +808,37 @@ mod tests {
         assert_eq!(load(&dir, &some_key()), None);
     }
 
+    /// A rebuilt controller gets its own key.
+    ///
+    /// What would make this red: the key reading only the version number, so a rebuilt
+    /// controller whose refusals or fact keys changed gets the entry the previous build wrote.
+    #[test]
+    fn a_rebuilt_controller_is_another_key() {
+        let build = |mtime_ns| Source {
+            path: "/bin/volant".into(),
+            len: 10,
+            mtime_ns,
+        };
+        let with = |controller: &Source| {
+            key_from(
+                Some(controller),
+                &interpreter(),
+                &BTreeSet::new(),
+                &[],
+                &[],
+                &[],
+                Path::new("/work"),
+            )
+        };
+        assert_eq!(with(&build(1)), with(&build(1)));
+        assert_ne!(with(&build(1)), with(&build(2)), "a rebuild");
+        let longer = Source {
+            len: 11,
+            ..build(1)
+        };
+        assert_ne!(with(&build(1)), with(&longer), "another size");
+    }
+
     /// Every input that is not a file has its own key.
     ///
     /// What would make this red: `ANSIBLE_MODULE_COMPRESSION` or `ANSIBLE_COLLECTIONS_PATH`
@@ -798,7 +851,15 @@ mod tests {
                 .iter()
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect();
-            key_from(&interpreter(), &modules, &[], &env, cfg, Path::new(cwd))
+            key_from(
+                None,
+                &interpreter(),
+                &modules,
+                &[],
+                &env,
+                cfg,
+                Path::new(cwd),
+            )
         };
         let base = with(&[("TERM", "xterm")], &[], "/work");
         assert_eq!(base, with(&[("TERM", "dumb")], &[], "/work"));
@@ -817,6 +878,7 @@ mod tests {
             ),
             with(&[], &[], "/elsewhere"),
             key_from(
+                None,
                 &InterpreterId {
                     mtime_ns: 3,
                     ..interpreter()
@@ -829,6 +891,7 @@ mod tests {
             ),
             // A Nix profile's `python3`: the same path and size, another store path behind it.
             key_from(
+                None,
                 &InterpreterId {
                     real: "/nix/store/other-python3/bin/python3".into(),
                     ..interpreter()
@@ -840,6 +903,7 @@ mod tests {
                 Path::new("/work"),
             ),
             key_from(
+                None,
                 &interpreter(),
                 &BTreeSet::from(["ping".to_string(), "stat".to_string()]),
                 &[],
@@ -1144,6 +1208,7 @@ mod tests {
         let key_now = || {
             let found = configs(Some(root.0.as_os_str()), None);
             key_from(
+                None,
                 &interpreter(),
                 &BTreeSet::new(),
                 &[],

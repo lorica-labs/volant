@@ -1111,6 +1111,23 @@ mod tests {
         );
     }
 
+    /// A fake `getent` leaves `PATH` as it found it once its guard is dropped, so a test runner
+    /// that shares the process does not hand the fake to every test after it.
+    ///
+    /// What would make this red: the guard dropped without putting `PATH` back.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_fake_getent_puts_path_back() {
+        let scratch = golden::Scratch::new("getent-path");
+        let before = std::env::var_os("PATH");
+        let during = {
+            let _path = golden::fake_getent(&scratch, "exit 2");
+            std::env::var_os("PATH")
+        };
+        assert_ne!(during, before, "the fake was not put on PATH");
+        assert_eq!(std::env::var_os("PATH"), before);
+    }
+
     /// An account only the name service knows, as on an LDAP or sssd host: a fake `getent` first
     /// on `PATH` answers for `volant-ldapuser` (uid 4242), whom `/etc/passwd` does not hold.
     ///
@@ -1121,7 +1138,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn an_account_only_the_name_service_knows_is_found_through_getent() {
         let scratch = golden::Scratch::new("getent");
-        golden::fake_getent(
+        let _path = golden::fake_getent(
             &scratch,
             r#"case "$1 $2" in
   "passwd volant-ldapuser"|"passwd 4242") echo "volant-ldapuser:x:4242:4242::/:/bin/sh" ;;
@@ -1237,16 +1254,47 @@ pub mod golden {
         }
     }
 
-    /// A `getent` running `body` (`sh`), put first on this test process's `PATH`. Nextest runs
-    /// each test in a process of its own, so no other test sees it.
-    pub fn fake_getent(scratch: &Scratch, body: &str) {
+    /// Held by every test that changes this process's environment, for as long as the change
+    /// lasts, so that no two of them overlap under a test runner that shares the process.
+    pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The `PATH` a [`fake_getent`] replaced, put back when this is dropped, with
+    /// [`ENV_LOCK`] held until then.
+    #[must_use = "PATH goes back when this is dropped"]
+    pub struct FakePath {
+        path: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for FakePath {
+        fn drop(&mut self) {
+            // SAFETY: under ENV_LOCK, like the change it undoes.
+            unsafe {
+                match &self.path {
+                    Some(path) => std::env::set_var("PATH", path),
+                    None => std::env::remove_var("PATH"),
+                }
+            }
+        }
+    }
+
+    /// A `getent` running `body` (`sh`), put first on this test process's `PATH` until the
+    /// returned guard is dropped.
+    pub fn fake_getent(scratch: &Scratch, body: &str) -> FakePath {
+        let lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let bin = scratch.path("bin");
         fs::create_dir(&bin).unwrap();
         let getent = format!("{bin}/getent");
         fs::write(&getent, format!("#!/bin/sh\n{body}\n")).unwrap();
         fs::set_permissions(&getent, fs::Permissions::from_mode(0o755)).unwrap();
-        let path = std::env::var("PATH").unwrap_or_default();
-        unsafe { std::env::set_var("PATH", format!("{bin}:{path}")) };
+        let path = std::env::var_os("PATH");
+        let mut fake = std::ffi::OsString::from(format!("{bin}:"));
+        fake.push(path.clone().unwrap_or_default());
+        // SAFETY: under ENV_LOCK, which every test that changes the environment holds.
+        unsafe { std::env::set_var("PATH", fake) };
+        FakePath { path, _lock: lock }
     }
 
     /// `f`'s answer, run on a thread, or a failure after `secs`: a native that ignores its clock

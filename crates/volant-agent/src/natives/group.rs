@@ -609,7 +609,7 @@ mod linux {
                 return;
             }
             let name = scratch_name("volantn");
-            fake_getent(
+            let _path = fake_getent(
                 &fakes.scratch,
                 &format!("[ \"$2\" = {name} ] && echo '{name}:x:5000:' && exit 0; exit 2"),
             );

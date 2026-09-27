@@ -51,8 +51,8 @@ fn main() {
     let remote_tmp = blobs::remote_tmp();
     blobs::sweep(&remote_tmp);
     let served = serve(&remote_tmp);
-    // Whichever way the conversation ended. A panic aborts the release build before this line,
-    // and a killed agent never reaches it: both leave their directory to the next agent's sweep.
+    // Whichever way the conversation ended. A panic on this thread unwinds past this line, and a
+    // killed agent never reaches it: both leave their directory to the next agent's sweep.
     blobs::end_connection(&remote_tmp);
     if let Err(err) = served {
         eprintln!("volant-agent: {err}");
@@ -87,28 +87,44 @@ fn hash_of_self(
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
+/// Runs the stdin reader `read`. A reader that ended quietly would look exactly like the
+/// controller closing stdin, which mid-batch reads as a cancel, so a panic in it is sent on as an
+/// error instead: the batch then ends broken and the agent exits non-zero.
+fn guard_reader(
+    tx: &mpsc::Sender<io::Result<blobs::Incoming>>,
+    read: impl FnOnce(&mpsc::Sender<io::Result<blobs::Incoming>>),
+) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(tx))).is_err() {
+        let _ = tx.send(Err(io::Error::other("the agent's stdin reader panicked")));
+    }
+}
+
 fn serve(remote_tmp: &str) -> io::Result<()> {
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
     // while a task is running. It also reads the blob frame after each `put_blob`, so nothing
     // else ever takes a blob for a message.
     let (tx, rx) = mpsc::channel::<io::Result<blobs::Incoming>>();
     thread::spawn(move || {
-        let mut stdin = BufReader::new(io::stdin().lock());
-        loop {
-            match blobs::read_incoming(&mut stdin) {
-                Ok(Some(Ok(incoming))) => {
-                    if tx.send(Ok(incoming)).is_err() {
+        guard_reader(&tx, |tx| {
+            let mut stdin = BufReader::new(io::stdin().lock());
+            loop {
+                match blobs::read_incoming(&mut stdin) {
+                    Ok(Some(Ok(incoming))) => {
+                        if tx.send(Ok(incoming)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Some(Err(err))) => {
+                        eprintln!("volant-agent: discarding malformed frame: {err}");
+                    }
+                    Ok(None) => break,
+                    Err(err) => {
+                        let _ = tx.send(Err(err));
                         break;
                     }
                 }
-                Ok(Some(Err(err))) => eprintln!("volant-agent: discarding malformed frame: {err}"),
-                Ok(None) => break,
-                Err(err) => {
-                    let _ = tx.send(Err(err));
-                    break;
-                }
             }
-        }
+        });
     });
 
     let mut out = BufWriter::new(io::stdout().lock());
@@ -160,6 +176,22 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reader that panics says so on the channel rather than dropping its sender, which the
+    /// batch would read as a cancel nobody sent.
+    ///
+    /// What would make this red: the reader's panic left to end its thread without a word.
+    #[test]
+    fn a_panicking_stdin_reader_reports_an_error() {
+        let (tx, rx) = mpsc::channel();
+        let reader = thread::spawn(move || guard_reader(&tx, |_| panic!("reader bug")));
+        let _ = reader.join();
+        match rx.recv() {
+            Ok(Err(err)) => assert_eq!(err.to_string(), "the agent's stdin reader panicked"),
+            Ok(Ok(_)) => panic!("a message instead of the error"),
+            Err(_) => panic!("the reader ended without a word"),
+        }
+    }
 
     /// A host without procfs still answers the probe with the hash of the file it was started
     /// from, rather than failing it and leaving the host unreachable over an agent that runs.

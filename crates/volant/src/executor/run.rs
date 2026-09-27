@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
-use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
+use volant_protocol::{BatchOutcome, FromAgent, StagedFile, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource, BlobFrame, BlobMemory};
 use crate::compile::{Compiled, Step};
@@ -1307,7 +1307,7 @@ fn sub_task(
         files: sub
             .files
             .iter()
-            .map(|(arg, blob)| volant_protocol::StagedFile {
+            .map(|(arg, blob)| StagedFile {
                 arg: arg.clone(),
                 blob: blob.hash.clone(),
             })
@@ -1489,6 +1489,17 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         // whose upload outlived `timeout` leaves `dest` alone and reports the timeout; before
         // it, the module gets what is left after the transfer.
         if expired() {
+            sweep_staged(
+                link,
+                host,
+                batch_id,
+                &tasks[0],
+                union,
+                stop,
+                stop_broken,
+                logs,
+            )
+            .await;
             return Ok(timeout_result());
         }
         let tasks: Vec<Task> = tasks.into_iter().map(bounded).collect();
@@ -1633,6 +1644,56 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
             return Ok(None);
         }
     }
+}
+
+/// Takes off the host the files a sub-task staged and never ran with, the item's deadline having
+/// passed during the transfer: a staged file can hold a rendered secret, and would otherwise stay
+/// until the link closes. A `stat` stages them under `path`, and the agent removes every staged
+/// file once its task ran; the reference's temporary directory goes when its alarm ends the
+/// action (`TaskExecutor`'s `cleanup`). Nothing is read of the answer.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the link, the batch counter and the run's interruption a batch needs"
+)]
+async fn sweep_staged<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    batch_id: &mut u64,
+    built: &Task,
+    union: Option<&Union>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+) {
+    let (Some(ran_under), Some(stat)) = (&built.payload, union.and_then(|u| u.payload("stat")))
+    else {
+        return;
+    };
+    if built.files.is_empty() {
+        return;
+    }
+    let args = ["follow", "get_checksum", "get_mime", "get_attributes"]
+        .into_iter()
+        .map(|key| (key.to_string(), json!(false)))
+        .collect();
+    let sweep = Task {
+        module: "stat".into(),
+        args,
+        timeout: Some(CANCEL_GRACE.as_secs()),
+        force_python: stat.force_python,
+        payload: Some(stat.under(&ran_under.interpreter)),
+        files: built
+            .files
+            .iter()
+            .map(|file| StagedFile {
+                arg: "path".into(),
+                blob: file.blob.clone(),
+            })
+            .collect(),
+        ..Task::default()
+    };
+    *batch_id += 1;
+    let _ = send_batch(link, host, *batch_id, vec![sweep], stop, stop_broken, logs).await;
 }
 
 /// Waits `delay`, or gives up when the run is interrupted, before it or during it. A zero delay
@@ -5010,7 +5071,7 @@ mod tests {
         assert_eq!(built.module, "copy");
         assert_eq!(
             built.files,
-            [volant_protocol::StagedFile {
+            [StagedFile {
                 arg: "src".into(),
                 blob: "cd".into(),
             }]
@@ -5328,7 +5389,7 @@ mod tests {
         // A staged file counts only when it went up for this batch, and the check has no memory
         // to consult: the agent consumed the one it had for the task before.
         let mut staging = tasks;
-        staging[0].files = vec![volant_protocol::StagedFile {
+        staging[0].files = vec![StagedFile {
             arg: "src".into(),
             blob: "cd".into(),
         }];
@@ -5351,7 +5412,7 @@ mod tests {
             &bare_item(),
             Some((&module_payload("zz"), "/usr/bin/python3")),
         );
-        staging.files = vec![volant_protocol::StagedFile {
+        staging.files = vec![StagedFile {
             arg: "src".into(),
             blob: blob.hash.clone(),
         }];
@@ -5551,7 +5612,7 @@ mod tests {
         for copy in copies {
             assert_eq!(
                 copy.files,
-                [volant_protocol::StagedFile {
+                [StagedFile {
                     arg: "src".into(),
                     blob: blob.hash.clone(),
                 }]
@@ -6014,14 +6075,15 @@ mod tests {
     }
 
     /// A plugin's file transfer runs on the item's `timeout`. A transfer that outlives it leaves
-    /// the module unsent and the item timed out, the way the reference's alarm ends the action
-    /// wherever it stands; one that leaves time gives the module what is left after it, not
-    /// what was left before. The fake's transfer sleeps past the deadline rather than racing
-    /// it, and the test reads what was sent, not how long it took.
+    /// the module unsent, the staged file taken off the host by a `stat` that stages it, and the
+    /// item timed out, the way the reference's alarm ends the action wherever it stands; one that
+    /// leaves time gives the module what is left after it, not what was left before. The fake's
+    /// transfer sleeps past the deadline rather than racing it, and the test reads what was
+    /// sent, not how long it took.
     ///
     /// What would make this red: the module sent after a transfer that used up the item's time,
-    /// which replaces `dest` and then reports the timeout (`["stat", "copy"]`); or its timeout
-    /// computed before the transfer (3).
+    /// which replaces `dest` and then reports the timeout (`["stat", "copy"]`); the staged file
+    /// left on the host (`["stat"]`); or the module's timeout computed before the transfer (3).
     #[tokio::test]
     async fn a_plugin_s_transfer_runs_on_the_item_s_time() {
         let blob = hello_blob();
@@ -6036,12 +6098,27 @@ mod tests {
         };
         let mut t = task("copy");
         t.timeout = Some(1);
-        let mut agent = FakeAgent::answering(answers());
+        let mut agent = FakeAgent::answering(
+            [
+                answers(),
+                one_result(2, json!({"stat": {"exists": true}})).to_vec(),
+            ]
+            .concat(),
+        );
         agent.transfer_takes = Duration::from_millis(1100);
         let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
         let result = ran.expect("the item ran").expect("nothing stopped it");
         assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
-        assert_eq!(modules_sent(&agent), ["stat"]);
+        // The second `stat` takes the staged file, which the agent removes after it.
+        assert_eq!(modules_sent(&agent), ["stat", "stat"]);
+        let swept = &batches_sent(&agent)[1][0];
+        assert_eq!(
+            swept.files,
+            [StagedFile {
+                arg: "path".into(),
+                blob: blob.hash.clone()
+            }]
+        );
 
         t.timeout = Some(3);
         let mut agent = FakeAgent::answering(

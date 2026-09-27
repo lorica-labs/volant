@@ -195,22 +195,41 @@ fn after_a_hand_back_the_payload_runs_once_on_the_staged_arguments() {
     );
 }
 
-/// A native that panics hands the task back instead of taking the agent down: the payload runs,
-/// the reason says what happened, and the agent answers the next batch.
+/// A native that panics fails its task instead of taking the agent down, and the agent answers
+/// the next task. The task fails rather than going to the payload: the panic may come after the
+/// native changed the host, and a hand-back is only ever made before any change.
 ///
 /// What would make this red: the call to the native no longer guarded, which ends the agent
-/// and leaves this test reading a closed pipe.
+/// and leaves this test reading a closed pipe, or a panic handed to the payload.
 #[test]
-fn a_native_that_panics_hands_the_task_back() {
+fn a_native_that_panics_fails_the_task_and_the_agent_lives() {
     let scratch = Scratch::new("panic");
     let mut agent = Agent::spawn(&scratch.0);
     agent.hello();
     let (result, ran) = agent.run_one(1, task("ansible.modules.volant_echo", json!({"panic": 1})));
-    assert_eq!(ran.path, ExecPath::Fallback, "{ran:?}");
-    assert_eq!(ran.reason.as_deref(), Some("native module panicked"));
-    assert_python_ran(&result);
+    assert_eq!(ran.path, ExecPath::Native, "{ran:?}");
+    assert!(result.failed(), "{result:?}");
+    assert_eq!(result.0["msg"], "native module panicked", "{result:?}");
     let (_, ran) = agent.run_one(2, task("ansible.modules.volant_echo", json!({})));
     assert_eq!(ran.path, ExecPath::Native);
+}
+
+/// The shipped agent unwinds, so the guard above holds outside test builds too: under
+/// `panic = "abort"` the process ends before the guard sees the panic. A profile cannot set
+/// `panic` per package, so the whole workspace's `release` (and `dist`, which inherits it)
+/// unwinds.
+///
+/// What would make this red: `panic = "abort"` back in a release profile.
+#[test]
+fn a_release_build_unwinds_so_a_native_panic_is_caught() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let manifest = std::fs::read_to_string(manifest).unwrap();
+    assert!(
+        !manifest
+            .lines()
+            .any(|line| line.trim().starts_with("panic")),
+        "a profile sets panic; the agent must unwind to survive a native panic"
+    );
 }
 
 /// The native `setup` through the dispatcher: `min` and the default subset answered under the

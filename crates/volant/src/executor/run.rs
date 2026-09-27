@@ -2228,6 +2228,13 @@ async fn send_batch<C: AgentChannel>(
                     *slot = Some(result);
                 }
             }
+            // Only `stop_batch` above asks for a cancel, and it consumes the answer. One that
+            // arrives here was never asked for: an agent whose stdin reader died reads its own
+            // end of input as a cancel.
+            Ok(Some(FromAgent::BatchDone {
+                outcome: BatchOutcome::Cancelled { .. },
+                ..
+            })) => break Err("the agent cancelled a batch nobody cancelled".to_string()),
             Ok(Some(FromAgent::BatchDone { outcome, .. })) => break Ok(outcome),
             // Collected rather than printed: a line the agent asked to show belongs on the
             // coordinator's queue with everything else this batch shows, which is the only
@@ -3861,6 +3868,39 @@ mod tests {
                 json!({"ansible_python_interpreter": " /usr/bin/python3 "})
             )),
             Some("/usr/bin/python3".to_string())
+        );
+    }
+
+    /// A batch the agent reports cancelled when this side never asked is an error, not a stop:
+    /// an agent whose stdin reader died reads its own end of input as a cancel, and taking that
+    /// at its word ends the host's play with nothing failed.
+    ///
+    /// What would make this red: the agent's `Cancelled` passed on as if the run had stopped.
+    #[tokio::test]
+    async fn a_cancel_nobody_asked_for_is_an_error() {
+        let (_stop_tx, mut stop) = watch::channel(false);
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut agent = FakeAgent::answering(vec![FromAgent::BatchDone {
+            batch: 3,
+            outcome: BatchOutcome::Cancelled { at: 0 },
+        }]);
+        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+        let (_, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            3,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert_eq!(
+            ended,
+            Err("the agent cancelled a batch nobody cancelled".to_string())
         );
     }
 

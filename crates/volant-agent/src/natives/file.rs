@@ -895,7 +895,7 @@ mod tests {
     fn a_hung_name_service_ends_with_the_timeout() {
         let scratch = Scratch::new("file-hung");
         let file = scratch.fixture();
-        super::super::common::golden::fake_getent(&scratch, "exec sleep 600");
+        let _path = super::super::common::golden::fake_getent(&scratch, "exec sleep 600");
         let context = Context {
             timeout: Some(std::time::Duration::from_secs(1)),
             ..Context::default()

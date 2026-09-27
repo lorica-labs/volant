@@ -57,7 +57,7 @@ pub const NATIVE: Native = Native {
             deadline: context.timeout.map(|timeout| Instant::now() + timeout),
             cancelled,
         };
-        match answer(args, &Root::real(), context, clock) {
+        match answer(args, &Root::real(), context, agent_env(), clock) {
             Ok(result) => NativeRun::Done(TaskResult(result)),
             Err(Stop::HandBack(reason)) => NativeRun::Fallback(reason),
             // What the Python path answers when the module outlives the task's `timeout`.
@@ -291,15 +291,24 @@ struct Request {
     filter: Vec<String>,
 }
 
-/// The module's result, or the reason to hand the task back.
+/// The agent's own environment, `None` when a name or a value is not UTF-8.
+fn agent_env() -> Option<BTreeMap<String, String>> {
+    std::env::vars_os()
+        .map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+
+/// The module's result, or the reason to hand the task back. `agent` is the agent's own
+/// environment ([`agent_env`]), which the early `lsb_release` and `ip` guess the module's from.
 fn answer(
     args: &Map<String, Value>,
     root: &Root,
     context: &Context,
+    agent: Option<BTreeMap<String, String>>,
     clock: Clock,
 ) -> Result<Map<String, Value>, Stop> {
     let request = request(args)?;
-    let facts = collect(&request, root, context, clock)?;
+    let facts = collect(&request, root, context, agent, clock)?;
     let mut invocation = invocation(SPEC, args);
     invocation["module_args"]["gather_subset"] = Value::from(request.gather_subset);
     if !matches!(args.get("filter"), None | Some(Value::Null)) {
@@ -462,6 +471,7 @@ fn collect(
     request: &Request,
     root: &Root,
     context: &Context,
+    agent: Option<BTreeMap<String, String>>,
     clock: Clock,
 ) -> Result<Map<String, Value>, Stop> {
     for key in context.environment.keys() {
@@ -480,13 +490,10 @@ fn collect(
     // `lsb_release` and `ip` need the module's environment, not the interpreter: they run beside
     // the probe in the environment the module has when its interpreter adds nothing to the
     // agent's, and again after the probe when it did (Python sets `LC_CTYPE` in a C locale).
-    let guess: Option<BTreeMap<String, String>> = std::env::vars_os()
-        .map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-        .collect::<Option<BTreeMap<_, _>>>()
-        .map(|mut env| {
-            env.extend(context.environment.clone());
-            env
-        });
+    let guess: Option<BTreeMap<String, String>> = agent.map(|mut env| {
+        env.extend(context.environment.clone());
+        env
+    });
     // The early runs cannot ask the task's cancel, which answers once and on this thread. They
     // stop at the deadline, or when this thread raises `halt`: as soon as the probe ends
     // without an answer, and when the cancel arrives while this thread waits for them.
@@ -1054,7 +1061,7 @@ pub fn print(gather_subset: &str, interpreter: &str) -> i32 {
         interpreter: Some(interpreter.to_string()),
         ..Context::default()
     };
-    match answer(&args, &Root::real(), &context, unbounded()) {
+    match answer(&args, &Root::real(), &context, agent_env(), unbounded()) {
         Ok(result) => {
             let result = crate::modules::module_result(result);
             println!("{}", Value::Object(result.0));
@@ -1452,8 +1459,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
-        // Safety: set before any thread of this test process reads the environment.
-        unsafe { std::env::set_var("LOGNAME", "the-agent-s-own") };
+        let agent = BTreeMap::from([("LOGNAME".to_string(), "the-agent-s-own".to_string())]);
         let root = fake.root();
         let interpreter = python::tests::fake_interpreter(&fake, &probe());
         let context = Context {
@@ -1465,7 +1471,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             .as_object()
             .unwrap()
             .clone();
-        let result = answer(&args, &root, &context, unbounded()).unwrap();
+        let result = answer(&args, &root, &context, Some(agent.clone()), unbounded()).unwrap();
         assert_eq!(
             result["invocation"],
             json!({"module_args": {
@@ -1500,7 +1506,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             .as_object()
             .unwrap()
             .clone();
-        let facts = &answer(&args, &root, &context, unbounded()).unwrap()["ansible_facts"];
+        let facts =
+            &answer(&args, &root, &context, Some(agent), unbounded()).unwrap()["ansible_facts"];
         assert_eq!(facts["ansible_processor_vcpus"], json!(1));
         assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
 
@@ -1520,7 +1527,14 @@ BUG_REPORT_URL="https://bugs.debian.org/"
                 json!({"ansible_processor_vcpus": 1}),
             ),
         ] {
-            let result = answer(args.as_object().unwrap(), &root, &context, unbounded()).unwrap();
+            let result = answer(
+                args.as_object().unwrap(),
+                &root,
+                &context,
+                agent_env(),
+                unbounded(),
+            )
+            .unwrap();
             assert_eq!(result["ansible_facts"], facts, "{args}");
             let converted = match &args["filter"] {
                 Value::String(one) => json!([one]),
@@ -1622,7 +1636,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
                 filter: Vec::new(),
             };
             let Err(Stop::HandBack(reason)) =
-                collect(&request, &fake.root(), &context, unbounded())
+                collect(&request, &fake.root(), &context, agent_env(), unbounded())
             else {
                 panic!("{key} is answered");
             };
@@ -1653,7 +1667,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             fact_path: None,
             filter: Vec::new(),
         };
-        let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
+        let Err(Stop::HandBack(reason)) =
+            collect(&request, &fake.root(), &context, agent_env(), unbounded())
         else {
             panic!("fedora is answered");
         };
@@ -1691,7 +1706,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             deadline: Some(started + std::time::Duration::from_secs(1)),
             cancelled: &|| false,
         };
-        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
         assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
 
@@ -1705,7 +1720,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             deadline: None,
             cancelled: &cancelled,
         };
-        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
         assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
@@ -1743,7 +1758,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             deadline: None,
             cancelled: &cancelled,
         };
-        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
         assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
 
@@ -1752,7 +1767,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             deadline: Some(started + std::time::Duration::from_secs(1)),
             cancelled: &|| false,
         };
-        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
         assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
@@ -1790,13 +1805,13 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             deadline: None,
             cancelled: &cancelled,
         };
-        let stop = collect(&request, &fake.root(), &context, clock).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
         assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
 
         context.interpreter = Some("/nonexistent/python3".into());
         let started = Instant::now();
-        let stop = collect(&request, &fake.root(), &context, unbounded()).unwrap_err();
+        let stop = collect(&request, &fake.root(), &context, agent_env(), unbounded()).unwrap_err();
         assert!(matches!(stop, Stop::HandBack(_)), "{stop:?}");
         assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
@@ -1826,7 +1841,8 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             fact_path: None,
             filter: Vec::new(),
         };
-        let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
+        let Err(Stop::HandBack(reason)) =
+            collect(&request, &fake.root(), &context, agent_env(), unbounded())
         else {
             panic!("the old distro is not seen");
         };

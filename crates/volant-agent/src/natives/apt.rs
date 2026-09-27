@@ -1317,15 +1317,28 @@ Architecture: amd64
     /// The zone's offset between the stamp and now matters only to a cache check: a stamp from
     /// summer time read in winter still gives `cache_update_time` for a task without one.
     ///
-    /// Needs the `Europe/Paris` zone in the system's tz database, and sets `TZ` for this test's
-    /// own process (nextest runs each test in one).
+    /// Needs the `Europe/Paris` zone in the system's tz database. The test runs itself again in
+    /// a child process that has `TZ` set, which leaves this process's environment alone.
     ///
     /// What would make this red: `now` compared on every task, which hands this one back; or not
     /// compared with a check, which answers an age the module measures an hour differently.
     #[test]
     fn only_a_cache_check_needs_the_same_offset_now() {
-        // Safety: set before any thread of this test process reads the environment.
-        unsafe { std::env::set_var("TZ", "Europe/Paris") };
+        // The marker, not `TZ` itself, tells the child it is one: a child that did not get `TZ`
+        // fails below rather than starting another.
+        if std::env::var_os("VOLANT_TZ_CHILD").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "natives::apt::tests::only_a_cache_check_needs_the_same_offset_now",
+                ])
+                .env("TZ", "Europe/Paris")
+                .env("VOLANT_TZ_CHILD", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "the test failed under TZ=Europe/Paris");
+            return;
+        }
         let summer = 1_790_276_713_i64; // 2026-09-24, CEST
         let winter = summer + 45 * 86_400; // 2026-11-08, CET
         assert_ne!(

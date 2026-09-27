@@ -150,11 +150,17 @@ pub fn enabled_names() -> Vec<String> {
         .collect()
 }
 
-/// Runs `native`, turning a panic into a hand-back so the payload still runs and the rest of the
-/// batch with it.
+const _: () = assert!(
+    cfg!(panic = "unwind"),
+    "natives::run needs an unwinding build to turn a native's panic into a failed task"
+);
+
+/// Runs `native`, turning a panic into a failed task so the agent lives on to run the rest of
+/// the batch. Failed rather than handed back: the panic may come after the native changed the
+/// host, and the payload must never run over a half-made change.
 ///
 /// Only as good as the build's panic strategy: under `panic = "abort"` the process ends before
-/// this sees anything.
+/// this sees anything, which is why no profile of the workspace sets it.
 pub fn run(
     native: &Native,
     args: &Map<String, Value>,
@@ -162,7 +168,7 @@ pub fn run(
     cancelled: &dyn Fn() -> bool,
 ) -> NativeRun {
     catch_unwind(AssertUnwindSafe(|| (native.run)(args, context, cancelled)))
-        .unwrap_or_else(|_| NativeRun::Fallback("native module panicked".into()))
+        .unwrap_or_else(|_| NativeRun::Done(TaskResult::failed_with("native module panicked")))
 }
 
 /// A native that exists only to exercise the dispatcher before any real one does. Built only

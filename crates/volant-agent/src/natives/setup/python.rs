@@ -277,9 +277,8 @@ pub mod tests {
     #[test]
     fn a_real_interpreter_answers_the_probe_as_the_reference_s_calls_do() {
         let tricky = "a\"b\\c\nd\té 😀 \u{7f}";
-        // Safety: set before any thread of this test process reads the environment.
-        unsafe { std::env::set_var("VOLANT_PROBE_TEXT", tricky) };
-        let probe = probe("python3", &BTreeMap::new(), super::super::unbounded())
+        let environment = BTreeMap::from([("VOLANT_PROBE_TEXT".to_string(), tricky.to_string())]);
+        let probe = probe("python3", &environment, super::super::unbounded())
             .expect("python3 answers the probe");
         assert_eq!(probe.env["VOLANT_PROBE_TEXT"], tricky);
         let reference = std::process::Command::new("python3")

@@ -17,7 +17,7 @@ pub const NATIVE: Native = Native {
     name: "group",
     aliases: &[],
     enabled: cfg!(unix),
-    run: linux::run,
+    run,
 };
 
 #[cfg(not(unix))]
@@ -32,7 +32,6 @@ mod linux {
     }
 }
 
-#[cfg(unix)]
 pub(super) use linux::*;
 
 #[cfg(unix)]

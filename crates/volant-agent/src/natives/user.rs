@@ -528,7 +528,7 @@ mod linux {
         fn useradd_takes_the_module_s_arguments_in_its_order() {
             let fakes = Fakes::new("useradd", &["useradd"], 0);
             let name = scratch_name("volantu");
-            let answer = answer(
+            let created = answer(
                 &args(json!({
                     "name": name, "uid": 64998, "group": "root", "groups": ["root"],
                     "comment": "c", "home": "/nonexistent-volant", "shell": "/bin/sh",
@@ -558,12 +558,12 @@ mod linux {
                     name.as_str(),
                 ]
             );
-            assert_eq!(answer["changed"], true);
-            assert_eq!(answer["system"], true);
-            assert_eq!(answer["create_home"], false);
-            assert_eq!(answer["stdout"], "out\n");
-            assert_eq!(answer["stderr"], "err\n");
-            assert!(!answer.contains_key("uid") && !answer.contains_key("append"));
+            assert_eq!(created["changed"], true);
+            assert_eq!(created["system"], true);
+            assert_eq!(created["create_home"], false);
+            assert_eq!(created["stdout"], "out\n");
+            assert_eq!(created["stderr"], "err\n");
+            assert!(!created.contains_key("uid") && !created.contains_key("append"));
 
             // `users` is a group on Debian and Ubuntu, and no account.
             answer(&args(json!({"name": "users"})), &fakes.context, unbounded()).unwrap();

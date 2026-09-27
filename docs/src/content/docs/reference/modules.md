@@ -71,7 +71,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `get_url` | Python module |
 | `getent` | Python module |
 | `git` | Python module |
-| `group` | Python module |
+| `group` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `group_by` | not supported yet: needs the `group_by` action plugin |
 | `hostname` | Python module |
 | `iptables` | Python module |
@@ -95,7 +95,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `sysvinit` | Python module |
 | `tempfile` | Python module |
 | `uri` | not supported yet: needs the `uri` action plugin |
-| `user` | Python module |
+| `user` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `wait_for` | Python module |
 | `wait_for_connection` | not supported yet: needs the `wait_for_connection` action plugin |
 | `yum_repository` | Python module |

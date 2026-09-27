@@ -1651,7 +1651,6 @@
       "name": "user-same-name-group",
       "user": {
        "name": "volantgrp",
-       "uid": 64996,
        "system": true,
        "create_home": false,
        "home": "/nonexistent-volantshape"

@@ -1343,12 +1343,16 @@ def natives():
     # Its own group as primary again, so `userdel` takes that group with the account.
     case("user-group-back", "user", dict(member, group=NATIVE_USER, create_home=False), changed, volatile=["group"], become=True)
     case("user-removed-home", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
-    # An account named after an existing group: `useradd -N`, no user group; and `-r`.
+    # An account named after an existing group: `useradd -N`, no user group; and `-r`. No `uid`:
+    # a system account given one above SYS_UID_MAX makes some `useradd` versions warn (4.13 does,
+    # 4.17 does not), and the warning is the module's `stderr`. The one `useradd` picks is the
+    # machine's.
     case(
         "user-same-name-group",
         "user",
-        {"name": NATIVE_GROUP, "uid": 64996, "system": True, "create_home": False, "home": NATIVE_HOME},
+        {"name": NATIVE_GROUP, "system": True, "create_home": False, "home": NATIVE_HOME},
         changed,
+        volatile=["uid"],
         become=True,
     )
     case("user-same-name-group-removed", "user", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)

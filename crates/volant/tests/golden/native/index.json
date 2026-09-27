@@ -2333,8 +2333,7 @@
       "create_home": false,
       "home": "/nonexistent-volantshape",
       "name": "volantgrp",
-      "system": true,
-      "uid": 64996
+      "system": true
     },
     "become": true,
     "branch": {
@@ -2345,7 +2344,9 @@
     "module": "user",
     "patterns": {},
     "unordered": [],
-    "volatile": [],
+    "volatile": [
+      "uid"
+    ],
     "why": ""
   },
   "user-same-name-group-removed": {

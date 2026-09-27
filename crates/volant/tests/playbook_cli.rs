@@ -2989,6 +2989,24 @@ fn a_task_that_did_not_change_does_not_notify() {
     );
 }
 
+/// A failure `ignore_errors` swallowed notifies nothing, even though a failed `command` reports
+/// `changed: true`: the reference files a notification from the ok branch of
+/// `_process_pending_results` alone. Measured on ansible-core 2.19.12 with this fixture: no
+/// `RUNNING HANDLER`, recap `ok=2 changed=1 ... ignored=1`, exit 0.
+///
+/// What would make this red: the notification filed for any changed result, failed or not.
+#[test]
+fn an_ignored_failure_does_not_notify() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/ignored-failure.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(!text.contains("RUNNING HANDLER"), "{text}");
+}
+
 /// `--force-handlers` runs the handlers of a host that failed, and the failure still stands.
 ///
 /// Measured on ansible-core 2.19.12 with the same fixture as above: the only difference is one

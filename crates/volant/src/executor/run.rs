@@ -847,11 +847,13 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
     Value::Object(out)
 }
 
-/// Files the handlers one finished task asked for, if it changed anything.
+/// Files the handlers one finished task asked for, if it changed anything and did not fail.
 ///
 /// Measured on ansible-core 2.19.12 and each half worth stating: a task that came back `ok`
 /// notifies nothing, a name notified twice runs its handler once, and for a loop it is the
-/// **aggregate** that decides - one changed item is a changed task. Notifications live in the
+/// **aggregate** that decides - one changed item is a changed task. A failed task notifies
+/// nothing, `ignore_errors` or not: the reference files a notification from the ok branch of
+/// `_process_pending_results` alone, the same rule as [`unresolved_notify`]. Notifications live in the
 /// driver and nowhere else: they are one host's business, and the flush the coordinator opens is
 /// the same flush whether this host has anything to run in it or not.
 pub(super) fn notify(
@@ -860,7 +862,10 @@ pub(super) fn notify(
     results: &[(Option<Value>, TaskResult)],
     notified: &mut Vec<usize>,
 ) {
-    if task.notify.is_empty() || !results.iter().any(|(_, r)| r.changed()) {
+    if task.notify.is_empty()
+        || results.iter().any(|(_, r)| r.failed())
+        || !results.iter().any(|(_, r)| r.changed())
+    {
         return;
     }
     for name in &task.notify {

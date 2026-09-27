@@ -30,6 +30,7 @@ mod copy;
 #[cfg(unix)]
 mod file;
 mod group;
+#[cfg(unix)]
 mod lineinfile;
 mod package_facts;
 mod service_facts;
@@ -103,6 +104,7 @@ pub const NATIVES: &[Native] = &[
     #[cfg(unix)]
     file::NATIVE,
     copy::NATIVE,
+    #[cfg(unix)]
     lineinfile::NATIVE,
     #[cfg(unix)]
     systemd::NATIVE,
@@ -113,6 +115,8 @@ pub const NATIVES: &[Native] = &[
     service_facts::NATIVE,
     #[cfg(feature = "test-natives")]
     echo::NATIVE,
+    #[cfg(feature = "test-natives")]
+    echo::DISABLED,
 ];
 
 /// The native going by `name` or one of its aliases, enabled or not.
@@ -165,6 +169,15 @@ mod echo {
         run,
     };
 
+    /// A native that stays disabled, for the dispatcher's "never consulted" case: no plan ever
+    /// enables it, and it would answer like `volant_echo` if it were consulted.
+    pub const DISABLED: Native = Native {
+        name: "volant_disabled",
+        aliases: &[],
+        enabled: false,
+        run,
+    };
+
     /// Answers `{"echo": <args>}`, leaving `changed` to the dispatcher, and with `read_src` also
     /// the content of the file named by `src`. Hands the task back when asked to, with the reason
     /// it was given, and panics when asked to.
@@ -205,7 +218,7 @@ mod tests {
         for name in NATIVE_CANDIDATES {
             assert!(find(name).is_some(), "{name} has no native");
         }
-        for native in NATIVES.iter().filter(|n| n.name != "volant_echo") {
+        for native in NATIVES.iter().filter(|n| !n.name.starts_with("volant_")) {
             for name in std::iter::once(native.name).chain(native.aliases.iter().copied()) {
                 assert!(NATIVE_CANDIDATES.contains(&name), "{name} is no candidate");
             }

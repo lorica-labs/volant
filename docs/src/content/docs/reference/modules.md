@@ -76,7 +76,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `hostname` | Python module |
 | `iptables` | Python module |
 | `known_hosts` | Python module |
-| `lineinfile` | Python module |
+| `lineinfile` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `mount_facts` | Python module |
 | `package_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `ping` | Python module |

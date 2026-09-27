@@ -695,6 +695,7 @@ version = "0.1.0-alpha.7"
 dependencies = [
  "blake3",
  "libc",
+ "regex",
  "serde_json",
  "sha1_smol",
  "shlex",

@@ -15,8 +15,8 @@ use serde_json::{Map, Value, json};
 
 use super::common::{
     Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, add_path_info, bool_param,
-    check_names, clock, failure, group_account, module_args, native_run, os_error, owner_account,
-    parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
+    check_names, clock, failure, flag, group_account, module_args, native_run, null, os_error,
+    owner_account, parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
 };
 #[cfg(target_os = "linux")]
 use super::common::{access, check};
@@ -72,26 +72,6 @@ const SPEC: &[ArgSpec] = &[
     },
     flag("unsafe_writes", false),
 ];
-
-const fn null(name: &'static str) -> ArgSpec {
-    ArgSpec {
-        name,
-        aliases: &[],
-        default: || Value::Null,
-    }
-}
-
-const fn flag(name: &'static str, default: bool) -> ArgSpec {
-    ArgSpec {
-        name,
-        aliases: &[],
-        default: if default {
-            || Value::Bool(true)
-        } else {
-            || Value::Bool(false)
-        },
-    }
-}
 
 /// Options whose every value other than `null` is outside the native.
 const UNSUPPORTED: &[&str] = &[

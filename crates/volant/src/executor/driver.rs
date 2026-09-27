@@ -493,7 +493,7 @@ pub(super) async fn drive_host(
     if let Some(grown) = driver.stepped_over(0..pos).await {
         pos += grown;
     }
-    let mut batch_id: u64 = 0;
+    let mut batch_id = first_batch_id();
     // The handlers this host has asked for and not yet run, as indices into `compiled.handlers`.
     // Never twice: measured, a handler notified by two tasks runs once.
     let mut notified: Vec<usize> = Vec::new();
@@ -2319,10 +2319,29 @@ impl Driver<'_> {
     }
 }
 
+/// Where one host's batch ids start for one play: a range 2^32 wide, handed out once per
+/// process, so no id is used twice on a link. Links outlive the play that opened them and are
+/// shared by every driver that reaches the host, and a batch reads only the frames of its own id:
+/// an id seen again would take a late frame left on the link for its own.
+fn first_batch_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// Each host's run of each play numbers its batches in a range of its own.
+    ///
+    /// What would make this red: the counter starting at zero for every play, which gives a
+    /// link that outlived its play a batch id it has already answered.
+    #[test]
+    fn batch_ids_start_in_a_range_of_their_own() {
+        let (a, b) = (first_batch_id(), first_batch_id());
+        assert!(b >= a + (1 << 32), "{a} {b}");
+    }
 
     /// The ledger is filed at the end of a batch and on both ways a stopped run leaves one, the
     /// plugin loop and the retry loop, so an interrupted run's profile keeps the attempts the

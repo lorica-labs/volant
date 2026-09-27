@@ -31,7 +31,7 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Attempt, PluginStart, Relinker, Retry, chosen_interpreter, fact_targets, failed_task_value,
-    finish, judge_attempt, notify, python_for, record_facts, record_registered,
+    finish, judge_attempt, notify, python_for, record_facts, record_local_facts, record_registered,
     requested_interpreter, retry_plan, reuse_or_connect, run_agent_batch, run_local,
     run_plugin_attempts, running_host_vars, step_tasks, take_warnings, unresolved_notify,
     wait_or_stop,
@@ -1079,7 +1079,6 @@ pub(super) async fn drive_host(
                                     task,
                                     item,
                                     step,
-                                    &fact_hosts,
                                     &templar,
                                     &store,
                                     verbosity,
@@ -1126,12 +1125,11 @@ pub(super) async fn drive_host(
                             })
                             .await;
                     }
-                    record_registered(
-                        &mut store.lock().expect("vars lock"),
-                        task,
-                        &register_hosts,
-                        &results,
-                    );
+                    {
+                        let mut vars = store.lock().expect("vars lock");
+                        record_registered(&mut vars, task, &register_hosts, &results);
+                        record_local_facts(&mut vars, task, &items, &fact_hosts, &results);
+                    }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
                     // body from `-v` on, measured: the dump is what puts the body on the line,

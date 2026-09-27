@@ -294,6 +294,23 @@ fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
     assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
+/// A controller-side `set_fact` or `include_vars` that failed keeps none of the facts it answered,
+/// `ignore_errors` or not, and a loop is judged whole. Measured on ansible-core 2.19.12 with this
+/// fixture: `"msg": "False False False"`, recap `ok=4 ... ignored=3`.
+///
+/// What would make this red: the facts written as the module runs, before `failed_when` has
+/// judged the result (`"True True True"`).
+#[test]
+fn a_failed_controller_side_task_keeps_none_of_its_facts() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/failed-facts.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""msg": "False False False""#), "{text}");
+}
+
 /// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
 /// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
 /// registered result has no `warnings` key. The driver shows every result's `warnings` that way,

@@ -39,13 +39,9 @@ const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression
 ///
 /// A deliberate divergence, recorded rather than hidden: these land as facts, which is precedence
 /// 20 here against the reference's own rank 19 for `include_vars`. The two differ only for a name
-/// a host variable also carries.
-fn run_include_vars(
-    item: &Item,
-    step: &Step,
-    hosts: &[String],
-    store: &Mutex<VarStore>,
-) -> TaskResult {
+/// a host variable also carries. They land once the task is judged, through
+/// [`record_local_facts`].
+fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>) -> TaskResult {
     let Some(name) = item
         .args
         .get("file")
@@ -104,14 +100,6 @@ fn run_include_vars(
         }
         None => loaded,
     };
-    {
-        let mut vars = store.lock().expect("vars lock");
-        for (key, value) in &facts {
-            for host in hosts {
-                vars.set_fact(host, key, value.clone());
-            }
-        }
-    }
     let mut r = Map::new();
     r.insert("ansible_facts".into(), Value::Object(facts));
     r.insert(
@@ -127,15 +115,10 @@ fn run_include_vars(
 /// which a `pause` waits on beside its timer: `None` is a pause the run's stop ended, which the
 /// driver answers the way it answers every other wait the stop ends, with no task line and no
 /// count.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the task, the host's view of it, and the run's interruption for a pause"
-)]
 pub(super) async fn run_local(
     task: &PlayTask,
     item: &Item,
     step: &Step,
-    fact_hosts: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
@@ -144,7 +127,7 @@ pub(super) async fn run_local(
     let mut result = if short_name(&task.module) == "pause" {
         pause(item, std::io::stdin().is_terminal(), stop).await?
     } else {
-        local_result(task, item, step, fact_hosts, templar, store, verbosity)
+        local_result(task, item, step, templar, store, verbosity)
     };
     // The reference's `maybe_raise_on_result` normalises every task's final result, wherever it
     // ran, the way `run_agent_batch` normalises an agent's.
@@ -157,7 +140,6 @@ fn local_result(
     task: &PlayTask,
     item: &Item,
     step: &Step,
-    fact_hosts: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
@@ -183,29 +165,15 @@ fn local_result(
                     .unwrap_or_else(|| json!("Failed as requested from task")),
             );
         }
-        "include_vars" => return run_include_vars(item, step, fact_hosts, store),
+        "include_vars" => return run_include_vars(item, step, store),
         "set_fact" => {
-            let mut facts = Map::new();
-            for (k, v) in &item.args {
-                if k == "cacheable" {
-                    continue;
-                }
-                // Only the values whose own render read a managed host are data. Measured on
-                // ansible-core 2.19.12: a fact the playbook wrote can still name the variable a
-                // `debug: var:` shows, so writing every fact as data would fail a play with no
-                // host value anywhere in it.
-                let from_host = item.args_untrusted.contains(k);
-                let mut vars = store.lock().expect("vars lock");
-                for host in fact_hosts {
-                    if from_host {
-                        vars.set_untrusted_fact(host, k, v.clone());
-                    } else {
-                        vars.set_fact(host, k, v.clone());
-                    }
-                }
-                drop(vars);
-                facts.insert(k.clone(), v.clone());
-            }
+            // Written by `record_local_facts` once the task is judged.
+            let facts: Map<String, Value> = item
+                .args
+                .iter()
+                .filter(|(k, _)| *k != "cacheable")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
@@ -2322,6 +2290,46 @@ pub(super) fn record_facts(
     removed
 }
 
+/// Writes the facts a controller-side `set_fact` or `include_vars` answered, once `failed_when`
+/// has judged the task. A failed task writes none, `ignore_errors` or not, and a loop is judged
+/// whole, as [`record_facts`] judges a host's: measured on ansible-core 2.19.12, a `set_fact` or
+/// an `include_vars` under `failed_when: true` and `ignore_errors: true` leaves its names
+/// undefined at the next task, and so does a `set_fact` loop whose last item failed.
+///
+/// Only the `set_fact` values whose own render read a managed host are data. Measured on
+/// ansible-core 2.19.12: a fact the playbook wrote can still name the variable a `debug: var:`
+/// shows, so writing every fact as data would fail a play with no host value anywhere in it.
+pub(super) fn record_local_facts(
+    vars: &mut VarStore,
+    task: &PlayTask,
+    items: &[Item],
+    hosts: &[String],
+    results: &[(Option<Value>, TaskResult)],
+) {
+    let set_fact = match short_name(&task.module) {
+        "set_fact" => true,
+        "include_vars" => false,
+        _ => return,
+    };
+    if results.iter().any(|(_, r)| r.failed()) {
+        return;
+    }
+    for (item, (_, result)) in items.iter().zip(results) {
+        let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, value) in facts {
+            for host in hosts {
+                if set_fact && item.args_untrusted.contains(key) {
+                    vars.set_untrusted_fact(host, key, value.clone());
+                } else {
+                    vars.set_fact(host, key, value.clone());
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
     if task.runs_once() && !live.is_empty() {
         live.to_vec()
@@ -2497,7 +2505,6 @@ mod tests {
                 &task(spec.name),
                 &item,
                 &step,
-                std::slice::from_ref(&"h1".to_string()),
                 &templar,
                 &store,
                 0,
@@ -2566,7 +2573,6 @@ mod tests {
             &written,
             &item,
             &step,
-            std::slice::from_ref(&"h1".to_string()),
             &templar,
             &store,
             0,

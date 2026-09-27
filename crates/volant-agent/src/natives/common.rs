@@ -248,7 +248,7 @@ fn lookup(
         };
         (parts.len() >= fields && hit).then(|| (parts[0].to_string(), entry_id))
     };
-    if files_first(db) {
+    if files_first("/etc/nsswitch.conf", db) {
         let text = fs::read_to_string(file).map_err(|err| format!("reading {file}: {err}"))?;
         for line in text.lines() {
             if line.starts_with(['+', '-']) {
@@ -270,10 +270,11 @@ fn lookup(
     }
 }
 
-/// Whether `nsswitch.conf` asks `files` first for `db`, so that an entry found there is the one
-/// the C library returns. glibc's default, without the file, is `files` first as well.
-fn files_first(db: &str) -> bool {
-    let Ok(conf) = fs::read_to_string("/etc/nsswitch.conf") else {
+/// Whether `nsswitch`, the host's `/etc/nsswitch.conf`, asks `files` first for `db`, so that an
+/// entry found there is the one the C library returns. glibc's default, without the file, is
+/// `files` first as well.
+pub(crate) fn files_first(nsswitch: &str, db: &str) -> bool {
+    let Ok(conf) = fs::read_to_string(nsswitch) else {
         return true;
     };
     conf.lines()

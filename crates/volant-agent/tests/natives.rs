@@ -51,6 +51,8 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
             "systemd",
             "systemd_service",
             "apt",
+            "user",
+            "group",
             "package_facts",
             "service_facts",
             "volant_echo"

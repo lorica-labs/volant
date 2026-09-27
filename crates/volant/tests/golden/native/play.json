@@ -1436,6 +1436,14 @@
       "become": true
      },
      {
+      "name": "cleanup-user-named-group-before",
+      "user": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
       "name": "cleanup-group-before",
       "group": {
        "name": "volantgrp",
@@ -1444,9 +1452,25 @@
       "become": true
      },
      {
+      "name": "cleanup-user-group-before",
+      "group": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
       "name": "cleanup-home-before",
       "file": {
        "path": "/nonexistent-volantshape",
+       "state": "absent"
+      },
+      "become": true
+     },
+     {
+      "name": "cleanup-home-moved-before",
+      "file": {
+       "path": "/nonexistent-volantshape-moved",
        "state": "absent"
       },
       "become": true
@@ -1537,7 +1561,226 @@
       "become": true
      },
      {
+      "name": "user-created-home",
+      "user": {
+       "name": "volantshape",
+       "uid": 64998,
+       "home": "/nonexistent-volantshape",
+       "groups": [
+        "volantgrp"
+       ],
+       "comment": "Volant shape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-home-same",
+      "user": {
+       "name": "volantshape",
+       "uid": 64998,
+       "home": "/nonexistent-volantshape",
+       "groups": [
+        "volantgrp"
+       ],
+       "comment": "Volant shape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-comment-uid-group",
+      "user": {
+       "name": "volantshape",
+       "uid": 64997,
+       "group": "volantgrp",
+       "comment": "Volant shape 2"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-append",
+      "user": {
+       "name": "volantshape",
+       "groups": [
+        "volantshape"
+       ],
+       "append": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-append-same",
+      "user": {
+       "name": "volantshape",
+       "groups": [
+        "volantgrp"
+       ],
+       "append": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-remove",
+      "user": {
+       "name": "volantshape",
+       "groups": [
+        "volantshape"
+       ]
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-cleared",
+      "user": {
+       "name": "volantshape",
+       "groups": []
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-string",
+      "user": {
+       "name": "volantshape",
+       "groups": "volantgrp,volantshape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-empty-string",
+      "user": {
+       "name": "volantshape",
+       "groups": ""
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-groups-cleared-same",
+      "user": {
+       "name": "volantshape",
+       "groups": []
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-home-moved",
+      "user": {
+       "name": "volantshape",
+       "home": "/nonexistent-volantshape-moved",
+       "create_home": false
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-group-back",
+      "user": {
+       "name": "volantshape",
+       "group": "volantshape",
+       "create_home": false
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-removed-home",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-same-name-group",
+      "user": {
+       "name": "volantgrp",
+       "system": true,
+       "create_home": false,
+       "home": "/nonexistent-volantshape"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "user-same-name-group-removed",
+      "user": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-gid-changed",
+      "group": {
+       "name": "volantgrp",
+       "gid": 64995
+      },
+      "register": "last",
+      "become": true
+     },
+     {
       "name": "group-removed",
+      "group": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-system-created",
+      "group": {
+       "name": "volantgrp",
+       "gid": 64999,
+       "system": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-system-same",
+      "group": {
+       "name": "volantgrp",
+       "gid": 64999,
+       "system": true
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "group-gid-taken",
+      "group": {
+       "name": "volantshape",
+       "gid": 64999
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "user-uid-taken",
+      "user": {
+       "name": "volantshape",
+       "uid": 0,
+       "group": "volantgrp",
+       "create_home": false
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "group-system-removed",
       "group": {
        "name": "volantgrp",
        "state": "absent"
@@ -1557,6 +1800,15 @@
       "ignore_errors": true
      },
      {
+      "name": "cleanup-user-named-group",
+      "user": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
       "name": "cleanup-group",
       "group": {
        "name": "volantgrp",
@@ -1566,9 +1818,27 @@
       "ignore_errors": true
      },
      {
+      "name": "cleanup-user-group",
+      "group": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
       "name": "cleanup-home",
       "file": {
        "path": "/nonexistent-volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-home-moved",
+      "file": {
+       "path": "/nonexistent-volantshape-moved",
        "state": "absent"
       },
       "become": true,

@@ -617,6 +617,40 @@
     "volatile": [],
     "why": ""
   },
+  "group-gid-changed": {
+    "args": {
+      "gid": 64995,
+      "name": "volantgrp"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "group-gid-taken": {
+    "args": {
+      "gid": 64999,
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "failed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
   "group-removed": {
     "args": {
       "name": "volantgrp",
@@ -638,6 +672,59 @@
     "args": {
       "gid": 64999,
       "name": "volantgrp"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "group-system-created": {
+    "args": {
+      "gid": 64999,
+      "name": "volantgrp",
+      "system": true
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "group-system-removed": {
+    "args": {
+      "name": "volantgrp",
+      "state": "absent"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "group-system-same": {
+    "args": {
+      "gid": 64999,
+      "name": "volantgrp",
+      "system": true
     },
     "become": true,
     "branch": {
@@ -1956,6 +2043,25 @@
     "volatile": [],
     "why": ""
   },
+  "user-comment-uid-group": {
+    "args": {
+      "comment": "Volant shape 2",
+      "group": "volantgrp",
+      "name": "volantshape",
+      "uid": 64997
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
   "user-created": {
     "args": {
       "create_home": false,
@@ -1975,6 +2081,219 @@
     "patterns": {},
     "unordered": [],
     "volatile": [],
+    "why": ""
+  },
+  "user-created-home": {
+    "args": {
+      "comment": "Volant shape",
+      "groups": [
+        "volantgrp"
+      ],
+      "home": "/nonexistent-volantshape",
+      "name": "volantshape",
+      "uid": 64998
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "group"
+    ],
+    "why": ""
+  },
+  "user-group-back": {
+    "args": {
+      "create_home": false,
+      "group": "volantshape",
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "group"
+    ],
+    "why": ""
+  },
+  "user-groups-append": {
+    "args": {
+      "append": true,
+      "groups": [
+        "volantshape"
+      ],
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-append-same": {
+    "args": {
+      "append": true,
+      "groups": [
+        "volantgrp"
+      ],
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-cleared": {
+    "args": {
+      "groups": [],
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-cleared-same": {
+    "args": {
+      "groups": [],
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-empty-string": {
+    "args": {
+      "groups": "",
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-remove": {
+    "args": {
+      "groups": [
+        "volantshape"
+      ],
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-groups-string": {
+    "args": {
+      "groups": "volantgrp,volantshape",
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-home-moved": {
+    "args": {
+      "create_home": false,
+      "home": "/nonexistent-volantshape-moved",
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-home-same": {
+    "args": {
+      "comment": "Volant shape",
+      "groups": [
+        "volantgrp"
+      ],
+      "home": "/nonexistent-volantshape",
+      "name": "volantshape",
+      "uid": 64998
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "group"
+    ],
     "why": ""
   },
   "user-password": {
@@ -2012,6 +2331,23 @@
     "volatile": [],
     "why": ""
   },
+  "user-removed-home": {
+    "args": {
+      "name": "volantshape",
+      "state": "absent"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
   "user-same": {
     "args": {
       "create_home": false,
@@ -2033,6 +2369,44 @@
     "volatile": [],
     "why": ""
   },
+  "user-same-name-group": {
+    "args": {
+      "create_home": false,
+      "home": "/nonexistent-volantshape",
+      "name": "volantgrp",
+      "system": true
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "uid"
+    ],
+    "why": ""
+  },
+  "user-same-name-group-removed": {
+    "args": {
+      "name": "volantgrp",
+      "state": "absent"
+    },
+    "become": true,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
   "user-shell": {
     "args": {
       "create_home": false,
@@ -2045,6 +2419,25 @@
     "become": true,
     "branch": {
       "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-uid-taken": {
+    "args": {
+      "create_home": false,
+      "group": "volantgrp",
+      "name": "volantshape",
+      "uid": 0
+    },
+    "become": true,
+    "branch": {
+      "failed": true
     },
     "compare": "exact",
     "expect": "native",

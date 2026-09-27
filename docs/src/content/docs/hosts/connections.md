@@ -107,7 +107,7 @@ Volant leaves sharing to you when you already configure it. It adds nothing when
 
 An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions ride the same connection too.
 
-It is still OpenSSH doing the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
+OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
 
 ## File descriptors
 

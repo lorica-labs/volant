@@ -20,7 +20,7 @@ On 2026-09-24 Volant ran the four Galaxy roles of [decision record 0007](/decisi
 - 0.6 s opening connections, because the probe and the link each paid their own ssh handshake;
 - 0.2 s preparing tasks on the controller. On k3s the same step took 2 s, and a CPU profile put about 80 percent of it in copying and freeing tables of variables.
 
-The frames themselves took 30 ms, and serializing a whole run took about 5 ms. The time was in starting Python, rebuilding things that had not changed, and opening connections. The wire format played almost no part.
+The frames themselves took 30 ms, and serializing a whole run took about 5 ms, so the wire format was not where the time went.
 
 The same profile of the k3s-ansible playbook added `service_facts` (3.3 s), `package_facts` (2.1 s) and a 5.7 s union build that included collections.
 
@@ -30,13 +30,13 @@ Common modules run natively in the agent, with a fallback to Python. `setup`, `s
 
 The golden comparison is the gate: a native module is turned on only in the change where its answers match the reference key for key, `changed`, `diff` and `invocation` included, in every case the golden records. The same test checks which path each case took, so a native module that answered outside its subset, or one that handed every case back, fails it.
 
-Facts are gathered natively only when the playbook provably needs nothing else. The native `setup` produces the 17 collectors of `gather_subset: min`, the processor and memory facts of `hardware`, and the default routes and address lists of `network`. A fact it cannot produce is absent, never guessed. Before connecting, the controller reads every play, role, template and variable definition of the run and lists the facts they can read. It uses the native `setup` only if every one of them is produced natively. A read by a computed name (`ansible_facts[item]`, `vars[...]`, `lookup('vars', ...)`, a whole `hostvars[host]`) counts as reading everything and keeps the Python `setup`. `--facts python` forces it anyway.
+Facts are gathered natively only when the playbook provably needs nothing else. The native `setup` produces the 17 collectors of `gather_subset: min`, the processor and memory facts of `hardware`, and the default routes and address lists of `network`. A fact it cannot produce is left out of the result. Before connecting, the controller reads every play, role, template and variable definition of the run and lists the facts they can read. It uses the native `setup` only if every one of them is produced natively. A read by a computed name (`ansible_facts[item]`, `vars[...]`, `lookup('vars', ...)`, a whole `hostvars[host]`) counts as reading everything and keeps the Python `setup`. `--facts python` forces it anyway.
 
 The union is cached on the controller: an entry is kept under `$XDG_CACHE_HOME/volant/unions/`, keyed on everything the build read that is not a file: the Volant version, the interpreter, the modules asked for, the `ANSIBLE_*` and `PYTHON*` environment, `ansible.cfg` and the working directory. It records each source file's size and modification time. Checking the 154 files costs about 1 ms. Any change rebuilds, and a cache that cannot be read or written never fails a run.
 
 Each inventory host gets one OpenSSH connection. Volant adds `ControlMaster`, a `ControlPath` of its own and `ControlPersist=30s` to its `ssh` command line, unless the operator's ssh configuration or `ansible_ssh_*_args` already say something about connection sharing. The probe, the upload check, the link and the escalated link then share one key exchange. The socket is per inventory host rather than per machine: fifty aliases of one machine sharing one master ran into the server's `MaxSessions` limit of 10.
 
-A host's variables are a stack of shared layers read from the top down, instead of a map merged and copied for every task. Gathered facts are shared, not copied, and a fact written by one host invalidates only that host's view.
+A host's variables are a stack of shared layers read from the top down, instead of a map merged and copied for every task. Gathered facts are held once and shared by every task that reads them, and a fact written by one host invalidates only that host's view.
 
 The barrier stays, and batching stays opt-in. Batching now also sees reads of other hosts in template bodies and in the definitions of variables, but it remains off by default. It decides from the playbook's text, and a dependency the text does not spell out, such as a service another host is still installing, would not be waited for. See [Cross-host batching](/hosts/batching/).
 
@@ -52,7 +52,7 @@ A binary frame format would have saved almost nothing. Encoding and decoding the
 
 QUIC would need a daemon and a listening port on every host. Volant's promise is a static agent started over the ssh access you already have.
 
-io_uring would have little to speed up: the agent does little I/O of its own. Its time is in the modules it runs and the processes they start.
+io_uring would find little to speed up, since the agent itself does little I/O. Its time is in the modules it runs and the processes they start.
 
 `gc.freeze()` and a child forked in advance were measured in the Python server. Each saved 1 ms or less per task, and neither was done.
 

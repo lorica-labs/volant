@@ -70,7 +70,7 @@ These numbers come from two real workloads against two Ubuntu 24.04 hosts. The f
   ]}
 />
 
-A task that does real work still takes as long as that work. Most of Volant's time on k3s goes to restarting the k3s service, running its install script and the other commands the playbook asks for, which cost the same under either engine. Volant removes the overhead around a module, not the module itself.
+A task that does real work still takes as long as that work. Most of Volant's time on k3s goes to restarting the k3s service, running its install script and the other commands the playbook asks for, which cost the same under either engine.
 
 <Aside type="note">
 These figures describe two playbooks on two hosts. Your own numbers depend on your network latency, on what your tasks do, and on how many hosts you drive at once. The [performance page](/project/performance/) gives the full configuration, the commands that reproduce the figures, and where the time goes step by step.

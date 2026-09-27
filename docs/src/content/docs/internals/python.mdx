@@ -149,7 +149,7 @@ The agent carries Rust versions of these modules:
 | `service_facts` | the host runs systemd |
 | `user`, `group` | on Debian and Ubuntu, for the common arguments |
 
-Anything outside that goes to ansible-core's Python module, as it did before. A task `environment`, SELinux, extended attributes, `remote_src`, a regular expression only Python understands, or a package half installed all hand back, among other cases. `dnf` and every other module always run in Python.
+Anything outside that goes to ansible-core's Python module. A task `environment`, SELinux, extended attributes, `remote_src`, a regular expression only Python understands, or a package half installed all hand back, among other cases. `dnf` and every other module always run in Python.
 
 A native module receives the arguments the Python module would have received. It first decides, by reading only, whether it can give the answer the reference would give. If it cannot, it hands the task back before touching the host, and the Python module does the real work. Its result, `invocation` included, is the one the reference module returns, key for key, and a test compares them for every case the module covers. The result comes back as untrusted data, through the same path as a Python module's.
 

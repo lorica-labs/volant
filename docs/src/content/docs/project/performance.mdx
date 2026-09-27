@@ -6,7 +6,7 @@ description: Two measured workloads, the configuration behind them, the commands
 import { Aside } from '@astrojs/starlight/components';
 import BarChart from '../../../components/BarChart.astro';
 
-Volant is measured on two real workloads, each run by a recipe in the repository. The figures on this page come from those recipes and nothing else.
+Volant is measured on two real workloads, each run by a recipe in the repository. Every figure on this page comes from those recipes.
 
 On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures.
 
@@ -22,7 +22,7 @@ On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) 
   ]}
 />
 
-The two ratios are far apart. The roles change nothing on a converged host, so most of the reference's time there goes to the machinery around each module, and Volant removes most of that. The k3s playbook restarts services and runs install scripts on every pass, and that work takes as long under either engine. [What is left](#what-is-left) breaks it down.
+The two ratios are far apart because the roles change nothing on a converged host, so most of the reference's time there goes to the machinery around each module, and Volant removes most of that. The k3s playbook restarts services and runs install scripts on every pass, and that work takes as long under either engine. [What is left](#what-is-left) breaks it down.
 
 ## Configuration
 
@@ -108,14 +108,14 @@ On k3s most of Volant's 23.5 seconds is work the playbook asks for:
 - the k3s install script, about 1.4 to 1.5 seconds per host;
 - 13 `command` tasks, such as `k3s --version`, about 3.1 seconds across both hosts.
 
-Both engines pay these the same way, because they are processes on the host, not overhead around them.
+Both engines pay for these the same way, because they are processes running on the host.
 
 Two steps are held back by what the reference itself does:
 
 - `service_facts` runs the commands ansible-core runs (`systemctl list-unit-files`, `service --status-all` and one `systemctl show` per unit) so that its answer is the same. The native module runs them side by side where the reference runs them one after the other, and they still make up most of its 2.4 seconds. It cannot go below them while it reads the same sources.
 - The playbook's `apt` task sets `update_cache` without `cache_valid_time`, so the reference runs `apt-get update` on every pass. The native `apt` only answers a task with nothing to do, so this one goes to the Python module, and the cache refresh is most of its 2.2 seconds.
 
-Those two steps together cost 4.5 to 4.7 seconds per host. Making them faster needs a different source of truth than the reference's, which is a decision for a later release.
+Those two steps together cost 4.5 to 4.7 seconds per host. Making them faster would mean reading other sources than the reference reads, and that decision is left to a later release.
 
 <Aside type="note">
 These figures describe two playbooks on two hosts. Your own numbers depend on your network latency, on what your tasks do, on how many of them a native module covers, and on how many hosts you drive at once. `--profile` shows the split for your own run: see [Command line](/reference/cli/#run-and-output).

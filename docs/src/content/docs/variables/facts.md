@@ -27,7 +27,7 @@ Gathered facts rank above inventory variables and below the play's own variables
 
 ## Native facts
 
-On Debian and Ubuntu, the agent can collect facts itself, in the reference's own words: the 17 collectors ansible-core runs for `gather_subset: min`, the processor and memory facts of its `hardware` collector, and the default routes and address lists of its `network` collector. A fact the native collector does not produce, such as mounts, devices or per-interface details, is left absent rather than guessed.
+On Debian and Ubuntu, the agent can collect facts itself, in the reference's own words: the 17 collectors ansible-core runs for `gather_subset: min`, the processor and memory facts of its `hardware` collector, and the default routes and address lists of its `network` collector. A fact the native collector does not produce, such as mounts, devices or per-interface details, is left out.
 
 An absent fact only matters if something reads it. So before the first connection, Volant reads every play, role, template and variable definition of the run and lists the facts they can read. It uses the native collector only if all of them are facts it produces. A read by a computed name, such as `ansible_facts[item]`, `vars['ansible_' ~ name]`, `lookup('vars', ...)` or a whole `hostvars[host]` passed to a filter, could reach any fact, so it keeps ansible-core's `setup`.
 

@@ -166,8 +166,7 @@ mod imp {
         }
         apt_config_gate(root)?;
         let updates = std::fs::read_dir(root.path("/var/lib/dpkg/updates"))
-            .map(|mut dir| dir.next().is_some())
-            .unwrap_or(false);
+            .is_ok_and(|mut dir| dir.next().is_some());
         if updates {
             return Err("dpkg has updates it has not written to its status".into());
         }
@@ -916,7 +915,7 @@ mod imp {
 
         /// A host as files: `=== <path>` starts each file, the lines up to the next header are its
         /// content. `/usr/bin/python3` stands for the interpreter the reference respawns under.
-        const HOST: &str = r#"=== /usr/bin/python3
+        const HOST: &str = r"=== /usr/bin/python3
 === /etc/apt/sources.list.d/ubuntu.sources
 Types: deb
 URIs: http://archive.ubuntu.com/ubuntu/
@@ -1191,7 +1190,7 @@ Multi-Arch: foreign
 Version: 2024a-2ubuntu1
 Depends: debconf (>= 0.5) | debconf-2.0
 Description: time zone and daylight-saving time data
-"#;
+";
 
         /// What python-apt 2.7 and 3.1 (`apt.Cache(rootdir=...)`, read the way `package_facts`
         /// reads it) say of `HOST`. Measured on both: `hello`'s section is the archive's, not
@@ -1362,7 +1361,8 @@ Description: time zone and daylight-saving time data
         /// version, answered.
         #[test]
         fn a_host_outside_the_subset_hands_back() {
-            let cases: Vec<(&str, Box<dyn Fn(&Tree)>)> = vec![
+            type Case = (&'static str, Box<dyn Fn(&Tree)>);
+            let cases: Vec<Case> = vec![
                 (
                     "is a list no configured source names",
                     Box::new(|tree| {

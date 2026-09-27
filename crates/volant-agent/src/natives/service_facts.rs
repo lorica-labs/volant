@@ -187,7 +187,10 @@ mod imp {
         Ok(result)
     }
 
-    type Listed = Result<Vec<(String, Map<String, Value>)>, Stop>;
+    /// Services by name, in the order the reference's dict gets them.
+    type Services = Vec<(String, Map<String, Value>)>;
+
+    type Listed = Result<Services, Stop>;
 
     enum Part {
         Sysv(Listed),
@@ -419,8 +422,8 @@ mod imp {
     }
 
     /// `_list_from_units`: one entry per line that mentions `.service`.
-    pub(super) fn from_units(stdout: &str) -> Result<Vec<(String, Map<String, Value>)>, String> {
-        let mut services: Vec<(String, Map<String, Value>)> = Vec::new();
+    pub(super) fn from_units(stdout: &str) -> Result<Services, String> {
+        let mut services: Services = Vec::new();
         for line in stdout.split('\n').filter(|line| line.contains(".service")) {
             let fields: Vec<&str> = py_split(line).collect();
             if fields.len() < 4 {

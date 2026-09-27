@@ -78,13 +78,13 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `known_hosts` | Python module |
 | `lineinfile` | Python module |
 | `mount_facts` | Python module |
-| `package_facts` | Python module |
+| `package_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `ping` | Python module |
 | `pip` | Python module |
 | `replace` | Python module |
 | `rpm_key` | Python module |
 | `script` | not supported yet: needs the `script` action plugin |
-| `service_facts` | Python module |
+| `service_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `set_stats` | not supported yet: needs the `set_stats` action plugin |
 | `setup` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `slurp` | Python module |

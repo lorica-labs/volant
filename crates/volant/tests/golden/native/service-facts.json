@@ -3,16 +3,279 @@
   "action": "service_facts",
   "ansible_facts": {
     "services": {
+      "apport-coredump-hook@.service": {
+        "name": "apport-coredump-hook@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "apport-forward@.service": {
+        "name": "apport-forward@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "autovt@.service": {
+        "name": "autovt@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "alias"
+      },
+      "capsule@.service": {
+        "name": "capsule@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "chrony-dnssrv@.service": {
+        "name": "chrony-dnssrv@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "container-getty@.service": {
+        "name": "container-getty@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "cron": {
+        "name": "cron",
+        "source": "sysv",
+        "state": "running"
+      },
       "cron.service": {
         "name": "cron.service",
         "source": "systemd",
         "state": "running",
         "status": "enabled"
       },
+      "e2scrub@.service": {
+        "name": "e2scrub@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "e2scrub_fail@.service": {
+        "name": "e2scrub_fail@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "getty@.service": {
+        "name": "getty@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "enabled"
+      },
+      "lxd-installer@.service": {
+        "name": "lxd-installer@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "mdadm-grow-continue@.service": {
+        "name": "mdadm-grow-continue@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "mdadm-last-resort@.service": {
+        "name": "mdadm-last-resort@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "mdmon@.service": {
+        "name": "mdmon@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "modprobe@.service": {
+        "name": "modprobe@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "polkit-agent-helper@.service": {
+        "name": "polkit-agent-helper@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "quotaon@.service": {
+        "name": "quotaon@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "serial-getty@.service": {
+        "name": "serial-getty@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "disabled"
+      },
+      "sshd-unix-local@.service": {
+        "name": "sshd-unix-local@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "alias"
+      },
+      "sshd@.service": {
+        "name": "sshd@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "indirect"
+      },
+      "systemd-ask-password@.service": {
+        "name": "systemd-ask-password@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-backlight@.service": {
+        "name": "systemd-backlight@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-creds@.service": {
+        "name": "systemd-creds@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-factory-reset@.service": {
+        "name": "systemd-factory-reset@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-fsck@.service": {
+        "name": "systemd-fsck@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-growfs@.service": {
+        "name": "systemd-growfs@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-journald-sync@.service": {
+        "name": "systemd-journald-sync@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
       "systemd-journald.service": {
         "name": "systemd-journald.service",
         "source": "systemd",
         "state": "running",
+        "status": "static"
+      },
+      "systemd-journald@.service": {
+        "name": "systemd-journald@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-loop@.service": {
+        "name": "systemd-loop@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-mute-console@.service": {
+        "name": "systemd-mute-console@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-networkd-wait-online@.service": {
+        "name": "systemd-networkd-wait-online@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "disabled"
+      },
+      "systemd-pcrextend@.service": {
+        "name": "systemd-pcrextend@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-pcrfs@.service": {
+        "name": "systemd-pcrfs@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-pcrlock@.service": {
+        "name": "systemd-pcrlock@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-quotacheck@.service": {
+        "name": "systemd-quotacheck@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-sysext@.service": {
+        "name": "systemd-sysext@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "systemd-validatefs@.service": {
+        "name": "systemd-validatefs@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "usb_modeswitch@.service": {
+        "name": "usb_modeswitch@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "user-runtime-dir@.service": {
+        "name": "user-runtime-dir@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "user@.service": {
+        "name": "user@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "xfs_scrub@.service": {
+        "name": "xfs_scrub@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "xfs_scrub_fail@.service": {
+        "name": "xfs_scrub_fail@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "xfs_scrub_media@.service": {
+        "name": "xfs_scrub_media@.service",
+        "source": "systemd",
+        "state": "unknown",
+        "status": "static"
+      },
+      "xfs_scrub_media_fail@.service": {
+        "name": "xfs_scrub_media_fail@.service",
+        "source": "systemd",
+        "state": "unknown",
         "status": "static"
       }
     }

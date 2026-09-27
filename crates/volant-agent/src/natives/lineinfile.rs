@@ -998,18 +998,14 @@ fn translate(pattern: &str) -> Result<String, String> {
             }
             b'*' | b'+' | b'?' | b'{' => {
                 let repeat = if byte == b'{' {
-                    match braces(bytes, at) {
-                        Some((repeat, next)) => {
-                            at = next;
-                            repeat
-                        }
+                    let Some((repeat, next)) = braces(bytes, at) else {
                         // Not a repeat: Python reads the brace as itself.
-                        None => {
-                            Item::Byte(byte).write(&mut out);
-                            last = Last::Item;
-                            continue;
-                        }
-                    }
+                        Item::Byte(byte).write(&mut out);
+                        last = Last::Item;
+                        continue;
+                    };
+                    at = next;
+                    repeat
                 } else {
                     char::from(byte).to_string()
                 };
@@ -1596,7 +1592,8 @@ mod tests {
     /// pattern Python refuses answered.
     #[test]
     fn translation_reads_patterns_as_python_reads_bytes() {
-        let cases: &[(&str, &[(&[u8], bool)])] = &[
+        type Lines<'a> = &'a [(&'a [u8], bool)];
+        let cases: &[(&str, Lines<'_>)] = &[
             (
                 "^a$",
                 &[

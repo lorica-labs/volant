@@ -734,8 +734,14 @@ BACKUP_SUFFIX = r"\.\d+\.\d{4}-\d{2}-\d{2}@\d{2}:\d{2}:\d{2}~$"
 # What `package_facts` and `service_facts` keep of the machine's full inventory. Both are compared
 # live, against a reference run next to the native one, so the recording only has to show the
 # shape of an entry; the full lists would also name every package and unit of the machine that
-# ran the generator.
-LIVE_KEEP = {"packages": ("bash",), "services": ("cron.service", "systemd-journald.service")}
+# ran the generator. One unit per `service_facts` branch: `list-units` (`cron.service`, whose
+# status `list-unit-files` replaces, and `systemd-journald.service`), the SysV listing (`cron`) and
+# the template units only `list-unit-files` names (`LIVE_KEEP_SUFFIX`). golden.rs keeps the same.
+LIVE_KEEP = {
+    "packages": ("bash",),
+    "services": ("cron.service", "systemd-journald.service", "cron"),
+}
+LIVE_KEEP_SUFFIX = {"services": "@.service"}
 
 TMP_PLACEHOLDER = "<golden-tmp>"
 HOST_PLACEHOLDER = "<golden-generator-host>"
@@ -1397,7 +1403,12 @@ def natives():
             result["ansible_facts"] = facts = {key: MACHINE_PLACEHOLDER for key in facts}
         for key, keep in LIVE_KEEP.items():
             if isinstance(facts.get(key), dict):
-                facts[key] = {k: v for k, v in facts[key].items() if k in keep}
+                suffix = LIVE_KEEP_SUFFIX.get(key)
+                facts[key] = {
+                    k: v
+                    for k, v in facts[key].items()
+                    if k in keep or (suffix is not None and k.endswith(suffix))
+                }
         if name in read_back:
             stat_info = outcomes[f"after-stat-{name}"]["stat"]
             after = {"exists": stat_info["exists"]}

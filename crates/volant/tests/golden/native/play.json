@@ -1707,6 +1707,28 @@
       "become": true
      },
      {
+      "name": "group-gid-taken",
+      "group": {
+       "name": "volantshape",
+       "gid": 64999
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "user-uid-taken",
+      "user": {
+       "name": "volantshape",
+       "uid": 0,
+       "group": "volantgrp",
+       "create_home": false
+      },
+      "register": "last",
+      "become": true,
+      "ignore_errors": true
+     },
+     {
       "name": "group-system-removed",
       "group": {
        "name": "volantgrp",

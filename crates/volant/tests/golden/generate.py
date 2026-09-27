@@ -1357,6 +1357,16 @@ def natives():
     system_group = {"name": NATIVE_GROUP, "gid": 64999, "system": True}
     case("group-system-created", "group", system_group, changed, become=True)
     case("group-system-same", "group", system_group, same, become=True)
+    # The commands' own refusals, which the module answers with their error output: a gid
+    # another group holds, a uid another account holds. Neither leaves anything behind.
+    case("group-gid-taken", "group", {"name": NATIVE_USER, "gid": 64999}, {"failed": True}, become=True)
+    case(
+        "user-uid-taken",
+        "user",
+        {"name": NATIVE_USER, "uid": 0, "group": NATIVE_GROUP, "create_home": False},
+        {"failed": True},
+        become=True,
+    )
     case("group-system-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
 
     block = {"block": tasks}

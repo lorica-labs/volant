@@ -593,6 +593,23 @@
     "volatile": [],
     "why": ""
   },
+  "group-gid-taken": {
+    "args": {
+      "gid": 64999,
+      "name": "volantshape"
+    },
+    "become": true,
+    "branch": {
+      "failed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "group",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
   "group-removed": {
     "args": {
       "name": "volantgrp",
@@ -2360,6 +2377,25 @@
     "become": true,
     "branch": {
       "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "user",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": ""
+  },
+  "user-uid-taken": {
+    "args": {
+      "create_home": false,
+      "group": "volantgrp",
+      "name": "volantshape",
+      "uid": 0
+    },
+    "become": true,
+    "branch": {
+      "failed": true
     },
     "compare": "exact",
     "expect": "native",

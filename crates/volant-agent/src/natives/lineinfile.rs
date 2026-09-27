@@ -12,6 +12,7 @@
 //! a link or a special file as the path, extended attributes on the file, a task `environment`.
 
 use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fmt::Write as _;
 use std::fs;

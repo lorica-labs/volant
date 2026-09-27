@@ -1407,7 +1407,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         };
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
-            Ok(built) => bounded(built),
+            Ok(built) => built,
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
@@ -1419,6 +1419,13 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         if let Err(err) = blob_preflight(link, host, &tasks, union, &sub.files, logs).await {
             return Ok(TaskResult::failed_with(err));
         }
+        // The transfer ran on the item's time. Past its end the module is not sent, so a `copy`
+        // whose upload outlived `timeout` leaves `dest` alone and reports the timeout; before
+        // it, the module gets what is left after the transfer.
+        if expired() {
+            return Ok(timeout_result());
+        }
+        let tasks: Vec<Task> = tasks.into_iter().map(bounded).collect();
         let (mut flat, ended) =
             send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
         let result = flat.pop().flatten();
@@ -3329,6 +3336,8 @@ mod tests {
         /// which is what a real agent busy with a batch does.
         hangs_when_empty: bool,
         ledger: crate::profile::Ledger,
+        /// How long writing one blob frame takes, for a transfer over a slow link.
+        transfer_takes: Duration,
     }
 
     impl FakeAgent {
@@ -3340,6 +3349,7 @@ mod tests {
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
                 ledger: crate::profile::Ledger::default(),
+                transfer_takes: Duration::ZERO,
             }
         }
 
@@ -3362,6 +3372,9 @@ mod tests {
         }
 
         async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            if !self.transfer_takes.is_zero() {
+                tokio::time::sleep(self.transfer_takes).await;
+            }
             self.frames.push((self.sent.len(), bytes.to_vec()));
             Ok(())
         }
@@ -5778,6 +5791,54 @@ mod tests {
         assert!(!result.0.contains_key("attempts"), "{result:?}");
         assert_eq!(lefts, Vec::<u32>::new());
         assert_eq!(modules_sent(&agent), ["stat"]);
+    }
+
+    /// A plugin's file transfer runs on the item's `timeout`. A transfer that outlives it leaves
+    /// the module unsent and the item timed out, the way the reference's alarm ends the action
+    /// wherever it stands; one that leaves time gives the module what is left after it, not
+    /// what was left before. The fake's transfer sleeps past the deadline rather than racing
+    /// it, and the test reads what was sent, not how long it took.
+    ///
+    /// What would make this red: the module sent after a transfer that used up the item's time,
+    /// which replaces `dest` and then reports the timeout (`["stat", "copy"]`); or its timeout
+    /// computed before the transfer (3).
+    #[tokio::test]
+    async fn a_plugin_s_transfer_runs_on_the_item_s_time() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let answers = || {
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+            ]
+            .concat()
+        };
+        let mut t = task("copy");
+        t.timeout = Some(1);
+        let mut agent = FakeAgent::answering(answers());
+        agent.transfer_takes = Duration::from_millis(1100);
+        let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
+        assert_eq!(modules_sent(&agent), ["stat"]);
+
+        t.timeout = Some(3);
+        let mut agent = FakeAgent::answering(
+            [
+                answers(),
+                one_result(2, json!({"changed": true, "dest": "/tmp/v/late"})).to_vec(),
+            ]
+            .concat(),
+        );
+        agent.transfer_takes = Duration::from_millis(1100);
+        let _ = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+        assert_eq!(modules_sent(&agent), ["stat", "copy"]);
+        let given = agent.sent.iter().find_map(|m| match m {
+            ToAgent::RunBatch { tasks, .. } if tasks[0].module == "copy" => tasks[0].timeout,
+            _ => None,
+        });
+        assert!(given.is_some_and(|t| t < 3), "{given:?}");
     }
 
     /// `until` reads the result the whole sequence ended with, judged by the task's conditions,

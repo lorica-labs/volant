@@ -490,8 +490,9 @@ pub fn run(
     context: &Context,
     cancelled: &dyn Fn() -> bool,
 ) -> (Run, Timing) {
-    let remote_tmp = crate::blobs::remote_tmp();
-    let blob = match crate::blobs::path(&remote_tmp, &payload.blob) {
+    // Set by the dispatcher from `blobs::remote_tmp`, and by a test to its own directory.
+    let remote_tmp = &context.remote_tmp;
+    let blob = match crate::blobs::path(remote_tmp, &payload.blob) {
         Ok(blob) => blob,
         Err(err) => {
             return (
@@ -503,7 +504,7 @@ pub fn run(
     SERVERS.with(|table| {
         table
             .borrow_mut()
-            .run(payload, &remote_tmp, &blob, args, context, cancelled)
+            .run(payload, remote_tmp, &blob, args, context, cancelled)
     })
 }
 
@@ -1087,15 +1088,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn each_environment_gets_a_server_started_with_it() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(
             root.path(),
             "\n    import os\n    with open(\"/proc/%d/environ\" % os.getppid(), \"rb\") as fh:\n        seen = [v for v in fh.read().decode().split(\"\\0\") if v.startswith(\"VOLANT_ENV_PROBE=\")]\n    print(json.dumps({\"parent\": os.getppid(), \"seen\": seen}))\n",
         );
         batch_started();
         let task = |value: Option<&str>| {
-            let mut context = Context::default();
+            let mut context = Context {
+                remote_tmp: tmp.clone(),
+                ..Context::default()
+            };
             if let Some(value) = value {
                 context
                     .environment
@@ -1383,12 +1386,14 @@ print(json.dumps([
     #[test]
     fn a_loop_alternating_two_environments_runs_every_item() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
         batch_started();
         for proxy in ["p1", "p2", "p1", "p2", "p1"] {
-            let mut context = Context::default();
+            let mut context = Context {
+                remote_tmp: tmp.clone(),
+                ..Context::default()
+            };
             context
                 .environment
                 .insert("https_proxy".into(), proxy.into());
@@ -1714,8 +1719,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_task_that_sets_pythonpath_gets_an_interpreter_started_with_it() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(
             root.path(),
             "\n    import os\n    try:\n        import volant_task_path_probe\n        found = volant_task_path_probe.VALUE\n    except ImportError:\n        found = None\n    print(json.dumps({\"found\": found, \"parent\": os.getppid()}))\n",
@@ -1726,7 +1730,10 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
             "VALUE = \"from the task path\"\n",
         )
         .unwrap();
-        let mut context = Context::default();
+        let mut context = Context {
+            remote_tmp: tmp.clone(),
+            ..Context::default()
+        };
         context.environment.insert(
             "PYTHONPATH".into(),
             path.path().to_str().unwrap().to_string(),
@@ -1734,9 +1741,15 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         batch_started();
         let task = |context: &Context| done(run(&payload, &args(json!({})), context, &|| false).0);
 
-        let warm = task(&Context::default());
+        let warm = task(&Context {
+            remote_tmp: tmp.clone(),
+            ..Context::default()
+        });
         let with = task(&context);
-        let again = task(&Context::default());
+        let again = task(&Context {
+            remote_tmp: tmp.clone(),
+            ..Context::default()
+        });
         assert_eq!(with.0["found"], "from the task path", "{:?}", with.0);
         assert_ne!(with.0["parent"], warm.0["parent"]);
         assert_eq!(warm.0["found"], Value::Null, "{:?}", warm.0);
@@ -1908,11 +1921,19 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_cancel_while_the_server_starts_is_a_cancel() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
         batch_started();
-        let run = run(&payload, &args(json!({})), &Context::default(), &|| true).0;
+        let run = run(
+            &payload,
+            &args(json!({})),
+            &Context {
+                remote_tmp: tmp.clone(),
+                ..Context::default()
+            },
+            &|| true,
+        )
+        .0;
         assert!(
             matches!(run, Run::Cancelled),
             "the start was not cancelled: {:?}",
@@ -1930,13 +1951,23 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_payload_is_hashed_once_while_its_server_lives() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
         batch_started();
         let before = crate::blobs::HASHED.load(Ordering::Relaxed);
         for _ in 0..3 {
-            let result = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
+            let result = done(
+                run(
+                    &payload,
+                    &args(json!({})),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            );
             assert!(!result.failed(), "{:?}", result.0);
         }
         assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
@@ -1955,11 +1986,21 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     fn a_payload_replaced_under_a_live_server_is_verified_again() {
         for renamed in [true, false] {
             let root = tempdir();
-            // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-            unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+            let tmp = root.path().to_str().unwrap().to_string();
             let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
             batch_started();
-            let first = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
+            let first = done(
+                run(
+                    &payload,
+                    &args(json!({})),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            );
             assert!(!first.failed(), "{:?}", first.0);
 
             let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
@@ -1983,7 +2024,18 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
                 std::fs::rename(&target, &at).unwrap();
             }
 
-            let second = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
+            let second = done(
+                run(
+                    &payload,
+                    &args(json!({})),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            );
             assert_eq!(
                 second.0["msg"],
                 format!("payload {} is not on this host", payload.blob),
@@ -2257,8 +2309,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_payload_no_server_can_start_against_refuses_the_rest_of_the_batch() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         let zip = b"not a payload at all";
         let hash = blake3::hash(zip).to_hex().to_string();
         crate::blobs::store(root.path().to_str().unwrap(), &hash, zip, false).unwrap();
@@ -2272,8 +2323,30 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
             interpreter: HOST_PYTHON.into(),
         };
         batch_started();
-        let first = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
-        let second = done(run(&payload, &args(json!({})), &Context::default(), &|| false).0);
+        let first = done(
+            run(
+                &payload,
+                &args(json!({})),
+                &Context {
+                    remote_tmp: tmp.clone(),
+                    ..Context::default()
+                },
+                &|| false,
+            )
+            .0,
+        );
+        let second = done(
+            run(
+                &payload,
+                &args(json!({})),
+                &Context {
+                    remote_tmp: tmp.clone(),
+                    ..Context::default()
+                },
+                &|| false,
+            )
+            .0,
+        );
 
         assert!(first.failed() && second.failed());
         assert!(
@@ -2299,8 +2372,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn the_server_is_reused_across_the_tasks_of_a_batch() {
         let root = tempdir();
-        // SAFETY: nextest runs each test in its own process, so this reaches no other test.
-        unsafe { std::env::set_var("VOLANT_REMOTE_TMP", root.path()) };
+        let tmp = root.path().to_str().unwrap().to_string();
         // The module reports the server it ran under, and can take that server down with it -
         // which is how the death is made to happen at a moment the test knows, rather than
         // racing a signal against the agent's next look at the table.
@@ -2308,8 +2380,20 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
             root.path(),
             "\n    import os, signal\n    if args.get(\"kill_parent\"):\n        os.kill(os.getppid(), signal.SIGKILL)\n    print(json.dumps({\"parent\": os.getppid()}))\n",
         );
-        let task =
-            |args_: Value| done(run(&payload, &args(args_), &Context::default(), &|| false).0);
+        let task = |args_: Value| {
+            done(
+                run(
+                    &payload,
+                    &args(args_),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            )
+        };
         batch_started();
 
         let first = task(json!({}));

@@ -265,8 +265,12 @@ async fn run_all(
     //
     // A collection's module the plays name is resolved by the same helper first, and refused
     // here, by name, when its collection is not installed or serves it through an action plugin.
-    let reach = python::Reach::walk(&compiled.iter().flatten().collect::<Vec<_>>())
-        .map_err(|e| Refusal::or(4, e))?;
+    let walked: Vec<_> = playbooks
+        .iter()
+        .zip(&compiled)
+        .flat_map(|(pb, steps)| pb.plays.iter().map(|play| play.dir.as_path()).zip(steps))
+        .collect();
+    let reach = python::Reach::walk(&walked).map_err(|e| Refusal::or(4, e))?;
     let python_modules = python::modules_for_run(&reach);
     let named: Vec<(String, String)> = compiled
         .iter()

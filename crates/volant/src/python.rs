@@ -273,7 +273,8 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
 pub(crate) struct Reach {
     /// The root of every role reached.
     pub(crate) roles: std::collections::BTreeSet<std::path::PathBuf>,
-    files: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Every task file read.
+    pub(crate) files: std::collections::BTreeSet<std::path::PathBuf>,
     modules: Vec<String>,
     /// Every task read from a file, with that file and where it resolves its relative paths.
     pub(crate) tasks: Vec<(
@@ -284,10 +285,13 @@ pub(crate) struct Reach {
 }
 
 impl Reach {
-    /// Walks from every step and handler of `plays`.
-    pub(crate) fn walk(plays: &[&crate::compile::Compiled]) -> anyhow::Result<Reach> {
+    /// Walks from every step and handler of `plays`, each with the directory of its play, which
+    /// is where a play handler's include resolves.
+    pub(crate) fn walk(
+        plays: &[(&std::path::Path, &crate::compile::Compiled)],
+    ) -> anyhow::Result<Reach> {
         let mut reach = Reach::default();
-        for play in plays {
+        for &(dir, play) in plays {
             for step in &play.steps {
                 reach.modules.push(step.task.module.clone());
                 if let Some(role) = &step.origin.role_dir {
@@ -301,9 +305,20 @@ impl Reach {
                     &play.search,
                 )?;
             }
-            reach
-                .modules
-                .extend(play.handlers.iter().map(|h| h.task.module.clone()));
+            for handler in &play.handlers {
+                reach.modules.push(handler.task.module.clone());
+                let role_dir = handler
+                    .role
+                    .and_then(|i| play.roles.get(i))
+                    .and_then(|role| play.search.locate(&role.name).ok());
+                if let Some(role) = &role_dir {
+                    reach.role(role, &play.search)?;
+                }
+                let file_dir = role_dir
+                    .as_ref()
+                    .map_or_else(|| dir.to_path_buf(), |role| role.join("handlers"));
+                reach.statement(&handler.task, &file_dir, role_dir.as_deref(), &play.search)?;
+            }
         }
         Ok(reach)
     }
@@ -356,7 +371,9 @@ impl Reach {
         search: &crate::roles::RoleSearch,
     ) -> anyhow::Result<()> {
         for task in tasks {
-            self.modules.push(task.module.clone());
+            if !task.module.is_empty() {
+                self.modules.push(task.module.clone());
+            }
             self.statement(task, file_dir, role_dir, search)?;
             let origin = crate::compile::Origin {
                 file_dir: file_dir.to_path_buf(),
@@ -414,12 +431,15 @@ impl Reach {
     }
 }
 
-/// Every task of a list, blocks and all three of their sections included.
+/// Every task of a list, blocks and all three of their sections included. A block's own keywords
+/// (`when`, `vars`, `environment`, ...) come first, as a task that names no module: what they
+/// read is read before any task of the block runs.
 fn flatten(items: &[crate::playbook::TaskOrBlock], out: &mut Vec<crate::playbook::PlayTask>) {
     for item in items {
         match item {
             crate::playbook::TaskOrBlock::Task(task) => out.push(task.clone()),
             crate::playbook::TaskOrBlock::Block(b) => {
+                out.push(b.keywords.clone());
                 for section in [&b.body, &b.rescue, &b.always] {
                     flatten(section, out);
                 }
@@ -1791,7 +1811,7 @@ mod tests {
         };
         let selection = crate::compile::TagSelection::new(Vec::new(), Vec::new());
         let play = crate::compile::compile(&pb.plays[0], &search, &selection)?;
-        Ok(modules_for_run(&Reach::walk(&[&play])?)
+        Ok(modules_for_run(&Reach::walk(&[(dir, &play)])?)
             .into_iter()
             .collect())
     }

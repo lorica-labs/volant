@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 use super::FileBlob;
 use crate::compile::Origin;
 
-/// The largest file one blob carries: what fits in a frame once in base64, with room left for
-/// the message around it.
-pub(crate) const MAX_FILE_LEN: usize = (MAX_FRAME_LEN - 4096) / 4 * 3;
+/// The largest file one blob carries: one frame, which holds the blob's bytes alone, raw or
+/// deflated to fewer.
+pub(crate) const MAX_FILE_LEN: usize = MAX_FRAME_LEN;
 
 /// Where the reference looks for a task's local file, in its order.
 ///
@@ -146,16 +146,17 @@ mod tests {
 
     /// A file too big for one frame is refused before anything is encoded, naming both sizes.
     ///
-    /// What would make this red: the limit dropped, which encodes a 60 MiB file into a frame the
+    /// What would make this red: the limit dropped, which encodes a 65 MiB file into a frame the
     /// agent refuses to read and ends the link, or a message without the two numbers.
     #[test]
     fn a_file_bigger_than_a_frame_is_refused_naming_both_sizes() {
-        let big = vec![0u8; 60 * 1024 * 1024];
-        let err = blob_of("big.bin", &big).expect_err("60 MiB does not fit");
+        let big = vec![0u8; 65 * 1024 * 1024];
+        let err = blob_of("big.bin", &big).expect_err("65 MiB does not fit");
         assert_eq!(
             err,
-            format!("big.bin is 62914560 bytes; one frame carries at most {MAX_FILE_LEN}")
+            format!("big.bin is 68157440 bytes; one frame carries at most {MAX_FILE_LEN}")
         );
+        assert!(blob_of("fits.bin", &big[..MAX_FILE_LEN]).is_ok());
         let blob = blob_of("x", b"x").expect("one byte fits");
         assert_eq!(blob.b64, "eA==");
         assert_eq!(blob.hash, blake3::hash(b"x").to_hex().to_string());

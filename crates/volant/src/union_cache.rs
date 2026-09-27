@@ -25,13 +25,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::agent::embedded::create_private;
+use crate::agent::{BlobFrame, keep_frame};
 use crate::python::{Resolved, Union};
 
 /// The manifest's own version. An entry written in another format is rebuilt, never read.
 ///
 /// 2: each module's facts carry `core`. A format 1 entry has none, and read as `false` it would
 /// keep every native module off for as long as the entry stays valid.
-const FORMAT: u64 = 2;
+///
+/// 3: an entry keeps the zip's deflated form beside it, `<key>.deflate`, named by its blake3 in
+/// the manifest. A format 2 entry has none.
+const FORMAT: u64 = 3;
 
 /// An entry nothing has rewritten for this long is removed by the next store: a module set a
 /// playbook no longer names would otherwise stay on disk for good.
@@ -334,7 +338,20 @@ pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
     let Some(zip) = read_own(&dir.join(format!("{}.zip", key.0)))? else {
         return Ok(None);
     };
-    Ok(parse(&manifest, zip))
+    let deflate_path = format!("{}.deflate", key.0);
+    // A deflated form that is missing, unreadable or not the one the manifest names is made
+    // again from the zip, which was just checked, and written back: never sent as it was.
+    let deflated = read_own(&dir.join(&deflate_path)).ok().flatten();
+    let Some((entry, kept)) = parse(&manifest, &zip, deflated) else {
+        return Ok(None);
+    };
+    let deflated = kept.unwrap_or_else(|| {
+        let deflated = volant_protocol::encoding::deflate(&zip);
+        let _ = write_new(dir, &deflate_path, &deflated);
+        deflated
+    });
+    keep_frame(&entry.union.hash, BlobFrame::smaller(zip, deflated));
+    Ok(Some(entry))
 }
 
 /// The bytes of `path`, or `None` when there is no such file, after checking the file actually
@@ -367,8 +384,13 @@ fn read_own(path: &Path) -> io::Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
-/// An entry from its manifest and zip, or `None` on any doubt.
-fn parse(manifest: &[u8], zip: Vec<u8>) -> Option<Entry> {
+/// An entry from its manifest and zip, or `None` on any doubt, with `deflated` when it is the
+/// deflated form the manifest names.
+fn parse(
+    manifest: &[u8],
+    zip: &[u8],
+    deflated: Option<Vec<u8>>,
+) -> Option<(Entry, Option<Vec<u8>>)> {
     let manifest: Value = serde_json::from_slice(manifest).ok()?;
     if manifest.get("format")?.as_u64()? != FORMAT {
         return None;
@@ -381,9 +403,11 @@ fn parse(manifest: &[u8], zip: Vec<u8>) -> Option<Entry> {
         return None;
     }
     let hash = manifest.get("hash")?.as_str()?;
-    if blake3::hash(&zip).to_hex().as_str() != hash {
+    if blake3::hash(zip).to_hex().as_str() != hash {
         return None;
     }
+    let deflated_hash = manifest.get("deflated")?.as_str()?;
+    let deflated = deflated.filter(|bytes| blake3::hash(bytes).to_hex().as_str() == deflated_hash);
     let mut modules = BTreeMap::new();
     for (name, facts) in manifest.get("modules")?.as_object()? {
         modules.insert(name.clone(), crate::python::module_facts(name, facts).ok()?);
@@ -399,17 +423,18 @@ fn parse(manifest: &[u8], zip: Vec<u8>) -> Option<Entry> {
             crate::python::resolved_from(name, answer).ok()?,
         );
     }
-    Some(Entry {
+    let entry = Entry {
         union: Union {
             hash: hash.to_string(),
-            zip_b64: volant_protocol::encoding::b64_encode(&zip),
+            zip_b64: volant_protocol::encoding::b64_encode(zip),
             modules,
             refused,
             natives: crate::python::Natives::default(),
         },
         sources,
         resolved,
-    })
+    };
+    Some((entry, deflated))
 }
 
 /// The sources as the helper reports them and the manifest keeps them, or `None` for anything
@@ -431,6 +456,8 @@ pub fn sources_from(value: &Value) -> Option<Vec<Source>> {
 /// Writes `entry` under `key`, each file under a temporary name renamed into place, mode 0600,
 /// in a directory created 0700. Two runs storing at once both leave a whole entry: the zip goes
 /// first, and a manifest paired with the other run's zip fails the hash check and is rebuilt.
+/// The zip is deflated here, at level 6, once for every host of this run and of the runs that
+/// load the entry.
 pub fn store(dir: &Path, key: &CacheKey, entry: &Entry) -> io::Result<()> {
     create_private(dir)?;
     check_dir(dir)?;
@@ -467,20 +494,24 @@ pub fn store(dir: &Path, key: &CacheKey, entry: &Entry) -> io::Result<()> {
         .iter()
         .map(|(name, answer)| (name.clone(), crate::python::resolved_json(answer)))
         .collect();
+    let deflated = volant_protocol::encoding::deflate(&zip);
     let manifest = json!({
         "format": FORMAT,
         "hash": entry.union.hash,
+        "deflated": blake3::hash(&deflated).to_hex().as_str(),
         "modules": modules,
         "refused": entry.union.refused,
         "resolved": resolved,
         "sources": sources,
     });
     write_new(dir, &format!("{}.zip", key.0), &zip)?;
+    write_new(dir, &format!("{}.deflate", key.0), &deflated)?;
     write_new(
         dir,
         &format!("{}.json", key.0),
         manifest.to_string().as_bytes(),
     )?;
+    keep_frame(&entry.union.hash, BlobFrame::smaller(zip, deflated));
     sweep(dir, SystemTime::now());
     Ok(())
 }
@@ -551,8 +582,8 @@ fn check_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether `name` is one this cache writes: `<key>.zip`, `<key>.json`, or a temporary file of
-/// either. Nothing else in the directory is the sweep's to remove.
+/// Whether `name` is one this cache writes: `<key>.zip`, `<key>.deflate`, `<key>.json`, or a
+/// temporary file of one of them. Nothing else in the directory is the sweep's to remove.
 fn written_here(name: &str) -> bool {
     let (Some(key), Some(rest)) = (name.get(..64), name.get(64..)) else {
         return false;
@@ -564,7 +595,7 @@ fn written_here(name: &str) -> bool {
             && parts.all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
     };
     key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        && [".zip", ".json"].iter().any(|ext| {
+        && [".zip", ".deflate", ".json"].iter().any(|ext| {
             rest.strip_prefix(ext)
                 .is_some_and(|after| after.is_empty() || after.strip_prefix('.').is_some_and(tmp))
         })
@@ -878,6 +909,121 @@ mod tests {
         assert!(!old.contains("core"), "{old}");
         fs::write(&manifest, old).unwrap();
         assert_eq!(load(&dir, &key), None);
+    }
+
+    /// A zip long enough to be sent deflated.
+    const LONG_ZIP: &[u8] = b"PK\x03\x04 a stored zip, as the helper builds it; ";
+
+    fn long_zip() -> Vec<u8> {
+        LONG_ZIP.repeat(200)
+    }
+
+    /// The bytes a frame carries, decoded as the agent decodes them.
+    fn unpacked(frame: &BlobFrame) -> Vec<u8> {
+        match frame.encoding {
+            volant_protocol::BlobEncoding::Raw => frame.bytes.clone(),
+            volant_protocol::BlobEncoding::Deflate => {
+                volant_protocol::encoding::inflate(&frame.bytes, frame.len as usize).unwrap()
+            }
+        }
+    }
+
+    /// The frame kept for a union is found by the zip's hash and holds that zip: storing an
+    /// entry keeps its deflated form, and the frame then comes from it without decoding the
+    /// union again, while another zip gets its own.
+    ///
+    /// What would make this red: the frames keyed by anything but the zip's content (the cache
+    /// key, the host), under which a union rebuilt in place would go up as the one before it.
+    #[tokio::test]
+    async fn the_frame_kept_for_a_union_is_found_by_its_content_alone() {
+        let root = tempdir();
+        let dir = root.0.join("unions");
+        let zip = long_zip();
+        let stored = entry(&root.0, &zip);
+        store(&dir, &some_key(), &stored).unwrap();
+        let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
+            .await
+            .expect("kept by the store");
+        assert_eq!(kept.encoding, volant_protocol::BlobEncoding::Deflate);
+        assert_eq!(unpacked(&kept), zip);
+
+        let other = [b"another zip ".as_slice(), &zip].concat();
+        let other_hash = blake3::hash(&other).to_hex().to_string();
+        let fresh =
+            crate::agent::frame(&other_hash, &volant_protocol::encoding::b64_encode(&other))
+                .await
+                .unwrap();
+        assert_eq!(unpacked(&fresh), other);
+        let again = crate::agent::frame(&stored.union.hash, "").await.unwrap();
+        assert_eq!(unpacked(&again), zip);
+    }
+
+    /// An entry of format 2, which has no deflated form, is a miss, never served, even with a
+    /// `.deflate` file beside it. Two checks hold that, each tried alone: the format, and the
+    /// deflated form's hash, which a format 3 manifest must carry.
+    ///
+    /// What would make this red: the format left at 2 or the format check relaxed (the case
+    /// that keeps the hash), or the hash read as optional (the format 3 case without one).
+    #[test]
+    fn a_format_two_entry_is_a_miss() {
+        let root = tempdir();
+        let dir = root.0.join("unions");
+        let key = some_key();
+        let stored = entry(&root.0, &long_zip());
+        store(&dir, &key, &stored).unwrap();
+        let manifest = dir.join(format!("{}.json", key.0));
+        let text = fs::read_to_string(&manifest).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        let hash = format!("\"deflated\":\"{}\",", value["deflated"].as_str().unwrap());
+        let (three, two) = ("\"format\":3", "\"format\":2");
+        assert!(text.contains(three) && text.contains(&hash), "{text}");
+        for (why, old) in [
+            ("format 2 with a hash", text.replace(three, two)),
+            ("format 2", text.replace(three, two).replace(&hash, "")),
+            ("format 3 without a hash", text.replace(&hash, "")),
+        ] {
+            fs::write(&manifest, old).unwrap();
+            assert_eq!(load(&dir, &key), None, "{why}");
+        }
+        fs::write(&manifest, text).unwrap();
+        assert_eq!(load(&dir, &key), Some(stored));
+    }
+
+    /// A deflated form that is missing, or is not the one the manifest names, is made again from
+    /// the zip and written back, and the frame holds the zip: the entry is still a hit.
+    ///
+    /// What would make this red: the `.deflate` file read without its hash checked, which sends
+    /// every host whatever that file holds, and the agents refuse it one by one; or a missing
+    /// one taken for a miss, which rebuilds the whole union for a file the zip can give back.
+    #[tokio::test]
+    async fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
+        let root = tempdir();
+        let dir = root.0.join("unions");
+        let key = some_key();
+        let zip = long_zip();
+        let stored = entry(&root.0, &zip);
+        store(&dir, &key, &stored).unwrap();
+        let path = dir.join(format!("{}.deflate", key.0));
+        let good = fs::read(&path).unwrap();
+        let wrong =
+            volant_protocol::encoding::deflate(&[b"not this union ".as_slice(), &zip].concat());
+        for (why, damage) in [
+            ("missing", None),
+            ("another stream", Some(wrong)),
+            ("truncated", Some(good[..good.len() / 2].to_vec())),
+        ] {
+            match damage {
+                None => fs::remove_file(&path).unwrap(),
+                Some(bytes) => fs::write(&path, bytes).unwrap(),
+            }
+            crate::agent::forget_frames();
+            assert_eq!(load(&dir, &key), Some(stored.clone()), "{why}");
+            let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
+                .await
+                .expect(why);
+            assert_eq!(unpacked(&kept), zip, "{why}");
+            assert_eq!(fs::read(&path).unwrap(), good, "{why}: written back");
+        }
     }
 
     /// What would make this red: the zip read back without its hash checked, which hands the

@@ -13,7 +13,7 @@ use std::io::{self, BufReader, BufWriter};
 use std::sync::mpsc;
 use std::thread;
 
-use volant_protocol::frame::{read_frame, write_frame};
+use volant_protocol::frame::write_frame;
 use volant_protocol::{FromAgent, LogLevel, PROTOCOL_VERSION, ToAgent};
 
 fn main() {
@@ -89,20 +89,19 @@ fn hash_of_self(
 
 fn serve(remote_tmp: &str) -> io::Result<()> {
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
-    // while a task is running.
-    let (tx, rx) = mpsc::channel::<io::Result<ToAgent>>();
+    // while a task is running. It also reads the blob frame after each `put_blob`, so nothing
+    // else ever takes a blob for a message.
+    let (tx, rx) = mpsc::channel::<io::Result<blobs::Incoming>>();
     thread::spawn(move || {
         let mut stdin = BufReader::new(io::stdin().lock());
         loop {
-            match read_frame(&mut stdin) {
-                Ok(Some(bytes)) => match serde_json::from_slice::<ToAgent>(&bytes) {
-                    Ok(msg) => {
-                        if tx.send(Ok(msg)).is_err() {
-                            break;
-                        }
+            match blobs::read_incoming(&mut stdin) {
+                Ok(Some(Ok(incoming))) => {
+                    if tx.send(Ok(incoming)).is_err() {
+                        break;
                     }
-                    Err(err) => eprintln!("volant-agent: discarding malformed frame: {err}"),
-                },
+                }
+                Ok(Some(Err(err))) => eprintln!("volant-agent: discarding malformed frame: {err}"),
                 Ok(None) => break,
                 Err(err) => {
                     let _ = tx.send(Err(err));
@@ -117,8 +116,8 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
         |msg: &FromAgent| -> io::Result<()> { write_frame(&mut out, &serde_json::to_vec(msg)?) };
 
     while let Ok(msg) = rx.recv() {
-        let msg = match msg {
-            Ok(msg) => msg,
+        let (msg, frame) = match msg {
+            Ok(incoming) => incoming,
             Err(err) => {
                 send(&FromAgent::Log {
                     level: LogLevel::Error,
@@ -151,7 +150,7 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
             // The same answer is given mid-batch by `runner::is_cancelled`, which is why it
             // lives in `blobs` rather than here.
             ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
-                blobs::answer(remote_tmp, &msg, &mut send)?;
+                blobs::answer(remote_tmp, &msg, &frame, &mut send)?;
             }
         }
     }

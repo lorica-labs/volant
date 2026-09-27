@@ -22,7 +22,22 @@ use serde_json::{Map, Value};
 ///
 /// `PutBlob.staged` did not move it again: no published release speaks 5 (`v0.1.0-alpha.7`
 /// speaks 4), so no agent that speaks 5 without knowing the field exists anywhere.
-pub const PROTOCOL_VERSION: u32 = 5;
+///
+/// 6 sends a blob as its own binary frame after `PutBlob`, deflated when that is shorter, rather
+/// than as base64 inside the JSON. An agent that speaks 5 would read the blob's frame as a
+/// malformed message, drop it, and answer a `put_blob` with no `zip_b64`; the handshake refuses
+/// it first, with the same sentence as every other mismatch.
+pub const PROTOCOL_VERSION: u32 = 6;
+
+/// How the frame after a `PutBlob` carries the blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlobEncoding {
+    /// The bytes themselves.
+    Raw,
+    /// A zlib stream, see [`crate::encoding::deflate`].
+    Deflate,
+}
 
 /// Controller to agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,11 +58,15 @@ pub enum ToAgent {
     HasBlob {
         hash: String,
     },
-    /// The payload itself, base64 exactly as `modify_module` produced it. The agent verifies the
-    /// hash against the decoded bytes before the blob can be used.
+    /// A blob follows: the next frame on the wire is the blob itself, encoded as `encoding` says,
+    /// and never a message. The agent verifies the hash against the decoded bytes before the
+    /// blob can be used.
     PutBlob {
         hash: String,
-        zip_b64: String,
+        /// The decoded length. The agent refuses a frame longer than this, reading it through
+        /// without holding it, and stops inflating once the output would pass it.
+        len: u64,
+        encoding: BlobEncoding,
         /// A file one task stages rather than a payload the link reuses. The agent keeps it out
         /// of its shared cache, in a directory of this connection's own that goes when the
         /// connection does, and `HasBlob` never answers for it: two links to one host account
@@ -442,7 +461,7 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
         assert_eq!(
-            PROTOCOL_VERSION, 5,
+            PROTOCOL_VERSION, 6,
             "additive fields do not move the version"
         );
     }
@@ -594,19 +613,21 @@ mod tests {
     fn the_blob_messages_round_trip() {
         let put = ToAgent::PutBlob {
             hash: "ff".into(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Deflate,
             staged: false,
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&put).unwrap()).unwrap();
         assert_eq!(back, put);
         assert_eq!(
             serde_json::to_string(&put).unwrap(),
-            r#"{"type":"put_blob","hash":"ff","zip_b64":"UEsDBA=="}"#,
-            "a payload carries no staged field"
+            r#"{"type":"put_blob","hash":"ff","len":4,"encoding":"deflate"}"#,
+            "a payload carries no staged field, and no bytes"
         );
         let file = ToAgent::PutBlob {
             hash: "ff".into(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
             staged: true,
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&file).unwrap()).unwrap();
@@ -660,10 +681,11 @@ mod tests {
     /// The version moves with the shape. An agent that does not know `files` would run `copy`
     /// with no source; an agent that does not know `payload` would run a Python task as an
     /// unknown module; an agent that does not know `put_blob` would discard the frame and then
-    /// fail every task of the batch.
+    /// fail every task of the batch; an agent that speaks 5 would take a blob's binary frame for
+    /// a malformed message.
     #[test]
-    fn the_protocol_version_is_five() {
-        assert_eq!(PROTOCOL_VERSION, 5);
+    fn the_protocol_version_is_six() {
+        assert_eq!(PROTOCOL_VERSION, 6);
     }
 
     #[test]

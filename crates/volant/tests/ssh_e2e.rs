@@ -3,6 +3,10 @@
 //! `VOLANT_SSH_TEST_KEY` (a private key accepted by localhost) and `VOLANT_AGENT_DIR` holding
 //! `volant-agent-<triple>`; `just ssh-test` and the `ssh` CI job provide both.
 //!
+//! The native module tests at the end run on the host `VOLANT_TARGET_HOST` names instead, or on
+//! localhost only on a GitHub Actions runner that opts in (see [`Machine`]): they create an
+//! account, a group and a unit.
+//!
 //! Every test gets its own `ansible_remote_tmp`, so the cache the host is asked about is the
 //! one this test put there. Sharing `~/.ansible/tmp` would let one test's upload decide
 //! another's outcome, and a test of the "no agent is cached" path would pass or fail on the
@@ -20,6 +24,15 @@ use std::time::Duration;
 
 #[path = "common/collections.rs"]
 mod collections;
+
+#[cfg(target_os = "linux")]
+#[path = "common/native_compare.rs"]
+mod native_compare;
+
+/// The reasons the native `setup` hands back for a host outside its subset, the agent's own list.
+#[cfg(target_os = "linux")]
+#[path = "../../volant-agent/tests/setup_exits/mod.rs"]
+mod setup_exits;
 
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -741,8 +754,18 @@ fn assert_passwordless_sudo(why: &str) {
 /// [`volant`], ended at a deadline. A plugin is several sub-tasks over one link, and a sub-task
 /// whose result never comes back is a run that waits for ever rather than one that fails.
 fn volant_within(args: &[&str], deadline: Duration) -> Output {
+    volant_env_within(args, &[], deadline)
+}
+
+/// [`volant_within`] with `envs` set on top of this process's environment. `volant` leads a
+/// process group of its own, and the deadline kills the whole group: its `ssh` children too, so
+/// the host's side of the session ends with it rather than running on.
+fn volant_env_within(args: &[&str], envs: &[(&str, &str)], deadline: Duration) -> Output {
+    use std::os::unix::process::CommandExt as _;
     let child = Command::new(env!("CARGO_BIN_EXE_volant"))
+        .process_group(0)
         .args(args)
+        .envs(envs.iter().copied())
         .env("NO_COLOR", "1")
         .env("ANSIBLE_HOST_KEY_CHECKING", "False")
         .stdout(Stdio::piped())
@@ -756,7 +779,9 @@ fn volant_within(args: &[&str], deadline: Duration) -> Output {
     });
     rx.recv_timeout(deadline).map_or_else(
         |_| {
-            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{pid}")])
+                .status();
             panic!("volant did not finish within {deadline:?}, so a sub-task never came back");
         },
         Result::unwrap,
@@ -1293,4 +1318,862 @@ fn ssh_fetch_writes_under_dest_and_nowhere_else() {
             );
         }
     }
+}
+
+/// The machine the native tests run on, and change: the host `VOLANT_TARGET_HOST` names, reached
+/// through the caller's own ssh configuration (`just remote ssh-test` exports it on the
+/// development machine), or localhost over the test key, but only on a GitHub Actions runner
+/// whose workflow opts in with `VOLANT_NATIVE_TESTS_ON_LOCALHOST=1` (the `ssh` job does; the runner
+/// is thrown away with the job). Nowhere else: the play creates an account, a group and a unit,
+/// and a developer's own machine is no place for them, whatever `CI` says.
+#[cfg(target_os = "linux")]
+enum Machine {
+    Named(String),
+    /// The test key and the account, read once here, so nothing that runs later, a cleanup
+    /// during a panic's unwind included, has a lookup left that could panic.
+    Localhost {
+        key: String,
+        user: String,
+    },
+}
+
+#[cfg(target_os = "linux")]
+impl Machine {
+    fn from_env() -> Self {
+        if let Ok(host) = std::env::var("VOLANT_TARGET_HOST")
+            && !host.is_empty()
+        {
+            return Self::Named(host);
+        }
+        let opted_in = std::env::var("VOLANT_NATIVE_TESTS_ON_LOCALHOST").as_deref() == Ok("1");
+        let runner = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true");
+        assert!(
+            opted_in && runner,
+            "the native tests change the machine they run on: set VOLANT_TARGET_HOST to a \
+             throwaway host; localhost is used only on a GitHub Actions runner whose workflow \
+             sets VOLANT_NATIVE_TESTS_ON_LOCALHOST=1 (opt-in {opted_in}, GITHUB_ACTIONS {runner})"
+        );
+        Self::Localhost {
+            key: key(),
+            user: user(),
+        }
+    }
+
+    /// One inventory line: `name` reaching this machine, with its agent under `remote_tmp`.
+    fn line(&self, name: &str, remote_tmp: &str) -> String {
+        match self {
+            Self::Named(host) => {
+                format!("{name} ansible_host={host} ansible_remote_tmp={remote_tmp}")
+            }
+            Self::Localhost { key, user } => format!(
+                "{name} ansible_host=127.0.0.1 ansible_user={user} ansible_ssh_private_key_file={key} ansible_remote_tmp={remote_tmp} ansible_ssh_common_args='-F /dev/null'"
+            ),
+        }
+    }
+
+    /// `ssh` to the machine, ready for its remote command.
+    fn ssh(&self) -> Command {
+        let mut ssh = Command::new("ssh");
+        ssh.args(["-o", "BatchMode=yes"]);
+        match self {
+            Self::Named(host) => ssh.arg(host),
+            Self::Localhost { key, user } => ssh
+                .args(["-F", "/dev/null", "-o", "StrictHostKeyChecking=no"])
+                .args(["-o", "UserKnownHostsFile=/dev/null", "-i", key])
+                .arg(format!("{user}@127.0.0.1")),
+        };
+        ssh
+    }
+
+    /// `script` run on the machine by the login shell, over an `ssh` of its own.
+    fn run(&self, script: &str) -> Output {
+        self.ssh().arg(script).output().unwrap()
+    }
+
+    /// `script` run by `sh` as root on the machine, fed on its standard input. Every failure is
+    /// returned, none panics: [`Cleanup`] calls this while a panic may be unwinding.
+    fn run_as_root(&self, script: &str) -> std::io::Result<Output> {
+        use std::io::Write as _;
+        let mut child = self
+            .ssh()
+            .arg("sudo -n sh -s")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        // Dropped once written, so the remote `sh` reads the end of its script.
+        let written = child
+            .stdin
+            .take()
+            .map_or(Ok(()), |mut stdin| stdin.write_all(script.as_bytes()));
+        let out = child.wait_with_output()?;
+        written.map(|()| out)
+    }
+
+    /// `script`, run as root on the machine when the returned guard drops: on every way out of
+    /// the test, a panic at a deadline included, which kills the controller before the play's
+    /// own `always` can run.
+    fn cleanup(&self, script: String) -> Cleanup<'_> {
+        Cleanup {
+            machine: self,
+            script,
+        }
+    }
+
+    /// [`Machine::cleanup`] of `rm -rf` of the directories a test leaves on the machine; as root,
+    /// since an escalated agent's cache is root's.
+    fn cleanup_dirs(&self, paths: &[&str]) -> Cleanup<'_> {
+        let quoted: Vec<String> = paths.iter().map(|p| format!("'{p}'")).collect();
+        self.cleanup(format!("rm -rf {}\n", quoted.join(" ")))
+    }
+}
+
+/// A cleanup on the machine, run when dropped. It never panics: a drop during a panic's unwind
+/// that panicked again would abort before the first message is shown.
+#[cfg(target_os = "linux")]
+struct Cleanup<'a> {
+    machine: &'a Machine,
+    script: String,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Cleanup<'_> {
+    fn drop(&mut self) {
+        match self.machine.run_as_root(&self.script) {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => eprintln!(
+                "the cleanup on the machine failed, exit {:?}: {}",
+                out.status.code(),
+                both(&out)
+            ),
+            Err(e) => eprintln!("the cleanup on the machine could not run: {e}"),
+        }
+    }
+}
+
+/// A cleanup whose `ssh` cannot even start returns from its drop, saying so, rather than
+/// panicking, which during a panic's unwind would abort the test before its message is shown.
+///
+/// What would make this red: any `unwrap` or `expect` back on the cleanup's path.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cleanup_that_cannot_run_returns_from_its_drop() {
+    // Safety: nextest runs each test in a process of its own, and nothing else here reads the
+    // environment concurrently.
+    unsafe { std::env::set_var("PATH", "/volant-no-such-directory") };
+    let machine = Machine::Named("volant-no-such-host".into());
+    assert!(
+        machine.run_as_root("true").is_err(),
+        "ssh cannot start without a PATH that holds it"
+    );
+    let returned = std::panic::catch_unwind(|| drop(machine.cleanup("true".into())));
+    assert!(returned.is_ok(), "the cleanup's drop panicked");
+}
+
+/// What the native play needs, checked before anything runs so a missing piece fails here, by
+/// name, rather than as a case that happens to differ: the recorded ansible-core as the
+/// controller's Python, and on the machine `sudo -n`, systemd, apt, a Python for the modules, and
+/// none of the throwaway names the play creates and removes.
+#[cfg(target_os = "linux")]
+fn assert_machine_can_run_the_native_play(machine: &Machine) {
+    let recorded = include_str!("golden/ANSIBLE_VERSION").trim();
+    let python = std::env::var("VOLANT_PYTHON").unwrap_or_else(|_| {
+        panic!("VOLANT_PYTHON must name a python with ansible-core {recorded}")
+    });
+    let version = Command::new(&python)
+        .args([
+            "-c",
+            "import ansible.release; print(ansible.release.__version__)",
+        ])
+        .output()
+        .unwrap_or_else(|e| panic!("VOLANT_PYTHON does not run: {e}"));
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        recorded,
+        "VOLANT_PYTHON must be ansible-core {recorded}, the version the native cases were recorded with"
+    );
+    let out = machine.run(
+        r"sudo -n true 2>/dev/null || echo 'passwordless sudo -n'
+test -d /run/systemd/system || echo 'a running systemd'
+command -v apt-get >/dev/null || echo 'apt'
+command -v python3 >/dev/null || echo 'python3'
+getent passwd volantshape >/dev/null && echo 'no volantshape account'
+getent passwd 64999 >/dev/null && echo 'no uid 64999'
+getent group volantgrp >/dev/null && echo 'no volantgrp group'
+getent group volantshape >/dev/null && echo 'no volantshape group'
+getent group 64999 >/dev/null && echo 'no gid 64999'
+test -e /run/systemd/system/volant-e2e.service && echo 'no volant-e2e unit'
+dpkg-query -W volant-nonexistent >/dev/null 2>&1 && echo 'no volant-nonexistent package'
+true",
+    );
+    let missing = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .replace('\n', ", ");
+    assert!(
+        out.status.success() && missing.is_empty(),
+        "the native play needs, on the machine under test: {missing} (ssh exit {:?}: {})",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Every native an agent of this release declares, `systemd_service` being `systemd`'s alias.
+#[cfg(target_os = "linux")]
+const EXPECTED_NATIVES: &[&str] = &[
+    "setup",
+    "stat",
+    "file",
+    "copy",
+    "lineinfile",
+    "apt",
+    "systemd",
+    "systemd_service",
+    "package_facts",
+    "service_facts",
+    "user",
+    "group",
+];
+
+/// The cases of `ssh/natives.yml` that have no recording, each with the recorded case of the same
+/// module whose index entry it is read under (what may move between two runs, what matches a
+/// pattern), and the path its own module must take.
+#[cfg(target_os = "linux")]
+const EXTRA_CASES: &[(&str, &str, &str)] = &[
+    (
+        "systemd-unit-started-same",
+        "systemd-unit-restarted",
+        "native",
+    ),
+    ("setup-virtual", "setup-pkg-mgr", "fallback"),
+    ("stat-sha256", "stat-file", "fallback"),
+    (
+        "systemd-unit-masked-false",
+        "systemd-unit-started",
+        "fallback",
+    ),
+    ("package-facts-all", "package-facts", "fallback"),
+    ("group-non-unique", "group-created", "fallback"),
+];
+
+/// Task keys that are not the module.
+#[cfg(target_os = "linux")]
+const TASK_KEYWORDS: &[&str] = &["name", "register", "ignore_errors", "when", "tags"];
+
+/// `tasks` with a `registered-<case>` task after each case, which shows the registered value (it
+/// keeps `failed`, which a `fatal:` line drops), and the cases tagged `tag` pushed onto `cases`,
+/// each with the index entry it is compared under.
+#[cfg(target_os = "linux")]
+fn registered_cases(
+    tasks: &mut Vec<serde_json::Value>,
+    tags: &serde_json::Value,
+    tag: &str,
+    index: &serde_json::Map<String, serde_json::Value>,
+    cases: &mut Vec<(String, serde_json::Value)>,
+) {
+    use serde_json::{Value, json};
+    for mut task in std::mem::take(tasks) {
+        let inner = task.get("tags").unwrap_or(tags).clone();
+        for part in ["block", "always"] {
+            if let Some(Value::Array(nested)) = task.get_mut(part) {
+                registered_cases(nested, &inner, tag, index, cases);
+            }
+        }
+        let name = task["name"].as_str().unwrap_or_default().to_string();
+        let registered = (task["register"] == "last")
+            .then(|| json!({"name": format!("registered-{name}"), "debug": {"var": "last"}}));
+        if registered.is_some() && inner.as_array().is_some_and(|t| t.contains(&json!(tag))) {
+            let (mut spec, expect) = match EXTRA_CASES.iter().find(|(case, ..)| *case == name) {
+                Some((_, like, expect)) => (index[*like].clone(), *expect),
+                None => (index[&name].clone(), tag),
+            };
+            assert!(
+                spec.is_object(),
+                "{name}: no index entry to compare it under"
+            );
+            assert_eq!(
+                expect, tag,
+                "{name}: the `{tag}` block holds a case that expects {expect}"
+            );
+            let module = task
+                .as_object()
+                .and_then(|t| t.keys().find(|k| !TASK_KEYWORDS.contains(&k.as_str())))
+                .expect("a case names its module")
+                .clone();
+            spec["module"] = module.into();
+            spec["expect"] = expect.into();
+            cases.push((name, spec));
+        }
+        tasks.push(task);
+        tasks.extend(registered);
+    }
+}
+
+/// `ssh/natives.yml` as JSON, as written.
+#[cfg(target_os = "linux")]
+fn native_play_source() -> serde_json::Value {
+    let text = std::fs::read_to_string(fixture("ssh/natives.yml")).unwrap();
+    let docs = volant::yaml::load(&text, "natives.yml").unwrap();
+    volant::yaml::to_json(&docs[0]).unwrap()
+}
+
+/// `ssh/natives.yml` ready to run, and its cases tagged `tag`.
+#[cfg(target_os = "linux")]
+fn native_play(tag: &str) -> (serde_json::Value, Vec<(String, serde_json::Value)>) {
+    let mut play = native_play_source();
+    let index: serde_json::Value =
+        serde_json::from_str(include_str!("golden/native/index.json")).unwrap();
+    let mut cases = Vec::new();
+    registered_cases(
+        play[0]["tasks"].as_array_mut().unwrap(),
+        &serde_json::json!([]),
+        tag,
+        index.as_object().unwrap(),
+        &mut cases,
+    );
+    assert!(
+        !cases.is_empty(),
+        "ssh/natives.yml has no case tagged {tag}"
+    );
+    (play, cases)
+}
+
+/// How one run of the native play goes: natives on (`--facts native`, so `setup` goes to its
+/// native too), natives off (`VOLANT_NATIVE_MODULES=0`), or natives on with no Python on the host
+/// (`ansible_python_interpreter=/bin/false`), where a task a native hands back fails instead of
+/// running its module, so the host holds what the native alone did.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Natives,
+    Python,
+    NoPython,
+}
+
+#[cfg(target_os = "linux")]
+impl Side {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Natives => "natives on",
+            Self::Python => "natives off",
+            Self::NoPython => "natives on, no Python",
+        }
+    }
+}
+
+/// Where one test's runs of the native play live: the local directory with the inventory, the
+/// play and the profiles, and on the machine the play's directory and the agent's `remote_tmp`.
+#[cfg(target_os = "linux")]
+struct NativeRun<'a> {
+    machine: &'a Machine,
+    local: PathBuf,
+    dir: String,
+    remote_tmp: String,
+}
+
+#[cfg(target_os = "linux")]
+impl NativeRun<'_> {
+    /// One run of `play`'s `tag` cases: its output, and its profile for `box`.
+    fn run(
+        &self,
+        play: &serde_json::Value,
+        tag: &str,
+        side: Side,
+    ) -> (Output, native_compare::NativeProfile) {
+        let mut line = self.machine.line("box", &self.remote_tmp);
+        if side == Side::NoPython {
+            line.push_str(" ansible_python_interpreter=/bin/false");
+        }
+        let inv = self.local.join("inventory.ini");
+        std::fs::write(&inv, format!("{line}\n")).unwrap();
+        // Read instead of the account's own `~/.ansible.cfg`, whose `[volant] native_modules` or
+        // `become_user` would change one side's answer.
+        let cfg = self.local.join("ansible.cfg");
+        std::fs::write(&cfg, "").unwrap();
+        let playbook = self.local.join("natives.yml");
+        std::fs::write(&playbook, play.to_string()).unwrap();
+        let profile = self.local.join("profile.jsonl");
+        let _ = std::fs::remove_file(&profile);
+        let dir_var = format!("dir={}", self.dir);
+        let mut args = vec!["playbook", "-vvv", "-i", inv.to_str().unwrap()];
+        args.extend(["--tags", tag, "-e", &dir_var]);
+        if side != Side::Python {
+            args.extend(["--facts", "native"]);
+        }
+        args.push(playbook.to_str().unwrap());
+        let natives = if side == Side::Python { "0" } else { "1" };
+        let out = volant_env_within(
+            &args,
+            &[
+                ("VOLANT_PROFILE_JSON", profile.to_str().unwrap()),
+                ("ANSIBLE_CONFIG", cfg.to_str().unwrap()),
+                ("VOLANT_NATIVE_MODULES", natives),
+            ],
+            Duration::from_secs(280),
+        );
+        (out, native_compare::native_profile(&profile, "box"))
+    }
+}
+
+/// What the native play's `always` removes, as root, run again by a [`Cleanup`] guard on every way
+/// out of the test, with the play's directory and the agent's cache.
+#[cfg(target_os = "linux")]
+fn native_cleanup(dir: &str, remote_tmp: &str) -> String {
+    format!(
+        "systemctl stop volant-e2e.service 2>/dev/null
+rm -f /run/systemd/system/volant-e2e.service
+systemctl daemon-reload
+userdel volantshape 2>/dev/null
+groupdel volantshape 2>/dev/null
+groupdel volantgrp 2>/dev/null
+rm -rf '{dir}' '{remote_tmp}'
+! getent passwd volantshape && ! getent group volantgrp && ! getent group volantshape && test ! -e /run/systemd/system/volant-e2e.service
+"
+    )
+}
+
+/// What the host holds that a native could change, read by `state-before-<case>` and
+/// `state-after-<case>` around each case of the no-Python run: every entry under the play's
+/// directory with its type, mode, owner, size, modification and change times and link target (a
+/// `chmod` to the same mode still moves the change time), each file's content, the accounts, the
+/// unit, the package, and the times of the account and package databases and unit directories.
+#[cfg(target_os = "linux")]
+const HOST_STATE: &str = r"cd '{{ dir }}' && find . -printf '%p %y %m %u %g %s %T@ %C@ %l\n' | LC_ALL=C sort
+find '{{ dir }}' -type f -exec sha256sum {} + | LC_ALL=C sort
+getent passwd volantshape; getent group volantgrp volantshape
+systemctl show volant-e2e -p LoadState -p ActiveState -p SubState -p UnitFileState -p NRestarts -p ExecMainStartTimestampMonotonic
+stat -c '%n %s %Y %Z' /etc/passwd /etc/group /etc/shadow /etc/gshadow /var/lib/dpkg/status /etc/systemd/system /run/systemd/system
+dpkg-query -W -f='${db:Status-Status}\n' volant-nonexistent 2>&1
+true";
+
+/// The play for the no-Python run: each `tag` case alone, its failure ignored, between two reads
+/// of [`HOST_STATE`]; the read-backs dropped, since they need a Python module too.
+#[cfg(target_os = "linux")]
+fn no_python_play(play: &serde_json::Value, tag: &str) -> serde_json::Value {
+    use serde_json::{Value, json};
+    fn walk(tasks: &mut [Value], tag: &str) {
+        for task in tasks.iter_mut() {
+            let tagged = task["tags"]
+                .as_array()
+                .is_some_and(|t| t.contains(&json!(tag)));
+            if tagged && let Some(Value::Array(block)) = task.get_mut("block") {
+                *block = std::mem::take(block)
+                    .into_iter()
+                    .filter(|case| case["register"] == "last")
+                    .flat_map(|mut case| {
+                        let name = case["name"].as_str().unwrap_or_default().to_string();
+                        case["ignore_errors"] = true.into();
+                        [
+                            json!({"name": format!("state-before-{name}"), "shell": HOST_STATE}),
+                            case,
+                            json!({"name": format!("state-after-{name}"), "shell": HOST_STATE}),
+                        ]
+                    })
+                    .collect();
+                continue;
+            }
+            for part in ["block", "always"] {
+                if let Some(Value::Array(nested)) = task.get_mut(part) {
+                    walk(nested, tag);
+                }
+            }
+        }
+    }
+    let mut play = play.clone();
+    walk(play[0]["tasks"].as_array_mut().unwrap(), tag);
+    play
+}
+
+/// The no-Python run of the `tag` cases: each case hands back, its Python module cannot run, and
+/// the host must read the same before and after it. This is the host read between the native and
+/// the Python module that a comparison of whole runs cannot make: a native that changed something
+/// before handing back, even something the module then does again the same way, is seen here.
+#[cfg(target_os = "linux")]
+fn check_no_python_run(
+    run: &NativeRun,
+    raw: &serde_json::Value,
+    tag: &str,
+    cases: &[(String, serde_json::Value)],
+    failures: &mut Vec<String>,
+) {
+    use native_compare::{NativeProfile, check_native_path, failed_tasks, results_by_task};
+    let (out, profile) = run.run(&no_python_play(raw, tag), tag, Side::NoPython);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let side = Side::NoPython.name();
+    if !out.status.success() {
+        failures.push(format!(
+            "{side}: volant exited {:?}, where every failure is ignored:\n{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let results = results_by_task(&stdout);
+    let failed = failed_tasks(&stdout);
+    if !results.contains_key("cleanup") || failed.contains("cleanup") {
+        failures.push(format!(
+            "{side}: the cleanup did not run, or left something behind"
+        ));
+    }
+    let profile = NativeProfile {
+        natives: Some(EXPECTED_NATIVES.iter().map(|n| (*n).to_string()).collect()),
+        tasks: profile.tasks,
+    };
+    for (case, spec) in cases {
+        let mut found = Vec::new();
+        check_native_path(case, spec, &profile, &mut found);
+        failures.extend(found.into_iter().map(|f| format!("{side}: {f}")));
+        // Handed back, the task goes to a Python that cannot run, and fails.
+        if !failed.contains(case) {
+            failures.push(format!(
+                "{side}: case {case} did not fail, so something answered it"
+            ));
+        }
+        let read = |when: &str| {
+            results
+                .get(&format!("state-{when}-{case}"))
+                .and_then(|r| r["stdout"].as_str())
+                .map(str::to_string)
+        };
+        match (read("before"), read("after")) {
+            (Some(before), Some(after)) if before == after => {}
+            (Some(before), Some(after)) => failures.push(format!(
+                "{side}: case {case} changed the host before handing back:\n--- before\n{before}\n--- after\n{after}"
+            )),
+            _ => failures.push(format!("{side}: case {case}: no host read around it")),
+        }
+    }
+}
+
+/// Both runs of the play's `tag` cases, natives on then off, compared case by case: the
+/// registered value with the `invocation` its `-vvv` line shows and what the case left behind
+/// (`_after`), key by key under the case's index entry, once the run's own directory and staged
+/// paths are masked on both sides; each other read-back's `stdout`; and the path each case took,
+/// from the profile. Natives on, the agent must declare every native of this release and each case
+/// takes its index's path; natives off, every case takes `python`. Both runs must exit 0 and run
+/// their cleanup.
+#[cfg(target_os = "linux")]
+fn compare_native_runs(tag: &str) -> Vec<String> {
+    use native_compare::{
+        NativeProfile, check_native_path, compare_native, failed_tasks, keep_live, native_result,
+        redact_staged, replace_in_strings, results_by_task, same_names,
+    };
+    let machine = Machine::from_env();
+    // Before the machine checks: another run holding the lock is between creating the accounts
+    // and removing them.
+    let _lock = native_compare::native_lock();
+    assert_machine_can_run_the_native_play(&machine);
+    let pid = std::process::id();
+    let run = NativeRun {
+        machine: &machine,
+        local: tmp(&format!("natives-{tag}")),
+        dir: format!("/var/tmp/volant-e2e-{tag}-{pid}"),
+        remote_tmp: format!("/var/tmp/volant-e2e-{tag}-remote-{pid}"),
+    };
+    // After the machine checks, which make sure none of the names it removes was there before.
+    let cleanup = machine.cleanup(native_cleanup(&run.dir, &run.remote_tmp));
+    let (play, cases) = native_play(tag);
+    let mut failures = Vec::new();
+    if tag == "fallback" {
+        check_no_python_run(&run, &native_play_source(), tag, &cases, &mut failures);
+    }
+    let mut runs = Vec::new();
+    for side in [Side::Natives, Side::Python] {
+        let (out, profile) = run.run(&play, tag, side);
+        let side = side.name();
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        // Every failing case carries `ignore_errors`, so a sound run exits 0 and runs its
+        // cleanup, which fails if anything the play created is left.
+        if !out.status.success() {
+            failures.push(format!(
+                "{side}: volant exited {:?}, where every failure is ignored:\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        let results = results_by_task(&stdout);
+        if !results.contains_key("cleanup") || failed_tasks(&stdout).contains("cleanup") {
+            failures.push(format!(
+                "{side}: the cleanup did not run, or left something behind"
+            ));
+        }
+        runs.push((results, profile));
+    }
+    drop(cleanup);
+    let _ = std::fs::remove_dir_all(&run.local);
+    let [
+        (native_results, native_profile),
+        (python_results, python_profile),
+    ] = <[_; 2]>::try_from(runs).ok().expect("two runs");
+    let declared = native_profile.natives.clone().unwrap_or_default();
+    for name in EXPECTED_NATIVES {
+        if !declared.iter().any(|d| d == name) {
+            failures.push(format!("the agent declares no {name} native"));
+        }
+    }
+    // Every case is held to its index's path whatever the agent declared: a native the agent
+    // leaves out answers through Python, which `check_native_path` would otherwise accept.
+    let native_profile = NativeProfile {
+        natives: Some(EXPECTED_NATIVES.iter().map(|n| (*n).to_string()).collect()),
+        tasks: native_profile.tasks,
+    };
+    let python_profile = NativeProfile {
+        natives: Some(Vec::new()),
+        tasks: python_profile.tasks,
+    };
+    let masked = |mut value: serde_json::Value| {
+        redact_staged(&mut value, &format!("{}/", run.remote_tmp));
+        replace_in_strings(&mut value, &run.dir, "<golden-tmp>");
+        value
+    };
+    for (case, spec) in &cases {
+        let (mut python, mut native) = match (
+            native_result(case, spec, &python_results),
+            native_result(case, spec, &native_results),
+        ) {
+            (Ok(python), Ok(native)) => (masked(python), masked(native)),
+            (python, native) => {
+                failures.push(format!(
+                    "case {case}: natives off {:?}, natives on {:?}",
+                    python.err(),
+                    native.err()
+                ));
+                continue;
+            }
+        };
+        if spec["compare"] == "live" {
+            same_names(case, &python, &native, &mut failures);
+            keep_live(&mut python);
+            keep_live(&mut native);
+        }
+        match (python.as_object(), native.as_object()) {
+            (Some(want), Some(got)) => compare_native(case, spec, "", want, got, &mut failures),
+            _ => failures.push(format!(
+                "case {case}: natives off {python}, natives on {native}"
+            )),
+        }
+        check_native_path(case, spec, &native_profile, &mut failures);
+        let mut forced = Vec::new();
+        check_native_path(case, spec, &python_profile, &mut forced);
+        failures.extend(
+            forced
+                .into_iter()
+                .map(|f| format!("natives off, every task forced to python: {f}")),
+        );
+    }
+    // The read-backs that are no case's `_after`: a package's or an account's state.
+    for (task, python) in &python_results {
+        if task.starts_with("after-") && python.get("stdout").is_some() {
+            let native = native_results.get(task).and_then(|r| r.get("stdout"));
+            if native != python.get("stdout") {
+                failures.push(format!(
+                    "{task}: natives off read {}, natives on {native:?}",
+                    python["stdout"]
+                ));
+            }
+        }
+    }
+    failures
+}
+
+/// Every native answers inside its subset what its Python module answers, on a real host, under
+/// `become`: `ssh/natives.yml`'s `native` cases, run once natives on and once off.
+///
+/// What would make this red: a native answering a key, a value, a message or a mode the Python
+/// module does not, or leaving a file, a unit or an account otherwise; a native disabled, or
+/// handing back where its index says it answers (the path); an agent that answers natively a
+/// task the controller told it to run in Python (`force_python`, natives off).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_natives_match_python_on_a_real_host() {
+    let failures = compare_native_runs("native");
+    assert!(
+        failures.is_empty(),
+        "{} difference(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Just outside its subset, each native hands the task back and the Python module answers, with
+/// the host in the state Python alone leaves it: `ssh/natives.yml`'s `fallback` cases (a link, a
+/// package no archive has, `remote_src`, `backrefs`, a password, ...), run once natives on and
+/// once off, their read-backs compared. `service_facts` has no case: it takes no argument, and
+/// hands back only on a host outside its subset.
+///
+/// What would make this red: a native answering outside its subset (the path, or a result that
+/// differs), or changing the host before it hands back, so that the Python module meets another
+/// state and answers or leaves something else.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_a_native_falls_back_before_touching_the_host() {
+    let failures = compare_native_runs("fallback");
+    assert!(
+        failures.is_empty(),
+        "{} difference(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// The play `copy`'s native was measured on: a directory, twenty changed `copy` tasks, the
+/// directory removed.
+#[cfg(target_os = "linux")]
+const TWENTY_COPIES: &str = r#"- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - name: directory
+          file: {path: "{{ dir }}", state: directory, mode: "0755"}
+        - name: copy
+          copy: {content: "{{ item }}\n", dest: "{{ dir }}/copy-{{ item }}.txt", mode: "0644"}
+          loop: "{{ range(20) | list }}"
+      always:
+        - name: cleanup
+          file: {path: "{{ dir }}", state: absent}
+"#;
+
+/// Twenty `copy` tasks that each change a file are twenty native `copy` sub-tasks on a real host.
+/// The time the profile gives them is printed, not asserted.
+///
+/// What would make this red: the native `copy` disabled, or handing back where the plugin stages
+/// its source on this host (a staging directory on another file system, for instance).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_twenty_copies_take_the_native_path() {
+    let machine = Machine::from_env();
+    let local = tmp("copies");
+    let pid = std::process::id();
+    let dir = format!("/var/tmp/volant-e2e-copies-{pid}");
+    let remote_tmp = format!("/var/tmp/volant-e2e-copies-remote-{pid}");
+    let inv = local.join("inventory.ini");
+    std::fs::write(&inv, format!("{}\n", machine.line("box", &remote_tmp))).unwrap();
+    let playbook = local.join("copies.yml");
+    std::fs::write(&playbook, TWENTY_COPIES).unwrap();
+    let profile = local.join("profile.jsonl");
+    let dir_var = format!("dir={dir}");
+    let cleanup = machine.cleanup_dirs(&[&dir, &remote_tmp]);
+    let out = volant_env_within(
+        &[
+            "playbook",
+            "-i",
+            inv.to_str().unwrap(),
+            "-e",
+            &dir_var,
+            playbook.to_str().unwrap(),
+        ],
+        &[("VOLANT_PROFILE_JSON", profile.to_str().unwrap())],
+        Duration::from_secs(300),
+    );
+    drop(cleanup);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    // The directory, the loop over the twenty files, and the removal.
+    assert_recap(&text, "box", 3);
+    let profile = native_compare::native_profile(&profile, "box");
+    let _ = std::fs::remove_dir_all(&local);
+    let copies: Vec<&serde_json::Value> = profile
+        .tasks
+        .iter()
+        .filter(|line| {
+            line["task"] == "copy" && line["module"].as_str().is_some_and(|m| m.ends_with("copy"))
+        })
+        .collect();
+    let paths: Vec<&str> = copies
+        .iter()
+        .map(|line| line["path"].as_str().unwrap_or("unreported"))
+        .collect();
+    assert_eq!(
+        paths, ["native"; 20],
+        "the paths of the twenty copy sub-tasks: {copies:?}"
+    );
+    let mut micros: Vec<u64> = copies
+        .iter()
+        .filter_map(|line| line["micros"].as_u64())
+        .collect();
+    micros.sort_unstable();
+    eprintln!(
+        "native copy: median {} us over {} sub-tasks",
+        micros.get(micros.len() / 2).copied().unwrap_or_default(),
+        micros.len()
+    );
+}
+
+/// Two inventory names for one machine are two hosts, each with a shared connection of its own:
+/// one control master per name, left in the control directory for `ControlPersist` after the run.
+/// `XDG_RUNTIME_DIR` points that directory under a short `/tmp` path of this test's own, where a
+/// socket path stays under the 104 bytes a Unix socket allows.
+///
+/// What would make this red: no sharing (no socket), or one master keyed by the address alone and
+/// shared by both names (one socket).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_one_connection_per_inventory_host() {
+    use std::os::unix::fs::{DirBuilderExt as _, FileTypeExt as _};
+    let machine = Machine::from_env();
+    let local = tmp("control");
+    let pid = std::process::id();
+    let runtime = PathBuf::from(format!("/tmp/vcm-{pid}"));
+    let _ = std::fs::remove_dir_all(&runtime);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&runtime)
+        .unwrap();
+    let remote_tmp = format!("/var/tmp/volant-e2e-control-remote-{pid}");
+    let inv = local.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!(
+            "{}\n{}\n",
+            machine.line("one", &remote_tmp),
+            machine.line("two", &remote_tmp)
+        ),
+    )
+    .unwrap();
+    let playbook = local.join("stat.yml");
+    std::fs::write(
+        &playbook,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - stat: {path: /}\n",
+    )
+    .unwrap();
+    let cleanup = machine.cleanup_dirs(&[&remote_tmp]);
+    let out = volant_env_within(
+        &[
+            "playbook",
+            "-i",
+            inv.to_str().unwrap(),
+            playbook.to_str().unwrap(),
+        ],
+        &[("XDG_RUNTIME_DIR", runtime.to_str().unwrap())],
+        Duration::from_secs(120),
+    );
+    let sockets: Vec<PathBuf> = std::fs::read_dir(runtime.join("volant-cm"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|t| t.is_socket()))
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    for socket in &sockets {
+        let _ = Command::new("ssh")
+            .arg("-o")
+            .arg(format!("ControlPath={}", socket.display()))
+            .args(["-O", "exit", "unused"])
+            .output();
+    }
+    drop(cleanup);
+    let _ = std::fs::remove_dir_all(&runtime);
+    let _ = std::fs::remove_dir_all(&local);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        sockets.len(),
+        2,
+        "one control master per inventory name, found {sockets:?}; with VOLANT_TARGET_HOST, an \
+         ssh configuration that already multiplexes that host keeps Volant's own out:\n{text}"
+    );
 }

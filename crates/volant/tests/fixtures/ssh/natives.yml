@@ -1,0 +1,479 @@
+# Every native module, inside its subset (tag `native`) and just outside it (tag `fallback`), for
+# `ssh_natives_match_python_on_a_real_host` and `ssh_a_native_falls_back_before_touching_the_host`.
+# A case is a task registered as `last`, named after its entry in `tests/golden/native/index.json`
+# (or in `EXTRA_CASES` in ssh_e2e.rs), whose arguments it keeps, with `dir` in place of the
+# recording's directory. The `after-*` tasks read back what the case left, as the recording does.
+#
+# Everything the play changes has a throwaway name: `dir` under /var/tmp, the runtime unit
+# `volant-e2e` under /run, the `volantshape` account and the `volantgrp` group, and the package
+# `volant-nonexistent`, which no archive has. The `always` section removes all of it.
+- hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - block:
+        - name: fixture
+          tags: [always]
+          shell: |
+            set -e
+            rm -rf '{{ dir }}'
+            mkdir -m 0755 '{{ dir }}'
+            printf 'hello\n' > '{{ dir }}/f.txt'
+            chmod 0644 '{{ dir }}/f.txt'
+            ln -s f.txt '{{ dir }}/l'
+            printf 'a=1\nx=1\na=2\nx=2\nz=0\n' > '{{ dir }}/m.conf'
+            printf 'a=1\n' > '{{ dir }}/b.conf'
+            chmod 0644 '{{ dir }}/m.conf' '{{ dir }}/b.conf'
+            printf '[Unit]\nDescription=Volant end-to-end throwaway unit\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n' > /run/systemd/system/volant-e2e.service
+            systemctl daemon-reload
+
+        - tags: [native]
+          block:
+            - name: setup-pkg-mgr
+              setup: {gather_subset: ["!all"], filter: [ansible_pkg_mgr]}
+              register: last
+            - name: setup-service-mgr
+              setup: {gather_subset: ["!all"], filter: [ansible_service_mgr]}
+              register: last
+
+            - name: stat-file
+              stat: {path: "{{ dir }}/f.txt"}
+              register: last
+            - name: stat-dir
+              stat: {path: "{{ dir }}"}
+              register: last
+            - name: stat-link-follow
+              stat: {path: "{{ dir }}/l", follow: true}
+              register: last
+            - name: stat-link-nofollow
+              stat: {path: "{{ dir }}/l"}
+              register: last
+            - name: stat-missing
+              stat: {path: "{{ dir }}/nope"}
+              register: last
+            - name: stat-plugin
+              stat: {path: "{{ dir }}/f.txt", follow: false, get_checksum: true, checksum_algorithm: sha1}
+              register: last
+            - name: stat-bare
+              stat: {path: "{{ dir }}/f.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: last
+
+            - name: file-dir-created
+              file: {path: "{{ dir }}/a/b", state: directory, mode: "0755"}
+              register: last
+            - name: after-stat-file-dir-created
+              stat: {path: "{{ dir }}/a/b", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-dir-same
+              file: {path: "{{ dir }}/a/b", state: directory, mode: 493}
+              register: last
+            - name: after-stat-file-dir-same
+              stat: {path: "{{ dir }}/a/b", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-dest-alias
+              file: {dest: "{{ dir }}/a/b", state: directory}
+              register: last
+            - name: after-stat-file-dest-alias
+              stat: {path: "{{ dir }}/a/b", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-dir-symbolic
+              file: {path: "{{ dir }}/a/b", state: directory, mode: "u=rwx,g=rx,o="}
+              register: last
+            - name: after-stat-file-dir-symbolic
+              stat: {path: "{{ dir }}/a/b", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-state-file-same
+              file: {path: "{{ dir }}/f.txt", state: file}
+              register: last
+            - name: after-stat-file-state-file-same
+              stat: {path: "{{ dir }}/f.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-file-state-file-same
+              slurp: {src: "{{ dir }}/f.txt"}
+              when: after.stat.isreg | default(false)
+            - name: file-state-file-mode
+              file: {path: "{{ dir }}/f.txt", state: file, mode: "0600"}
+              register: last
+            - name: after-stat-file-state-file-mode
+              stat: {path: "{{ dir }}/f.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-file-state-file-mode
+              slurp: {src: "{{ dir }}/f.txt"}
+              when: after.stat.isreg | default(false)
+            - name: file-state-file-missing
+              file: {path: "{{ dir }}/missing", state: file}
+              register: last
+              ignore_errors: true
+            - name: after-stat-file-state-file-missing
+              stat: {path: "{{ dir }}/missing", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-dir-over-file
+              file: {path: "{{ dir }}/f.txt", state: directory}
+              register: last
+              ignore_errors: true
+            - name: after-stat-file-dir-over-file
+              stat: {path: "{{ dir }}/f.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-file-dir-over-file
+              slurp: {src: "{{ dir }}/f.txt"}
+              when: after.stat.isreg | default(false)
+            - name: file-owner-unknown
+              file: {path: "{{ dir }}/f.txt", owner: volant-no-such-user}
+              register: last
+              ignore_errors: true
+            - name: after-stat-file-owner-unknown
+              stat: {path: "{{ dir }}/f.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-file-owner-unknown
+              slurp: {src: "{{ dir }}/f.txt"}
+              when: after.stat.isreg | default(false)
+            - name: file-absent-missing
+              file: {path: "{{ dir }}/gone", state: absent}
+              register: last
+            - name: after-stat-file-absent-missing
+              stat: {path: "{{ dir }}/gone", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: file-absent-present
+              file: {path: "{{ dir }}/a", state: absent}
+              register: last
+            - name: after-stat-file-absent-present
+              stat: {path: "{{ dir }}/a", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+
+            - name: copy-module-created
+              copy: {content: "one\n", dest: "{{ dir }}/c.txt", mode: "0644"}
+              register: last
+            - name: after-stat-copy-module-created
+              stat: {path: "{{ dir }}/c.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-copy-module-created
+              slurp: {src: "{{ dir }}/c.txt"}
+              when: after.stat.isreg | default(false)
+            - name: copy-module-modified-backup
+              copy: {content: "two\n", dest: "{{ dir }}/c.txt", backup: true}
+              register: last
+            - name: after-stat-copy-module-modified-backup
+              stat: {path: "{{ dir }}/c.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-copy-module-modified-backup
+              slurp: {src: "{{ dir }}/c.txt"}
+              when: after.stat.isreg | default(false)
+            - name: after-backup-copy-module-modified-backup
+              slurp: {src: "{{ last.backup_file }}"}
+            - name: copy-module-dest-link
+              copy: {content: "one\n", dest: "{{ dir }}/l"}
+              register: last
+            - name: after-stat-copy-module-dest-link
+              stat: {path: "{{ dir }}/l", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-copy-module-dest-link
+              slurp: {src: "{{ dir }}/l"}
+              when: after.stat.isreg | default(false)
+            - name: copy-module-checksum
+              copy: {content: "k\n", dest: "{{ dir }}/k.txt", checksum: "0000"}
+              register: last
+              ignore_errors: true
+            - name: after-stat-copy-module-checksum
+              stat: {path: "{{ dir }}/k.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: copy-module-no-dir
+              copy: {content: "x\n", dest: "{{ dir }}/nodir/x.txt"}
+              register: last
+              ignore_errors: true
+            - name: after-stat-copy-module-no-dir
+              stat: {path: "{{ dir }}/nodir/x.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: copy-module-validate-fail
+              copy: {content: "", dest: "{{ dir }}/v.txt", validate: "test -s %s"}
+              register: last
+              ignore_errors: true
+            - name: after-stat-copy-module-validate-fail
+              stat: {path: "{{ dir }}/v.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+
+            - name: lineinfile-missing
+              lineinfile: {path: "{{ dir }}/l.conf", line: a=1}
+              register: last
+              ignore_errors: true
+            - name: after-stat-lineinfile-missing
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: lineinfile-created
+              lineinfile: {path: "{{ dir }}/l.conf", line: a=1, create: true, mode: "0644"}
+              register: last
+            - name: after-stat-lineinfile-created
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-created
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-same
+              lineinfile: {path: "{{ dir }}/l.conf", line: a=1, create: true, mode: "0644"}
+              register: last
+            - name: after-stat-lineinfile-same
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-same
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-appended
+              lineinfile: {path: "{{ dir }}/l.conf", regexp: "^b=", line: b=2}
+              register: last
+            - name: after-stat-lineinfile-appended
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-appended
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-insertafter
+              lineinfile: {path: "{{ dir }}/l.conf", insertafter: "^a=", line: c=4}
+              register: last
+            - name: after-stat-lineinfile-insertafter
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-insertafter
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-search-string
+              lineinfile: {path: "{{ dir }}/l.conf", search_string: c=4, line: c=5}
+              register: last
+            - name: after-stat-lineinfile-search-string
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-search-string
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-replaced-backup
+              lineinfile: {path: "{{ dir }}/l.conf", regexp: "^a=", line: a=3, backup: true}
+              register: last
+            - name: after-stat-lineinfile-replaced-backup
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-replaced-backup
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: after-backup-lineinfile-replaced-backup
+              slurp: {src: "{{ last.backup }}"}
+            - name: lineinfile-mode
+              lineinfile: {path: "{{ dir }}/l.conf", regexp: "^a=", line: a=3, mode: "0600"}
+              register: last
+            - name: after-stat-lineinfile-mode
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-mode
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-validate-ok
+              lineinfile: {path: "{{ dir }}/l.conf", line: d=6, validate: "test -s %s"}
+              register: last
+            - name: after-stat-lineinfile-validate-ok
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-validate-ok
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-validate-fail
+              lineinfile: {path: "{{ dir }}/l.conf", line: e=7, validate: "false %s"}
+              register: last
+              ignore_errors: true
+            - name: after-stat-lineinfile-validate-fail
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-validate-fail
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-absent
+              lineinfile: {path: "{{ dir }}/l.conf", regexp: "^d=", state: absent}
+              register: last
+            - name: after-stat-lineinfile-absent
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-absent
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-absent-same
+              lineinfile: {path: "{{ dir }}/l.conf", regexp: "^d=", state: absent}
+              register: last
+            - name: after-stat-lineinfile-absent-same
+              stat: {path: "{{ dir }}/l.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-absent-same
+              slurp: {src: "{{ dir }}/l.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-dir
+              lineinfile: {path: "{{ dir }}", line: x}
+              register: last
+              ignore_errors: true
+            - name: after-stat-lineinfile-dir
+              stat: {path: "{{ dir }}", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: lineinfile-last-match
+              lineinfile: {path: "{{ dir }}/m.conf", regexp: "^a=", line: a=3}
+              register: last
+            - name: after-stat-lineinfile-last-match
+              stat: {path: "{{ dir }}/m.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-last-match
+              slurp: {src: "{{ dir }}/m.conf"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-insertafter-last
+              lineinfile: {path: "{{ dir }}/m.conf", line: y=1, insertafter: "^x="}
+              register: last
+            - name: after-stat-lineinfile-insertafter-last
+              stat: {path: "{{ dir }}/m.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-insertafter-last
+              slurp: {src: "{{ dir }}/m.conf"}
+              when: after.stat.isreg | default(false)
+
+            # A cache younger than ten years is fresh: the native answers, and nothing is fetched.
+            - name: apt-present-installed
+              apt: {name: bash, state: present}
+              register: last
+            - name: apt-present-list
+              apt: {name: [bash, coreutils], state: present}
+              register: last
+            - name: apt-absent-missing
+              apt: {name: volant-nonexistent, state: absent}
+              register: last
+            - name: apt-present-update-fresh
+              apt: {name: bash, update_cache: true, cache_valid_time: 315360000}
+              register: last
+            - name: apt-update-fresh
+              apt: {update_cache: true, cache_valid_time: 315360000}
+              register: last
+
+            - name: systemd-daemon-reload
+              systemd: {daemon_reload: true}
+              register: last
+            - name: systemd-missing-unit
+              systemd: {name: volant-nonexistent, state: started}
+              register: last
+              ignore_errors: true
+            - name: systemd-unit-started
+              systemd: {name: volant-e2e, state: started}
+              register: last
+            - name: after-unit-systemd-unit-started
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+            - name: systemd-unit-started-same
+              systemd_service: {name: volant-e2e, state: started}
+              register: last
+            - name: after-unit-systemd-unit-started-same
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+            - name: systemd-unit-restarted
+              systemd: {name: volant-e2e, state: restarted}
+              register: last
+            - name: after-unit-systemd-unit-restarted
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+            - name: systemd-unit-reloaded
+              systemd: {name: volant-e2e, state: reloaded}
+              register: last
+            - name: after-unit-systemd-unit-reloaded
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+            - name: systemd-unit-stopped
+              systemd: {name: volant-e2e, state: stopped}
+              register: last
+            - name: after-unit-systemd-unit-stopped
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+
+            - name: package-facts
+              package_facts: {manager: auto}
+              register: last
+            - name: service-facts
+              service_facts: {}
+              register: last
+
+            - name: group-created
+              group: {name: volantgrp, gid: 64999}
+              register: last
+            - name: group-same
+              group: {name: volantgrp, gid: 64999}
+              register: last
+            - name: user-created
+              user: {name: volantshape, uid: 64999, group: volantgrp, shell: /bin/sh, home: /nonexistent-volantshape, create_home: false}
+              register: last
+            - name: user-same
+              user: {name: volantshape, uid: 64999, group: volantgrp, shell: /bin/sh, home: /nonexistent-volantshape, create_home: false}
+              register: last
+            - name: user-shell
+              user: {name: volantshape, uid: 64999, group: volantgrp, shell: /bin/bash, home: /nonexistent-volantshape, create_home: false}
+              register: last
+            - name: user-removed
+              user: {name: volantshape, state: absent}
+              register: last
+            - name: user-absent-missing
+              user: {name: volantshape, state: absent}
+              register: last
+            - name: group-removed
+              group: {name: volantgrp, state: absent}
+              register: last
+
+        - tags: [fallback]
+          block:
+            - name: setup-virtual
+              setup: {gather_subset: ["!all", virtual], filter: [ansible_virtualization_type]}
+              register: last
+            - name: stat-sha256
+              stat: {path: "{{ dir }}/f.txt", checksum_algorithm: sha256}
+              register: last
+            - name: file-link
+              file: {path: "{{ dir }}/l2", src: "{{ dir }}/f.txt", state: link}
+              register: last
+            - name: after-stat-file-link
+              stat: {path: "{{ dir }}/l2", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: copy-module-remote-src
+              copy: {src: "{{ dir }}/f.txt", dest: "{{ dir }}/r.txt", remote_src: true}
+              register: last
+            - name: after-stat-copy-module-remote-src
+              stat: {path: "{{ dir }}/r.txt", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-copy-module-remote-src
+              slurp: {src: "{{ dir }}/r.txt"}
+              when: after.stat.isreg | default(false)
+            - name: lineinfile-backrefs
+              lineinfile: {path: "{{ dir }}/b.conf", regexp: "^(a)=.*", line: "\\1=10", backrefs: true}
+              register: last
+            - name: after-stat-lineinfile-backrefs
+              stat: {path: "{{ dir }}/b.conf", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
+            - name: after-content-lineinfile-backrefs
+              slurp: {src: "{{ dir }}/b.conf"}
+              when: after.stat.isreg | default(false)
+            - name: apt-present-unknown
+              apt: {name: volant-nonexistent, state: present}
+              register: last
+              ignore_errors: true
+            - name: after-package-apt-present-unknown
+              shell: dpkg-query -W -f='${db:Status-Status}' volant-nonexistent || true
+            - name: systemd-unit-masked-false
+              systemd: {name: volant-e2e, state: started, masked: false}
+              register: last
+            - name: after-unit-systemd-unit-masked-false
+              command: systemctl show volant-e2e -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description
+            - name: package-facts-all
+              package_facts: {manager: auto, strategy: all}
+              register: last
+            - name: group-non-unique
+              group: {name: volantgrp, gid: 64999, non_unique: true}
+              register: last
+            - name: after-account-group-non-unique
+              shell: getent group volantgrp || true
+            - name: user-password
+              user: {name: volantshape, password: "!", create_home: false}
+              register: last
+            - name: after-account-user-password
+              shell: "getent passwd volantshape | cut -d: -f1,5,6,7 || true"
+
+      always:
+        - name: cleanup
+          tags: [always]
+          shell: |
+            systemctl stop volant-e2e.service 2>/dev/null
+            rm -f /run/systemd/system/volant-e2e.service
+            systemctl daemon-reload
+            userdel volantshape 2>/dev/null
+            groupdel volantshape 2>/dev/null
+            groupdel volantgrp 2>/dev/null
+            rm -rf '{{ dir }}'
+            ! getent passwd volantshape && ! getent group volantgrp && ! getent group volantshape && test ! -e '{{ dir }}'

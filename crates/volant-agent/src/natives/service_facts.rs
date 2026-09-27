@@ -171,16 +171,12 @@ mod imp {
         })?;
         // A deadline or a cancel on either side wins over the other side's hand-back: handing
         // back would run the module again, past a deadline already spent.
-        let (sysv, systemd) = match (sysv, systemd) {
-            (Ok(sysv), Ok(systemd)) => (sysv, systemd),
-            (Err(stop @ (Stop::TimedOut | Stop::Cancelled)), _)
-            | (_, Err(stop @ (Stop::TimedOut | Stop::Cancelled)))
-            | (Err(stop), _)
-            | (_, Err(stop)) => return Err(stop),
-        };
+        if let Err(stop @ (Stop::TimedOut | Stop::Cancelled)) = systemd {
+            return Err(stop);
+        }
         // `all_services.update(...)`, SysV first.
         let mut services = Map::new();
-        for (name, service) in sysv.into_iter().chain(systemd) {
+        for (name, service) in sysv?.into_iter().chain(systemd?) {
             services.insert(name, Value::Object(service));
         }
         if services.is_empty() {

@@ -566,14 +566,13 @@ mod imp {
                 return Err(format!("the source line {line:?} is incomplete"));
             };
             let mut archs = None;
-            let mut enabled = true;
             let mut trust = [None, None];
+            // apt reads no `enabled` option on a one-line entry: `[enabled=no]` still fetches.
             for option in options {
                 let (key, value) = option.split_once('=').unwrap_or((&option, ""));
                 let key = key.to_ascii_lowercase();
                 match key.as_str() {
                     "arch" => archs = Some(value.split(',').map(str::to_string).collect()),
-                    "enabled" => enabled = value != "no",
                     "signed-by" => trust[0] = Some(value.to_string()),
                     "trusted" => trust[1] = Some(value.to_string()),
                     "target" | "inrelease-path" | "snapshot" | "include" | "exclude" => {
@@ -585,18 +584,51 @@ mod imp {
                     _ => {}
                 }
             }
-            if enabled {
-                entries.push(Entry {
-                    binary,
-                    uri: (*uri).to_string(),
-                    suite: (*suite).to_string(),
-                    components: components.iter().map(|c| (*c).to_string()).collect(),
-                    archs,
-                    trust,
-                });
-            }
+            entries.push(Entry {
+                binary,
+                uri: (*uri).to_string(),
+                suite: (*suite).to_string(),
+                components: components.iter().map(|c| (*c).to_string()).collect(),
+                archs,
+                trust,
+            });
         }
         Ok(())
+    }
+
+    /// apt's `StringToBool` without a default: an integer 0 or 1 as `strtol` reads the whole
+    /// text, then its words for no and yes in any case. Anything else takes the caller's
+    /// default in apt, which the native does not guess: `None`.
+    pub(super) fn apt_bool(text: &str) -> Option<bool> {
+        let (negative, body) = match text.strip_prefix(['+', '-']) {
+            Some(rest) => (text.starts_with('-'), rest),
+            None => (false, text),
+        };
+        // Rust's parsers take a sign of their own, which `strtol` would not after the first.
+        let number = if body.starts_with(['+', '-']) {
+            None
+        } else if let Some(hex) = body.strip_prefix("0x").or(body.strip_prefix("0X")) {
+            u128::from_str_radix(hex, 16)
+                .ok()
+                .filter(|_| !hex.starts_with(['+', '-']))
+        } else if body.len() > 1 && body.starts_with('0') {
+            u128::from_str_radix(body, 8).ok()
+        } else {
+            body.parse::<u128>().ok()
+        };
+        match number {
+            Some(0) => return Some(false),
+            Some(1) if !negative => return Some(true),
+            _ => {}
+        }
+        let word = text.to_ascii_lowercase();
+        if ["no", "false", "without", "off", "disable"].contains(&word.as_str()) {
+            Some(false)
+        } else if ["yes", "true", "with", "on", "enable"].contains(&word.as_str()) {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// The deb822 form of `*.sources`: one entry per type, URI and suite of each paragraph.
@@ -628,8 +660,24 @@ mod imp {
                     value.split_whitespace().map(str::to_string).collect()
                 })
             };
-            if field(stanza, "Enabled").is_some_and(|value| value.eq_ignore_ascii_case("no")) {
-                continue;
+            if let Some(value) = field(stanza, "Enabled") {
+                match apt_bool(value) {
+                    Some(false) => continue,
+                    Some(true) => {}
+                    None => {
+                        return Err(format!(
+                            "the source field Enabled: {value} is not a boolean"
+                        ));
+                    }
+                }
+            }
+            // apt refuses the whole list over a paragraph missing one of these, and the module
+            // then fails.
+            if let Some(missing) = ["Types", "URIs", "Suites"]
+                .into_iter()
+                .find(|name| words(name).is_empty())
+            {
+                return Err(format!("a deb822 source paragraph has no {missing}"));
             }
             let archs = field(stanza, "Architectures").map(|_| words("Architectures"));
             let trust =
@@ -1463,6 +1511,16 @@ Description: time zone and daylight-saving time data
                         );
                     }),
                 ),
+                (
+                    "a deb822 source paragraph has no URIs",
+                    Box::new(|tree| {
+                        tree.edit(
+                            "/etc/apt/sources.list.d/ubuntu.sources",
+                            "URIs: http://archive.ubuntu.com/ubuntu/\nSuites: noble noble-updates",
+                            "Suites: noble noble-updates",
+                        );
+                    }),
+                ),
             ];
             for (reason, break_host) in cases {
                 let tree = Tree::new(HOST);
@@ -1481,6 +1539,86 @@ Description: time zone and daylight-saving time data
                 other => panic!("APT_CONFIG answered: {other:?}"),
             };
             assert!(given.contains("APT_CONFIG"), "{given}");
+        }
+
+        /// `Enabled` read as apt reads it (measured on apt 2.8.3 and 3.2.0): a deb822 source
+        /// is disabled by any of `StringToBool`'s false spellings, so its leftover lists are
+        /// stale and hand back; a value apt would read with its default hands back; a one-line
+        /// entry has no `enabled` option at all and is still read.
+        ///
+        /// What would make this red, one each: only `no` read as disabled (a disabled PPA's
+        /// leftover list then gives its origin to a status-only version); an unknown value
+        /// guessed; `[enabled=no]` read as disabled on a one-line entry (its lists then hand
+        /// back as stale).
+        #[test]
+        fn enabled_is_read_as_apt_reads_it() {
+            for (text, expected) in [
+                ("0", Some(false)),
+                ("00", Some(false)),
+                ("-0", Some(false)),
+                ("0x0", Some(false)),
+                ("1", Some(true)),
+                ("+1", Some(true)),
+                ("0X1", Some(true)),
+                ("-1", None),
+                ("2", None),
+                ("08", None),
+                ("0x", None),
+                ("++1", None),
+                ("0x+1", None),
+                ("No", Some(false)),
+                ("FALSE", Some(false)),
+                ("without", Some(false)),
+                ("off", Some(false)),
+                ("disable", Some(false)),
+                ("yes", Some(true)),
+                ("True", Some(true)),
+                ("with", Some(true)),
+                ("ON", Some(true)),
+                ("enable", Some(true)),
+                ("maybe", None),
+                ("", None),
+            ] {
+                assert_eq!(apt_bool(text), expected, "{text:?}");
+            }
+            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+            let as_deb822 = |tree: &Tree, enabled: &str| {
+                tree.write("/etc/apt/sources.list.d/example.list", "");
+                tree.write(
+                    "/etc/apt/sources.list.d/example.sources",
+                    &format!(
+                        "Types: deb\nURIs: https://repo.example.org/debian\nSuites: stable\n\
+                         Components: main\nSigned-By: /usr/share/keyrings/example.gpg\n\
+                         Enabled: {enabled}\n"
+                    ),
+                );
+            };
+            for disabled in ["false", "0", "off", "Disable", "NO"] {
+                let tree = Tree::new(HOST);
+                as_deb822(&tree, disabled);
+                let given = tree.hands_back(json!({}));
+                assert!(
+                    given.contains("is a list no configured source names"),
+                    "{disabled}: {given}"
+                );
+            }
+            for enabled in ["yes", "1", "on"] {
+                let tree = Tree::new(HOST);
+                as_deb822(&tree, enabled);
+                let result = tree.answer(json!({})).unwrap();
+                assert_eq!(result["ansible_facts"]["packages"], reference, "{enabled}");
+            }
+            let tree = Tree::new(HOST);
+            as_deb822(&tree, "maybe");
+            assert!(tree.hands_back(json!({})).contains("is not a boolean"));
+            let tree = Tree::new(HOST);
+            tree.edit(
+                "/etc/apt/sources.list.d/example.list",
+                "deb [signed-by=",
+                "deb [enabled=no signed-by=",
+            );
+            let result = tree.answer(json!({})).unwrap();
+            assert_eq!(result["ansible_facts"]["packages"], reference);
         }
 
         /// `apt` named ahead of `auto` is tried first, so a host with `apk` is still answered.

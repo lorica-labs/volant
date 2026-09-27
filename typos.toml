@@ -14,3 +14,5 @@ extend-exclude = [
 # Keys of the reference's `stat` result, which the native `stat` returns under the same names.
 woth = "woth"
 writeable = "writeable"
+# Puppet's fact tool, whose prefix ansible-core's `setup` filter treats apart.
+facter = "facter"

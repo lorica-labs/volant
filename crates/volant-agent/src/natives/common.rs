@@ -18,7 +18,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-pub use super::setup::{Clock, Stop, run as run_program, run_captured};
+pub use super::setup::{Clock, Stop, run as run_program};
 
 /// `Stop::TimedOut` once the task's deadline has passed, `Stop::Cancelled` once the controller
 /// has cancelled it: for a loop of the native's own that can run long.

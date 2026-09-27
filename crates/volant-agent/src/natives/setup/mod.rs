@@ -873,16 +873,19 @@ pub fn run(
     program: &Path,
     args: &[&str],
 ) -> Result<Option<(i32, String)>, Stop> {
-    Ok(run_captured(env, clock, program, args)?.map(|(rc, stdout, _)| (rc, stdout)))
+    Ok(run_output(env, clock, program, args)?
+        .ok()
+        .map(|(rc, stdout, _)| (rc, stdout)))
 }
 
-/// `run`, with the standard error as well.
-pub fn run_captured(
+/// [`run`], with the standard error as well, and, for a program that could not be started, the
+/// `errno` Python's `OSError` would carry.
+pub fn run_output(
     env: &BTreeMap<String, String>,
     clock: Clock,
     program: &Path,
     args: &[&str],
-) -> Result<Option<(i32, String, String)>, Stop> {
+) -> Result<Result<(i32, String, String), i32>, Stop> {
     let timeout = match clock.deadline {
         Some(deadline) => Some(
             deadline
@@ -905,7 +908,7 @@ pub fn run_captured(
         Run::Cancelled => Err(Stop::Cancelled),
         Run::Done(result) if result.0.contains_key("timedout") => Err(Stop::TimedOut),
         // Only a command that started has a `start`.
-        Run::Done(result) if result.0.contains_key("start") => Ok(Some((
+        Run::Done(result) if result.0.contains_key("start") => Ok(Ok((
             result.0["rc"]
                 .as_i64()
                 .and_then(|rc| i32::try_from(rc).ok())
@@ -913,7 +916,10 @@ pub fn run_captured(
             result.0["stdout"].as_str().unwrap_or_default().to_string(),
             result.0["stderr"].as_str().unwrap_or_default().to_string(),
         ))),
-        Run::Done(_) => Ok(None),
+        Run::Done(result) => Ok(Err(result.0["rc"]
+            .as_i64()
+            .and_then(|rc| i32::try_from(rc).ok())
+            .unwrap_or(1))),
     }
 }
 

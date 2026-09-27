@@ -25,9 +25,10 @@ use serde_json::{Map, Value, json};
 use super::common::{
     Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, add_path_info, bool_param, check,
     check_names, clock, flag, group_account, module_args, native_run, null, os_error,
-    owner_account, parse_mode, path_param, run_captured, selinux_enabled, set_fs_attributes_diff,
-    str_param, umask,
+    owner_account, parse_mode, path_param, selinux_enabled, set_fs_attributes_diff, str_param,
+    umask,
 };
+use super::setup::run_output;
 use super::{Native, NativeRun};
 use crate::modules::Context;
 
@@ -798,15 +799,24 @@ fn write_changes(
             .split_first()
             .ok_or_else(|| fail(format!("validate names no program: {validate}"), None))?;
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        match run_captured(&BTreeMap::new(), clock, Path::new(program), &args)? {
-            Some((0, _, _)) => {}
-            Some((rc, _, err)) => {
+        match run_output(&BTreeMap::new(), clock, Path::new(program), &args)? {
+            Ok((0, _, _)) => {}
+            Ok((rc, _, err)) => {
                 return Err(fail(
                     format!("failed to validate: rc:{rc} error:{err}"),
                     None,
                 ));
             }
-            None => return Err(fail(format!("{program} cannot be run"), None)),
+            // Checked up front; only a program removed since then gets here. `run_command`'s
+            // answer to the `OSError`, its `cmd` without `_clean_args`' masking.
+            Err(errno) => {
+                let mut fail = message("Error executing command.".into());
+                fail.insert("rc".into(), errno.into());
+                fail.insert("stdout".into(), "".into());
+                fail.insert("stderr".into(), "".into());
+                fail.insert("cmd".into(), argv.join(" ").into());
+                return Err(Stop::Fail(fail));
+            }
         }
     }
     atomic_move(&tmp.0, path).map_err(|err| fail(err, None))

@@ -241,8 +241,9 @@ pub fn native_profile(path: &std::path::Path, host: &str) -> NativeProfile {
 }
 
 /// Whether a `package_facts` hand-back is the host's apt sources naming a scheme other than
-/// http(s), which the native does not read (`the source <uri> is not http or https`), rather
-/// than the native failing on a host it should answer.
+/// http(s), which the native does not read (`the source scheme <scheme> is not http or https`,
+/// or `the source URI is not http or https` when the part before `:` is not a plain scheme),
+/// rather than the native failing on a host it should answer.
 #[cfg(target_os = "linux")]
 pub fn package_facts_host_exit(reason: &str) -> bool {
     reason.starts_with("the source ")

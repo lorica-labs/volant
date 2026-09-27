@@ -463,7 +463,7 @@
               user: {name: volantshape, password: "!", create_home: false}
               register: last
             - name: after-account-user-password
-              shell: getent passwd volantshape | cut -d: -f1,5,6,7 || true
+              shell: "getent passwd volantshape | cut -d: -f1,5,6,7 || true"
 
       always:
         - name: cleanup

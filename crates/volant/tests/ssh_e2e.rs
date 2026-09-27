@@ -1659,6 +1659,12 @@ fn compare_native_runs(tag: &str) -> Vec<String> {
             failures.push(format!("the agent declares no {name} native"));
         }
     }
+    // Every case is held to its index's path whatever the agent declared: a native the agent
+    // leaves out answers through Python, which `check_native_path` would otherwise accept.
+    let native_profile = NativeProfile {
+        natives: Some(EXPECTED_NATIVES.iter().map(|n| (*n).to_string()).collect()),
+        tasks: native_profile.tasks,
+    };
     let python_profile = NativeProfile {
         natives: Some(Vec::new()),
         tasks: python_profile.tasks,
@@ -1697,7 +1703,11 @@ fn compare_native_runs(tag: &str) -> Vec<String> {
         check_native_path(case, spec, &native_profile, &mut failures);
         let mut forced = Vec::new();
         check_native_path(case, spec, &python_profile, &mut forced);
-        failures.extend(forced.into_iter().map(|f| format!("natives off: {f}")));
+        failures.extend(
+            forced
+                .into_iter()
+                .map(|f| format!("natives off, every task forced to python: {f}")),
+        );
     }
     // The read-backs that are no case's `_after`: a package's or an account's state.
     for (task, python) in &python_results {
@@ -1808,8 +1818,8 @@ fn ssh_twenty_copies_take_the_native_path() {
     machine.remove(&[&dir, &remote_tmp]);
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    // The directory, twenty files and the removal.
-    assert_recap(&text, "box", 22);
+    // The directory, the loop over the twenty files, and the removal.
+    assert_recap(&text, "box", 3);
     let profile = native_compare::native_profile(&profile, "box");
     let _ = std::fs::remove_dir_all(&local);
     let copies: Vec<&serde_json::Value> = profile

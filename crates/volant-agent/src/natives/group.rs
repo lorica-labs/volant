@@ -179,7 +179,7 @@ mod linux {
         let id = os_release
             .lines()
             .filter_map(|line| line.strip_prefix("ID="))
-            .last()
+            .next_back()
             .map(|id| id.trim_matches(['"', '\'']).to_lowercase());
         if !matches!(id.as_deref(), Some("debian" | "ubuntu")) {
             return Err("the distribution is outside Debian and Ubuntu".into());

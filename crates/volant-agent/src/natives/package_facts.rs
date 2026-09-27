@@ -675,7 +675,7 @@ mod imp {
             // then fails.
             if let Some(missing) = ["Types", "URIs", "Suites"]
                 .into_iter()
-                .find(|name| words(name).is_empty())
+                .find(|&name| words(name).is_empty())
             {
                 return Err(format!("a deb822 source paragraph has no {missing}"));
             }

@@ -244,6 +244,8 @@ pub const NATIVE_ENABLED: &[&str] = &[
     "systemd",
     "systemd_service",
     "apt",
+    "user",
+    "group",
     "package_facts",
     "service_facts",
     "lineinfile",

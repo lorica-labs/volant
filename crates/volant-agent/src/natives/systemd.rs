@@ -30,12 +30,39 @@ pub const NATIVE: Native = Native {
     aliases: &["systemd_service"],
     enabled: true,
     run: |args, context, cancelled| {
-        native_run(
-            answer(args, context, clock(context, cancelled), "/etc"),
-            context,
-        )
+        let answer = match answer(args, context, clock(context, cancelled), "/etc") {
+            Ok(result) | Err(Exit::Failed(result)) => Ok(result),
+            Err(Exit::Stop(stop)) => Err(stop),
+        };
+        native_run(answer, context)
     },
 };
+
+/// How an answer ends before the module's last line: handed back, out of time, cancelled, or
+/// with the module's own failure from deep inside a step.
+#[derive(Debug)]
+enum Exit {
+    Stop(Stop),
+    Failed(Map<String, Value>),
+}
+
+impl From<Stop> for Exit {
+    fn from(stop: Stop) -> Exit {
+        Exit::Stop(stop)
+    }
+}
+
+impl From<String> for Exit {
+    fn from(reason: String) -> Exit {
+        Exit::Stop(Stop::HandBack(reason))
+    }
+}
+
+impl From<&str> for Exit {
+    fn from(reason: &str) -> Exit {
+        Exit::Stop(Stop::HandBack(reason.to_string()))
+    }
+}
 
 /// `systemd_service`'s `argument_spec` in ansible-core 2.19.12.
 const SPEC: &[ArgSpec] = &[
@@ -152,10 +179,9 @@ fn request<'a>(
     if params["scope"] != "system" {
         return Err("a scope other than system is left to the module".into());
     }
+    // `required_one_of` never fires: the defaults of `daemon_reload` and `daemon_reexec` are set
+    // before it counts the keys given, so a task with only a `name` reads the unit's status.
     let daemon_reload = flag("daemon_reload")?;
-    if state.is_none() && enabled.is_none() && !daemon_reload {
-        return Err("the module refuses a task that asks for nothing".into());
-    }
     if (state.is_some() || enabled.is_some()) && unit.is_none() {
         return Err("the module refuses state or enabled without a name".into());
     }
@@ -190,25 +216,48 @@ struct Host<'a> {
 
 impl Host<'_> {
     /// `module.run_command(...)` on `systemctl args...`: exit code, output, error output.
-    fn systemctl(&self, args: &[&str]) -> Result<(i32, String, String), Stop> {
-        self.run(&self.systemctl, args)
+    fn systemctl(&self, reply: &Reply, args: &[&str]) -> Result<(i32, String, String), Exit> {
+        self.run(reply, &self.systemctl, args)
     }
 
-    fn run(&self, program: &Path, args: &[&str]) -> Result<(i32, String, String), Stop> {
-        setup::run_output(&self.env, self.clock, program, args)?
-            .ok_or_else(|| Stop::from(format!("{} could not be started", program.display())))
+    /// A program that cannot be started is handed back while nothing has changed; after that it
+    /// fails the way `run_command` fails when `Popen` raises.
+    fn run(
+        &self,
+        reply: &Reply,
+        program: &Path,
+        args: &[&str],
+    ) -> Result<(i32, String, String), Exit> {
+        match setup::run_output(&self.env, self.clock, program, args)? {
+            Ok(ran) => Ok(ran),
+            Err(_) if !reply.touched => {
+                Err(format!("{} could not be started", program.display()).into())
+            }
+            Err(errno) => {
+                let program = program.to_string_lossy();
+                let words: Vec<&str> = std::iter::once(program.as_ref())
+                    .chain(args.iter().copied())
+                    .collect();
+                let mut failure = reply.fail("Error executing command.".into());
+                failure.insert("rc".into(), Value::from(errno));
+                failure.insert("stdout".into(), Value::from(""));
+                failure.insert("stderr".into(), Value::from(""));
+                failure.insert("cmd".into(), Value::from(clean_args(&words)));
+                Err(Exit::Failed(failure))
+            }
+        }
     }
 
     /// `is_chroot(module)`: `/` against pid 1's root, or, when that cannot be read (not root),
     /// the inode of `/` against the file system's own root inode.
-    fn is_chroot(&self) -> Result<bool, Stop> {
+    fn is_chroot(&self, reply: &Reply) -> Result<bool, Exit> {
         let root = std::fs::metadata("/").map_err(|err| format!("/ cannot be read: {err}"))?;
         if let Ok(init) = std::fs::metadata("/proc/1/root/.") {
             return Ok(root.ino() != init.ino() || root.dev() != init.dev());
         }
         let mut fs_root_ino = 2;
         if let Some(stat) = setup::bin_path(&Root::real(), &self.path, "stat") {
-            let (_, out, _) = self.run(&stat, &["-f", "--format=%T", "/"])?;
+            let (_, out, _) = self.run(reply, &stat, &["-f", "--format=%T", "/"])?;
             if out.contains("btrfs") {
                 fs_root_ino = 256;
             } else if out.contains("xfs") {
@@ -262,7 +311,7 @@ fn answer(
     context: &Context,
     clock: Clock,
     etc: &str,
-) -> Result<Map<String, Value>, Stop> {
+) -> Result<Map<String, Value>, Exit> {
     let invocation = invocation(SPEC, args);
     let params = invocation["module_args"].as_object().unwrap().clone();
     let request = request(args, &params)?;
@@ -284,16 +333,15 @@ fn answer(
         .ok_or("the module finds no systemctl")?;
     // The module splits `"<systemctl> <verb> '<unit>'"` with `shlex`: a path `shlex.quote` leaves
     // alone reads back as itself.
-    if !systemctl.to_str().is_some_and(|text| {
-        text.chars()
-            .all(|c| c.is_alphanumeric() || "_@%+=:,./-".contains(c))
-    }) {
+    if !systemctl
+        .to_str()
+        .is_some_and(|text| shlex_quote(text) == text)
+    {
         return Err("the module reads this systemctl path differently".into());
     }
     let mut env = context.environment.clone();
-    if var("XDG_RUNTIME_DIR").is_none() {
-        let euid = unsafe { libc::geteuid() };
-        env.insert("XDG_RUNTIME_DIR".into(), format!("/run/user/{euid}"));
+    if let Some(dir) = xdg_default(&var, unsafe { libc::geteuid() }) {
+        env.insert("XDG_RUNTIME_DIR".into(), dir);
     }
     let host = Host {
         systemctl,
@@ -313,10 +361,10 @@ fn answer(
     let mut status = Map::new();
 
     if request.daemon_reload {
-        let (rc, _, err) = host.systemctl(&["daemon-reload"])?;
+        let (rc, _, err) = host.systemctl(&reply, &["daemon-reload"])?;
         if rc != 0 {
             // A reload that failed changed nothing: handing back is still safe here.
-            if host.is_chroot()? {
+            if host.is_chroot(&reply)? {
                 return Err("daemon-reload failed in a chroot".into());
             }
             return Ok(reply.fail(format!("failure {rc} during daemon-reload: {err}")));
@@ -328,7 +376,7 @@ fn answer(
         let is_initd = Path::new(&format!("{etc}/init.d/{unit}")).exists();
         let mut is_systemd = false;
         // Read before any action: the module reports the unit as it found it.
-        let (rc, out, err) = host.systemctl(&["show", unit])?;
+        let (rc, out, err) = host.systemctl(&reply, &["show", unit])?;
         if rc == 0 && !(request_was_ignored(&out) || request_was_ignored(&err)) {
             if !out.is_empty() {
                 status = parse_systemctl_show(&out);
@@ -349,28 +397,32 @@ fn answer(
                 Some((base, _)) => format!("{base}@"),
                 None => unit.to_string(),
             };
-            let (_, out, _) = host.systemctl(&["list-unit-files", &format!("{search}*")])?;
+            let (_, out, _) =
+                host.systemctl(&reply, &["list-unit-files", &format!("{search}*")])?;
             is_systemd = out.contains(&search);
-            let (_, out, _) = host.systemctl(&["is-active", unit])?;
+            let (_, out, _) = host.systemctl(&reply, &["is-active", unit])?;
             status.insert(
                 "ActiveState".into(),
                 Value::from(out.trim_end_matches('\n')),
             );
         } else {
             reply.outside("systemctl show failed")?;
-            let (_, out, _) = host.systemctl(&["is-enabled", unit])?;
+            let (_, out, _) = host.systemctl(&reply, &["is-enabled", unit])?;
             if VALID_ENABLED_STATES.contains(&py_strip(&out)) {
                 is_systemd = true;
             } else {
-                let (rc, _, _) = host.systemctl(&["list-unit-files", unit])?;
+                let (rc, _, _) = host.systemctl(&reply, &["list-unit-files", unit])?;
                 if rc == 0 {
                     is_systemd = true;
                 } else {
                     // `module.run_command(systemctl, check_rc=True)`.
-                    let (rc, out, err) = host.systemctl(&[])?;
+                    let (rc, out, err) = host.systemctl(&reply, &[])?;
                     if rc != 0 {
-                        let mut failure = reply.fail(err.trim_end_matches(py_space).to_string());
-                        failure.insert("cmd".into(), Value::from(host.systemctl.to_str()));
+                        // `stderr` is still bytes there: `rstrip()` strips ASCII whitespace.
+                        let msg = err.trim_end_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
+                        let mut failure = reply.fail(msg.to_string());
+                        let systemctl = host.systemctl.to_string_lossy();
+                        failure.insert("cmd".into(), Value::from(clean_args(&[&systemctl])));
                         failure.insert("rc".into(), Value::from(rc));
                         failure.insert("stdout".into(), Value::from(out));
                         failure.insert("stderr".into(), Value::from(err));
@@ -394,7 +446,7 @@ fn answer(
             if !found {
                 return Ok(reply.fail(reply_missing(unit)));
             }
-            let (rc, out, _) = host.systemctl(&["is-enabled", unit, "-l"])?;
+            let (rc, out, _) = host.systemctl(&reply, &["is-enabled", unit, "-l"])?;
             let mut enabled = false;
             if rc == 0 {
                 // Enabled for the module unless systemd says it is so only for now, through
@@ -414,7 +466,7 @@ fn answer(
             if enabled != wanted {
                 result.insert("changed".into(), Value::Bool(true));
                 reply.touched = true;
-                let (rc, out, err) = host.systemctl(&[action, unit])?;
+                let (rc, out, err) = host.systemctl(&reply, &[action, unit])?;
                 if rc != 0 {
                     return Ok(reply.fail(format!("Unable to {action} service {unit}: {out}{err}")));
                 }
@@ -444,12 +496,12 @@ fn answer(
                 if let Some(action) = action {
                     result.insert("changed".into(), Value::Bool(true));
                     reply.touched = true;
-                    let (rc, _, err) = host.systemctl(&[action, unit])?;
+                    let (rc, _, err) = host.systemctl(&reply, &[action, unit])?;
                     if rc != 0 {
                         return Ok(reply.fail(format!("Unable to {action} service {unit}: {err}")));
                     }
                 }
-            } else if host.is_chroot()? {
+            } else if host.is_chroot(&reply)? {
                 reply.outside("the host is a chroot")?;
                 reply.warnings.push(
                     "Target is a chroot or systemd is offline. This can lead to false positives \
@@ -466,6 +518,58 @@ fn answer(
 
     result.insert("status".into(), Value::Object(status));
     Ok(reply.finish(result))
+}
+
+/// The `XDG_RUNTIME_DIR` the module sets when `os.getenv` finds none, even an empty one.
+fn xdg_default(var: impl Fn(&str) -> Option<String>, euid: u32) -> Option<String> {
+    var("XDG_RUNTIME_DIR")
+        .is_none()
+        .then(|| format!("/run/user/{euid}"))
+}
+
+/// `AnsibleModule._clean_args(args)`, the `cmd` of a failed `run_command`: the word after one
+/// that starts `pass` (after up to two `-`) masked, or the part after its `=`, then each word
+/// `shlex.quote`d. `heuristic_log_sanitize` is not applied: it only rewrites `user:pass@` URLs.
+fn clean_args(words: &[&str]) -> String {
+    let mut clean = Vec::new();
+    let mut masked = false;
+    for word in words {
+        if masked {
+            masked = false;
+            clean.push("********".to_string());
+            continue;
+        }
+        let bare = word
+            .strip_prefix("--")
+            .or_else(|| word.strip_prefix('-'))
+            .unwrap_or(word);
+        if bare.starts_with("pass") {
+            if let Some(at) = word.find('=') {
+                clean.push(format!("{}=********", &word[..at]));
+                continue;
+            }
+            masked = true;
+        }
+        clean.push((*word).to_string());
+    }
+    clean
+        .iter()
+        .map(|word| shlex_quote(word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `shlex.quote`.
+fn shlex_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\"'\"'"))
+    }
 }
 
 /// `fail_if_missing(module, found, unit, msg='host')`'s message.
@@ -600,7 +704,7 @@ mod tests {
             format!("{}/etc", self.0)
         }
 
-        fn answer(&self, args: Value) -> Result<Map<String, Value>, Stop> {
+        fn answer(&self, args: Value) -> Result<Map<String, Value>, Exit> {
             answer(
                 args.as_object().unwrap(),
                 &self.context(),
@@ -703,7 +807,7 @@ esac"#;
         assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
     }
 
-    /// `systemd-enabled-only`, through the `systemd_service` spelling's own `name`.
+    /// `systemd-enabled-only`: `enabled` alone reads the unit and changes nothing.
     #[test]
     fn enabled_alone_reads_and_does_not_start() {
         let fake = Fake::new("enabled-only", CRON);
@@ -917,12 +1021,14 @@ esac"#,
             json!({"name": 1, "state": "started"}),
             json!({"name": "u", "service": "u", "state": "started"}),
             json!({"name": "u", "state": "started", "other": 1}),
-            json!({"name": "u"}),
             json!({"state": "started"}),
         ] {
             let fake = Fake::new("refused", CRON);
             assert!(
-                matches!(fake.answer(refused.clone()), Err(Stop::HandBack(_))),
+                matches!(
+                    fake.answer(refused.clone()),
+                    Err(Exit::Stop(Stop::HandBack(_)))
+                ),
                 "{refused}"
             );
             assert!(fake.calls().is_empty(), "{refused}");
@@ -942,7 +1048,7 @@ esac"#,
             assert!(
                 matches!(
                     fake.answer(json!({"name": "u", "state": "started"})),
-                    Err(Stop::HandBack(_))
+                    Err(Exit::Stop(Stop::HandBack(_)))
                 ),
                 "{body}"
             );
@@ -1051,7 +1157,7 @@ esac"#,
                     unbounded(),
                     &fake.etc()
                 ),
-                Err(Stop::HandBack(_))
+                Err(Exit::Stop(Stop::HandBack(_)))
             ));
         }
         assert!(fake.calls().is_empty());
@@ -1067,6 +1173,108 @@ esac"#,
         )
         .unwrap();
         assert_eq!(fake.calls(), ["show u", "xdg=/run/user/4242"]);
+    }
+
+    /// A task with only a `name` reads the unit and answers its status, and an empty one answers
+    /// nothing: the module's `required_one_of` counts the defaults it has just set.
+    ///
+    /// What would make this red: the old "nothing asked" hand-back; any command but `show`.
+    #[test]
+    fn a_status_only_task_reads_the_unit() {
+        let fake = Fake::new("status-only", CRON);
+        let answer = fake.answer(json!({"name": "cron"})).unwrap();
+        assert_eq!(answer["changed"], false);
+        assert_eq!(answer["name"], "cron");
+        assert!(answer.get("state").is_none() && answer.get("enabled").is_none());
+        assert_eq!(
+            answer["status"],
+            Value::Object(parse_systemctl_show(SHOW_CRON))
+        );
+        assert_eq!(fake.calls(), ["show cron"]);
+
+        let fake = Fake::new("empty", CRON);
+        let answer = fake.answer(json!({})).unwrap();
+        assert_eq!(
+            Value::Object(answer),
+            json!({"changed": false, "name": null, "status": {},
+                   "invocation": invocation(SPEC, &Map::new())})
+        );
+        assert!(fake.calls().is_empty());
+    }
+
+    /// The aliases answer like the canonical names, and `invocation` carries both spellings.
+    ///
+    /// What would make this red: an alias read as unknown (a hand-back), or dropped from
+    /// `module_args`, or the canonical key left at its default.
+    #[test]
+    fn the_aliases_answer_and_are_kept_in_the_invocation() {
+        for alias in ["unit", "service"] {
+            let fake = Fake::new(alias, CRON);
+            let task = format!(r#"{{"{alias}": "cron", "enabled": true}}"#);
+            let answer = fake.answer(serde_json::from_str(&task).unwrap()).unwrap();
+            let module_args = &answer["invocation"]["module_args"];
+            assert_eq!(module_args[alias], "cron");
+            assert_eq!(module_args["name"], "cron");
+            assert_eq!(answer["name"], "cron");
+            assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
+        }
+        let fake = Fake::new("reload-alias", "");
+        let answer = fake.answer(json!({"daemon-reload": true})).unwrap();
+        let module_args = &answer["invocation"]["module_args"];
+        assert_eq!(module_args["daemon-reload"], true);
+        assert_eq!(module_args["daemon_reload"], true);
+        assert_eq!(fake.calls(), ["daemon-reload"]);
+    }
+
+    /// `XDG_RUNTIME_DIR` is set only when `os.getenv` finds none; an empty one stays.
+    #[test]
+    fn xdg_runtime_dir_is_added_only_when_missing() {
+        assert_eq!(xdg_default(|_| None, 42), Some("/run/user/42".into()));
+        assert_eq!(xdg_default(|_| Some(String::new()), 42), None);
+        assert_eq!(xdg_default(|_| Some("/run/user/7".into()), 42), None);
+    }
+
+    /// A `systemctl` that cannot be started after the reload changed the host fails the task as
+    /// `run_command` does when `Popen` raises, instead of handing a half-done task back.
+    ///
+    /// What would make this red: the hand-back kept after an effect, which runs the reload
+    /// again under Python; a wrong `rc`, `cmd` or missing `stdout`/`stderr`.
+    #[test]
+    fn a_systemctl_that_cannot_start_after_a_change_fails_like_the_module() {
+        let fake = Fake::new("vanishes", r#"[ "$1" = daemon-reload ] && rm -f "$0""#);
+        let task = json!({"name": "u", "state": "started", "daemon_reload": true});
+        let answer = fake.answer(task.clone()).unwrap();
+        let systemctl = format!("{}/bin/systemctl", fake.0);
+        assert_eq!(
+            Value::Object(answer),
+            json!({
+                "failed": true, "msg": "Error executing command.", "rc": 2,
+                "cmd": format!("{systemctl} show u"), "stdout": "", "stderr": "",
+                "invocation": invocation(SPEC, &args(task)),
+            })
+        );
+        assert_eq!(fake.calls(), ["daemon-reload"]);
+    }
+
+    /// `_clean_args`: `shlex.quote` on each word, and the word after a `pass...` one masked.
+    #[test]
+    fn a_failed_command_is_named_like_the_module_names_it() {
+        assert_eq!(
+            clean_args(&["/usr/bin/systemctl", "list-unit-files", "u@*"]),
+            "/usr/bin/systemctl list-unit-files 'u@*'"
+        );
+        assert_eq!(
+            clean_args(&["systemctl", "is-enabled", "passwd.service", "-l"]),
+            "systemctl is-enabled passwd.service '********'"
+        );
+        assert_eq!(
+            clean_args(&["--password=x", "a b", "it's", ""]),
+            "'--password=********' 'a b' 'it'\"'\"'s' ''"
+        );
+        assert_eq!(
+            clean_args(&["/opt/\u{e9}/systemctl"]),
+            "'/opt/\u{e9}/systemctl'"
+        );
     }
 
     /// A `systemctl` that hangs (a D-Bus that does not answer) ends at the task's `timeout`, and

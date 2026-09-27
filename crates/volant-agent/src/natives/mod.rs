@@ -12,7 +12,20 @@
 #[cfg(unix)]
 pub mod common;
 
+#[cfg(unix)]
 mod apt;
+/// The native `apt` reads a Linux host's files; elsewhere the task goes to the Python module.
+#[cfg(not(unix))]
+mod apt {
+    use crate::natives::{Native, NativeRun};
+
+    pub const NATIVE: Native = Native {
+        name: "apt",
+        aliases: &[],
+        enabled: false,
+        run: |_, _, _| NativeRun::Fallback("the native apt reads a Linux host".into()),
+    };
+}
 mod copy;
 #[cfg(unix)]
 mod file;

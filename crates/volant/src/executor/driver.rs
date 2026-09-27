@@ -1763,8 +1763,14 @@ pub(super) async fn drive_host(
                     record_registered(&mut vars, task, &targets, &results);
                     // Only here, and never on the `run_local` path above: this is where a
                     // managed host's own words arrive, and `set_fact` writes its own facts with
-                    // the trust each of them earned.
-                    record_facts(&mut vars, &targets, &results)
+                    // the trust each of them earned. Under `delegate_facts` they are the
+                    // delegate's, as on the controller-side path; the registered result stays
+                    // with the host the task was written for.
+                    let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
+                        (true, Some(to)) => std::slice::from_ref(to),
+                        _ => &targets[..],
+                    };
+                    record_facts(&mut vars, fact_hosts, &results)
                 };
                 // A name, never a value, so there is nothing in it for `no_log` to hide.
                 for key in removed {

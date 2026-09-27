@@ -6204,6 +6204,33 @@ fn limit_narrows_before_the_batches_are_cut() {
     );
 }
 
+/// A module run on the delegate under `delegate_facts` files its facts under the delegate, and
+/// its registered result under the host the task was written for. Measured on ansible-core
+/// 2.19.12 with this fixture: `ok: [h1 -> h3]`, then `"msg": "True none True"`.
+///
+/// What would make this red: the facts of a remote result filed under the delegating host, as
+/// they were before (`"none True True"`).
+#[test]
+fn a_remote_result_under_delegate_facts_lands_on_the_delegate() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/delegate-facts-remote.yml"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("ok: [h1 -> h3]"), "{text}");
+    assert!(text.contains(r#""msg": "True none True""#), "{text}");
+}
+
 /// `run_once`, `delegate_to` and `delegate_facts` on the campaign's own fixture.
 ///
 /// Every line below is what ansible-core 2.19.12 printed for this playbook against this

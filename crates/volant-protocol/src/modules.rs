@@ -233,6 +233,11 @@ pub const NATIVE_CANDIDATES: &[&str] = &[
     "service_facts",
 ];
 
+/// The candidates this release's agent runs natively, aliases included: what the modules page
+/// says of them. The agent checks its own table against this list, so the page cannot promise a
+/// native the agent does not have, nor miss one it has.
+pub const NATIVE_ENABLED: &[&str] = &["setup", "stat", "file"];
+
 const fn honoured(name: &'static str) -> ModuleArg {
     ModuleArg {
         name,
@@ -606,6 +611,8 @@ pub fn documentation_table() -> String {
 
 Every other module ansible-core ships is a Python module, and Volant runs it as one. The host needs a Python 3 interpreter, and the controller needs ansible-core to build the payload. [The warm Python path](/internals/python/) explains how it works.
 
+Some of these modules also have a native version in the agent. It answers when the task's arguments stay within what it implements. Otherwise, before it changes anything on the host, it hands the task to the Python module. The table below says which modules have one.
+
 Modules from collections installed on the controller run the same way. The controller's ansible-core resolves each name before the first connection, and Volant never installs a collection. If a play or one of its roles names a module from a collection that is not installed, the run stops before it reaches a host and prints the `ansible-galaxy collection install` command that fixes it. Volant refuses, by name, a module that its collection runs through an action plugin, because it does not run a collection's action plugins. A module that only a dynamic include brings in is refused when a host reaches the include, which then fails for that host. Volant keeps a collection's module under its full name, so that module never stands in for a builtin module or for another collection's module with the same short name.
 
 The exceptions are the modules ansible-core runs through an action plugin that Volant does not have yet. What the playbook asks for lives in the plugin, not in the module, so sending the module alone would do something else and call it a success. Those modules are not supported yet: Volant names them before the run reaches a host. Fact gathering still works: a play's `gather_facts` runs the `setup` module directly.
@@ -622,6 +629,9 @@ The exceptions are the modules ansible-core runs through an action plugin that V
         }
         let how = if BUILTIN_ACTION_PLUGINS.contains(m) {
             format!("not supported yet: needs the `{m}` action plugin")
+        } else if NATIVE_ENABLED.contains(m) {
+            "natively in the agent when its arguments allow it, as a Python module otherwise"
+                .to_string()
         } else {
             "Python module".to_string()
         };

@@ -48,8 +48,8 @@ mod linux {
         native_run, path_param, str_param, strerror,
     };
     use crate::natives::group::{
-        bin, entry, failure, host_gate, id_param, outcome, outside_subset, plain_name, present,
-        resolve_group, run_command,
+        NSSWITCH, bin, entry, failure, host_gate, id_param, outcome, outside_subset, plain_name,
+        present, resolve_group, run_command,
     };
     use crate::natives::setup::py_strip;
 
@@ -58,7 +58,10 @@ mod linux {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> NativeRun {
-        native_run(answer(args, context, clock(context, cancelled)), context)
+        native_run(
+            answer(args, context, clock(context, cancelled), NSSWITCH),
+            context,
+        )
     }
 
     const fn arg(name: &'static str, default: fn() -> Value) -> ArgSpec {
@@ -560,6 +563,7 @@ mod linux {
         args: &Map<String, Value>,
         context: &Context,
         clock: Clock,
+        nsswitch: &str,
     ) -> Result<Map<String, Value>, Stop> {
         let mut invocation = invocation(SPEC, args);
         // `type='list'` splits a string on commas, and `invocation` shows the list.
@@ -569,7 +573,7 @@ mod linux {
         }
         let params = invocation["module_args"].as_object().unwrap();
         let r = request(args, params)?;
-        host_gate()?;
+        host_gate(nsswitch)?;
         for file in ["/etc/redhat-release", "/etc/SuSE-release"] {
             if Path::new(file).exists() {
                 return Err(format!("{file} changes the module's useradd arguments").into());
@@ -668,7 +672,7 @@ mod linux {
         use crate::natives::setup::unbounded;
 
         fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, Stop> {
-            answer(args, context, unbounded())
+            answer(args, context, unbounded(), NSSWITCH)
         }
 
         /// An account the host does not have is created with the module's `useradd` arguments

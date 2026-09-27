@@ -1167,11 +1167,12 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
                 _ => bail!("extra vars must be a mapping: {item}"),
             }
         } else {
-            for word in shlex::split(item).unwrap_or_default() {
-                let (k, v) = word
-                    .split_once('=')
-                    .with_context(|| format!("extra var '{word}' is not key=value"))?;
-                out.insert(k.to_string(), Value::String(v.to_string()));
+            let (options, raw) = crate::splitter::parse_kv(item)?;
+            if let Some(word) = raw {
+                bail!("extra var '{word}' is not key=value");
+            }
+            for (k, v) in options {
+                out.insert(k, Value::String(v));
             }
         }
     }

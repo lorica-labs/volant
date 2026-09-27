@@ -46,6 +46,7 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
             "setup",
             "stat",
             "file",
+            "copy",
             "systemd",
             "systemd_service",
             "apt",

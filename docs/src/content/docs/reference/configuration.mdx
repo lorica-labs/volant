@@ -92,5 +92,13 @@ A file that exists but cannot be read is skipped, and the run continues with the
 Ansible ignores this section, so one `ansible.cfg` can carry it and still drive both engines. `ansible-config validate` is the exception, see [Cross-host batching](/hosts/batching/#turning-it-on).
 
 <Option name="batching" id="volant-batching" default="false" env="VOLANT_BATCHING">
-  Let each host run ahead through tasks that do not depend on the others. See [Cross-host batching](/hosts/batching/).
+  Off by default. With `batching = true`, a host moves on to its next tasks without waiting for the other hosts, except in front of a task whose text reads another host (`hostvars`, `ansible_play_hosts`, `delegate_to`, a template or variable that does). A dependency the playbook does not spell, such as a service another host is still installing or a file on a host named literally, is not waited for. Turn it on only for plays whose hosts do not depend on each other that way. See [Cross-host batching](/hosts/batching/).
+</Option>
+
+<Option name="native_modules" id="volant-native-modules" default="true" env="VOLANT_NATIVE_MODULES">
+  Let the agent answer a task with its native version of the module, when the task's arguments stay within what that version implements. With `false`, every task goes to ansible-core's Python module, and `setup` too, which is how to compare the two paths on a real run. The value is read as ansible-core reads a boolean, and a word it does not know stops the run with exit code 5. See [Native modules](/internals/python/#native-modules).
+</Option>
+
+<Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
+  Share one OpenSSH connection between all the `ssh` runs of an inventory host. With `false`, each link and probe opens its own connection. See [One connection per host](/hosts/connections/#one-connection-per-host).
 </Option>

@@ -704,13 +704,17 @@ mod tests {
             format!("{}/etc", self.0)
         }
 
+        /// The native's answer, a failure from inside a step included, as `NATIVE.run` gives it.
         fn answer(&self, args: Value) -> Result<Map<String, Value>, Exit> {
-            answer(
+            match answer(
                 args.as_object().unwrap(),
                 &self.context(),
                 unbounded(),
                 &self.etc(),
-            )
+            ) {
+                Err(Exit::Failed(result)) => Ok(result),
+                other => other,
+            }
         }
 
         fn calls(&self) -> Vec<String> {
@@ -1093,7 +1097,7 @@ esac"#,
   show) exit 1 ;;
   is-enabled) echo bogus ;;
   list-unit-files) exit 1 ;;
-  '') echo listed; echo broken >&2; exit 3 ;;
+  '') echo listed; printf 'broken\034 \n' >&2; exit 3 ;;
 esac"#,
         );
         let answer = fake
@@ -1103,8 +1107,9 @@ esac"#,
         assert_eq!(
             Value::Object(answer),
             json!({
-                "failed": true, "msg": "broken", "cmd": systemctl, "rc": 3,
-                "stdout": "listed\n", "stderr": "broken\n",
+                // `bytes.rstrip()` keeps the `\x1c` `str.strip()` would take.
+                "failed": true, "msg": "broken\u{1c}", "cmd": systemctl, "rc": 3,
+                "stdout": "listed\n", "stderr": "broken\u{1c} \n",
                 "invocation": invocation(SPEC, &args(
                     json!({"name": "u", "state": "started", "daemon_reload": true})
                 )),

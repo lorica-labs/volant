@@ -311,6 +311,72 @@ fn a_failed_controller_side_task_keeps_none_of_its_facts() {
     assert!(text.contains(r#""msg": "False False False""#), "{text}");
 }
 
+/// `retries` is rendered per item, on the agent path, the controller-side one and an action
+/// plugin's. Measured on ansible-core 2.19.12 with these fixtures, for each task: one retry line
+/// for `r: 1`, two for `r: 2`, the item `r: x` failed alone with `"changed": false` and
+/// `"msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be
+/// converted to 'int'."`, `r: 0` run once, and the registered `attempts` read `1,2,-,-`. The
+/// `r: 0` item still has its `changed_when` applied: no `"changed": true` under the `command`,
+/// one under the `copy`.
+///
+/// What would make this red: the plan rendered once, against the first item, which retries
+/// every item once and runs `r: x` (`1,1,1,1`); or an item that does not retry, in a task
+/// another item retries, reported without its conditions.
+#[test]
+fn retries_are_rendered_per_item() {
+    let check = |text: &str, tasks: &[&str], changed: usize| {
+        for task in tasks {
+            assert!(
+                text.contains(&format!(r#""msg": "{task} 1,2,-,-""#)),
+                "{text}"
+            );
+            for (left, count) in [(2, 1), (1, 2)] {
+                assert_eq!(
+                    text.matches(&format!("[localhost]: {task} ({left} retries left)."))
+                        .count(),
+                    count,
+                    "{text}"
+                );
+            }
+        }
+        assert_eq!(
+            text.matches(
+                r#""changed": false, "msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be converted to 'int'.""#
+            )
+            .count(),
+            tasks.len(),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches(r#""changed": true"#).count(),
+            changed,
+            "{text}"
+        );
+    };
+    let out = volant_within(
+        &["playbook", &fixture("controller/retries-per-item.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    check(&text, &["remote", "local"], 0);
+    // `copy` names a Python module, which the run builds before it starts.
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let out = volant_within_env(
+        &[
+            "playbook",
+            &fixture("controller/retries-per-item-plugin.yml"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    check(&text, &["plugin"], 1);
+}
+
 /// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
 /// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
 /// registered result has no `warnings` key. The driver shows every result's `warnings` that way,

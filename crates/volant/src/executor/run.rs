@@ -913,9 +913,7 @@ pub(super) struct Retry {
     until: Vec<String>,
 }
 
-/// `item` is the task's first one, whose variables `retries` and `delay` are rendered against.
-/// It is an `Option` because nothing here promises a task has items; one that has none is
-/// `Prepared::Skipped` and never reaches this.
+/// `item` is the one whose variables `retries` and `delay` are rendered against.
 pub(super) fn retry_plan(
     task: &PlayTask,
     item: Option<&Item>,
@@ -932,7 +930,8 @@ pub(super) fn retry_plan(
         }
         .map_err(|_| {
             TemplateError(format!(
-                "Error processing keyword '{keyword}': The value {rendered} could not be converted to 'int'."
+                "Error processing keyword '{keyword}': The value {} could not be converted to 'int'.",
+                crate::playbook::python_repr(&rendered)
             ))
         })
     };
@@ -960,6 +959,37 @@ pub(super) fn retry_plan(
         delay,
         until: task.until.clone(),
     }))
+}
+
+/// One item's retry plan, or the failed result it reports when its `retries` or `delay` did not
+/// render.
+pub(super) type ItemRetry = Result<Option<Retry>, TaskResult>;
+
+/// Each item's retry plan, rendered against its own variables: the reference post-validates
+/// `retries` and `delay` once per item. An item whose render fails reports that failure and the
+/// other items run: measured on ansible-core 2.19.12, a loop with `retries: "{{ item.r }}"` over
+/// `r: 1`, `r: 2`, `r: x` and `r: 0` retries the first once and the second twice, fails the
+/// third alone with `Task failed: Error processing keyword 'retries': The value 'x' could not be
+/// converted to 'int'.`, and runs the fourth once with no `attempts`. A skipped item renders
+/// nothing.
+pub(super) fn retry_plans(task: &PlayTask, items: &[Item], templar: &Templar) -> Vec<ItemRetry> {
+    items
+        .iter()
+        .map(|item| match item.skipped {
+            Some(_) => Ok(None),
+            None => retry_plan(task, Some(item), templar).map_err(|e| {
+                let mut failed = TaskResult::failed_with(format!("Task failed: {}", e.0));
+                failed.0.insert("changed".into(), json!(false));
+                failed
+            }),
+        })
+        .collect()
+}
+
+/// Whether any item of [`retry_plans`] retries or failed to render, which sends the task down
+/// the one-item-at-a-time path.
+pub(super) fn any_retried(plans: &[ItemRetry]) -> bool {
+    plans.iter().any(|plan| !matches!(plan, Ok(None)))
 }
 
 /// Whether the attempt loop stops here: the `until` conditions all hold, or - when the task gave

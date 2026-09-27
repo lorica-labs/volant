@@ -2193,8 +2193,15 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     // concurrently.
     unsafe { libc::umask(0o022) };
     native_fixture();
-    // Outside NATIVE_DIR, as in the generator: `stat-dir` reports the directory's link count.
-    let work = std::env::temp_dir().join(format!("volant-golden-native-{}", std::process::id()));
+    // Outside NATIVE_DIR, as in the generator: `stat-dir` reports the directory's link count. Beside
+    // it under `/var/tmp` all the same, because the agent stages `copy`'s source under this
+    // directory: the reference staged its own under `~/.ansible/tmp`, on the file system of
+    // NATIVE_DIR, and renamed it into place, where a staging directory on a tmpfs `/tmp` would
+    // cross a mount and send the native `copy` back to Python.
+    let work = std::path::PathBuf::from(format!(
+        "/var/tmp/volant-golden-native-work-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).expect("the work directory is writable");
     // Read by both runs instead of the account's own `~/.ansible.cfg`, whose `[volant]

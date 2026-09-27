@@ -203,11 +203,52 @@
     ],
     "why": ""
   },
+  "copy-module-checksum": {
+    "args": {
+      "checksum": "0000",
+      "content": "k\n",
+      "dest": "<golden-tmp>/k.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "Copied file does not match the expected checksum. Transfer failed."
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
   "copy-module-created": {
     "args": {
       "content": "one\n",
       "dest": "<golden-tmp>/c.txt",
       "mode": "0644"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "exact",
+    "expect": "native",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [
+      "invocation.module_args._original_basename"
+    ],
+    "why": ""
+  },
+  "copy-module-dest-link": {
+    "args": {
+      "content": "one\n",
+      "dest": "<golden-tmp>/l"
     },
     "become": false,
     "branch": {

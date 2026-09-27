@@ -1376,6 +1376,58 @@
       "register": "last"
      },
      {
+      "name": "copy-module-checksum",
+      "copy": {
+       "content": "k\n",
+       "dest": "<golden-tmp>/k.txt",
+       "checksum": "0000"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-copy-module-checksum",
+      "stat": {
+       "path": "<golden-tmp>/k.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-checksum",
+      "slurp": {
+       "src": "<golden-tmp>/k.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-dest-link",
+      "copy": {
+       "content": "one\n",
+       "dest": "<golden-tmp>/l"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-copy-module-dest-link",
+      "stat": {
+       "path": "<golden-tmp>/l",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-dest-link",
+      "slurp": {
+       "src": "<golden-tmp>/l"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
       "name": "cleanup-user-before",
       "user": {
        "name": "volantshape",

@@ -12,7 +12,7 @@
 //! a link or a special file as the path, extended attributes on the file, a task `environment`.
 
 use std::collections::BTreeMap;
-#[cfg(target_os = "linux")]
+#[cfg(all(test, target_os = "linux"))]
 use std::ffi::CString;
 use std::fmt::Write as _;
 use std::fs;
@@ -24,10 +24,11 @@ use regex::bytes::{Regex, RegexBuilder};
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, BackupError, Clock, FsError, ModeError, Stop as Halt, access, add_path_info,
-    backup_local, bool_param, check, check_names, chown_if_permitted, clock, flag, group_account,
-    module_args, native_run, null, os_error, owner_account, parse_mode, path_param,
-    selinux_enabled, set_fs_attributes_diff, str_param, umask,
+    APPEND, AUTOMATIC, Account, ArgSpec, BackupError, Clock, FsError, IMMUTABLE, ModeError,
+    Stop as Halt, access, add_path_info, backup_local, bool_param, check, check_names,
+    chown_if_permitted, clock, flag, group_account, has_flags, has_xattrs, module_args, native_run,
+    null, os_error, owner_account, parent, parse_mode, path_param, selinux_enabled,
+    set_fs_attributes_diff, str_param, umask, validate_runs_as_python,
 };
 use super::setup::run_output;
 use super::{Native, NativeRun};
@@ -339,10 +340,11 @@ fn edit(request: &Request, context: &Context, clock: Clock) -> Result<Map<String
             makedirs(path)?;
         }
         if request.backup && exists {
-            backup = match backup_local(path) {
+            backup = match backup_local(path, clock) {
                 Ok(name) => name,
                 Err(BackupError::Exists(name)) => return Err(format!("{name} exists").into()),
                 Err(BackupError::Failed(msg)) => return Err(fail(msg, None)),
+                Err(BackupError::Stopped(halt)) => return Err(Stop::Clock(halt)),
             };
         }
         write_changes(request, &lines.concat(), &context.remote_tmp, clock)?;
@@ -581,93 +583,7 @@ fn preflight(request: &Request, exists: bool, tmpdir: &str) -> Result<(), String
     let Some(validate) = request.validate.filter(|validate| validate.contains("%s")) else {
         return Ok(());
     };
-    // `validate % tmpfile` is Python's formatting, and `run_command` expands `~` and `$VAR`
-    // in every argument.
-    if validate.matches('%').count() != 1 || validate.contains(['$', '~']) {
-        return Err("validate is formatted or expanded by Python".into());
-    }
-    // Where the `shlex` crate and Python's `shlex.split` part ways: the crate reads `#` as a
-    // comment, drops a backslash before a backtick in double quotes, and keeps a carriage
-    // return inside a word.
-    if validate.contains(['#', '`', '\r', '\\']) {
-        return Err("validate would not split as Python splits it".into());
-    }
-    if !tmpdir
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
-    {
-        return Err("remote_tmp would be split or expanded in validate".into());
-    }
-    let argv = shlex::split(&validate.replace("%s", &format!("{tmpdir}/tmpxxxxxxxx")))
-        .ok_or("validate does not split as a command line")?;
-    let program = argv.first().ok_or("validate names no program")?;
-    if exec_path(program).is_none() {
-        return Err(format!("{program} cannot be run"));
-    }
-    Ok(())
-}
-
-/// Whether the path carries any extended attribute, ACLs included.
-#[cfg(target_os = "linux")]
-fn has_xattrs(path: &str) -> bool {
-    let Ok(path) = CString::new(path) else {
-        return true;
-    };
-    // SAFETY: a null buffer of size 0 asks only for the size of the list.
-    let size = unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
-    size != 0 && !(size < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP))
-}
-
-/// `FS_IMMUTABLE_FL` and `FS_APPEND_FL`.
-const IMMUTABLE: libc::c_long = 0x10;
-const APPEND: libc::c_long = 0x20;
-/// The flags a fresh copy on the same file system gets anyway: ext4's extents and inline data.
-const AUTOMATIC: libc::c_long = 0x0008_0000 | 0x1000_0000;
-
-/// Whether the file has one of the inode flags in `mask`. `lsattr` fails where the flags cannot
-/// be read, and the reference then copies none; a file that cannot be opened counts as flagged.
-#[cfg(target_os = "linux")]
-fn has_flags(path: &str, mask: libc::c_long) -> bool {
-    let Ok(file) = fs::File::open(path) else {
-        return true;
-    };
-    let mut flags: libc::c_long = 0;
-    // SAFETY: FS_IOC_GETFLAGS writes one `long` through the pointer.
-    let rc = unsafe {
-        libc::ioctl(
-            std::os::fd::AsRawFd::as_raw_fd(&file),
-            libc::FS_IOC_GETFLAGS,
-            &raw mut flags,
-        )
-    };
-    rc == 0 && flags & mask != 0
-}
-
-/// Elsewhere the native hands every task back before it gets here.
-#[cfg(not(target_os = "linux"))]
-fn has_xattrs(_: &str) -> bool {
-    true
-}
-
-#[cfg(not(target_os = "linux"))]
-fn has_flags(_: &str, _: libc::c_long) -> bool {
-    true
-}
-
-/// Where `subprocess` finds `program`: as given with a `/`, otherwise along `PATH`, or
-/// `/bin:/usr/bin` without one.
-fn exec_path(program: &str) -> Option<String> {
-    let runnable = |path: &str| {
-        fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
-    };
-    if program.contains('/') {
-        return runnable(program).then(|| program.to_string());
-    }
-    std::env::var("PATH")
-        .unwrap_or_else(|_| "/bin:/usr/bin".into())
-        .split(':')
-        .map(|dir| format!("{}/{program}", if dir.is_empty() { "." } else { dir }))
-        .find(|candidate| runnable(candidate))
+    validate_runs_as_python(validate, &format!("{tmpdir}/tmpxxxxxxxx"), "remote_tmp")
 }
 
 /// `os.makedirs(os.path.dirname(dest))` for a file `create` makes. A first directory that
@@ -696,14 +612,6 @@ fn makedirs(path: &str) -> Result<(), Stop> {
         }
     }
     Ok(())
-}
-
-fn parent(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(0) => "/",
-        Some(at) => &path[..at],
-        None => "",
-    }
 }
 
 /// A file created as `tempfile.mkstemp` creates one: `0600`, a name nobody else has.
@@ -1702,7 +1610,7 @@ mod tests {
         write(&path, "a=1\n", 0o644);
         write(&taken, "older backup\n", 0o644);
         assert!(matches!(
-            backup_copy(&path, &taken),
+            backup_copy(&path, &taken, super::super::setup::unbounded()),
             Err(BackupError::Exists(_))
         ));
         assert_eq!(fs::read_to_string(&taken).unwrap(), "older backup\n");

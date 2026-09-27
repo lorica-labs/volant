@@ -1257,6 +1257,18 @@ def natives():
     )
     facts_shape.add("setup-min")
 
+    # Two more `copy` cases, last so that no task name before them moves: a `checksum` the staged
+    # file does not have, and the fixture's link `l` as `dest`, which is replaced by a file of its
+    # own while `f.txt` keeps its content. The `stat-link-*` cases are the only others to read `l`.
+    case(
+        "copy-module-checksum",
+        "copy",
+        {"content": "k\n", "dest": f"{t}/k.txt", "checksum": "0000"},
+        failed("Copied file does not match the expected checksum. Transfer failed."),
+        volatile=staged,
+    )
+    case("copy-module-dest-link", "copy", {"content": "one\n", "dest": f"{t}/l"}, changed, volatile=staged)
+
     # The account and group are removed before the first case that creates them, in case an
     # interrupted run left them behind (`group-created` would record "no change"), and again in
     # `always`, which runs even when a case fails.

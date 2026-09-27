@@ -330,14 +330,14 @@ fn plan(
     }
     match request.state {
         State::Absent => {
-            if let Some(name) = request.packages.iter().find(|name| {
+            if request.packages.iter().any(|name| {
                 status.get(name.as_str()).is_some_and(|entries| {
                     entries
                         .iter()
                         .any(|e| !matches!(e.current(), "not-installed" | "config-files"))
                 })
             }) {
-                return Err(format!("{name} is installed, or partly"));
+                return Err("a package is installed, or partly".into());
             }
             result.insert("changed".into(), false.into());
             Ok(result)
@@ -348,24 +348,25 @@ fn plan(
                 Some([dpkg]) => dpkg.architecture,
                 _ => return Err("the native architecture is not dpkg's alone".into()),
             };
-            if let Some(name) = request
+            if request
                 .packages
                 .iter()
-                .find(|name| !is_installed(&status, name, Some(native_arch)))
+                .any(|name| !is_installed(&status, name, Some(native_arch)))
             {
-                return Err(format!("{name} is not installed"));
+                return Err("a package is not installed".into());
             }
             // The module's `apt-mark manual` would change what apt believes: that task is its own.
             let extended = read(root, EXTENDED_STATES)?.unwrap_or_default();
             let extended = stanzas(&extended);
-            if let Some(name) = request.packages.iter().find(|name| {
+            if request.packages.iter().any(|name| {
                 extended
                     .get(name.as_str())
                     .is_some_and(|entries| entries.iter().any(|e| e.auto_installed))
             }) {
-                return Err(format!(
-                    "{name} is marked automatically installed, and apt-mark would change that"
-                ));
+                return Err(
+                    "a package is marked automatically installed, and apt-mark would change that"
+                        .into(),
+                );
             }
             // Without `apt-mark` the module warns; with it, every name manual, the call it makes
             // is a no-op the native skips.
@@ -474,8 +475,8 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
         if packages.is_empty() {
             return Err("the package list is empty".into());
         }
-        if let Some(name) = packages.iter().find(|name| !is_exact_name(name)) {
-            return Err(format!("'{name}' is not an exact package name"));
+        if !packages.iter().all(|name| is_exact_name(name)) {
+            return Err("a package is not given by its exact name".into());
         }
         module_args.insert(
             "package".into(),
@@ -970,7 +971,7 @@ Architecture: amd64
     fn a_half_configured_package_is_not_installed_for_the_fast_path() {
         let host = Host::new("half");
         let reason = host.hands_back(&json!({"name": "foo", "state": "present"}));
-        assert_eq!(reason, "foo is not installed");
+        assert_eq!(reason, "a package is not installed");
         host.hands_back(&json!({"name": ["bash", "foo"]}));
         // Removing it is not "nothing to do" either.
         host.hands_back(&json!({"name": "foo", "state": "absent"}));
@@ -1218,7 +1219,7 @@ Architecture: amd64
         let host = Host::new("manual");
         let reason = host.hands_back(&json!({"name": ["bash", "libfoo"]}));
         assert!(
-            reason.starts_with("libfoo is marked automatically"),
+            reason.starts_with("a package is marked automatically"),
             "{reason}"
         );
         host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));

@@ -227,7 +227,9 @@ fn answer(
         "absent" => ensure_absent(&path, clock),
         "file" => ensure_file(&path, follow, &attrs),
         "directory" => ensure_directory(&path, follow, &attrs),
-        other => return Err(format!("state {other}").into()),
+        // A choice the native leaves to the module is named; anything else the task gave is not.
+        other @ ("hard" | "link" | "touch") => return Err(format!("state {other}").into()),
+        _ => return Err("state is not one of the module's choices".into()),
     };
     let mut result = match outcome {
         Ok(result) => result,

@@ -271,7 +271,7 @@ mod imp {
         }
         for dir in dirs.into_iter().filter(|dir| !dir.is_empty()) {
             if !dir.starts_with('/') {
-                return Err(format!("PATH holds the relative directory {dir}"));
+                return Err("PATH holds a relative directory".into());
             }
             let path = root.path(&format!("{}/{name}", dir.trim_end_matches('/')));
             let executable = std::fs::metadata(&path)
@@ -486,10 +486,7 @@ mod imp {
                 .insert(prefix.clone(), &entry.trust)
                 .is_some_and(|seen| *seen != entry.trust)
             {
-                return Err(format!(
-                    "{} {} is given two different Signed-By or Trusted",
-                    entry.uri, entry.suite
-                ));
+                return Err("a source is given two different Signed-By or Trusted".into());
             }
             if !entry.binary {
                 continue;
@@ -501,14 +498,14 @@ mod imp {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || ".-".contains(c))
                 {
-                    return Err(format!("the component {component} is not a plain name"));
+                    return Err("a component is not a plain name".into());
                 }
                 for arch in archs {
                     packages.push(format!("{prefix}{component}_binary-{arch}_Packages"));
                 }
             }
             if packages.is_empty() {
-                return Err(format!("{} {} names no component", entry.uri, entry.suite));
+                return Err("a source names no component".into());
             }
             sources.push(Source { prefix, packages });
         }
@@ -560,10 +557,10 @@ mod imp {
             let binary = match kind {
                 "deb" => true,
                 "deb-src" => false,
-                _ => return Err(format!("the source type {kind} is not deb")),
+                _ => return Err("a source type is not deb".into()),
             };
             let [uri, suite, components @ ..] = &words[..] else {
-                return Err(format!("the source line {line:?} is incomplete"));
+                return Err("a source line is incomplete".into());
             };
             let mut archs = None;
             let mut trust = [None, None];
@@ -576,10 +573,10 @@ mod imp {
                     "signed-by" => trust[0] = Some(value.to_string()),
                     "trusted" => trust[1] = Some(value.to_string()),
                     "target" | "inrelease-path" | "snapshot" | "include" | "exclude" => {
-                        return Err(format!("the source option {option} changes its lists"));
+                        return Err(format!("the source option {key} changes its lists"));
                     }
                     _ if key.ends_with('+') || key.ends_with('-') => {
-                        return Err(format!("the source option {option} changes its lists"));
+                        return Err(format!("the source option {key} changes its lists"));
                     }
                     _ => {}
                 }
@@ -665,9 +662,7 @@ mod imp {
                     Some(false) => continue,
                     Some(true) => {}
                     None => {
-                        return Err(format!(
-                            "the source field Enabled: {value} is not a boolean"
-                        ));
+                        return Err("the source field Enabled is not a boolean".into());
                     }
                 }
             }
@@ -686,7 +681,7 @@ mod imp {
                 let binary = match kind.as_str() {
                     "deb" => true,
                     "deb-src" => false,
-                    _ => return Err(format!("the source type {kind} is not deb")),
+                    _ => return Err("a source type is not deb".into()),
                 };
                 for uri in words("URIs") {
                     for suite in words("Suites") {
@@ -711,7 +706,23 @@ mod imp {
         let rest = uri
             .strip_prefix("http://")
             .or_else(|| uri.strip_prefix("https://"))
-            .ok_or_else(|| format!("the source {uri} is not http or https"))?;
+            .ok_or_else(|| {
+                // The scheme alone, in the characters a scheme may hold: whatever follows it can
+                // carry credentials.
+                let scheme = uri
+                    .split_once(':')
+                    .map(|(scheme, _)| scheme)
+                    .filter(|scheme| {
+                        !scheme.is_empty()
+                            && scheme
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
+                    });
+                match scheme {
+                    Some(scheme) => format!("the source scheme {scheme} is not http or https"),
+                    None => "the source URI is not http or https".to_string(),
+                }
+            })?;
         let plain = |text: &str, extra: &str| {
             !text.is_empty()
                 && text
@@ -719,10 +730,10 @@ mod imp {
                     .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
         };
         if !plain(rest, ".-/:") || rest.contains("//") {
-            return Err(format!("the source {uri} is not a plain URI"));
+            return Err("a source URI is not a plain one".into());
         }
         if !plain(suite, ".-/") || suite.ends_with('/') {
-            return Err(format!("the suite {suite} is not a plain name"));
+            return Err("a suite is not a plain name".into());
         }
         let rest = rest.trim_end_matches('/');
         Ok(format!(
@@ -1612,7 +1623,7 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| tree.write("/etc/apt/sources.list.d/my repo.list", "")),
                 ),
                 (
-                    "the component ma!n is not a plain name",
+                    "a component is not a plain name",
                     Box::new(|tree| tree.edit(example, "stable main", "stable ma!n")),
                 ),
                 (
@@ -1620,15 +1631,15 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| tree.edit(example, "stable main", "stable")),
                 ),
                 (
-                    "the suite sta~ble is not a plain name",
+                    "a suite is not a plain name",
                     Box::new(|tree| tree.edit(example, "stable main", "sta~ble main")),
                 ),
                 (
-                    "is not a plain URI",
+                    "a source URI is not a plain one",
                     Box::new(|tree| tree.edit(example, "https://repo.", "https://user@repo.")),
                 ),
                 (
-                    "is incomplete",
+                    "a source line is incomplete",
                     Box::new(|tree| {
                         tree.write(
                             "/etc/apt/sources.list",
@@ -1637,7 +1648,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source type deb-foo is not deb",
+                    "a source type is not deb",
                     Box::new(|tree| {
                         tree.write(
                             "/etc/apt/sources.list",
@@ -1646,7 +1657,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source option target=Packages changes its lists",
+                    "the source option target changes its lists",
                     Box::new(|tree| {
                         tree.edit(
                             example,
@@ -1656,7 +1667,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source option arch+=i386 changes its lists",
+                    "the source option arch+ changes its lists",
                     Box::new(|tree| {
                         tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=");
                     }),
@@ -1666,7 +1677,7 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| append(tree, ubuntu, "Snapshot: yes\n")),
                 ),
                 (
-                    "the source type rpm is not deb",
+                    "a source type is not deb",
                     Box::new(|tree| tree.edit(ubuntu, "Types: deb\n", "Types: rpm\n")),
                 ),
             ];
@@ -1681,10 +1692,7 @@ Description: time zone and daylight-saving time data
                 Err(Stop::HandBack(reason)) => reason,
                 other => panic!("a relative PATH answered: {other:?}"),
             };
-            assert!(
-                given.contains("PATH holds the relative directory bin"),
-                "{given}"
-            );
+            assert!(given.contains("PATH holds a relative directory"), "{given}");
             // A `deb-src` twin with the same `Signed-By` and a `sources.list` that exists are
             // read, and change nothing.
             let tree = Tree::new(HOST);

@@ -233,7 +233,7 @@ mod imp {
         }
         for dir in dirs.into_iter().filter(|dir| !dir.is_empty()) {
             if !dir.starts_with('/') {
-                return Err(format!("PATH holds the relative directory {dir}"));
+                return Err("PATH holds a relative directory".into());
             }
             let path = root.path(&format!("{}/{name}", dir.trim_end_matches('/')));
             let executable = std::fs::metadata(&path)
@@ -432,7 +432,7 @@ mod imp {
         for line in stdout.split('\n').filter(|line| line.contains(".service")) {
             let fields: Vec<&str> = py_split(line).collect();
             if fields.len() < 4 {
-                return Err(format!("the unit line {line:?} has fewer than four fields"));
+                return Err("a unit line has fewer than four fields".into());
             }
             let head = &fields[..fields.len() - 1];
             let bad: Vec<&str> = BAD_STATES
@@ -445,7 +445,7 @@ mod imp {
             let status = match bad[..] {
                 [] => fields[2],
                 [one] => one,
-                _ => return Err(format!("the unit line {line:?} names two failure states")),
+                _ => return Err("a unit line names two failure states".into()),
             };
             let state = if fields[3] == "running" {
                 "running"
@@ -484,9 +484,7 @@ mod imp {
                 let mut words = py_split(line);
                 match (words.next(), words.next()) {
                     (Some(name), Some(state)) => Ok((name.to_string(), state.to_string())),
-                    _ => Err(format!(
-                        "the unit file line {line:?} has fewer than two words"
-                    )),
+                    _ => Err("a unit file line has fewer than two words".into()),
                 }
             })
             .collect()
@@ -969,7 +967,7 @@ esac
             match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
                 Err(Stop::HandBack(reason)) => {
                     assert!(
-                        reason.contains("PATH holds the relative directory bin"),
+                        reason.contains("PATH holds a relative directory"),
                         "{reason}"
                     );
                 }

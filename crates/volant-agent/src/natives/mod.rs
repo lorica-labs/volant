@@ -255,4 +255,104 @@ mod tests {
         page.sort_unstable();
         assert_eq!(ours, page);
     }
+
+    /// A hand-back reason reaches the profile and its JSON file, which get shared: it names the
+    /// argument and why the native leaves it, never the value, which can be a secret.
+    ///
+    /// What would make this red: a reason that quotes a `regexp`, a `validate` program, a mode,
+    /// a state, an account or a package name the task gave.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_hand_back_reason_never_quotes_an_argument_value() {
+        use serde_json::json;
+
+        let scratch = common::golden::Scratch::new("reason-values");
+        let file = scratch.path("config.yaml");
+        std::fs::write(&file, "token: K3S0SECRET0E\n").unwrap();
+        std::fs::create_dir(scratch.path(".tmp")).unwrap();
+        let context = Context {
+            remote_tmp: scratch.path(".tmp"),
+            ..Context::default()
+        };
+        let cases = [
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "^token: K3S0SECRET0A**", "line": "x"}),
+                "K3S0SECRET0A",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "K3S0SECRET0B*+", "line": "x"}),
+                "K3S0SECRET0B",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "(?<K3S0SECRET0C>x)", "line": "x"}),
+                "K3S0SECRET0C",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "insertafter": "K3S0SECRET0D**", "line": "x"}),
+                "K3S0SECRET0D",
+            ),
+            (
+                "lineinfile",
+                json!({
+                    "path": file,
+                    "search_string": "token: K3S0SECRET0E",
+                    "line": "token: K3S0SECRET0F",
+                    "validate": "/nonexistent/K3S0SECRET0G %s",
+                }),
+                "K3S0SECRET0",
+            ),
+            (
+                "copy",
+                json!({"src": file, "dest": scratch.path("copied"), "mode": "+75318642"}),
+                "75318642",
+            ),
+            (
+                "file",
+                json!({"path": file, "state": "K3S0SECRET0H"}),
+                "K3S0SECRET0H",
+            ),
+            (
+                "file",
+                json!({"path": file, "owner": "+4815162342"}),
+                "4815162342",
+            ),
+            (
+                "user",
+                json!({"name": "volant-reason-probe", "group": "+4815162343"}),
+                "4815162343",
+            ),
+            (
+                "user",
+                json!({"name": "volant-reason-probe", "groups": ["+4815162344"]}),
+                "4815162344",
+            ),
+            ("apt", json!({"name": ["k3s0secret0i!"]}), "k3s0secret0i"),
+            (
+                "apt",
+                json!({"name": ["k3s0secret0j"], "state": "present"}),
+                "k3s0secret0j",
+            ),
+            (
+                "setup",
+                json!({"gather_subset": ["k3s0secret0k"]}),
+                "k3s0secret0k",
+            ),
+        ];
+        let mut leaks = Vec::new();
+        for (name, args, secret) in cases {
+            let native = find(name).unwrap();
+            match run(native, args.as_object().unwrap(), &context, &|| false) {
+                NativeRun::Fallback(reason) if reason.contains(secret) => {
+                    leaks.push(format!("{name}: {reason}"));
+                }
+                NativeRun::Fallback(_) => {}
+                _ => panic!("{name} did not hand back on {args}"),
+            }
+        }
+        assert!(leaks.is_empty(), "reasons quote a value: {leaks:#?}");
+    }
 }

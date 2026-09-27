@@ -898,17 +898,20 @@ fn eval_expr(
 }
 
 fn convert_error(err: minijinja::Error) -> TemplateError {
-    let text = err.to_string();
     // An operator given an undefined operand is an undefined read (`nope | int + 1` fails
-    // `'nope' is undefined`, measured on ansible-core 2.19.12); minijinja names the operand's
-    // kind in its message and has no other way to tell it.
+    // `'nope' is undefined`, measured on ansible-core 2.19.12), worded as any other; minijinja
+    // names the operand's kind in its message and has no other way to tell it.
     let undefined_operand = err.kind() == ErrorKind::InvalidOperation
         && err.detail().is_some_and(|d| {
             d.starts_with("tried to use ")
                 && (d.contains(" unsupported types undefined and ")
                     || d.ends_with(" and undefined"))
         });
-    if err.kind() == ErrorKind::UndefinedError || undefined_operand {
+    if undefined_operand {
+        return convert_error(minijinja::Error::from(ErrorKind::UndefinedError));
+    }
+    let text = err.to_string();
+    if err.kind() == ErrorKind::UndefinedError {
         return TemplateError(format!("{UNDEFINED} The error was: {text}"));
     }
     TemplateError(text)
@@ -1659,6 +1662,7 @@ mod reference_parity {
         ] {
             let err = t.render(text, &none).unwrap_err();
             assert!(err.is_undefined(), "{text}: {err}");
+            assert_eq!(err, t.render("{{ nope }}", &none).unwrap_err(), "{text}");
         }
         let err = t.render("{{ 'a' - 1 }}", &none).unwrap_err();
         assert!(!err.is_undefined(), "{err}");

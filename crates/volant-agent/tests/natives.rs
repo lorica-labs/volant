@@ -73,10 +73,7 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
 
     let (result, ran) = agent.run_one(
         4,
-        task(
-            "ansible.modules.lineinfile",
-            json!({"path": "/x", "line": "y"}),
-        ),
+        task("ansible.modules.group", json!({"name": "volant-x"})),
     );
     assert_eq!(
         ran.path,

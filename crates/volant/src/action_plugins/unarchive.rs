@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(
             Value::Object(sub.args),
             json!({"path": "/tmp/unarchive-marker", "follow": true, "get_checksum": false,
-                   "checksum_algorithm": "sha1"})
+                   "get_mime": false, "get_attributes": false, "checksum_algorithm": "sha1"})
         );
         let result = done(
             plugin.as_mut(),

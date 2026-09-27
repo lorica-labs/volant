@@ -19,8 +19,6 @@
 //! it out upward would mean compiling every play twice. Neither is worth it, and a later change
 //! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
-use std::io::IsTerminal as _;
-
 use anyhow::bail;
 use volant_protocol::modules::{
     ArgStatus, import_module, include_module, is_builtin, is_known, short_name,
@@ -89,7 +87,14 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
 /// keyword written in a file the playbook only names. A module a role uses and this release
 /// cannot run is refused here, before the first connection, exactly as one written in the play
 /// is.
-pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
+///
+/// `prompts` says whether a prompting `pause` could block this play: standard input is a
+/// terminal and the play matched at least one host. A play that matches none is skipped whole
+/// (`skipping: no hosts matched`), so none of its pauses is reached and none is refused.
+pub(crate) fn check_steps(
+    compiled: &crate::compile::Compiled,
+    prompts: bool,
+) -> anyhow::Result<()> {
     for step in &compiled.steps {
         // A flush point the compiler put in itself carries no task at all, so there is no module
         // and no `meta` action to judge. No handler step exists yet - the coordinator splices
@@ -99,8 +104,7 @@ pub(crate) fn check_steps(compiled: &crate::compile::Compiled) -> anyhow::Result
         if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
         }
-        check_pause(compiled, step, std::io::stdin().is_terminal())
-            .map_err(|e| Refusal::or(CODE, e))?;
+        check_pause(compiled, step, prompts).map_err(|e| Refusal::or(CODE, e))?;
         check_notify(compiled, &step.task)?;
     }
     for handler in &compiled.handlers {
@@ -732,7 +736,7 @@ mod tests {
             &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
         )
         .unwrap();
-        check_steps(&compiled).expect("and so does the second pass");
+        check_steps(&compiled, true).expect("and so does the second pass");
         assert_eq!(
             collection_modules(&compiled),
             [

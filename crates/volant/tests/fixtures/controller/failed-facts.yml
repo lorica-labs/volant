@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - set_fact: {sf: 1}
+      failed_when: true
+      ignore_errors: true
+    - include_vars: failed-facts-vars.yml
+      failed_when: true
+      ignore_errors: true
+    - set_fact: {lp: "{{ item }}"}
+      loop: [1, 2]
+      failed_when: item == 2
+      ignore_errors: true
+    - debug: msg="{{ sf is defined }} {{ iv is defined }} {{ lp is defined }}"

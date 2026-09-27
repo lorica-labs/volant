@@ -812,7 +812,7 @@ mod tests {
         assert_eq!(
             Value::Object(subs[0].args.clone()),
             json!({"path": "/tmp/v/d/one.txt", "follow": true, "get_checksum": true,
-                   "checksum_algorithm": "sha1"})
+                   "get_mime": false, "get_attributes": false, "checksum_algorithm": "sha1"})
         );
         assert_eq!(
             Value::Object(subs[1].args.clone()),

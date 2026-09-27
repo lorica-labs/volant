@@ -847,7 +847,8 @@ fn refusal_for(tried: &str) -> String {
 /// A helper process and the two pipes a request travels over.
 pub struct PythonBuilder {
     child: Child,
-    stdin: ChildStdin,
+    /// `None` only once [`Drop`] has closed it.
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     /// The interpreter it runs under, as it was started.
     python: String,
@@ -887,7 +888,7 @@ impl PythonBuilder {
         let stdout = BufReader::new(child.stdout.take().expect("stdout was piped"));
         Ok(PythonBuilder {
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout,
             python: python.to_string(),
         })
@@ -902,7 +903,8 @@ impl PythonBuilder {
         &mut self,
         modules: &[String],
     ) -> anyhow::Result<(Union, Option<crate::union_cache::Traced>)> {
-        exchange(&mut self.stdin, &mut self.stdout, modules)
+        let stdin = self.stdin.as_mut().expect("stdin is open until drop");
+        exchange(stdin, &mut self.stdout, modules)
     }
 
     /// Adds each directory's plugin directories to the helper's loaders, as ansible-playbook
@@ -910,8 +912,9 @@ impl PythonBuilder {
     pub fn add_plugin_dirs(&mut self, dirs: &[std::path::PathBuf]) -> anyhow::Result<()> {
         let dirs: Vec<&str> = dirs.iter().filter_map(|dir| dir.to_str()).collect();
         if !dirs.is_empty() {
+            let stdin = self.stdin.as_mut().expect("stdin is open until drop");
             ask(
-                &mut self.stdin,
+                stdin,
                 &mut self.stdout,
                 &serde_json::json!({ "plugin_dirs": dirs }),
                 "add the plugin directories",
@@ -922,15 +925,28 @@ impl PythonBuilder {
 
     /// What the controller's ansible-core makes of each name, one answer per name asked.
     pub fn resolve(&mut self, modules: &[String]) -> anyhow::Result<BTreeMap<String, Resolved>> {
-        resolve_exchange(&mut self.stdin, &mut self.stdout, modules)
+        let stdin = self.stdin.as_mut().expect("stdin is open until drop");
+        resolve_exchange(stdin, &mut self.stdout, modules)
     }
 }
 
+/// How long a dropped helper gets to exit on its own before it is killed.
+const HELPER_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl Drop for PythonBuilder {
-    /// Killed rather than asked to stop: the helper holds nothing a run needs once the last
-    /// answer is in, and an interpreter wedged in a build would otherwise outlive the run that
-    /// started it. The wait is what keeps it from being left as a zombie.
+    /// Asked to stop first: closing stdin ends the helper's loop, and the interpreter's exit
+    /// handlers remove the `ansible-local-*` directory ansible-core made at import. A helper
+    /// still running after `HELPER_EXIT_GRACE` (wedged in a build) is killed, and the wait is
+    /// what keeps it from being left as a zombie.
     fn drop(&mut self) {
+        drop(self.stdin.take());
+        let deadline = std::time::Instant::now() + HELPER_EXIT_GRACE;
+        while std::time::Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1366,6 +1382,35 @@ mod tests {
             "meta/runtime.yml",
             "requires_ansible: '>=2.15'\nplugin_routing:\n  modules:\n    routed:\n      action_plugin: volanttest.coll.act\n    gone:\n      tombstone:\n        removal_version: 1.0.0\n        warning_text: use good instead\n    moved:\n      redirect: absentns.absent.moved\n",
         );
+    }
+
+    /// Dropping the builder lets ansible-core's exit cleanup run, so the `ansible-local-*`
+    /// directory it creates at import is gone once the helper is.
+    ///
+    /// What would make this red: the helper killed before it sees end of input, which skips
+    /// the interpreter's exit handlers and leaves one directory per run behind.
+    #[test]
+    fn dropping_the_builder_leaves_no_ansible_local_directory() {
+        let python = match find_python(
+            std::env::var("VOLANT_PYTHON").ok().as_deref(),
+            std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        ) {
+            Ok(python) => python,
+            Err(why) => return skip_or_fail(&format!("{why:#}")),
+        };
+        let root = std::env::temp_dir().join(format!("volant-local-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let local = root.display().to_string();
+        let mut builder =
+            PythonBuilder::under_with(&python, &[("ANSIBLE_LOCAL_TEMP", &local)]).unwrap();
+        builder.union(&["ping".to_string()]).unwrap();
+        let during = std::fs::read_dir(&root).unwrap().count();
+        drop(builder);
+        let after = std::fs::read_dir(&root).unwrap().count();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(during, 1, "the helper made its ansible-local directory");
+        assert_eq!(after, 0, "the directory outlived the helper");
     }
 
     /// Only ansible-core's own module is reported as core. A `stat.py` in a `library` directory

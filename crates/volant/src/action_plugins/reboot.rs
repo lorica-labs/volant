@@ -152,7 +152,7 @@ impl<'a> Reboot<'a> {
         Step::Reconnect {
             probe,
             wait,
-            timeout: deadline.saturating_duration_since(Instant::now() + wait),
+            timeout: deadline.saturating_duration_since(after(Instant::now(), wait)),
             attempt: self.options().connect_timeout,
         }
     }
@@ -282,7 +282,7 @@ impl Plugin for Reboot<'_> {
                 let wait = Duration::from_secs(self.options().post_reboot_delay);
                 let timeout = Duration::from_secs(self.options().reboot_timeout);
                 self.started = Some(now);
-                self.deadline = Some(now + wait + timeout);
+                self.deadline = Some(after(after(now, wait), timeout));
                 self.state = State::Back;
                 self.reconnect(self.boot_time_command(), wait)
             }
@@ -295,8 +295,10 @@ impl Plugin for Reboot<'_> {
                 // answers nothing just before it goes down.
                 if !is_gone(&read) && rc(&read) == Some(0) && !id.is_empty() && id != self.previous
                 {
-                    self.deadline =
-                        Some(Instant::now() + Duration::from_secs(self.options().reboot_timeout));
+                    self.deadline = Some(after(
+                        Instant::now(),
+                        Duration::from_secs(self.options().reboot_timeout),
+                    ));
                     self.state = State::Test;
                     return Step::RunDropping(raw(&self.options().test_command));
                 }
@@ -325,6 +327,13 @@ impl Plugin for Reboot<'_> {
             }
         }
     }
+}
+
+/// `now + by`, or a point 2^32 seconds away when the sum overflows: a `reboot_timeout` or a
+/// `post_reboot_delay` that large waits as long as anything can, where a plain sum would panic.
+fn after(now: Instant, by: Duration) -> Instant {
+    now.checked_add(by)
+        .unwrap_or_else(|| now + Duration::from_secs(1 << 32))
 }
 
 fn raw(line: &str) -> Sub {
@@ -482,6 +491,20 @@ fn python_list(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A deadline past what an `Instant` holds is held far away instead of panicking the
+    /// controller: `reboot_timeout: 18446744073709551615` is a `u64` the options accept.
+    ///
+    /// What would make this red: a plain sum, which panics on the overflow.
+    #[test]
+    fn a_deadline_that_overflows_is_held_far_away() {
+        let now = Instant::now();
+        assert!(after(now, Duration::MAX) > now + Duration::from_secs(1 << 31));
+        assert_eq!(
+            after(now, Duration::from_secs(5)),
+            now + Duration::from_secs(5)
+        );
+    }
 
     fn map(value: Value) -> Map<String, Value> {
         object(value)

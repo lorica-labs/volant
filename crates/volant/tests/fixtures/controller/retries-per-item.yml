@@ -1,0 +1,20 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: remote
+      command: "false"
+      loop: [{r: 1}, {r: 2}, {r: x}, {r: 0}]
+      retries: "{{ item.r }}"
+      delay: 0
+      changed_when: false
+      ignore_errors: true
+      register: out
+    - debug: msg="remote {{ out.results | map(attribute='attempts', default='-') | join(',') }}"
+    - name: local
+      assert: {that: false}
+      loop: [{r: 1}, {r: 2}, {r: x}, {r: 0}]
+      retries: "{{ item.r }}"
+      delay: 0
+      ignore_errors: true
+      register: loc
+    - debug: msg="local {{ loc.results | map(attribute='attempts', default='-') | join(',') }}"

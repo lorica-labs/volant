@@ -242,11 +242,19 @@ fn inside(dir: &str, name: &str) -> String {
 /// call also sends `get_size: false`, a key `ansible.windows.win_stat` added and the posix module
 /// never declared; that call tolerates an argument the module does not know, and a sub-task run
 /// through this dispatch does not, so `get_size` stays out.
+///
+/// `get_mime` and `get_attributes` are sent `false`, where the reference leaves them at their
+/// defaults: no plugin reads `mimetype`, `charset` or `attributes`, and the defaults run `file`
+/// and `lsattr` on the host at every call (about 5 ms against 1 ms, measured on the native
+/// `stat`). The only trace is this sub-task's own `invocation`, which neither engine shows or
+/// hands on.
 pub(super) fn stat(path: &str, follow: bool, checksum: bool) -> Step {
     let mut args = Map::new();
     args.insert("path".into(), Value::String(path.to_string()));
     args.insert("follow".into(), Value::Bool(follow));
     args.insert("get_checksum".into(), Value::Bool(checksum));
+    args.insert("get_mime".into(), Value::Bool(false));
+    args.insert("get_attributes".into(), Value::Bool(false));
     args.insert("checksum_algorithm".into(), Value::String("sha1".into()));
     Sub::run("stat", args)
 }
@@ -565,12 +573,15 @@ mod tests {
     ];
 
     /// The first sub-task is the reference's `stat`, measured: the SHA-1 and nothing else, and
-    /// every argument sent is one the module's own `argument_spec` declares.
+    /// every argument sent is one the module's own `argument_spec` declares. The MIME type and
+    /// the attributes are not asked for: no plugin reads them, and each costs the host a program
+    /// (`file`, `lsattr`) per call.
     ///
     /// What would make this red: another algorithm asked for, which never equals the local sum
     /// and sends every file on every run, or an argument outside the module's `argument_spec` -
     /// `get_size`, which only `ansible.windows.win_stat` declares, refused a real `stat` on a
-    /// real host with "Unsupported parameters" until it was dropped.
+    /// real host with "Unsupported parameters" until it was dropped; or `get_mime` and
+    /// `get_attributes` left at their defaults, which run `file` and `lsattr` for nothing.
     #[test]
     fn the_stat_is_the_reference_s() {
         let mut plugin = copy_task("stat", json!({}));
@@ -579,7 +590,7 @@ mod tests {
         assert_eq!(
             Value::Object(sub.args.clone()),
             json!({"path": "/tmp/v/hello.txt", "follow": false, "get_checksum": true,
-                   "checksum_algorithm": "sha1"})
+                   "get_mime": false, "get_attributes": false, "checksum_algorithm": "sha1"})
         );
         for key in sub.args.keys() {
             assert!(

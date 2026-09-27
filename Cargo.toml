@@ -74,7 +74,8 @@ debug = "line-tables-only"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# No `panic = "abort"`: the agent turns a native module's panic into a failed task, which only
+# an unwinding build can do. Measured on the musl agent: 6.6% larger, no speed difference.
 strip = true
 
 # The profile that 'dist' will build with

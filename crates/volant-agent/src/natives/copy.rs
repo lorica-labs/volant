@@ -440,7 +440,7 @@ fn validate_src(request: &Request, validate: &str, clock: Clock) -> Result<(), S
     let argv = shlex::split(&validate.replace("%s", src)).unwrap_or_default();
     let (program, args) = argv
         .split_first()
-        .ok_or_else(|| Stop::Fail(message(format!("validate names no program: {validate}"))))?;
+        .ok_or_else(|| Stop::Fail(message("validate names no program".into())))?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let ran =
         run_output(&BTreeMap::new(), clock, Path::new(program), &args).map_err(
@@ -810,6 +810,27 @@ mod tests {
     fn write(path: &str, content: &str, mode: u32) {
         fs::write(path, content).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A `validate` that splits into no program fails without quoting the command, which can
+    /// carry a secret: the reference, whose `shlex.split` raises on it, quotes none of it. The
+    /// up-front check hands such a `validate` back, so only the validation itself reaches this.
+    ///
+    /// What would make this red: the message carrying the `validate` value.
+    #[test]
+    fn a_validate_naming_no_program_is_not_quoted() {
+        let scratch = scratch("copy-no-program");
+        let src = stage(&scratch, "v\n");
+        let validate = "'secret %s";
+        let args = json!({"src": src, "dest": scratch.path("v.txt"), "validate": validate});
+        let cancelled = || false;
+        let clock = clock(&Context::default(), &cancelled);
+        let params = module_args(SPEC, args.as_object().unwrap());
+        let request = request(&params, clock).ok().unwrap();
+        let Err(Stop::Fail(fail)) = validate_src(&request, validate, clock) else {
+            panic!("the validation did not fail");
+        };
+        assert_eq!(fail["msg"], "validate names no program");
     }
 
     fn ask(args: &Value) -> NativeRun {

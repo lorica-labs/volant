@@ -962,7 +962,7 @@ mod linux {
                 return;
             }
             let name = scratch_name("volantn");
-            fake_getent(
+            let _path = fake_getent(
                 &fakes.scratch,
                 &format!(
                     "[ \"$1\" = passwd ] && [ \"$2\" = {name} ] && echo '{name}:x:5000:5000::/home/{name}:/bin/sh' && exit 0; exit 2"

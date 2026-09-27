@@ -234,7 +234,7 @@ fn lookup(
     let id = if !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) {
         Some(
             key.parse::<u32>()
-                .map_err(|_| format!("{db} id {key} is out of range"))?,
+                .map_err(|_| format!("the {db} id is out of range"))?,
         )
     } else {
         None
@@ -262,7 +262,7 @@ fn lookup(
     let no_env = BTreeMap::new();
     match run_program(&no_env, clock, Path::new("getent"), &[db, key])? {
         Some((0, out)) => Ok(Some(out.lines().find_map(entry).ok_or_else(|| {
-            Stop::HandBack(format!("getent {db} answered no entry for {key}"))
+            Stop::HandBack(format!("getent {db} answered no entry for the key"))
         })?)),
         Some((2, _)) => Ok(None),
         Some((rc, _)) => Err(Stop::HandBack(format!("getent {db} exited {rc}"))),
@@ -305,7 +305,7 @@ fn account(given: &str, find: impl Fn(&str) -> Result<Option<u32>, Stop>) -> Res
         return given
             .parse()
             .map(Account::Id)
-            .map_err(|_| Stop::HandBack(format!("id {given} is out of range")));
+            .map_err(|_| Stop::HandBack("the id is out of range".into()));
     }
     // Python's `int()` also takes a sign, underscores, spaces and other scripts' digits.
     if given.is_empty()
@@ -314,9 +314,9 @@ fn account(given: &str, find: impl Fn(&str) -> Result<Option<u32>, Stop>) -> Res
                 .chars()
                 .all(|c| c.is_numeric() || c.is_whitespace() || "+-_".contains(c)))
     {
-        return Err(Stop::HandBack(format!(
-            "{given:?} is read as a number or not at all by Python"
-        )));
+        return Err(Stop::HandBack(
+            "the account is read as a number or not at all by Python".into(),
+        ));
     }
     Ok(find(given)?.map_or_else(|| Account::Unknown(given.to_string()), Account::Id))
 }
@@ -335,7 +335,8 @@ pub enum ModeError {
 /// as it is, a string of octal digits in base 8, anything else as a symbolic mode
 /// (`_symbolic_mode_to_octal`) applied to `current`, the path's permission bits now.
 pub fn parse_mode(mode: &Value, current: u32, is_dir: bool) -> Result<u32, ModeError> {
-    let unsupported = || ModeError::Unsupported(format!("mode {mode}"));
+    let unsupported =
+        || ModeError::Unsupported("mode takes a form the module reads its own way".into());
     match mode {
         Value::Number(n) => n
             .as_u64()
@@ -817,7 +818,7 @@ pub fn validate_runs_as_python(validate: &str, path: &str, what: &str) -> Result
         .ok_or("validate does not split as a command line")?;
     let program = argv.first().ok_or("validate names no program")?;
     if exec_path(program).is_none() {
-        return Err(format!("{program} cannot be run"));
+        return Err("the validate program cannot be run".into());
     }
     Ok(())
 }

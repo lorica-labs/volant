@@ -34,6 +34,10 @@ pub const NATIVE: Native = Native {
     run: |_, _, _| NativeRun::Fallback("the native service_facts reads a Linux host".into()),
 };
 
+/// The reason guard's cases, for `natives::tests`.
+#[cfg(all(test, target_os = "linux"))]
+pub(super) use imp::tests::secret_probes;
+
 #[cfg(unix)]
 mod imp {
     use std::collections::BTreeMap;
@@ -233,7 +237,7 @@ mod imp {
         }
         for dir in dirs.into_iter().filter(|dir| !dir.is_empty()) {
             if !dir.starts_with('/') {
-                return Err(format!("PATH holds the relative directory {dir}"));
+                return Err("PATH holds a relative directory".into());
             }
             let path = root.path(&format!("{}/{name}", dir.trim_end_matches('/')));
             let executable = std::fs::metadata(&path)
@@ -432,7 +436,7 @@ mod imp {
         for line in stdout.split('\n').filter(|line| line.contains(".service")) {
             let fields: Vec<&str> = py_split(line).collect();
             if fields.len() < 4 {
-                return Err(format!("the unit line {line:?} has fewer than four fields"));
+                return Err("a unit line has fewer than four fields".into());
             }
             let head = &fields[..fields.len() - 1];
             let bad: Vec<&str> = BAD_STATES
@@ -445,7 +449,7 @@ mod imp {
             let status = match bad[..] {
                 [] => fields[2],
                 [one] => one,
-                _ => return Err(format!("the unit line {line:?} names two failure states")),
+                _ => return Err("a unit line names two failure states".into()),
             };
             let state = if fields[3] == "running" {
                 "running"
@@ -484,9 +488,7 @@ mod imp {
                 let mut words = py_split(line);
                 match (words.next(), words.next()) {
                     (Some(name), Some(state)) => Ok((name.to_string(), state.to_string())),
-                    _ => Err(format!(
-                        "the unit file line {line:?} has fewer than two words"
-                    )),
+                    _ => Err("a unit file line has fewer than two words".into()),
                 }
             })
             .collect()
@@ -591,7 +593,7 @@ mod imp {
     }
 
     #[cfg(all(test, target_os = "linux"))]
-    mod tests {
+    pub(super) mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::time::Duration;
 
@@ -599,6 +601,56 @@ mod imp {
 
         use super::*;
         use crate::natives::setup::unbounded;
+
+        /// The reason guard's cases (`natives::tests`): `systemctl` lines the native hands back
+        /// on, each naming a secret-looking unit, and a `PATH` holding one.
+        pub(in crate::natives) fn secret_probes() -> Vec<crate::natives::tests::Probe> {
+            let fixture = |file: &str, content: &str| {
+                let host = Host::new();
+                host.write(file, content);
+                host
+            };
+            let cases = [
+                (
+                    "service_facts short unit line",
+                    "k3s0secret2a",
+                    fixture("/fixture/units.txt", "k3s0secret2a.service loaded active\n"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "service_facts two failure states",
+                    "k3s0secret2b",
+                    fixture(
+                        "/fixture/units.txt",
+                        "k3s0secret2b.service not-found failed failed k3s0secret2b\n",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "service_facts short unit file line",
+                    "k3s0secret2c",
+                    fixture("/fixture/files.txt", "k3s0secret2c.service\n"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "service_facts PATH",
+                    "K3S0SECRET2D",
+                    Host::new(),
+                    "K3S0SECRET2D:/usr/bin:/bin",
+                ),
+            ];
+            cases
+                .into_iter()
+                .map(|(case, secret, host, path)| {
+                    let env = BTreeMap::from([("PATH".to_string(), path.to_string())]);
+                    let reason = match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
+                        Err(Stop::HandBack(reason)) => Some(reason),
+                        _ => None,
+                    };
+                    (case, secret, reason)
+                })
+                .collect()
+        }
 
         /// `list-units` on an Ubuntu 24.04 host with systemd 255, cut down and sanitised (disk
         /// ids zeroed), plus the lines whose description names a failure state: the reference
@@ -969,7 +1021,7 @@ esac
             match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
                 Err(Stop::HandBack(reason)) => {
                     assert!(
-                        reason.contains("PATH holds the relative directory bin"),
+                        reason.contains("PATH holds a relative directory"),
                         "{reason}"
                     );
                 }

@@ -416,9 +416,7 @@ fn gather_subset(value: Option<&Value>) -> Result<(Vec<String>, BTreeSet<&'stati
                 added.insert(subset);
             }
             None => {
-                return Err(format!(
-                    "gather_subset '{subset}' is not a subset the native knows"
-                ));
+                return Err("gather_subset names a subset the native does not know".into());
             }
         }
     }

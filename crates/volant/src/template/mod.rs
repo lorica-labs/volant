@@ -628,14 +628,40 @@ fn holds_template(value: &Value) -> bool {
     }
 }
 
-/// `{{ expr }}` and nothing else: no text around, no second expression, no statement.
+/// `{{ expr }}` and nothing else: no text around, no second expression, no statement. A `}}`
+/// inside is no end when it closes a bracket the expression opened or sits in a string literal:
+/// `{'a': {'x': 5}}` closing on `}}}` and `'}}'` are one expression, `1 }}{{ 2` is two.
 fn single_expression(text: &str) -> Option<&str> {
     let t = text.trim();
     let inner = t.strip_prefix("{{")?.strip_suffix("}}")?;
-    if inner.contains("{{") || inner.contains("}}") || inner.contains("{%") {
+    if inner.contains("{%") || inner.contains("{#") || !closes_only_what_it_opens(inner) {
         return None;
     }
     Some(inner.trim())
+}
+
+/// Whether every bracket `expr` closes outside a string literal is one it opened. minijinja's
+/// own parser cannot be asked: its lexer panics on a `}` with nothing open.
+fn closes_only_what_it_opens(expr: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut chars = expr.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some(_), '\\') => {
+                chars.next();
+            }
+            (Some(q), c) if c == q => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '{' | '[' | '(') => depth += 1,
+            (None, '}' | ']' | ')') => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    true
 }
 
 fn type_name(v: &Value) -> &'static str {
@@ -831,7 +857,9 @@ fn render_str(
             lstrip_blocks: env.lstrip_blocks(),
             trim_blocks: env.trim_blocks(),
         },
-        default_auto_escape: Arc::new(minijinja::default_auto_escape_callback),
+        // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
+        // `{{ "<b>" }}` writes `<b>`.
+        default_auto_escape: Arc::new(|_| AutoEscape::None),
     };
     let mut compiled = CompiledTemplate::new(name, source, &config)?;
     route_concat(&mut compiled.instructions);
@@ -871,7 +899,16 @@ fn eval_expr(
 
 fn convert_error(err: minijinja::Error) -> TemplateError {
     let text = err.to_string();
-    if err.kind() == ErrorKind::UndefinedError {
+    // An operator given an undefined operand is an undefined read (`nope | int + 1` fails
+    // `'nope' is undefined`, measured on ansible-core 2.19.12); minijinja names the operand's
+    // kind in its message and has no other way to tell it.
+    let undefined_operand = err.kind() == ErrorKind::InvalidOperation
+        && err.detail().is_some_and(|d| {
+            d.starts_with("tried to use ")
+                && (d.contains(" unsupported types undefined and ")
+                    || d.ends_with(" and undefined"))
+        });
+    if err.kind() == ErrorKind::UndefinedError || undefined_operand {
         return TemplateError(format!("{UNDEFINED} The error was: {text}"));
     }
     TemplateError(text)
@@ -1575,6 +1612,73 @@ mod unit {
                     "{field} {name} is not wrapped"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reference_parity {
+    use super::*;
+    use serde_json::json;
+
+    /// Measured on ansible-core 2.19.12: `x: "{{ {'a': {'x': 5}} }}"` sets a dict, although the
+    /// text closes on `}}}`. A `}}` inside a string literal is no end either; two expressions
+    /// side by side still render to a string.
+    #[test]
+    fn a_nested_dict_literal_closing_on_three_braces_keeps_its_type() {
+        let t = Templar::new(std::env::temp_dir());
+        let none = Map::new();
+        assert_eq!(
+            t.render("{{ {'a': {'x': 5}} }}", &none),
+            Ok(json!({"a": {"x": 5}}))
+        );
+        assert_eq!(t.render("{{ '}}' }}", &none), Ok(json!("}}")));
+        assert!(t.render("{{ 1 }}{{ 2 }}", &none).unwrap().is_string());
+        assert!(
+            t.render("{{ {'a': 1} }} {{ 2 }}", &none)
+                .unwrap()
+                .is_string()
+        );
+        assert_eq!(
+            t.condition("{{ {'a': {'x': 5}} == {'a': {'x': 5}} }}", &none),
+            Ok(true)
+        );
+    }
+
+    /// Measured on ansible-core 2.19.12: `nope | int + 1` fails `'nope' is undefined`, the
+    /// filter's undefined result read by the operator. An operator on two defined values that
+    /// do not fit keeps its own error.
+    #[test]
+    fn arithmetic_on_an_undefined_filter_result_is_an_undefined_read() {
+        let t = Templar::new(std::env::temp_dir());
+        let none = Map::new();
+        for text in [
+            "{{ nope | int + 1 }}",
+            "{{ 2 * (nope | int) }}",
+            "{{ nope | int - 1 }}",
+        ] {
+            let err = t.render(text, &none).unwrap_err();
+            assert!(err.is_undefined(), "{text}: {err}");
+        }
+        let err = t.render("{{ 'a' - 1 }}", &none).unwrap_err();
+        assert!(!err.is_undefined(), "{err}");
+    }
+
+    /// Measured on ansible-core 2.19.12: `template:` from `index.html.j2` holding `{{ "<b>" }} &`
+    /// writes `<b> &`, never `&lt;b&gt;`. Ansible never turns auto-escape on by file name.
+    #[test]
+    fn a_template_named_html_or_xml_is_not_escaped() {
+        let t = Templar::new(std::env::temp_dir());
+        for name in ["index.html.j2", "server.xml", "a.htm.jinja2"] {
+            let opts = FileRender {
+                name: Some(name.into()),
+                ..FileRender::default()
+            };
+            assert_eq!(
+                t.render_file("{{ \"<b>\" }} &", &Map::new(), &opts),
+                Ok("<b> &".to_string()),
+                "{name}"
+            );
         }
     }
 }

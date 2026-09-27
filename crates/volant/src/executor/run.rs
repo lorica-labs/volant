@@ -1378,7 +1378,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     return Ok(timeout_result());
                 }
                 let built = match sub_task(task, item, &probe, union, interpreters, asked) {
-                    Ok(built) => bounded(built),
+                    Ok(built) => built,
                     Err(failure) => return Ok(failure),
                 };
                 let left = deadline.saturating_duration_since(Instant::now());
@@ -1397,8 +1397,11 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                         std::future::pending::<()>().await;
                     }
                 };
+                let sent_before = *batch_id;
                 let once = async {
                     relink.relink(link, attempt).await?;
+                    // What is left once the connection is up, not before it.
+                    let built = bounded(built);
                     *batch_id += 1;
                     let (mut flat, ended) =
                         send_batch(link, host, *batch_id, vec![built], stop, stop_broken, logs)
@@ -1420,7 +1423,21 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     Ok(Ok(Some(result))) => result,
                     Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
                     Ok(Err(why)) => gone(&why),
-                    Err(_) => gone(&format!("no answer after {} seconds", left.as_secs_f64())),
+                    Err(_) => {
+                        // A probe that went out may still be running on the host, and the agent
+                        // drops any `RunBatch` that arrives while a batch runs: left there, it
+                        // would swallow the next sub-task and leave it unanswered. Cancelled, or,
+                        // when the agent does not say it stopped, the link replaced like one the
+                        // host outlived.
+                        if *batch_id != sent_before
+                            && !link.stop_batch(*batch_id, CANCEL_GRACE).await
+                        {
+                            relink.relink(link, attempt).await.map_err(|why| {
+                                Err(format!("replacing a link busy with a probe: {why}"))
+                            })?;
+                        }
+                        gone(&format!("no answer after {} seconds", left.as_secs_f64()))
+                    }
                 });
                 continue;
             }
@@ -3360,6 +3377,51 @@ mod tests {
         ledger: crate::profile::Ledger,
         /// How long writing one blob frame takes, for a transfer over a slow link.
         transfer_takes: Duration,
+        /// Set to run batches one at a time, as the agent does.
+        busy: Option<Box<Busy>>,
+    }
+
+    /// Batches run the way `volant-agent`'s runner runs them: one at a time, each `RunBatch` it
+    /// accepts taking the next script (`None` runs until cancelled), and a `RunBatch` that
+    /// arrives while another batch runs dropped, as `runner::is_cancelled` drops it.
+    struct Busy {
+        scripts: std::collections::VecDeque<Option<Vec<FromAgent>>>,
+        running: Option<u64>,
+        dropped: Vec<u64>,
+        /// Whether a `Cancel` of the running batch is answered with its `BatchDone`.
+        confirms_cancel: bool,
+    }
+
+    impl FakeAgent {
+        /// A fake running `scripts` one batch at a time; see [`Busy`].
+        fn busy(scripts: Vec<Option<Vec<FromAgent>>>, confirms_cancel: bool) -> Self {
+            FakeAgent {
+                hangs_when_empty: true,
+                busy: Some(Box::new(Busy {
+                    scripts: scripts.into(),
+                    running: None,
+                    dropped: Vec::new(),
+                    confirms_cancel,
+                })),
+                ..FakeAgent::answering(Vec::new())
+            }
+        }
+    }
+
+    /// `msg` as if the agent sent it for batch `id`.
+    fn for_batch(msg: FromAgent, id: u64) -> FromAgent {
+        match msg {
+            FromAgent::TaskResult {
+                index, result, ran, ..
+            } => FromAgent::TaskResult {
+                batch: id,
+                index,
+                result,
+                ran,
+            },
+            FromAgent::BatchDone { outcome, .. } => FromAgent::BatchDone { batch: id, outcome },
+            other => other,
+        }
     }
 
     impl FakeAgent {
@@ -3372,6 +3434,7 @@ mod tests {
                 hangs_when_empty: false,
                 ledger: crate::profile::Ledger::default(),
                 transfer_takes: Duration::ZERO,
+                busy: None,
             }
         }
 
@@ -3390,6 +3453,16 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.sent.push(msg.clone());
+            if let (Some(busy), ToAgent::RunBatch { id, .. }) = (&mut self.busy, msg) {
+                if busy.running.is_some() {
+                    busy.dropped.push(*id);
+                } else {
+                    busy.running = Some(*id);
+                    let script = busy.scripts.pop_front().flatten().unwrap_or_default();
+                    self.answers
+                        .extend(script.into_iter().map(|m| for_batch(m, *id)));
+                }
+            }
             Ok(())
         }
 
@@ -3403,7 +3476,15 @@ mod tests {
 
         async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
             match self.answers.pop_front() {
-                Some(answer) => Ok(Some(answer)),
+                Some(answer) => {
+                    if let (Some(busy), FromAgent::BatchDone { batch, .. }) =
+                        (&mut self.busy, &answer)
+                        && busy.running == Some(*batch)
+                    {
+                        busy.running = None;
+                    }
+                    Ok(Some(answer))
+                }
                 None if self.hangs_when_empty => std::future::pending().await,
                 None => Ok(None),
             }
@@ -3411,6 +3492,16 @@ mod tests {
 
         async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
             self.sent.push(ToAgent::Cancel { id });
+            let Some(busy) = &mut self.busy else {
+                return true;
+            };
+            if busy.running != Some(id) || !busy.confirms_cancel {
+                return false;
+            }
+            busy.running = None;
+            self.answers.retain(|m| {
+                !matches!(m, FromAgent::TaskResult { batch, .. } | FromAgent::BatchDone { batch, .. } if *batch == id)
+            });
             true
         }
 
@@ -7348,6 +7439,61 @@ mod tests {
         };
         assert_eq!(timeouts(&relink.retired[0]), [Some(2); 4]);
         assert_eq!(timeouts(relink.retired.last().expect("a probe")), [Some(1)]);
+    }
+
+    /// A probe the item's deadline abandoned is cancelled on the host. The agent runs one batch
+    /// at a time and drops a `RunBatch` that arrives while another runs, so a probe left running
+    /// swallows the next item's first batch, whose answer then never comes. The fake runs
+    /// batches the way the agent does; the next batch is bounded, so the defect fails the test
+    /// rather than hanging it. An agent that does not confirm the cancel has its link replaced.
+    ///
+    /// What would make this red: the probe dropped without a `Cancel` (the next batch is
+    /// dropped and never answered), or an unconfirmed cancel leaving the busy link in place.
+    #[tokio::test]
+    async fn a_probe_abandoned_at_the_deadline_is_cancelled() {
+        fn fresh() -> FakeAgent {
+            FakeAgent::busy(vec![Some(raw_answer(0, 0, "next\n").to_vec())], true)
+        }
+        for confirms in [true, false] {
+            let mut stop = watch::channel(false).1;
+            let mut agent = before_the_reboot(None);
+            let probing = FakeAgent::busy(
+                vec![None, Some(raw_answer(0, 0, "next\n").to_vec())],
+                confirms,
+            );
+            let mut relink = Scripted::new(vec![Try::Up(probing)]);
+            relink.after = Some(fresh);
+            let result = reboot_item_under(
+                Some(2),
+                json!({}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
+            .await
+            .expect("the item ran to its end");
+            assert_eq!(result, TaskResult::timed_out(2), "{confirms}");
+            let next = vec![protocol_task(&task("command"), &bare_item(), None)];
+            let (received, _) = tokio::time::timeout(
+                Duration::from_secs(10),
+                run_agent_batch(
+                    &mut agent,
+                    "h1",
+                    1000,
+                    next,
+                    None,
+                    &[],
+                    &mut stop,
+                    &mut false,
+                    &mut Vec::new(),
+                ),
+            )
+            .await
+            .expect("the next batch was answered rather than dropped");
+            let answered = received[0].clone().expect("a result").0;
+            assert_eq!(answered["stdout"], json!("next\n"), "{confirms}");
+        }
     }
 
     /// A `shutdown` that answered and then took the link down reports its answer: a refusal

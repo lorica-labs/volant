@@ -1018,6 +1018,7 @@ pub(super) async fn drive_host(
                         task,
                         &register_hosts,
                         &results,
+                        &[],
                     );
                     let Some(next) = driver.advance(pos).await else {
                         break 'run;
@@ -1116,12 +1117,13 @@ pub(super) async fn drive_host(
                         options.abort.raise(reason);
                         break 'run;
                     }
-                    for message in take_warnings(&mut results) {
+                    let warnings = take_warnings(&mut results);
+                    for message in &warnings {
                         let _ = tx
                             .send(Event::Warning {
                                 host: name.clone(),
                                 index: pos,
-                                message,
+                                message: message.clone(),
                                 censored: task.censors(),
                             })
                             .await;
@@ -1131,6 +1133,7 @@ pub(super) async fn drive_host(
                         task,
                         &register_hosts,
                         &results,
+                        &warnings,
                     );
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
@@ -1744,12 +1747,13 @@ pub(super) async fn drive_host(
                     options.abort.raise(reason);
                     break 'run;
                 }
-                for message in take_warnings(&mut results) {
+                let warnings = take_warnings(&mut results);
+                for message in &warnings {
                     let _ = tx
                         .send(Event::Warning {
                             host: name.clone(),
                             index: *index,
-                            message,
+                            message: message.clone(),
                             censored: task.censors(),
                         })
                         .await;
@@ -1760,7 +1764,7 @@ pub(super) async fn drive_host(
                     // One lock for both: a reader between them would see a host that had
                     // registered a result without holding the facts that came in it.
                     let mut vars = store.lock().expect("vars lock");
-                    record_registered(&mut vars, task, &targets, &results);
+                    record_registered(&mut vars, task, &targets, &results, &warnings);
                     // Only here, and never on the `run_local` path above: this is where a
                     // managed host's own words arrive, and `set_fact` writes its own facts with
                     // the trust each of them earned.

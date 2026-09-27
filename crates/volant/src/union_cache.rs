@@ -115,13 +115,17 @@ pub struct Traced {
 impl Place {
     /// This run's place, or `None` when there is no cache directory or no interpreter to build
     /// under: the run then builds as it always did.
-    pub fn here(modules: &BTreeSet<String>, asked: &[String]) -> Option<Place> {
+    pub fn here(
+        modules: &BTreeSet<String>,
+        asked: &[String],
+        plugin_dirs: &[PathBuf],
+    ) -> Option<Place> {
         let explicit = std::env::var("VOLANT_PYTHON").ok();
         let virtual_env = std::env::var("VIRTUAL_ENV").ok();
         let interpreter = interpreter_without_running(explicit.as_deref(), virtual_env.as_deref())?;
         Some(Place {
             dir: cache_dir()?,
-            key: key(&interpreter, modules, asked),
+            key: key(&interpreter, modules, asked, plugin_dirs),
             interpreter: interpreter.path,
             real: interpreter.real,
         })
@@ -178,15 +182,55 @@ pub fn located(candidate: &str) -> Option<PathBuf> {
 }
 
 /// The key of this run's union, read from the process: its environment, its working directory,
-/// and every `ansible.cfg` ansible-core might read (`configs`).
-pub fn key(interpreter: &InterpreterId, modules: &BTreeSet<String>, asked: &[String]) -> CacheKey {
+/// every `ansible.cfg` ansible-core might read (`configs`), and what the playbooks' and roles'
+/// plugin directories hold (`plugin_files`).
+pub fn key(
+    interpreter: &InterpreterId,
+    modules: &BTreeSet<String>,
+    asked: &[String],
+    plugin_dirs: &[PathBuf],
+) -> CacheKey {
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    let cfg = configs(
+    let mut files = configs(
         std::env::var_os("ANSIBLE_CONFIG").as_deref(),
         std::env::var_os("HOME").as_deref().map(Path::new),
     );
+    files.extend(plugin_files(plugin_dirs));
     let cwd = std::env::current_dir().unwrap_or_default();
-    key_from(interpreter, modules, asked, &env, &cfg, &cwd)
+    key_from(interpreter, modules, asked, &env, &files, &cwd)
+}
+
+/// Each directory of `dirs`, then every file under its `library/` and `module_utils/` with its
+/// contents: which module a name finds, and what its `module_utils` import reads, is decided
+/// there. The sources an entry keeps cannot see it: a `library/` created after the entry was
+/// written has no mtime in them, and a module shadowing one of ansible-core's would go unseen.
+fn plugin_files(dirs: &[PathBuf]) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    for dir in dirs {
+        out.push((dir.clone(), Vec::new()));
+        for sub in ["library", "module_utils"] {
+            files_under(&dir.join(sub), &mut out);
+        }
+    }
+    out
+}
+
+/// Every file under `dir`, at any depth, in a stable order. A link to a directory is not
+/// followed, so a loop of links ends.
+fn files_under(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<fs::DirEntry> = entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(fs::DirEntry::path);
+    for entry in entries {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            files_under(&path, out);
+        } else if let Ok(bytes) = fs::read(&path) {
+            out.push((path, bytes));
+        }
+    }
 }
 
 /// Every configuration file ansible-core's `find_ini_config_file` may pick, with its contents:
@@ -265,13 +309,13 @@ fn expanded(text: &str, home: Option<&Path>, var: impl Fn(&str) -> Option<String
 /// The environment is `ANSIBLE_*` (every setting ansible-core reads there), `PYTHON*` (which
 /// ansible-core the interpreter imports) and `HOME` (where `~` puts the collections). The working
 /// directory is in because a relative path in either the environment or a relative
-/// `ANSIBLE_CONFIG` is read against it.
+/// `ANSIBLE_CONFIG` is read against it. `files` is every file read for the key, with its contents.
 fn key_from(
     interpreter: &InterpreterId,
     modules: &BTreeSet<String>,
     asked: &[String],
     env: &[(OsString, OsString)],
-    cfg: &[(PathBuf, Vec<u8>)],
+    files: &[(PathBuf, Vec<u8>)],
     cwd: &Path,
 ) -> CacheKey {
     let mut hasher = blake3::Hasher::new();
@@ -309,7 +353,7 @@ fn key_from(
         field(value.as_encoded_bytes());
     }
     field(b"cfg");
-    for (path, text) in cfg {
+    for (path, text) in files {
         field(path.as_os_str().as_encoded_bytes());
         field(text);
     }
@@ -850,6 +894,47 @@ mod tests {
         ] {
             assert_ne!(base, other);
         }
+    }
+
+    /// A module written, or rewritten in place, in a playbook's `library/` or `module_utils/`
+    /// is another key, and so is a playbook directory named in another place of the list.
+    ///
+    /// What would make this red: the key leaving the plugin directories out, which serves the
+    /// union built before a `library/stat.py` existed, with ansible-core's own `stat`, since no
+    /// source it kept names a directory that was not there.
+    #[test]
+    fn a_module_written_in_a_playbook_s_library_is_another_key() {
+        let root = tempdir();
+        let (play, role) = (root.0.join("play"), root.0.join("role"));
+        fs::create_dir_all(&play).unwrap();
+        fs::create_dir_all(&role).unwrap();
+        let key = |dirs: &[PathBuf]| {
+            key_from(
+                &interpreter(),
+                &BTreeSet::from(["stat".to_string()]),
+                &[],
+                &[],
+                &plugin_files(dirs),
+                Path::new("/work"),
+            )
+        };
+        let both = [play.clone(), role.clone()];
+        let mut seen = vec![key(&both)];
+        assert_ne!(key(&[role.clone(), play.clone()]), seen[0], "the order");
+        fs::create_dir_all(play.join("library")).unwrap();
+        fs::write(play.join("library").join("stat.py"), "one").unwrap();
+        seen.push(key(&both));
+        fs::write(play.join("library").join("stat.py"), "two").unwrap();
+        seen.push(key(&both));
+        fs::create_dir_all(role.join("module_utils").join("net")).unwrap();
+        fs::write(role.join("module_utils").join("net").join("a.py"), "").unwrap();
+        seen.push(key(&both));
+        for (i, one) in seen.iter().enumerate() {
+            for other in &seen[i + 1..] {
+                assert_ne!(one, other);
+            }
+        }
+        assert_eq!(key(&both), seen[3], "nothing changed since");
     }
 
     /// An entry that does not read whole is rebuilt, not trusted.

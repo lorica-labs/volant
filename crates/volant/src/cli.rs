@@ -277,10 +277,34 @@ async fn run_all(
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let python = python::union_for(&python_modules, &named, &mut |warning| {
+    // Where ansible-playbook finds a playbook's own modules: each playbook's directory, then each
+    // role's that is not in a collection, the order its loaders are given them.
+    let mut plugin_dirs: Vec<PathBuf> = Vec::new();
+    let roles = reach.role_order.iter().filter(|role| {
+        !role
+            .components()
+            .any(|c| c.as_os_str() == "ansible_collections")
+    });
+    for dir in walked
+        .iter()
+        .map(|(dir, _)| *dir)
+        .chain(roles.map(PathBuf::as_path))
+    {
+        if let Ok(dir) = std::fs::canonicalize(dir)
+            && !plugin_dirs.contains(&dir)
+        {
+            plugin_dirs.push(dir);
+        }
+    }
+    let python = python::union_for(&python_modules, &named, &plugin_dirs, &mut |warning| {
         out.warning(&warning, false);
     })
     .map_err(|e| Refusal::or(4, e))?;
+    for plays in &compiled {
+        for play in plays {
+            preflight::check_built(play, python.as_ref()).map_err(|e| Refusal::or(4, e))?;
+        }
+    }
     profile.phase(None, Phase::Union, micros(building));
 
     let agents = agent::AgentSource::discover();

@@ -139,13 +139,14 @@ pub fn payload_key(module: &str) -> &str {
     }
 }
 
-/// Whether only an installed collection can answer to this name: qualified, and under neither of
-/// the two prefixes that name ansible-core's own modules. `ansible.builtin.nosuch` is not one: it
-/// is a typo in a namespace ansible-core owns whole, and no collection can supply it.
-pub fn is_collection_name(module: &str) -> bool {
-    module.contains('.')
+/// Whether only the controller's ansible-core can say what this name is: a collection's module,
+/// or a name no builtin has (`my_module`, `ansible.legacy.my_module`), which a `library/` beside
+/// the playbook, in a role, or on the configured path may hold. `ansible.builtin.nosuch` is not
+/// one: it is a typo in a namespace ansible-core owns whole, and nothing can supply it.
+pub fn is_resolved_name(module: &str) -> bool {
+    !module.is_empty()
         && !module.starts_with("ansible.builtin.")
-        && !module.starts_with("ansible.legacy.")
+        && !volant_protocol::modules::is_builtin(module)
 }
 
 /// What the controller's ansible-core makes of one module name it was asked about.
@@ -202,7 +203,7 @@ pub fn is_python_module(module: &str) -> bool {
         import_module, include_module, is_builtin, is_known, short_name,
     };
 
-    if is_collection_name(module) {
+    if is_resolved_name(module) {
         return true;
     }
     is_builtin(module)
@@ -273,6 +274,9 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
 pub(crate) struct Reach {
     /// The root of every role reached.
     pub(crate) roles: std::collections::BTreeSet<std::path::PathBuf>,
+    /// The same roots in the order ansible-playbook loads them, a role after its `meta/main.yml`
+    /// dependencies, which is the order their plugin directories join the loaders.
+    pub(crate) role_order: Vec<std::path::PathBuf>,
     /// Every task file read.
     pub(crate) files: std::collections::BTreeSet<std::path::PathBuf>,
     modules: Vec<String>,
@@ -337,6 +341,7 @@ impl Reach {
                 self.role(&found, search)?;
             }
         }
+        self.role_order.push(dir.to_path_buf());
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
                 self.files.insert(path.clone());
@@ -491,23 +496,33 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 ///
 /// The union is kept between runs ([`crate::union_cache`]): a run whose entry is still valid
 /// starts no helper at all. `warn` is told, once, when the cache cannot be written.
+///
+/// `plugin_dirs` is every playbook's directory, then every role's, in the order ansible-playbook
+/// adds them to its loaders: their `library/` and `module_utils/` are searched before anything
+/// configured, and the helper is told about them before it resolves or builds anything.
 pub fn union_for(
     modules: &std::collections::BTreeSet<String>,
     named: &[(String, String)],
+    plugin_dirs: &[std::path::PathBuf],
     warn: &mut dyn FnMut(String),
 ) -> anyhow::Result<Option<Union>> {
     if modules.is_empty() {
         return Ok(None);
     }
-    let place = crate::union_cache::Place::here(modules, &collection_names(modules));
-    union_from(PythonBuilder::start, modules, named, place.as_ref(), warn)
+    let place = crate::union_cache::Place::here(modules, &collection_names(modules), plugin_dirs);
+    let start = || {
+        let mut builder = PythonBuilder::start()?;
+        builder.add_plugin_dirs(plugin_dirs)?;
+        Ok(builder)
+    };
+    union_from(start, modules, named, place.as_ref(), warn)
 }
 
-/// The names only an installed collection can answer to, which the helper resolves first.
+/// The names only the controller's ansible-core can answer to, which the helper resolves first.
 fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String> {
     modules
         .iter()
-        .filter(|m| is_collection_name(m))
+        .filter(|m| is_resolved_name(m))
         .cloned()
         .collect()
 }
@@ -558,7 +573,7 @@ fn union_from(
         Err(_)
             if names
                 .iter()
-                .all(|m| is_collection_name(m) && !named.iter().any(|(_, n)| n == m)) =>
+                .all(|m| is_resolved_name(m) && !named.iter().any(|(_, n)| n == m)) =>
         {
             return Ok(None);
         }
@@ -770,6 +785,21 @@ impl PythonBuilder {
         modules: &[String],
     ) -> anyhow::Result<(Union, Option<crate::union_cache::Traced>)> {
         exchange(&mut self.stdin, &mut self.stdout, modules)
+    }
+
+    /// Adds each directory's plugin directories to the helper's loaders, as ansible-playbook
+    /// adds a playbook's and a role's.
+    pub fn add_plugin_dirs(&mut self, dirs: &[std::path::PathBuf]) -> anyhow::Result<()> {
+        let dirs: Vec<&str> = dirs.iter().filter_map(|dir| dir.to_str()).collect();
+        if !dirs.is_empty() {
+            ask(
+                &mut self.stdin,
+                &mut self.stdout,
+                &serde_json::json!({ "plugin_dirs": dirs }),
+                "add the plugin directories",
+            )?;
+        }
+        Ok(())
     }
 
     /// What the controller's ansible-core makes of each name, one answer per name asked.
@@ -1903,7 +1933,7 @@ mod tests {
     /// playbook on a machine that has no ansible-core - including the ones that never needed it.
     #[test]
     fn a_run_with_no_python_module_builds_nothing() {
-        let none = union_for(&std::collections::BTreeSet::new(), &[], &mut |_| {})
+        let none = union_for(&std::collections::BTreeSet::new(), &[], &[], &mut |_| {})
             .expect("nothing to build");
         assert!(none.is_none());
     }
@@ -2059,6 +2089,7 @@ mod tests {
             key: crate::union_cache::key(
                 &interpreter,
                 &std::collections::BTreeSet::from(["ping".into()]),
+                &[],
                 &[],
             ),
             interpreter: interpreter.path,

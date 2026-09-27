@@ -477,6 +477,19 @@ def resolve_one(name):
     }
 
 
+def plugin_dirs(dirs):
+    """Adds each playbook's and each role's directory as ansible-playbook adds it, with
+    `add_all_plugin_dirs`: its `library/`, `module_utils/` and other plugin directories are
+    searched before the configured paths, in the order given, so a `library/stat.py` beside the
+    playbook is the `stat` a task gets."""
+    from ansible.plugins.loader import add_all_plugin_dirs
+
+    loaders()
+    for directory in dirs:
+        add_all_plugin_dirs(directory)
+    return {}
+
+
 def read_frame(stream):
     header = stream.read(4)
     if len(header) < 4:
@@ -509,7 +522,9 @@ def main():
         if request is None:
             return
         try:
-            if "resolve" in request:
+            if "plugin_dirs" in request:
+                answer = plugin_dirs(request["plugin_dirs"])
+            elif "resolve" in request:
                 answer = resolve(request["resolve"])
             else:
                 answer = union(request["modules"])

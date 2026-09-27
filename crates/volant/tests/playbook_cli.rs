@@ -8086,6 +8086,146 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A module that answers `<name> says <word>`, as a `library/` holds one.
+fn library_module(dir: &Path, name: &str, field: &str) {
+    std::fs::create_dir_all(dir).expect("a library directory");
+    std::fs::write(
+        dir.join(format!("{name}.py")),
+        format!(
+            "from ansible.module_utils.basic import AnsibleModule\n\
+             m = AnsibleModule(argument_spec={{'word': {{'type': 'str', 'default': 'x'}}}})\n\
+             m.exit_json(changed=False, {field}='{name} says ' + m.params['word'])\n"
+        ),
+    )
+    .expect("the module");
+}
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a module in `library/` beside the
+/// playbook and one in a role's `library/` both run, `ok` with the value each returns
+/// (`add_all_plugin_dirs`, from `Playbook._load_playbook_data` and `Role._load_role_data`).
+///
+/// What would make this red: the playbook's or the role's directory not handed to the helper,
+/// which refuses the task with "couldn't resolve module/action"; or a name no builtin has
+/// refused before the controller's ansible-core was asked.
+#[test]
+fn a_module_in_the_playbook_s_library_or_a_role_s_runs() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-modules");
+    library_module(&dir.join("library"), "pb_probe", "msg");
+    let role = dir.join("roles").join("r");
+    library_module(&role.join("library"), "role_probe", "msg");
+    std::fs::create_dir_all(role.join("tasks")).expect("the role's tasks");
+    std::fs::write(
+        role.join("tasks").join("main.yml"),
+        "- role_probe: word=from-role\n  register: r\n- debug: var=r.msg\n",
+    )
+    .expect("the role's tasks");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  roles: [r]\n  tasks:\n    - pb_probe: word=from-playbook\n      register: p\n    - debug: var=p.msg\n",
+    )
+    .expect("the play");
+    let cache = dir.join("cache");
+    let out = volant_within_env(
+        &["playbook", dir.join("play.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#""p.msg": "pb_probe says from-playbook""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""r.msg": "role_probe says from-role""#),
+        "{text}"
+    );
+    // Measured there too: a word that is not `key=value` fails the task with "Action 'pb_probe'
+    // does not support raw params."; Volant refuses the run with it before the first
+    // connection, once the name resolved.
+    std::fs::write(
+        dir.join("stray.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - pb_probe: word=a stray\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &["playbook", dir.join("stray.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(
+        text.contains("Action 'pb_probe' does not support raw params."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A `library/` written beside the playbook after a run kept its union: the next run builds
+/// again and gets the playbook's `ping`, as ansible-core 2.19.12 does, where it finds the file
+/// before its own module.
+///
+/// What would make this red: the kept union's key blind to what the playbook's `library/`
+/// holds. No source the first run kept names a directory that was not there, so the second run
+/// loads the union holding ansible-core's `ping` and prints `pong`.
+#[test]
+fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-cache");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - ping:\n      register: p\n    - debug: var=p.ping\n",
+    )
+    .expect("the play");
+    let cache = dir.join("cache");
+    let run = || {
+        let out = volant_within_env(
+            &["playbook", dir.join("play.yml").to_str().expect("a path")],
+            std::time::Duration::from_secs(60),
+            &[
+                ("VOLANT_PYTHON", &python),
+                ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+            ],
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{text}");
+        text
+    };
+    let first = run();
+    assert!(first.contains(r#""p.ping": "pong""#), "{first}");
+    let kept = std::fs::read_dir(cache.join("volant").join("unions"))
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert!(
+        kept > 0,
+        "the first run kept no union, so nothing is proven"
+    );
+    library_module(&dir.join("library"), "ping", "ping");
+    let second = run();
+    assert!(second.contains(r#""p.ping": "ping says x""#), "{second}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// A controller interpreter with ansible-core, which a task an action plugin backs needs for its
 /// sub-tasks: `VOLANT_PYTHON` when it is set, else the one beside an `ansible-playbook` on `PATH`
 /// (where a `uv tool` or `pipx` install puts it), else `python3`. `None` after saying why, so a

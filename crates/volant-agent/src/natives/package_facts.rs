@@ -1541,6 +1541,181 @@ Description: time zone and daylight-saving time data
             assert!(given.contains("APT_CONFIG"), "{given}");
         }
 
+        /// The remaining hand-backs, one host change each, every one before anything is read
+        /// beyond the configuration: records dpkg or a list would give apt that the native does
+        /// not reproduce, and sources apt would read differently, name another way or refuse.
+        ///
+        /// What would make this red, one line each: a relative `PATH` entry resolved against
+        /// the agent's directory; an unknown `Multi-Arch`, a status without its three words, an
+        /// installed package without a version, a package installed twice, or a listed one
+        /// without a version, answered; a source file name apt skips, a component or suite
+        /// that is not a plain name, a line without a component, an incomplete line, a type
+        /// other than `deb`, an option or field that moves the lists, or a URI with user info,
+        /// answered.
+        #[test]
+        fn every_other_record_or_source_the_native_does_not_read_hands_back() {
+            let append = |tree: &Tree, path: &str, text: &str| {
+                let full = tree.0.join(path.trim_start_matches('/'));
+                let mut content = std::fs::read_to_string(&full).unwrap_or_default();
+                content.push_str(text);
+                std::fs::write(full, content).unwrap();
+            };
+            let status = "/var/lib/dpkg/status";
+            let example = "/etc/apt/sources.list.d/example.list";
+            let ubuntu = "/etc/apt/sources.list.d/ubuntu.sources";
+            let repo =
+                format!("{LISTS}/repo.example.org_debian_dists_stable_main_binary-amd64_Packages");
+            type Case<'a> = (&'static str, Box<dyn Fn(&Tree) + 'a>);
+            let cases: Vec<Case> = vec![
+                (
+                    "Multi-Arch: weird is not one apt knows",
+                    Box::new(|tree| {
+                        tree.edit(
+                            status,
+                            "Section: devel\n",
+                            "Section: devel\nMulti-Arch: weird\n",
+                        );
+                    }),
+                ),
+                (
+                    "hello has the status",
+                    Box::new(|tree| {
+                        tree.edit(
+                            status,
+                            "Package: hello\nStatus: install ok installed",
+                            "Package: hello\nStatus: installed",
+                        );
+                    }),
+                ),
+                (
+                    "hello is installed without a version or an architecture",
+                    Box::new(|tree| {
+                        tree.edit(status, "Version: 2.10-3build2", "Xersion: 2.10-3build2")
+                    }),
+                ),
+                (
+                    "hello is installed twice",
+                    Box::new(|tree| {
+                        append(
+                            tree,
+                            status,
+                            "\nPackage: hello\nStatus: install ok installed\nVersion: 9\nArchitecture: amd64\nSection: devel\n",
+                        );
+                    }),
+                ),
+                (
+                    "tool is listed without a version or an architecture",
+                    Box::new(|tree| tree.edit(&repo, "Version: 1.0-1", "Xersion: 1.0-1")),
+                ),
+                (
+                    "has a name apt may skip",
+                    Box::new(|tree| tree.write("/etc/apt/sources.list.d/my repo.list", "")),
+                ),
+                (
+                    "the component ma!n is not a plain name",
+                    Box::new(|tree| tree.edit(example, "stable main", "stable ma!n")),
+                ),
+                (
+                    "names no component",
+                    Box::new(|tree| tree.edit(example, "stable main", "stable")),
+                ),
+                (
+                    "the suite sta~ble is not a plain name",
+                    Box::new(|tree| tree.edit(example, "stable main", "sta~ble main")),
+                ),
+                (
+                    "is not a plain URI",
+                    Box::new(|tree| tree.edit(example, "https://repo.", "https://user@repo.")),
+                ),
+                (
+                    "is incomplete",
+                    Box::new(|tree| {
+                        tree.write(
+                            "/etc/apt/sources.list",
+                            "deb http://archive.example.org/debian\n",
+                        )
+                    }),
+                ),
+                (
+                    "the source type deb-foo is not deb",
+                    Box::new(|tree| {
+                        tree.write(
+                            "/etc/apt/sources.list",
+                            "deb-foo http://archive.example.org/debian stable main\n",
+                        )
+                    }),
+                ),
+                (
+                    "the source option target=Packages changes its lists",
+                    Box::new(|tree| {
+                        tree.edit(
+                            example,
+                            "deb [signed-by=",
+                            "deb [target=Packages signed-by=",
+                        )
+                    }),
+                ),
+                (
+                    "the source option arch+=i386 changes its lists",
+                    Box::new(|tree| {
+                        tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=")
+                    }),
+                ),
+                (
+                    "the source field Snapshot changes its lists",
+                    Box::new(|tree| append(tree, ubuntu, "Snapshot: yes\n")),
+                ),
+                (
+                    "the source type rpm is not deb",
+                    Box::new(|tree| tree.edit(ubuntu, "Types: deb\n", "Types: rpm\n")),
+                ),
+            ];
+            for (reason, break_host) in cases {
+                let tree = Tree::new(HOST);
+                break_host(&tree);
+                let given = tree.hands_back(json!({}));
+                assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
+            }
+            let tree = Tree::new(HOST);
+            let given = match tree.answer_with(json!({}), &[("PATH", "bin:/usr/bin")]) {
+                Err(Stop::HandBack(reason)) => reason,
+                other => panic!("a relative PATH answered: {other:?}"),
+            };
+            assert!(
+                given.contains("PATH holds the relative directory bin"),
+                "{given}"
+            );
+            // A `deb-src` twin with the same `Signed-By` and a `sources.list` that exists are
+            // read, and change nothing.
+            let tree = Tree::new(HOST);
+            append(
+                &tree,
+                example,
+                "deb-src [signed-by=/usr/share/keyrings/example.gpg] https://repo.example.org/debian stable main\n",
+            );
+            tree.write("/etc/apt/sources.list", "# moved to sources.list.d\n");
+            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+            let result = tree.answer(json!({})).unwrap();
+            assert_eq!(result["ansible_facts"]["packages"], reference);
+        }
+
+        /// The entry point the agent calls: arguments outside the subset hand back with their
+        /// reason, and nothing is read.
+        #[test]
+        fn the_entry_point_hands_back_what_the_answer_hands_back() {
+            let context = Context {
+                timeout: None,
+                environment: BTreeMap::new(),
+                interpreter: None,
+                remote_tmp: "/tmp".into(),
+            };
+            let args = json!({"strategy": "all"});
+            match run(args.as_object().unwrap(), &context, &|| false) {
+                NativeRun::Fallback(reason) => assert_eq!(reason, "strategy is not first"),
+                _ => panic!("strategy all was answered"),
+            }
+        }
+
         /// `Enabled` read as apt reads it (measured on apt 2.8.3 and 3.2.0): a deb822 source
         /// is disabled by any of `StringToBool`'s false spellings, so its leftover lists are
         /// stale and hand back; a value apt would read with its default hands back; a one-line

@@ -911,6 +911,104 @@ esac
             }
         }
 
+        /// The rest of what the reference does around its commands.
+        ///
+        /// What would make this red, one each: no `locale` or a failing one not read as `C`,
+        /// no `service` not read as an empty SysV list, a repeated unit line not taking the
+        /// later one's values in the first one's place (answered, not appended); a failing
+        /// `list-unit-files` answered (the reference warns); nothing found answered (the
+        /// reference answers `skipped`); a relative `PATH` entry resolved; a `systemctl` whose
+        /// path a shell would change run directly.
+        #[test]
+        fn the_edges_around_the_commands_are_read_as_the_reference_reads_them() {
+            let host = Host::new();
+            std::fs::remove_file(host.0.join("usr/bin/locale")).unwrap();
+            host.answer().unwrap();
+            let host = Host::new();
+            host.command("/usr/bin/locale", "#!/bin/sh\nexit 1\n");
+            host.answer().unwrap();
+
+            let host = Host::new();
+            std::fs::remove_file(host.0.join("usr/sbin/service")).unwrap();
+            let services = host.answer().unwrap()["ansible_facts"]["services"].clone();
+            let services = services.as_object().unwrap();
+            assert!(
+                services
+                    .values()
+                    .all(|service| service["source"] == "systemd")
+            );
+
+            let host = Host::new();
+            host.write(
+                "/fixture/units.txt",
+                &format!("{UNITS}cron.service loaded inactive dead Regular background program\n"),
+            );
+            let result = host.answer().unwrap();
+            let services = result["ansible_facts"]["services"].as_object().unwrap();
+            assert_eq!(services["cron.service"]["state"], "stopped");
+
+            let host = Host::new();
+            host.command(
+                "/usr/bin/systemctl",
+                &SYSTEMCTL.replacen(
+                    "#!/bin/sh\n",
+                    "#!/bin/sh\n[ \"$1\" = list-unit-files ] && exit 1\n",
+                    1,
+                ),
+            );
+            assert!(host.hands_back().contains("list-unit-files exited 1"));
+
+            let host = Host::new();
+            for fixture in ["units.txt", "files.txt", "sysv.txt"] {
+                host.write(&format!("/fixture/{fixture}"), "");
+            }
+            assert!(host.hands_back().contains("no service was found"));
+
+            let host = Host::new();
+            let env = BTreeMap::from([("PATH".to_string(), "bin:/usr/bin".to_string())]);
+            match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
+                Err(Stop::HandBack(reason)) => {
+                    assert!(
+                        reason.contains("PATH holds the relative directory bin"),
+                        "{reason}"
+                    );
+                }
+                other => panic!("a relative PATH answered: {other:?}"),
+            }
+
+            let host = Host::new();
+            host.command("/opt/my tools/systemctl", SYSTEMCTL);
+            std::fs::remove_file(host.0.join("usr/bin/systemctl")).unwrap();
+            let env = BTreeMap::from([(
+                "PATH".to_string(),
+                "/opt/my tools:/usr/bin:/bin".to_string(),
+            )]);
+            match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
+                Err(Stop::HandBack(reason)) => {
+                    assert!(reason.contains("is not a plain path"), "{reason}");
+                }
+                other => panic!("a path with a space answered: {other:?}"),
+            }
+        }
+
+        /// The entry point the agent calls: an argument hands back with its reason.
+        #[test]
+        fn the_entry_point_hands_back_what_the_answer_hands_back() {
+            let context = Context {
+                timeout: None,
+                environment: BTreeMap::new(),
+                interpreter: None,
+                remote_tmp: "/tmp".into(),
+            };
+            let args = json!({"x": 1});
+            match run(args.as_object().unwrap(), &context, &|| false) {
+                NativeRun::Fallback(reason) => {
+                    assert_eq!(reason, "the argument x is outside the native service_facts");
+                }
+                _ => panic!("an argument was answered"),
+            }
+        }
+
         /// A SysV hand-back does not win over systemd's deadline or cancel: the task ends with
         /// the stop, not with a hand-back that would run the module past its deadline.
         ///

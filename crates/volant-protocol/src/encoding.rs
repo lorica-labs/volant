@@ -6,8 +6,8 @@
 //! lines, so it comes from `miniz_oxide`, pure Rust. One copy for both crates, so the controller
 //! and the agent cannot read the same bytes two ways.
 
-/// The most a blob may decode to. The agent refuses a `put_blob` announcing more before it reads
-/// a byte of the frame after it.
+/// The most a blob may decode to. The agent refuses a `put_blob` announcing more, reading the
+/// frame after it through without holding it.
 pub const BLOB_LIMIT: usize = 256 * 1024 * 1024;
 
 /// `bytes` as a zlib stream at level 6: the adler-32 at its end lets [`inflate`] refuse a stream

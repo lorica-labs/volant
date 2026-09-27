@@ -63,8 +63,8 @@ pub enum ToAgent {
     /// blob can be used.
     PutBlob {
         hash: String,
-        /// The decoded length. The agent refuses a frame longer than this before reading it, and
-        /// stops inflating once the output would pass it.
+        /// The decoded length. The agent refuses a frame longer than this, reading it through
+        /// without holding it, and stops inflating once the output would pass it.
         len: u64,
         encoding: BlobEncoding,
         /// A file one task stages rather than a payload the link reuses. The agent keeps it out

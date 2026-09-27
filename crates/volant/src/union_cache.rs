@@ -20,13 +20,12 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::agent::BlobFrame;
 use crate::agent::embedded::create_private;
+use crate::agent::{BlobFrame, keep_frame};
 use crate::python::{Resolved, Union};
 
 /// The manifest's own version. An entry written in another format is rebuilt, never read.
@@ -37,48 +36,6 @@ use crate::python::{Resolved, Union};
 /// 3: an entry keeps the zip's deflated form beside it, `<key>.deflate`, named by its blake3 in
 /// the manifest. A format 2 entry has none.
 const FORMAT: u64 = 3;
-
-/// The frame each union this process has held goes up in, by the blake3 of its zip: deflated
-/// once, when its entry was stored or loaded, never once per host.
-///
-/// Keyed by the zip's content hash alone, so an entry here can never be stale: another zip is
-/// another key.
-static FRAMES: Mutex<BTreeMap<String, Arc<BlobFrame>>> = Mutex::new(BTreeMap::new());
-
-/// Keeps `frame` as the one the union named `hash` goes up in, and hands it back.
-fn remember(hash: &str, frame: BlobFrame) -> Arc<BlobFrame> {
-    let frame = Arc::new(frame);
-    FRAMES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(hash.to_string(), Arc::clone(&frame));
-    frame
-}
-
-/// Forgets every frame this process kept, as a new run starts with none.
-#[cfg(test)]
-fn forget_frames() {
-    FRAMES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clear();
-}
-
-/// The frame the union named `hash` goes up in: the one kept when its entry was stored or
-/// loaded, or `zip_b64` deflated now and kept when there is none (the cache could not be used).
-pub fn frame(hash: &str, zip_b64: &str) -> Result<Arc<BlobFrame>, String> {
-    if let Some(frame) = FRAMES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(hash)
-    {
-        return Ok(Arc::clone(frame));
-    }
-    let zip = volant_protocol::encoding::b64_decode(zip_b64)
-        .map_err(|err| format!("decoding the module payload {hash}: {err}"))?;
-    let deflated = volant_protocol::encoding::deflate(&zip);
-    Ok(remember(hash, BlobFrame::smaller(zip, deflated)))
-}
 
 /// An entry nothing has rewritten for this long is removed by the next store: a module set a
 /// playbook no longer names would otherwise stay on disk for good.
@@ -393,7 +350,7 @@ pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
         let _ = write_new(dir, &deflate_path, &deflated);
         deflated
     });
-    remember(&entry.union.hash, BlobFrame::smaller(zip, deflated));
+    keep_frame(&entry.union.hash, BlobFrame::smaller(zip, deflated));
     Ok(Some(entry))
 }
 
@@ -554,7 +511,7 @@ pub fn store(dir: &Path, key: &CacheKey, entry: &Entry) -> io::Result<()> {
         &format!("{}.json", key.0),
         manifest.to_string().as_bytes(),
     )?;
-    remember(&entry.union.hash, BlobFrame::smaller(zip, deflated));
+    keep_frame(&entry.union.hash, BlobFrame::smaller(zip, deflated));
     sweep(dir, SystemTime::now());
     Ok(())
 }
@@ -977,22 +934,28 @@ mod tests {
     ///
     /// What would make this red: the frames keyed by anything but the zip's content (the cache
     /// key, the host), under which a union rebuilt in place would go up as the one before it.
-    #[test]
-    fn the_frame_kept_for_a_union_is_found_by_its_content_alone() {
+    #[tokio::test]
+    async fn the_frame_kept_for_a_union_is_found_by_its_content_alone() {
         let root = tempdir();
         let dir = root.0.join("unions");
         let zip = long_zip();
         let stored = entry(&root.0, &zip);
         store(&dir, &some_key(), &stored).unwrap();
-        let kept = frame(&stored.union.hash, "not base64 at all").expect("kept by the store");
+        let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
+            .await
+            .expect("kept by the store");
         assert_eq!(kept.encoding, volant_protocol::BlobEncoding::Deflate);
         assert_eq!(unpacked(&kept), zip);
 
         let other = [b"another zip ".as_slice(), &zip].concat();
         let other_hash = blake3::hash(&other).to_hex().to_string();
-        let fresh = frame(&other_hash, &volant_protocol::encoding::b64_encode(&other)).unwrap();
+        let fresh =
+            crate::agent::frame(&other_hash, &volant_protocol::encoding::b64_encode(&other))
+                .await
+                .unwrap();
         assert_eq!(unpacked(&fresh), other);
-        assert_eq!(unpacked(&frame(&stored.union.hash, "").unwrap()), zip);
+        let again = crate::agent::frame(&stored.union.hash, "").await.unwrap();
+        assert_eq!(unpacked(&again), zip);
     }
 
     /// An entry of format 2, which has no deflated form, is a miss, never served, even with a
@@ -1032,8 +995,8 @@ mod tests {
     /// What would make this red: the `.deflate` file read without its hash checked, which sends
     /// every host whatever that file holds, and the agents refuse it one by one; or a missing
     /// one taken for a miss, which rebuilds the whole union for a file the zip can give back.
-    #[test]
-    fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
+    #[tokio::test]
+    async fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
         let root = tempdir();
         let dir = root.0.join("unions");
         let key = some_key();
@@ -1053,9 +1016,11 @@ mod tests {
                 None => fs::remove_file(&path).unwrap(),
                 Some(bytes) => fs::write(&path, bytes).unwrap(),
             }
-            forget_frames();
+            crate::agent::forget_frames();
             assert_eq!(load(&dir, &key), Some(stored.clone()), "{why}");
-            let kept = frame(&stored.union.hash, "not base64 at all").expect(why);
+            let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
+                .await
+                .expect(why);
             assert_eq!(unpacked(&kept), zip, "{why}");
             assert_eq!(fs::read(&path).unwrap(), good, "{why}: written back");
         }

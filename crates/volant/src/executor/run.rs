@@ -1752,8 +1752,8 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
     if let Some(seen) = link.memory().seen(hash) {
         return seen;
     }
-    // Deflated once per run, when the union cache stored or loaded the entry, never here.
-    let frame = || crate::union_cache::frame(hash, zip_b64);
+    // Deflated once per run, when the union cache stored or loaded the entry.
+    let frame = crate::agent::frame(hash, zip_b64);
     let state = match place_blob(link, host, hash, frame, false, logs).await {
         Ok(true) => Ok(()),
         // The agent logs why on its way to saying no, and that line is already in `logs`.
@@ -1767,7 +1767,7 @@ pub(super) async fn ensure_blob<C: AgentChannel>(
 }
 
 /// Asks whether the agent holds `hash`, and sends it when it does not: whether it holds it now.
-/// A `staged` file is sent without asking. `frame` is only called when the blob goes up.
+/// A `staged` file is sent without asking. `frame` is only awaited when the blob goes up.
 ///
 /// Remembers nothing. That is [`ensure_blob`]'s to do for a payload, and is never done for a
 /// file a sub-task stages: the agent takes that one out of its cache to hand it to the module,
@@ -1778,7 +1778,7 @@ async fn place_blob<C: AgentChannel>(
     link: &mut C,
     host: &str,
     hash: &str,
-    frame: impl FnOnce() -> Result<std::sync::Arc<BlobFrame>, String>,
+    frame: impl Future<Output = Result<std::sync::Arc<BlobFrame>, String>>,
     staged: bool,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
@@ -1786,7 +1786,7 @@ async fn place_blob<C: AgentChannel>(
     if !staged && blob_state(link, host, hash, &has, None, logs).await? {
         return Ok(true);
     }
-    let frame = frame()?;
+    let frame = frame.await?;
     let put = ToAgent::PutBlob {
         hash: hash.into(),
         len: frame.len,
@@ -1807,12 +1807,8 @@ async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        // A staged file has no cache entry to keep a deflated form in: packed as it goes.
-        let frame = || {
-            volant_protocol::encoding::b64_decode(&blob.b64)
-                .map(|raw| std::sync::Arc::new(BlobFrame::packed(raw)))
-                .map_err(|err| format!("decoding the file {}: {err}", blob.hash))
-        };
+        // Framed once for every host that is sent the same bytes.
+        let frame = crate::agent::frame(&blob.hash, &blob.b64);
         let placed_now = place_blob(link, host, &blob.hash, frame, true, logs)
             .await
             .map_err(|err| format!("staging the file for '{arg}': {err}"))?;

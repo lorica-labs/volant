@@ -28,14 +28,17 @@ pub type Incoming = (ToAgent, Result<Vec<u8>, String>);
 /// stream never falls out of step: a frame longer than the announced `len` is read through and
 /// dropped without being held, and answered as a refusal. `Ok(None)` at a clean end of stream.
 ///
-/// A message that is not JSON is `Some(Err(why))`: the caller logs and drops it, as it always has.
+/// A message that does not read is `Some(Err(why))`: the caller logs and drops it, as it always
+/// has. A `put_blob` that does not read (an encoding this agent does not know) still has its
+/// blob frame after it, which is read through without being held, never taken for the next
+/// message; when it names its hash it is answered as a refused blob.
 pub fn read_incoming<R: Read>(mut input: R) -> io::Result<Option<Result<Incoming, String>>> {
     let Some(bytes) = volant_protocol::frame::read_frame(&mut input)? else {
         return Ok(None);
     };
     let msg = match serde_json::from_slice::<ToAgent>(&bytes) {
         Ok(msg) => msg,
-        Err(err) => return Ok(Some(Err(err.to_string()))),
+        Err(err) => return unreadable(&mut input, &bytes, &err.to_string()),
     };
     let blob = match &msg {
         ToAgent::PutBlob { len, .. } => read_blob_frame(&mut input, *len)?,
@@ -44,19 +47,51 @@ pub fn read_incoming<R: Read>(mut input: R) -> io::Result<Option<Result<Incoming
     Ok(Some(Ok((msg, blob))))
 }
 
+/// A message that did not read, after its frame: the blob frame behind a `put_blob` is read
+/// through, and a `put_blob` naming its hash comes back as one whose blob is refused, so the
+/// controller waiting for its `BlobState` gets one.
+fn unreadable<R: Read>(
+    mut input: R,
+    bytes: &[u8],
+    why: &str,
+) -> io::Result<Option<Result<Incoming, String>>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    if value.get("type").and_then(|t| t.as_str()) != Some("put_blob") {
+        return Ok(Some(Err(why.to_string())));
+    }
+    // Announced as 0 bytes, any frame is longer and read through without being held.
+    let _skipped = read_blob_frame(&mut input, 0)?;
+    let Some(hash) = value.get("hash").and_then(|h| h.as_str()) else {
+        return Ok(Some(Err(why.to_string())));
+    };
+    let refused = ToAgent::PutBlob {
+        hash: hash.to_string(),
+        len: 0,
+        encoding: BlobEncoding::Raw,
+        staged: value.get("staged").and_then(serde_json::Value::as_bool) == Some(true),
+    };
+    Ok(Some(Ok((
+        refused,
+        Err(format!("the put_blob does not read: {why}")),
+    ))))
+}
+
 /// The frame after a `put_blob` announcing `len` decoded bytes. Neither encoding makes a blob
 /// longer than `len` on the wire (the controller deflates only when that is shorter), so a
-/// longer frame is refused before its bytes are held. The end of the stream in its place is an
-/// error: the controller went away mid-blob.
+/// longer frame, or any frame after a `len` past [`BLOB_LIMIT`], is read through without being
+/// held and refused. The end of the stream in its place is an error: the controller went away
+/// mid-blob.
 fn read_blob_frame<R: Read>(mut input: R, len: u64) -> io::Result<Result<Vec<u8>, String>> {
     let mut header = [0u8; 4];
     input.read_exact(&mut header)?;
     let size = payload_len(header)?;
-    if size as u64 > len {
+    if size as u64 > len || len > BLOB_LIMIT as u64 {
         io::copy(&mut input.take(size as u64), &mut io::sink())?;
-        return Ok(Err(format!(
-            "the blob's frame is {size} bytes, longer than the {len} bytes it decodes to"
-        )));
+        return Ok(Err(if len > BLOB_LIMIT as u64 {
+            format!("{len} bytes is past the {BLOB_LIMIT} byte limit")
+        } else {
+            format!("the blob's frame is {size} bytes, longer than the {len} bytes it decodes to")
+        }));
     }
     let mut bytes = vec![0u8; size];
     input.read_exact(&mut bytes)?;
@@ -824,12 +859,6 @@ mod tests {
         }
     }
 
-    /// Base64 the agent cannot decode is refused as invalid data, before anything is written and
-    /// with the offset that broke it.
-    ///
-    /// What would make this red: a decoder that skips what it does not recognise, which turns a
-    /// truncated transfer into bytes that hash to something and land under a name no later run
-    /// can tell from a good one.
     /// A raw frame is the blob only at exactly the announced length, and a deflated one only
     /// when it inflates to exactly that length.
     ///
@@ -890,6 +919,54 @@ mod tests {
         assert!(why.contains("longer than the 2 bytes"), "{why}");
         assert_eq!(next(), (has, Ok(Vec::new())));
         assert!(read_incoming(&mut input).unwrap().is_none());
+    }
+
+    /// A `put_blob` that does not read still has its frame read through, never taken for the
+    /// next message, and is answered as a refused blob; a `len` past the limit is refused
+    /// without the frame being held.
+    ///
+    /// What would make this red: a `put_blob` with an unknown encoding dropped whole, which
+    /// leaves its frame to be read as a message (here a `cancel`) and the controller waiting for
+    /// a `BlobState`; or the limit left to `decoded`, after the frame is in memory.
+    #[test]
+    fn a_put_blob_that_does_not_read_never_leaves_its_frame_behind() {
+        use volant_protocol::frame::write_frame;
+        let mut wire = Vec::new();
+        write_frame(
+            &mut wire,
+            br#"{"type":"put_blob","hash":"ab","len":24,"encoding":"zstd","staged":true}"#,
+        )
+        .unwrap();
+        write_frame(&mut wire, br#"{"type":"cancel","id":1}"#).unwrap();
+        let past = ToAgent::PutBlob {
+            hash: "cd".into(),
+            len: BLOB_LIMIT as u64 + 1,
+            encoding: BlobEncoding::Raw,
+            staged: false,
+        };
+        write_frame(&mut wire, &serde_json::to_vec(&past).unwrap()).unwrap();
+        write_frame(&mut wire, br#"{"type":"cancel","id":2}"#).unwrap();
+        write_frame(&mut wire, br#"{"type":"has_blob","hash":"ab"}"#).unwrap();
+        let mut input = io::Cursor::new(wire);
+        let mut next = || read_incoming(&mut input).unwrap().unwrap().unwrap();
+
+        let (msg, frame) = next();
+        assert_eq!(
+            msg,
+            ToAgent::PutBlob {
+                hash: "ab".into(),
+                len: 0,
+                encoding: BlobEncoding::Raw,
+                staged: true
+            }
+        );
+        let why = frame.unwrap_err();
+        assert!(why.contains("zstd"), "{why}");
+        let (msg, frame) = next();
+        assert_eq!(msg, past);
+        let why = frame.unwrap_err();
+        assert!(why.contains("byte limit"), "{why}");
+        assert_eq!(next().0, ToAgent::HasBlob { hash: "ab".into() });
     }
 
     /// A controller gone mid-blob is a broken stream, never a blob of the bytes that came.

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Finding the agent binary and talking to a running agent.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use anyhow::{Context, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -83,9 +83,7 @@ impl AgentSource {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Arc<AgentFile>>> {
-        self.read
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.read.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn local(&self) -> anyhow::Result<PathBuf> {
@@ -207,15 +205,88 @@ impl BlobFrame {
     }
 
     /// `raw`, deflated first when it is past 4 KiB and that makes it shorter. Under that, the
-    /// deflate costs more than the bytes it saves.
+    /// deflate costs more than the bytes it saves. Past 64 KiB, the first 64 KiB are deflated
+    /// alone first, and bytes whose sample does not shrink by a tenth (an archive, an image, a
+    /// binary) go raw without paying a deflate of the whole file.
     pub fn packed(raw: Vec<u8>) -> BlobFrame {
-        if raw.len() > 4096 {
-            let deflated = volant_protocol::encoding::deflate(&raw);
-            BlobFrame::smaller(raw, deflated)
-        } else {
-            BlobFrame::raw(raw)
+        const SAMPLE: usize = 64 * 1024;
+        if raw.len() <= 4096 {
+            return BlobFrame::raw(raw);
         }
+        if raw.len() > SAMPLE
+            && volant_protocol::encoding::deflate(&raw[..SAMPLE]).len() > SAMPLE / 10 * 9
+        {
+            return BlobFrame::raw(raw);
+        }
+        #[cfg(test)]
+        DEFLATED.fetch_add(raw.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let deflated = volant_protocol::encoding::deflate(&raw);
+        BlobFrame::smaller(raw, deflated)
     }
+}
+
+/// How many bytes [`BlobFrame::packed`] deflated whole, so a test can tell a deflate that ran
+/// from one that was skipped or shared.
+#[cfg(test)]
+static DEFLATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One blob's frame, made by the first caller that needs it while the others wait for it.
+type Slot = Arc<OnceLock<Result<Arc<BlobFrame>, String>>>;
+
+/// The frame each blob this process sends goes up in, by the blake3 of its content: the union's,
+/// kept by the union cache when it stores or loads the entry, and each staged file's, made on its
+/// first send. So a blob sent to every host of a run is decoded and deflated once, not once per
+/// host.
+///
+/// Keyed by the content hash alone, so an entry here can never be stale: other bytes are another
+/// key.
+static FRAMES: Mutex<BTreeMap<String, Slot>> = Mutex::new(BTreeMap::new());
+
+/// Keeps `frame` as the one the blob named `hash` goes up in.
+pub fn keep_frame(hash: &str, frame: BlobFrame) {
+    FRAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(
+            hash.to_string(),
+            Arc::new(OnceLock::from(Ok(Arc::new(frame)))),
+        );
+}
+
+/// Forgets every frame this process kept, as a new run starts with none.
+#[cfg(test)]
+pub fn forget_frames() {
+    FRAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+}
+
+/// The frame the blob named `hash`, whose bytes are `b64`, goes up in: the one kept for it, or
+/// made now from `b64` by [`BlobFrame::packed`], once for the whole process however many hosts
+/// ask at the same moment, and on a blocking thread rather than on an async worker.
+pub async fn frame(hash: &str, b64: &str) -> Result<Arc<BlobFrame>, String> {
+    let slot = Arc::clone(
+        FRAMES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(hash.to_string())
+            .or_default(),
+    );
+    if let Some(made) = slot.get() {
+        return made.clone();
+    }
+    let (named, b64) = (hash.to_string(), b64.to_string());
+    tokio::task::spawn_blocking(move || {
+        slot.get_or_init(|| {
+            volant_protocol::encoding::b64_decode(&b64)
+                .map(|raw| Arc::new(BlobFrame::packed(raw)))
+                .map_err(|err| format!("decoding the blob {named}: {err}"))
+        })
+        .clone()
+    })
+    .await
+    .map_err(|err| format!("framing the blob {hash}: {err}"))?
 }
 
 /// What one link knows about the module payloads the agent behind it holds: `Ok` for a payload
@@ -632,6 +703,54 @@ mod tests {
         let grew = volant_protocol::encoding::deflate(&noise);
         assert!(grew.len() >= noise.len(), "{} bytes", grew.len());
         assert_eq!(BlobFrame::packed(noise.clone()), BlobFrame::raw(noise));
+    }
+
+    /// Bytes whose first 64 KiB do not compress go raw without a deflate of the whole of them.
+    ///
+    /// What would make this red: the sample check removed, which deflates a 40 MiB archive at
+    /// level 6 on every first send only to throw the result away.
+    #[test]
+    fn bytes_whose_sample_does_not_shrink_skip_the_whole_deflate() {
+        let noise: Vec<u8> = (0..32 * 1024u32)
+            .flat_map(|n| *blake3::hash(&n.to_le_bytes()).as_bytes())
+            .collect();
+        assert_eq!(BlobFrame::packed(noise.clone()), BlobFrame::raw(noise));
+        assert_eq!(DEFLATED.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let text = b"a log line that repeats\n".repeat(40_000);
+        let packed = BlobFrame::packed(text.clone());
+        assert_eq!(packed.encoding, BlobEncoding::Deflate);
+        assert_eq!(
+            DEFLATED.load(std::sync::atomic::Ordering::Relaxed),
+            text.len() as u64
+        );
+    }
+
+    /// A blob asked for by many hosts at once is framed once, and every host gets that frame.
+    ///
+    /// What would make this red: the frames not kept by content hash, or the lookup and the
+    /// keeping in two separate steps with the deflate between them, either of which deflates the
+    /// same file once per host.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_blob_sent_to_many_hosts_is_framed_once() {
+        let text = b"a log line that repeats\n".repeat(40_000);
+        let hash = blake3::hash(&text).to_hex().to_string();
+        let b64 = volant_protocol::encoding::b64_encode(&text);
+        let hosts: Vec<_> = (0..8)
+            .map(|_| {
+                let (hash, b64) = (hash.clone(), b64.clone());
+                tokio::spawn(async move { frame(&hash, &b64).await.unwrap() })
+            })
+            .collect();
+        let mut frames = Vec::new();
+        for host in hosts {
+            frames.push(host.await.unwrap());
+        }
+        assert!(frames.iter().all(|f| Arc::ptr_eq(f, &frames[0])));
+        assert_eq!(frames[0].encoding, BlobEncoding::Deflate);
+        assert_eq!(
+            DEFLATED.load(std::sync::atomic::Ordering::Relaxed),
+            text.len() as u64
+        );
     }
 
     /// An agent that speaks the protocol before this one is refused at the handshake with the

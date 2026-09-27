@@ -1590,7 +1590,7 @@ Description: time zone and daylight-saving time data
                 (
                     "hello is installed without a version or an architecture",
                     Box::new(|tree| {
-                        tree.edit(status, "Version: 2.10-3build2", "Xersion: 2.10-3build2")
+                        tree.edit(status, "Version: 2.10-3build2", "Xersion: 2.10-3build2");
                     }),
                 ),
                 (
@@ -1633,7 +1633,7 @@ Description: time zone and daylight-saving time data
                         tree.write(
                             "/etc/apt/sources.list",
                             "deb http://archive.example.org/debian\n",
-                        )
+                        );
                     }),
                 ),
                 (
@@ -1642,7 +1642,7 @@ Description: time zone and daylight-saving time data
                         tree.write(
                             "/etc/apt/sources.list",
                             "deb-foo http://archive.example.org/debian stable main\n",
-                        )
+                        );
                     }),
                 ),
                 (
@@ -1652,13 +1652,13 @@ Description: time zone and daylight-saving time data
                             example,
                             "deb [signed-by=",
                             "deb [target=Packages signed-by=",
-                        )
+                        );
                     }),
                 ),
                 (
                     "the source option arch+=i386 changes its lists",
                     Box::new(|tree| {
-                        tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=")
+                        tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=");
                     }),
                 ),
                 (

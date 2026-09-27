@@ -855,34 +855,52 @@ esac
         }
 
         /// A hung command ends at the task's deadline with `TimedOut`, and a cancel with
-        /// `Cancelled`, whichever thread runs it: `service` hangs here, beside systemd's
-        /// listing.
+        /// `Cancelled`, whichever command hangs and whichever thread runs it: `locale` on this
+        /// thread, `service` beside systemd's listing, `list-units` on systemd's thread, and a
+        /// `show` on one of its workers.
         ///
-        /// What would make this red: the SysV thread run without the deadline or the cancel
-        /// (the test then waits the full sleep, and its limit fails it), or the cancel not
-        /// asked while the threads run.
+        /// What would make this red, one each: any of those commands run without the deadline
+        /// or the cancel (the answer then waits out the sleep and is no stop, or the elapsed
+        /// check fails), or the cancel not asked while the threads run.
         #[test]
         fn a_hung_command_ends_at_the_deadline_or_the_cancel() {
-            let host = Host::new();
-            host.command("/usr/sbin/service", "#!/bin/sh\nexec sleep 60\n");
-            let started = Instant::now();
-            let never = || false;
-            let clock = Clock {
-                deadline: Some(Instant::now() + Duration::from_millis(500)),
-                cancelled: &never,
+            let hang = |sub: &str| {
+                SYSTEMCTL.replacen(
+                    "#!/bin/sh\n",
+                    &format!("#!/bin/sh\n[ \"$1\" = {sub} ] && exec sleep 60\n"),
+                    1,
+                )
             };
-            assert!(matches!(host.answer_with(clock), Err(Stop::TimedOut)));
-            let calls = AtomicUsize::new(0);
-            let soon = || calls.fetch_add(1, Ordering::Relaxed) > 3;
-            let clock = Clock {
-                deadline: None,
-                cancelled: &soon,
-            };
-            assert!(matches!(host.answer_with(clock), Err(Stop::Cancelled)));
-            assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "the hung command was waited for"
-            );
+            let hung: [(&str, String); 4] = [
+                ("/usr/bin/locale", "#!/bin/sh\nexec sleep 60\n".into()),
+                ("/usr/sbin/service", "#!/bin/sh\nexec sleep 60\n".into()),
+                ("/usr/bin/systemctl", hang("list-units")),
+                ("/usr/bin/systemctl", hang("show")),
+            ];
+            for (path, script) in hung {
+                let host = Host::new();
+                host.command(path, &script);
+                let started = Instant::now();
+                let never = || false;
+                let clock = Clock {
+                    deadline: Some(Instant::now() + Duration::from_millis(500)),
+                    cancelled: &never,
+                };
+                let answer = host.answer_with(clock);
+                assert!(matches!(answer, Err(Stop::TimedOut)), "{path}: {answer:?}");
+                let calls = AtomicUsize::new(0);
+                let soon = || calls.fetch_add(1, Ordering::Relaxed) > 3;
+                let clock = Clock {
+                    deadline: None,
+                    cancelled: &soon,
+                };
+                let answer = host.answer_with(clock);
+                assert!(matches!(answer, Err(Stop::Cancelled)), "{path}: {answer:?}");
+                assert!(
+                    started.elapsed() < Duration::from_secs(30),
+                    "{path}: the hung command was waited for"
+                );
+            }
         }
 
         /// A unit name a shell rewrites is sent through the shell, as the reference sends it:

@@ -10,7 +10,7 @@ use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
 use crate::inventory::{Inventory, is_localhost};
-use crate::template::Vars;
+use crate::template::{Templar, Vars};
 use crate::yaml;
 
 /// One host's merged variables, with the inventory-wide view its templates read `hostvars`
@@ -180,6 +180,18 @@ pub struct VarStore {
     /// fixed for the run, but the lists come from the coordinator's last published progress and
     /// move whenever a host drops out, so the map is good for one triple and no longer.
     shared: Option<(SharedKey, Arc<Map<String, Value>>)>,
+    /// See [`VarStore::templated_facts`]. Never goes back to `false`: the fact outlives the play.
+    templated_facts: bool,
+}
+
+/// Whether any string in `value`, at any depth, is a template.
+pub(crate) fn holds_template(value: &Value) -> bool {
+    match value {
+        Value::String(text) => Templar::is_template(text),
+        Value::Array(items) => items.iter().any(holds_template),
+        Value::Object(map) => map.values().any(holds_template),
+        _ => false,
+    }
 }
 
 /// The play and batch host lists one `shared` map was built from.
@@ -423,7 +435,21 @@ impl VarStore {
             hostvars_with: BTreeMap::new(),
             untrusted_hosts: None,
             shared: None,
+            templated_facts: false,
         })
+    }
+
+    /// Every variable map the inventory, its `group_vars` and `host_vars` and the command line
+    /// define, for every host at once: what the executor scans for a name whose value reads
+    /// another host.
+    pub fn static_maps(&self) -> impl Iterator<Item = &Map<String, Value>> {
+        self.group_files
+            .iter()
+            .chain(&self.host_files)
+            .flat_map(BTreeMap::values)
+            .chain(self.inventory_vars.values())
+            .chain(self.host_line_vars.values())
+            .chain([&self.extra])
     }
 
     /// What `ansible_forks` reports for this run.
@@ -458,7 +484,22 @@ impl VarStore {
     /// Writes a fact the playbook wrote: `include_vars`, and the engine's own bookkeeping. The
     /// name gets its trust back, because a write from an author-side source is author content
     /// whatever the name held before.
+    ///
+    /// A value still holding a template is rendered again by every task that reads it, and what
+    /// it names can be another host's variable; see [`VarStore::templated_facts`].
     pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
+        self.templated_facts |= holds_template(&value);
+        self.write_fact(host, key, value);
+    }
+
+    /// Whether the playbook has written, while the run went, a fact that is still a template: an
+    /// `include_vars` file whose values render, most often. Nothing before the run could read
+    /// what such a value names, so from then on the executor makes every step a boundary.
+    pub fn templated_facts(&self) -> bool {
+        self.templated_facts
+    }
+
+    fn write_fact(&mut self, host: &str, key: &str, value: Value) {
         if let Some(names) = self.untrusted.get_mut(host) {
             names.remove(key);
         }
@@ -472,10 +513,11 @@ impl VarStore {
     /// Writes a fact that came from a managed host: a module result, a `register`, a `set_fact`.
     /// The name is data from here on, and a template that reads it is not rendered again.
     pub fn set_untrusted_fact(&mut self, host: &str, key: &str, value: Value) {
-        // After, not before: `set_fact` clears the name, because a write from an author-side
-        // source gives the trust back. The cache `set_fact` dropped covers this write too,
-        // because nothing can read it between the two lines.
-        self.set_fact(host, key, value);
+        // After, not before: `write_fact` clears the name, because a write from an author-side
+        // source gives the trust back. The cache `write_fact` dropped covers this write too,
+        // because nothing can read it between the two lines. Not `set_fact`: a template a host
+        // returned is data and is never rendered, so it reads nothing.
+        self.write_fact(host, key, value);
         self.untrusted
             .entry(host.to_string())
             .or_default()
@@ -1540,7 +1582,7 @@ mod tests {
     fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
         let inventory = Inventory::parse_ini("h1\n").unwrap();
         let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
-        let templar = crate::template::Templar::new(PathBuf::from("."));
+        let templar = Templar::new(PathBuf::from("."));
         let condition = "kubectl_installed.rc == 0 and (k3s_server_copy_yaml.changed or 'kubeconfig' in ansible_run_tags)";
         let holds = |store: &mut VarStore| {
             let mut v = store.for_host("h1", &scope(&["h1"]));
@@ -1951,7 +1993,7 @@ mod tests {
             role_params: one("rp"),
             ..scope(&["h1"])
         };
-        let templar = crate::template::Templar::new(PathBuf::from("."));
+        let templar = Templar::new(PathBuf::from("."));
         let untrusted = store.untrusted_of("h1", &scope);
         let untrusted_hosts = store.untrusted_hosts();
         let hostvars = store.hostvars_shared("h1");
@@ -2049,7 +2091,7 @@ mod tests {
                 .unwrap(),
         );
         let play = scope(&["h1"]);
-        let templar = crate::template::Templar::new(dir.clone());
+        let templar = Templar::new(dir.clone());
         let untrusted = store.untrusted_of("h1", &play);
         let layers = store.layered_for_host("h1", &play);
         let merged = store.for_host("h1", &play);

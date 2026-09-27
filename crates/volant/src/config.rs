@@ -48,7 +48,11 @@ pub struct Config {
     pub tags_skip: Vec<String>,
     /// `[volant] batching`, or `VOLANT_BATCHING`: whether a host may carry on through the tasks
     /// between two synchronisation points instead of meeting the other hosts in front of every
-    /// one of them. Off by default, which is what `linear` means.
+    /// one of them. Off by default, which is what `linear` means. On, a host meets the others
+    /// only in front of a task that reads what another host did, as far as the playbook's text
+    /// shows it (see `is_boundary` in the executor); a dependency no text carries - a service
+    /// another host is still installing, a file on a host named literally - is not seen, which
+    /// is why it is asked for and never assumed.
     ///
     /// Not a playbook keyword, and never one: a playbook has to stay runnable by the reference
     /// as written, and the reference has no such keyword. Measured on ansible-core 2.19.12 with
@@ -522,10 +526,12 @@ mod tests {
     /// section a shared file carries for the other engine is read here without disturbing
     /// `[defaults]` around it.
     ///
-    /// What would make this red: the key read with `bool_from_str` alone, which answers nothing
-    /// for `1` and leaves the option off for the spelling the documentation gives.
+    /// What would make this red: the default turned on, which lets hosts run ahead through every
+    /// dependency no variable carries; or the key read with `bool_from_str` alone, which answers
+    /// nothing for `1` and leaves the option off for the spelling the documentation gives.
     #[test]
     fn the_volant_section_carries_the_batching_switch() {
+        assert!(!Config::default().batching, "the strict linear by default");
         assert!(!cfg("[defaults]\nforks = 3\n", ".").batching);
         assert!(cfg("[volant]\nbatching = true\n", ".").batching);
         assert!(cfg("[volant]\nbatching = 1\n", ".").batching);

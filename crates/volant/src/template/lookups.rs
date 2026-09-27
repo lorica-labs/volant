@@ -345,9 +345,9 @@ fn lookup_error(name: &str, e: &TemplateError) -> Error {
 /// each entry of `ansible_search_path`, then under the entry itself, the first entry with a
 /// match winning; a pattern that already names a directory - an absolute one, measured on the
 /// two static `with_fileglob` patterns of the `airgap` role, or a relative one under a search
-/// entry - is globbed at that directory directly. Only files match, several terms concatenate
-/// into one list before it is sorted whole. The result then goes through the same shaping every
-/// other plugin's does ([`shaped`]).
+/// entry - is globbed at that directory directly. Only files match, in the order the directory
+/// lists them (`glob.glob`, no sort, no dedupe), and several terms concatenate. The result then
+/// goes through the same shaping every other plugin's does ([`shaped`]).
 ///
 /// The result is controller content, not tainted: a matched name is a path the pattern's author
 /// named and the controller's filesystem confirmed, the same standing `lookup('first_found')`
@@ -374,7 +374,6 @@ fn fileglob(
             }
         }
     }
-    out.sort();
     Ok(out.into_iter().map(Value::from).collect())
 }
 
@@ -800,9 +799,45 @@ mod tests {
             format!("{}/{glob}", self.path.display())
         }
 
-        fn full(&self, name: &str) -> String {
-            self.path.join(name).display().to_string()
+        /// The full paths of `names`, in the order the directory listing gives them: the order
+        /// `glob.glob` answers in, whatever the filesystem.
+        fn listed(&self, names: &[&str]) -> Vec<String> {
+            std::fs::read_dir(&self.path)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .filter(|name| names.iter().any(|n| name.to_str() == Some(n)))
+                .map(|name| self.path.join(name).display().to_string())
+                .collect()
         }
+    }
+
+    /// `fileglob.py` in ansible-core 2.19.12 extends its list with `glob.glob`'s answer as it
+    /// comes: no sort and no dedupe, so the matches arrive in directory-listing order (measured:
+    /// `b.txt` before `a.txt`). Where a filesystem happens to list sorted, the test still holds.
+    ///
+    /// What would make this red: the matches sorted.
+    #[test]
+    fn fileglob_keeps_the_directory_listing_order() {
+        let dir = Dir::new("order");
+        // Written out of order (every seventh letter), so neither a listing in creation order nor
+        // one in reverse creation order (tmpfs) is sorted.
+        let names: Vec<String> = (0..26u8)
+            .map(|i| format!("{}.txt", char::from(b'a' + i * 7 % 26)))
+            .collect();
+        for name in &names {
+            dir.write(name);
+        }
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let t = Templar::new(dir.path.clone());
+        let all = dir.pattern("*.txt");
+        assert_eq!(
+            t.render(
+                &format!("{{{{ lookup('fileglob', '{all}', wantlist=True) }}}}"),
+                &Map::new()
+            )
+            .unwrap(),
+            json!(dir.listed(&names))
+        );
     }
 
     impl Drop for Dir {
@@ -816,10 +851,11 @@ mod tests {
     /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
     /// matched and not just the extension, a directory whose own name matches the pattern
     /// (`k3s-selinux-dir.rpm`, `images-dir.tar.gz`) proves a directory never matches, and the
-    /// result is sorted. Two matches each: a list with `wantlist=True`, a comma join without.
+    /// result keeps the listing's order. Two matches each: a list with `wantlist=True`, a comma
+    /// join without.
     ///
     /// What would make this red: the absolute pattern read as a search-path entry instead of
-    /// globbed directly, a directory counted as a match, or the result left in read-dir order.
+    /// globbed directly, or a directory counted as a match.
     #[test]
     fn fileglob_matches_the_two_static_airgap_patterns() {
         let dir = Dir::new("airgap");
@@ -836,10 +872,7 @@ mod tests {
                 &Map::new()
             )
             .unwrap(),
-            json!([
-                dir.full("k3s-selinux-1.el8.rpm"),
-                dir.full("k3s-selinux-1.rpm")
-            ])
+            json!(dir.listed(&["k3s-selinux-1.el8.rpm", "k3s-selinux-1.rpm"]))
         );
 
         dir.write("images-2.tar.gz")
@@ -852,11 +885,10 @@ mod tests {
                 &Map::new()
             )
             .unwrap(),
-            json!(format!(
-                "{},{}",
-                dir.full("images-1.tar.gz"),
-                dir.full("images-2.tar.gz")
-            ))
+            json!(
+                dir.listed(&["images-1.tar.gz", "images-2.tar.gz"])
+                    .join(",")
+            )
         );
     }
 

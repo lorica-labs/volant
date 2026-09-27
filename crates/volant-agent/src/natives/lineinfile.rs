@@ -23,8 +23,8 @@ use regex::bytes::{Regex, RegexBuilder};
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, add_path_info, bool_param, check,
-    check_names, clock, flag, group_account, module_args, native_run, null, os_error,
+    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, access, add_path_info, bool_param,
+    check, check_names, clock, flag, group_account, module_args, native_run, null, os_error,
     owner_account, parse_mode, path_param, selinux_enabled, set_fs_attributes_diff, str_param,
     umask,
 };
@@ -554,6 +554,11 @@ fn absent(request: &Request, lines: &mut Vec<Vec<u8>>, clock: Clock) -> Result<u
 fn preflight(request: &Request, exists: bool, tmpdir: &str) -> Result<(), String> {
     if !fs::metadata(tmpdir).is_ok_and(|meta| meta.is_dir()) {
         return Err(format!("remote_tmp {tmpdir} is not a directory"));
+    }
+    // The backup and the rename would fail there, with an exception the Python module words.
+    let dir = parent(request.path);
+    if fs::metadata(dir).is_ok() && !access(dir, libc::W_OK | libc::X_OK) {
+        return Err(format!("{dir} is not writable"));
     }
     // `shutil.copystat` copies them, to the backup and to the new file.
     if exists && has_xattrs(request.path) {
@@ -1789,6 +1794,24 @@ mod tests {
                 "{args} was answered"
             );
             assert_eq!(snapshot(&scratch), before, "{args} changed the disk");
+        }
+
+        // A directory the agent cannot write, where root could.
+        if unsafe { libc::geteuid() } != 0 {
+            let dir = scratch.path("ro");
+            fs::create_dir(&dir).unwrap();
+            write(&scratch.path("ro/f.conf"), "a=1\n", 0o644);
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+            let before = snapshot(&scratch);
+            let args = json!({"path": scratch.path("ro/f.conf"), "line": "b=2", "backup": true});
+            let answer = ask(&args, &context);
+            let after = snapshot(&scratch);
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(
+                matches!(answer, NativeRun::Fallback(_)),
+                "{args} was answered"
+            );
+            assert_eq!(after, before, "{args} changed the disk");
         }
     }
 

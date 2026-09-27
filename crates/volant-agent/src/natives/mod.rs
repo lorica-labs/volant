@@ -42,6 +42,7 @@ pub mod setup {
 }
 #[cfg(unix)]
 mod stat;
+#[cfg(unix)]
 mod systemd;
 mod user;
 
@@ -90,6 +91,7 @@ pub const NATIVES: &[Native] = &[
     file::NATIVE,
     copy::NATIVE,
     lineinfile::NATIVE,
+    #[cfg(unix)]
     systemd::NATIVE,
     apt::NATIVE,
     user::NATIVE,

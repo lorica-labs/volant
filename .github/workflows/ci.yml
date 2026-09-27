@@ -175,3 +175,7 @@ jobs:
           fi
           echo "host python has no ansible-core, as required"
       - run: just ssh-test
+        env:
+          # The native module tests create an account, a group and a unit on the machine they
+          # run on. This runner is thrown away with the job, so they may use its localhost.
+          VOLANT_NATIVE_TESTS_ON_LOCALHOST: "1"

@@ -77,7 +77,8 @@ pub fn failed_tasks(stdout: &str) -> std::collections::BTreeSet<String> {
 /// `NATIVE_LOCK` in `generate.py`, taken and held until the returned file is dropped: the
 /// fixture, the accounts, the unit and the package are the machine's, so one run at a time, this
 /// test's or the generator's. Under the account's own home, where no other account can create the
-/// file first and keep it from being opened; the runs that share the state are this account's.
+/// file first and keep it from being opened; the runs that share the state are this account's. Its
+/// messages name the path from `~`, never the expanded home.
 #[cfg(target_os = "linux")]
 pub fn native_lock() -> std::fs::File {
     use std::os::fd::AsRawFd as _;
@@ -88,16 +89,13 @@ pub fn native_lock() -> std::fs::File {
         .create(true)
         .append(true)
         .open(&path)
-        .unwrap_or_else(|e| panic!("{} opens: {e}", path.display()));
+        .unwrap_or_else(|e| panic!("~/.cache/volant-golden-native.lock opens: {}", e.kind()));
     // Safety: a valid descriptor, open for as long as the lock is held.
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        eprintln!(
-            "waiting for {}: another native golden run holds it",
-            path.display()
-        );
+        eprintln!("waiting for ~/.cache/volant-golden-native.lock: another native run holds it");
         // Safety: as above.
         let locked = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) };
-        assert_eq!(locked, 0, "{} is lockable", path.display());
+        assert_eq!(locked, 0, "~/.cache/volant-golden-native.lock is lockable");
     }
     lock
 }

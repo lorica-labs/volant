@@ -183,8 +183,9 @@ smoke-embedded: agent-musl
 
 # Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING). The
 # native module tests among them change the machine they run on: they go to the host
-# VOLANT_TARGET_HOST names, through your own ssh configuration, and to localhost only on a CI
-# runner; with neither they fail and say so.
+# VOLANT_TARGET_HOST names, through your own ssh configuration, and to localhost only on a GitHub
+# Actions runner whose workflow sets VOLANT_NATIVE_TESTS_ON_LOCALHOST=1; otherwise they fail and
+# say so.
 ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }

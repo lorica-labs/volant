@@ -1785,6 +1785,56 @@ mod tests {
         }
     }
 
+    /// A file with an extended attribute (which `copystat` would copy), or with an inode flag
+    /// a copy would not get (which `backup_local` would set with `chattr`), goes to the Python
+    /// module untouched when the task changes it.
+    ///
+    /// What would make this red: either check dropped, and the file rewritten without them.
+    #[test]
+    fn a_file_with_xattrs_or_flags_is_handed_back() {
+        let (scratch, context) = scratch("lineinfile-xattr");
+        let tagged = scratch.path("x.conf");
+        let flagged = scratch.path("n.conf");
+        write(&tagged, "a=1\n", 0o644);
+        write(&flagged, "a=1\n", 0o644);
+        let name = CString::new(tagged.as_str()).unwrap();
+        // SAFETY: a valid path, attribute name and value.
+        let tagged_ok = unsafe {
+            libc::setxattr(
+                name.as_ptr(),
+                c"user.volant".as_ptr(),
+                c"1".as_ptr().cast(),
+                1,
+                0,
+            )
+        } == 0;
+        let file = fs::File::open(&flagged).unwrap();
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        let mut flags: libc::c_long = 0;
+        // SAFETY: both ioctls read or write one `long`; 0x40 is `FS_NODUMP_FL`.
+        let flagged_ok = unsafe {
+            libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
+                flags |= 0x40;
+                libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
+            }
+        };
+        if !tagged_ok || !flagged_ok {
+            eprintln!("skipped: this file system takes no user xattr or no nodump flag");
+            return;
+        }
+        let before = snapshot(&scratch);
+        for args in [
+            json!({"path": tagged, "line": "b=2"}),
+            json!({"path": flagged, "line": "b=2", "backup": true}),
+        ] {
+            assert!(
+                matches!(ask(&args, &context), NativeRun::Fallback(_)),
+                "{args} was answered"
+            );
+            assert_eq!(snapshot(&scratch), before, "{args} changed the disk");
+        }
+    }
+
     /// A `validate` that hangs ends with the task's `timeout`, as the Python module does, and
     /// with the controller's cancel; the file stays as it was either way.
     ///

@@ -9,3 +9,7 @@ extend-exclude = [
   "crates/volant/tests/golden/python-modules/",
   "crates/volant/tests/golden/native/",
 ]
+
+# Puppet's fact tool, whose prefix ansible-core's `setup` filter treats apart.
+[default.extend-words]
+facter = "facter"

@@ -19,3 +19,4 @@ A record is not rewritten once it is accepted. When a later decision changes it,
 | [0005](/decisions/0005-fork-permits-span-host-local-batches/) | A host keeps its fork permit across host-local steps, behind the `batching` option. |
 | [0006](/decisions/0006-warm-python-path/) | Send one union blob of Python modules per run, and fork them from a warm server. |
 | [0007](/decisions/0007-action-plugins/) | Run action plugins as a sequence of sub-tasks driven by the controller. |
+| [0008](/decisions/0008-native-modules-and-speed/) | Answer common modules natively in the agent, hand the rest to Python, and share one ssh connection per host. |

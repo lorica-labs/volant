@@ -146,6 +146,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: 'Roadmap', slug: 'project/roadmap' },
+            { label: 'Performance', slug: 'project/performance' },
             { label: 'Contributing', link: `${repo}/blob/main/CONTRIBUTING.md`, attrs: { target: '_blank' } },
             { label: 'Changelog', link: '/changelog/' },
             { label: 'Security policy', link: `${repo}/blob/main/SECURITY.md`, attrs: { target: '_blank' } },

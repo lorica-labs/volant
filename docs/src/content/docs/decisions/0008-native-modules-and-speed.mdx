@@ -1,0 +1,70 @@
+---
+title: "Native modules with a Python fallback, and the other speed choices"
+description: "Decision record 0008."
+sidebar:
+  label: "0008 · Native modules and speed"
+  order: 8
+---
+
+| Status | Date |
+|---|---|
+| accepted | 2026-09-27 |
+
+## Context
+
+On 2026-09-24 Volant ran the four Galaxy roles of [decision record 0007](/decisions/0007-action-plugins/#results) against two converged hosts in 12.66 s, against 26.23 s for ansible-core 2.19.12 with pipelining. A per-step profile of that run showed where the time went, per host:
+
+- 5.5 s in eight `apt` tasks with nothing to install: 140 ms to import the module and 606 ms to run it, on every call;
+- 3.8 s rebuilding the union of Python modules on the controller, although nothing in ansible-core had changed since the last run;
+- 1.1 s in `setup`, about 300 ms of it starting the Python server, then 0.7 s in three `systemd` tasks and 0.7 s in `file`, `lineinfile` and `stat`;
+- 0.6 s opening connections, because the probe and the link each paid their own ssh handshake;
+- 0.2 s preparing tasks on the controller. On k3s the same step took 2 s, and a CPU profile put about 80 percent of it in copying and freeing tables of variables.
+
+The frames themselves took 30 ms, and serializing a whole run took about 5 ms. The time was in starting Python, rebuilding things that had not changed, and opening connections. The wire format played almost no part.
+
+The same profile of the k3s-ansible playbook added `service_facts` (3.3 s), `package_facts` (2.1 s) and a 5.7 s union build that included collections.
+
+## Decision
+
+**Native modules in the agent, with a fallback to Python.** `setup`, `stat`, `file`, `apt`, `systemd` (and `systemd_service`), `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group` have a Rust version in the agent. A native module receives the arguments the Python module would have received. It answers with the reference module's result when those arguments fall within what it implements, and otherwise it hands the task back to the Python module. It decides by reading, and only then acts, so a hand-back always comes before anything on the host has changed. Its result enters the controller through the same path as a Python module's, as untrusted data.
+
+**The golden comparison is the gate.** A native module is turned on only in the change where its answers match the reference key for key, `changed`, `diff` and `invocation` included, in every case the golden records. The same test checks which path each case took, so a native module that answered outside its subset, or one that handed every case back, fails it.
+
+**Native facts only when the playbook provably needs nothing else.** The native `setup` produces the 17 collectors of `gather_subset: min`, the processor and memory facts of `hardware`, and the default routes and address lists of `network`. A fact it cannot produce is absent, never guessed. Before connecting, the controller reads every play, role, template and variable definition of the run and lists the facts they can read. It uses the native `setup` only if every one of them is produced natively. A read by a computed name (`ansible_facts[item]`, `vars[...]`, `lookup('vars', ...)`, a whole `hostvars[host]`) counts as reading everything and keeps the Python `setup`. `--facts python` forces it anyway.
+
+**The union is cached on the controller.** An entry is kept under `$XDG_CACHE_HOME/volant/unions/`, keyed on everything the build read that is not a file: the Volant version, the interpreter, the modules asked for, the `ANSIBLE_*` and `PYTHON*` environment, `ansible.cfg` and the working directory. It records each source file's size and modification time. Checking the 154 files costs about 1 ms. Any change rebuilds, and a cache that cannot be read or written never fails a run.
+
+**One OpenSSH connection per inventory host.** Volant adds `ControlMaster`, a `ControlPath` of its own and `ControlPersist=30s` to its `ssh` command line, unless the operator's ssh configuration or `ansible_ssh_*_args` already say something about connection sharing. The probe, the upload check, the link and the escalated link then share one key exchange. The socket is per inventory host rather than per machine: fifty aliases of one machine sharing one master ran into the server's `MaxSessions` limit of 10.
+
+**Layered variables.** A host's variables are a stack of shared layers read from the top down, instead of a map merged and copied for every task. Gathered facts are shared, not copied, and a fact written by one host invalidates only that host's view.
+
+**The barrier stays, batching stays opt-in.** Batching now also sees reads of other hosts in template bodies and in the definitions of variables. It remains off by default. It decides from the playbook's text, and a dependency the text does not spell out, such as a service another host is still installing, would not be waited for. See [Cross-host batching](/hosts/batching/).
+
+**Binary, compressed blobs.** Protocol version 6 sends the union and staged files as raw bytes in the frame that follows the announcement, no longer as base64 inside JSON. The union is compressed with deflate once, when it is written to the controller's cache. A staged file is compressed when it is larger than 4 KiB and compression makes it smaller. The agent decompresses up to the announced size and checks the BLAKE3 hash of the result. The other frames stay JSON.
+
+**A warm import in the Python server.** After forking the child that runs a module, the server imports that module into itself while the child runs, so the next child of the same module starts with it loaded.
+
+## Options considered and set aside
+
+**A Rust ssh client (`russh`).** Measured against one host: a new channel on an open `russh` connection took 45 ms, a new session over an OpenSSH `ControlMaster` 53 ms. The 8 ms gain would have cost 115 more crates in the agent's dependency tree (63 to 178), a `cargo deny` failure on RUSTSEC-2023-0071, and support for the operator's configuration: `Match` ignored, `Include` failing the whole file, `ProxyJump` parsed but not used, no `HostKeyAlias`, no `/etc/ssh/ssh_config` or global `known_hosts`, no GSSAPI in a static build. Keeping OpenSSH keeps every `~/.ssh/config` working as it does for `ansible-playbook`.
+
+**A binary frame format.** Encoding and decoding the frames of a whole roles run took 4.8 to 5.3 ms in JSON, 3.9 to 4.6 ms in MessagePack with named fields and 5.9 to 6.6 ms in CBOR, out of a 12.5 s run. MessagePack without field names could not read back its own output. Protobuf has no clean way to carry the `Map<String, Value>` that makes up 80 percent of the bytes. JSON stays; only the blob changed.
+
+**QUIC.** It would need a daemon and a listening port on every host. Volant's promise is a static agent started over the ssh access you already have.
+
+**io_uring.** The agent does little I/O of its own. Its time is in the modules it runs and the processes they start.
+
+**`gc.freeze()` and a child forked in advance.** Measured in the Python server, each saved 1 ms or less per task. Neither was done.
+
+## Consequences
+
+- A task within a native subset no longer runs Python. A host where every task stays within one never starts the Python server at all, as on the roles workload.
+- The Python path remains the reference for everything else, and each native module's subset is documented in its source. A change of arguments can move a task from one path to the other without changing its result.
+- `[volant] native_modules = false` sends every task to Python, and `--facts python` forces the Python `setup`, to compare the two paths on a real run. `--profile` and `VOLANT_PROFILE_JSON` show which path each task took and why it handed back.
+- The ssh socket directory (`$XDG_RUNTIME_DIR/volant-cm`, or `/tmp/volant-cm-<uid>` at mode 0700) is one more place the controller writes to. A master outlives the run by 30 seconds.
+- At startup Volant raises its open-file limit up to the hard limit, since each link holds three descriptors. A hard limit of 1024 still caps a run at about 330 links.
+- A controller and an agent of different protocol versions refuse each other, as before. Volant always uploads its own agent, so this only matters for a hand-built agent.
+
+## Results
+
+Measured on 2026-09-27 with `just bench` and `just bench-k3s`: the four roles in 0.529 s against 26.435 s for ansible-core 2.19.12 with `pipelining = True` (a ratio of 49.97), and k3s-ansible in 23.477 s against 50.519 s (2.15). The configuration, the command lines and a step-by-step comparison with 2026-09-24 are on the [performance page](/project/performance/).

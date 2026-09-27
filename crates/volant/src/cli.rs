@@ -265,40 +265,41 @@ async fn run_all(
     //
     // A collection's module the plays name is resolved by the same helper first, and refused
     // here, by name, when its collection is not installed or serves it through an action plugin.
-    let walked: Vec<_> = playbooks
+    let named_dirs: Vec<PathBuf> = args
+        .playbooks
         .iter()
-        .zip(&compiled)
-        .flat_map(|(pb, steps)| pb.plays.iter().map(|play| play.dir.as_path()).zip(steps))
+        .map(PathBuf::as_path)
+        .map(playbook::base_dir)
         .collect();
-    let reach = python::Reach::walk(&walked).map_err(|e| Refusal::or(4, e))?;
+    let named_playbooks: Vec<python::Named> = named_dirs
+        .iter()
+        .zip(playbooks.iter().zip(&compiled))
+        .map(|(dir, (pb, steps))| python::Named {
+            dir: Some(dir.as_path()),
+            plays: pb
+                .plays
+                .iter()
+                .map(|play| play.dir.as_path())
+                .zip(steps)
+                .collect(),
+        })
+        .collect();
+    let reach = python::Reach::walk_run(&named_playbooks).map_err(|e| Refusal::or(4, e))?;
+    python::check_plugin_order(&reach).map_err(|e| Refusal::or(4, e))?;
     let python_modules = python::modules_for_run(&reach);
     let named: Vec<(String, String)> = compiled
         .iter()
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    // Where ansible-playbook finds a playbook's own modules: each playbook's directory, then each
-    // role's that is not in a collection, the order its loaders are given them.
-    let mut plugin_dirs: Vec<PathBuf> = Vec::new();
-    let roles = reach.role_order.iter().filter(|role| {
-        !role
-            .components()
-            .any(|c| c.as_os_str() == "ansible_collections")
-    });
-    for dir in walked
-        .iter()
-        .map(|(dir, _)| *dir)
-        .chain(roles.map(PathBuf::as_path))
-    {
-        if let Ok(dir) = std::fs::canonicalize(dir)
-            && !plugin_dirs.contains(&dir)
-        {
-            plugin_dirs.push(dir);
-        }
-    }
-    let python = python::union_for(&python_modules, &named, &plugin_dirs, &mut |warning| {
-        out.warning(&warning, false);
-    })
+    let python = python::union_for(
+        &python_modules,
+        &named,
+        &reach.plugin_dirs,
+        &mut |warning| {
+            out.warning(&warning, false);
+        },
+    )
     .map_err(|e| Refusal::or(4, e))?;
     for plays in &compiled {
         for play in plays {

@@ -264,7 +264,7 @@ pub fn modules_to_build<'a>(
 /// A literal include target that cannot be is left to the include, which fails the host reaching
 /// it the way the reference does.
 pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<String> {
-    modules_to_build(reach.modules.iter().map(String::as_str))
+    modules_to_build(reach.modules.iter().map(|(module, _)| module.as_str()))
 }
 
 /// Every role and task file a run's plays can reach, read once before the first connection: what
@@ -274,12 +274,14 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
 pub(crate) struct Reach {
     /// The root of every role reached.
     pub(crate) roles: std::collections::BTreeSet<std::path::PathBuf>,
-    /// The same roots in the order ansible-playbook loads them, a role after its `meta/main.yml`
-    /// dependencies, which is the order their plugin directories join the loaders.
-    pub(crate) role_order: Vec<std::path::PathBuf>,
+    /// Every directory whose plugin directories join ansible-playbook's loaders, in the order it
+    /// adds them (`add_all_plugin_dirs`), which is the order they are searched in.
+    pub(crate) plugin_dirs: Vec<std::path::PathBuf>,
     /// Every task file read.
     pub(crate) files: std::collections::BTreeSet<std::path::PathBuf>,
-    modules: Vec<String>,
+    /// Every module a task names, with how many of `plugin_dirs` the reference had added when
+    /// that task runs.
+    modules: Vec<(String, usize)>,
     /// Every task read from a file, with that file and where it resolves its relative paths.
     pub(crate) tasks: Vec<(
         std::path::PathBuf,
@@ -288,43 +290,113 @@ pub(crate) struct Reach {
     )>,
 }
 
+/// One playbook the operator named: the directory it is in, and its plays, an imported file's
+/// spliced in, each with the directory of the file it was written in.
+pub(crate) struct Named<'a> {
+    pub(crate) dir: Option<&'a std::path::Path>,
+    pub(crate) plays: Vec<(&'a std::path::Path, &'a crate::compile::Compiled)>,
+}
+
 impl Reach {
-    /// Walks from every step and handler of `plays`, each with the directory of its play, which
-    /// is where a play handler's include resolves.
+    /// [`Reach::walk_run`] over plays of one playbook with no directory of its own.
+    #[cfg(test)]
     pub(crate) fn walk(
         plays: &[(&std::path::Path, &crate::compile::Compiled)],
     ) -> anyhow::Result<Reach> {
+        Reach::walk_run(&[Named {
+            dir: None,
+            plays: plays.to_vec(),
+        }])
+    }
+
+    /// Walks from every step and handler of each playbook's plays, each with the directory of
+    /// its play, which is where a play handler's include resolves.
+    ///
+    /// The plugin directories are added in the reference's order, measured on ansible-core
+    /// 2.19.12 with a `library/ping.py` placed in each position: every named playbook's
+    /// directory before anything runs (`cli/playbook.py`); then, as each playbook is read, just
+    /// before its plays run, each imported file's directory and each play's roles, a role after
+    /// its dependencies (`Playbook._load_playbook_data`, `Role._load_role_data`); and a role an
+    /// `include_role` brings in when that task runs. A later playbook's roles are therefore not
+    /// searched for an earlier playbook's tasks, and a later playbook's own directory is.
+    pub(crate) fn walk_run(playbooks: &[Named]) -> anyhow::Result<Reach> {
         let mut reach = Reach::default();
-        for &(dir, play) in plays {
-            for step in &play.steps {
-                reach.modules.push(step.task.module.clone());
-                if let Some(role) = &step.origin.role_dir {
-                    reach.role(role, &play.search)?;
-                }
-                let origin = &step.origin;
-                reach.statement(
-                    &step.task,
-                    &origin.file_dir,
-                    origin.role_dir.as_deref(),
-                    &play.search,
-                )?;
+        for playbook in playbooks {
+            if let Some(dir) = playbook.dir {
+                reach.add_dir(dir);
             }
-            for handler in &play.handlers {
-                reach.modules.push(handler.task.module.clone());
-                let role_dir = handler
-                    .role
-                    .and_then(|i| play.roles.get(i))
-                    .and_then(|role| play.search.locate(&role.name).ok());
-                if let Some(role) = &role_dir {
-                    reach.role(role, &play.search)?;
+        }
+        for playbook in playbooks {
+            for &(dir, play) in &playbook.plays {
+                reach.add_dir(dir);
+                for role in &play.roles {
+                    if let Ok(path) = play.search.locate(&role.name) {
+                        reach.add_dir(&path);
+                    }
                 }
-                let file_dir = role_dir
-                    .as_ref()
-                    .map_or_else(|| dir.to_path_buf(), |role| role.join("handlers"));
-                reach.statement(&handler.task, &file_dir, role_dir.as_deref(), &play.search)?;
+            }
+            for &(dir, play) in &playbook.plays {
+                reach.play(dir, play)?;
             }
         }
         Ok(reach)
+    }
+
+    /// `dir`, by its real path, at the end of [`Reach::plugin_dirs`] unless it is there already.
+    /// A playbook or a role inside a collection adds nothing, as in the reference.
+    fn add_dir(&mut self, dir: &std::path::Path) {
+        let Ok(dir) = std::fs::canonicalize(dir) else {
+            return;
+        };
+        if !dir
+            .components()
+            .any(|c| c.as_os_str() == "ansible_collections")
+            && !self.plugin_dirs.contains(&dir)
+        {
+            self.plugin_dirs.push(dir);
+        }
+    }
+
+    /// Records `module` as named by a task that runs now.
+    fn named(&mut self, module: &str) {
+        self.modules
+            .push((module.to_string(), self.plugin_dirs.len()));
+    }
+
+    /// Walks one play's steps and handlers, each task named at the time it runs.
+    fn play(
+        &mut self,
+        dir: &std::path::Path,
+        play: &crate::compile::Compiled,
+    ) -> anyhow::Result<()> {
+        for step in &play.steps {
+            self.named(&step.task.module);
+            if let Some(role) = &step.origin.role_dir {
+                self.role(role, &play.search)?;
+            }
+            let origin = &step.origin;
+            self.statement(
+                &step.task,
+                &origin.file_dir,
+                origin.role_dir.as_deref(),
+                &play.search,
+            )?;
+        }
+        for handler in &play.handlers {
+            self.named(&handler.task.module);
+            let role_dir = handler
+                .role
+                .and_then(|i| play.roles.get(i))
+                .and_then(|role| play.search.locate(&role.name).ok());
+            if let Some(role) = &role_dir {
+                self.role(role, &play.search)?;
+            }
+            let file_dir = role_dir
+                .as_ref()
+                .map_or_else(|| dir.to_path_buf(), |role| role.join("handlers"));
+            self.statement(&handler.task, &file_dir, role_dir.as_deref(), &play.search)?;
+        }
+        Ok(())
     }
 
     fn role(
@@ -341,7 +413,7 @@ impl Reach {
                 self.role(&found, search)?;
             }
         }
-        self.role_order.push(dir.to_path_buf());
+        self.add_dir(dir);
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
                 self.files.insert(path.clone());
@@ -377,7 +449,7 @@ impl Reach {
     ) -> anyhow::Result<()> {
         for task in tasks {
             if !task.module.is_empty() {
-                self.modules.push(task.module.clone());
+                self.named(&task.module);
             }
             self.statement(task, file_dir, role_dir, search)?;
             let origin = crate::compile::Origin {
@@ -434,6 +506,48 @@ impl Reach {
         }
         Ok(())
     }
+}
+
+/// Refuses a run in which one module name finds different files at different points of the
+/// run. The union holds one module per name, built with every directory of
+/// [`Reach::plugin_dirs`] searched; the reference searches only the directories it has added
+/// when the task runs. Measured on ansible-core 2.19.12: with a second named playbook whose role
+/// ships `library/ping.py`, the first playbook's `ping` answers `pong` and the second one's the
+/// role's; after an `include_role` of a role shipping it, the `ping` before answers `pong`.
+///
+/// A name is safe when the first directory whose `library/` holds it was added before the
+/// earliest task naming it, or when none holds it: every task then finds the same file. A name
+/// a plugin's sub-tasks use (`stat` for `copy`) counts as named by the plugin's task.
+pub(crate) fn check_plugin_order(reach: &Reach) -> anyhow::Result<()> {
+    let mut earliest: BTreeMap<String, usize> = BTreeMap::new();
+    for (module, at) in &reach.modules {
+        for name in modules_to_build([module.as_str()]) {
+            let name = name.strip_prefix("ansible.legacy.").unwrap_or(&name);
+            if name.contains('.') {
+                continue;
+            }
+            let first = earliest.entry(name.to_string()).or_insert(*at);
+            *first = (*first).min(*at);
+        }
+    }
+    for (name, at) in earliest {
+        let Some(first) = reach.plugin_dirs.iter().position(|dir| holds(dir, &name)) else {
+            continue;
+        };
+        if first >= at {
+            bail!(
+                "module '{name}' is found in {} only once ansible-playbook has added that directory, after a task naming '{name}' has run with another module under that name. Volant builds one module per name for the whole run and cannot run both. Rename the module in that directory, or run the playbooks apart.",
+                reach.plugin_dirs[first].join("library").display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir`'s `library/` holds the module `name` as the reference's legacy search finds
+/// one built with `mod_type=".py"`: a file `<name>.py`, a link to one included.
+fn holds(dir: &std::path::Path, name: &str) -> bool {
+    dir.join("library").join(format!("{name}.py")).is_file()
 }
 
 /// Every task of a list, blocks and all three of their sections included. A block's own keywords
@@ -2091,7 +2205,8 @@ mod tests {
                 &std::collections::BTreeSet::from(["ping".into()]),
                 &[],
                 &[],
-            ),
+            )
+            .expect("no plugin file to vouch for"),
             interpreter: interpreter.path,
             real: interpreter.real,
         }

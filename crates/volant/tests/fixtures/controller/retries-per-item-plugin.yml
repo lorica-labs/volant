@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: plugin
+      copy:
+        content: x
+        dest: /nonexistent-volant-dir/f
+      loop: [{r: 1}, {r: 2}, {r: x}, {r: 0}]
+      retries: "{{ item.r }}"
+      delay: 0
+      changed_when: item.r == 0
+      ignore_errors: true
+      register: plug
+    - debug: msg="plugin {{ plug.results | map(attribute='attempts', default='-') | join(',') }}"

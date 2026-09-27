@@ -1,0 +1,8 @@
+- hosts: nomatch
+  gather_facts: false
+  tasks:
+    - pause: {prompt: Go?}
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg=after

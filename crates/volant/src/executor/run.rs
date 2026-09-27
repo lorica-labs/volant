@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
-use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
+use volant_protocol::{BatchOutcome, FromAgent, StagedFile, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource, BlobFrame, BlobMemory};
 use crate::compile::{Compiled, Step};
@@ -39,13 +39,9 @@ const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression
 ///
 /// A deliberate divergence, recorded rather than hidden: these land as facts, which is precedence
 /// 20 here against the reference's own rank 19 for `include_vars`. The two differ only for a name
-/// a host variable also carries.
-fn run_include_vars(
-    item: &Item,
-    step: &Step,
-    hosts: &[String],
-    store: &Mutex<VarStore>,
-) -> TaskResult {
+/// a host variable also carries. They land once the task is judged, through
+/// [`record_local_facts`].
+fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>) -> TaskResult {
     let Some(name) = item
         .args
         .get("file")
@@ -104,14 +100,6 @@ fn run_include_vars(
         }
         None => loaded,
     };
-    {
-        let mut vars = store.lock().expect("vars lock");
-        for (key, value) in &facts {
-            for host in hosts {
-                vars.set_fact(host, key, value.clone());
-            }
-        }
-    }
     let mut r = Map::new();
     r.insert("ansible_facts".into(), Value::Object(facts));
     r.insert(
@@ -127,15 +115,10 @@ fn run_include_vars(
 /// which a `pause` waits on beside its timer: `None` is a pause the run's stop ended, which the
 /// driver answers the way it answers every other wait the stop ends, with no task line and no
 /// count.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the task, the host's view of it, and the run's interruption for a pause"
-)]
 pub(super) async fn run_local(
     task: &PlayTask,
     item: &Item,
     step: &Step,
-    fact_hosts: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
@@ -144,7 +127,7 @@ pub(super) async fn run_local(
     let mut result = if short_name(&task.module) == "pause" {
         pause(item, std::io::stdin().is_terminal(), stop).await?
     } else {
-        local_result(task, item, step, fact_hosts, templar, store, verbosity)
+        local_result(task, item, step, templar, store, verbosity)
     };
     // The reference's `maybe_raise_on_result` normalises every task's final result, wherever it
     // ran, the way `run_agent_batch` normalises an agent's.
@@ -157,7 +140,6 @@ fn local_result(
     task: &PlayTask,
     item: &Item,
     step: &Step,
-    fact_hosts: &[String],
     templar: &Templar,
     store: &Mutex<VarStore>,
     verbosity: u8,
@@ -183,29 +165,15 @@ fn local_result(
                     .unwrap_or_else(|| json!("Failed as requested from task")),
             );
         }
-        "include_vars" => return run_include_vars(item, step, fact_hosts, store),
+        "include_vars" => return run_include_vars(item, step, store),
         "set_fact" => {
-            let mut facts = Map::new();
-            for (k, v) in &item.args {
-                if k == "cacheable" {
-                    continue;
-                }
-                // Only the values whose own render read a managed host are data. Measured on
-                // ansible-core 2.19.12: a fact the playbook wrote can still name the variable a
-                // `debug: var:` shows, so writing every fact as data would fail a play with no
-                // host value anywhere in it.
-                let from_host = item.args_untrusted.contains(k);
-                let mut vars = store.lock().expect("vars lock");
-                for host in fact_hosts {
-                    if from_host {
-                        vars.set_untrusted_fact(host, k, v.clone());
-                    } else {
-                        vars.set_fact(host, k, v.clone());
-                    }
-                }
-                drop(vars);
-                facts.insert(k.clone(), v.clone());
-            }
+            // Written by `record_local_facts` once the task is judged.
+            let facts: Map<String, Value> = item
+                .args
+                .iter()
+                .filter(|(k, _)| *k != "cacheable")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
@@ -412,9 +380,7 @@ async fn pause(
     // Python's clock counts nanoseconds in a signed 64-bit integer, and the reference fails a
     // pause it cannot hold rather than wait it out. Measured on ansible-core 2.19.12.
     if asked.is_some_and(|(seconds, _)| seconds > i64::MAX / 1_000_000_000) {
-        return Some(TaskResult::failed_with(
-            "Task failed: timestamp out of range for C PyTime_t",
-        ));
+        return Some(TaskResult::failed_with(PYTIME_OUT_OF_RANGE));
     }
     let prompting = asked.is_none() || item.args.contains_key("prompt");
     if prompting && interactive {
@@ -847,11 +813,13 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
     Value::Object(out)
 }
 
-/// Files the handlers one finished task asked for, if it changed anything.
+/// Files the handlers one finished task asked for, if it changed anything and did not fail.
 ///
 /// Measured on ansible-core 2.19.12 and each half worth stating: a task that came back `ok`
 /// notifies nothing, a name notified twice runs its handler once, and for a loop it is the
-/// **aggregate** that decides - one changed item is a changed task. Notifications live in the
+/// **aggregate** that decides - one changed item is a changed task. A failed task notifies
+/// nothing, `ignore_errors` or not: the reference files a notification from the ok branch of
+/// `_process_pending_results` alone, the same rule as [`unresolved_notify`]. Notifications live in the
 /// driver and nowhere else: they are one host's business, and the flush the coordinator opens is
 /// the same flush whether this host has anything to run in it or not.
 pub(super) fn notify(
@@ -860,7 +828,10 @@ pub(super) fn notify(
     results: &[(Option<Value>, TaskResult)],
     notified: &mut Vec<usize>,
 ) {
-    if task.notify.is_empty() || !results.iter().any(|(_, r)| r.changed()) {
+    if task.notify.is_empty()
+        || results.iter().any(|(_, r)| r.failed())
+        || !results.iter().any(|(_, r)| r.changed())
+    {
         return;
     }
     for name in &task.notify {
@@ -938,11 +909,33 @@ pub(super) struct Retry {
     pub(super) delay: Duration,
     /// The conditions that end the loop. Empty means "the result did not fail".
     until: Vec<String>,
+    /// What `time.sleep(delay)` raises in the reference, for a delay it refuses.
+    unsleepable: Option<&'static str>,
 }
 
-/// `item` is the task's first one, whose variables `retries` and `delay` are rendered against.
-/// It is an `Option` because nothing here promises a task has items; one that has none is
-/// `Prepared::Skipped` and never reaches this.
+/// `time.sleep` on a value Python's clock, nanoseconds in a signed 64-bit integer, cannot hold.
+const PYTIME_OUT_OF_RANGE: &str = "Task failed: timestamp out of range for C PyTime_t";
+
+/// `time.sleep(float('nan'))`.
+const SLEEP_NAN: &str = "Task failed: Invalid value NaN (not a number)";
+
+impl Retry {
+    /// The failure the reference's wait between two attempts raises for a `delay` its
+    /// `time.sleep` refuses, in place of the wait: the item ends there, after the retry line.
+    /// Measured on ansible-core 2.19.12: `retries: 1` on a failing `command` with `delay: 1e20`
+    /// prints `(1 retries left)`, then fails the item with `{"changed": false, "msg": "Task
+    /// failed: timestamp out of range for C PyTime_t"}`, and `delay: nan` with `Task failed:
+    /// Invalid value NaN (not a number)`.
+    pub(super) fn sleep_failure(&self) -> Option<TaskResult> {
+        self.unsleepable.map(|msg| {
+            let mut failed = TaskResult::failed_with(msg);
+            failed.0.insert("changed".into(), json!(false));
+            failed
+        })
+    }
+}
+
+/// `item` is the one whose variables `retries` and `delay` are rendered against.
 pub(super) fn retry_plan(
     task: &PlayTask,
     item: Option<&Item>,
@@ -950,22 +943,28 @@ pub(super) fn retry_plan(
 ) -> Result<Option<Retry>, TemplateError> {
     let empty = HostVars::default();
     let vars = item.map_or(&empty, |i| &i.vars);
-    let number = |raw: &Value, keyword: &str| -> Result<f64, TemplateError> {
+    // `retries` is the reference's `isa='int'`, which refuses a value it would truncate (its
+    // `Decimal` check: `'2.5'` and `2.5` fail, `'2.0'` and `true` pass), and `delay` its
+    // `isa='float'`. Measured on ansible-core 2.19.12, both messages included.
+    let number = |raw: &Value, keyword: &str, isa: &str| -> Result<f64, TemplateError> {
         let rendered = templar.render_value(raw, vars)?;
-        match &rendered {
-            Value::Number(n) => n.as_f64().ok_or_else(|| TemplateError(String::new())),
-            Value::String(s) => s.trim().parse::<f64>().map_err(|_| TemplateError(String::new())),
-            _ => Err(TemplateError(String::new())),
-        }
-        .map_err(|_| {
-            TemplateError(format!(
-                "Error processing keyword '{keyword}': The value {rendered} could not be converted to 'int'."
-            ))
-        })
+        let n = match &rendered {
+            Value::Bool(b) => Some(f64::from(u8::from(*b))),
+            Value::Number(n) => n.as_f64(),
+            Value::String(s) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        };
+        n.filter(|n| isa == "float" || (n.is_finite() && n.fract() == 0.0))
+            .ok_or_else(|| {
+                TemplateError(format!(
+                    "Error processing keyword '{keyword}': The value {} could not be converted to '{isa}'.",
+                    crate::playbook::python_repr(&rendered)
+                ))
+            })
     };
     let retries = match &task.retries {
         Some(raw) => {
-            let n = number(raw, "retries")?;
+            let n = number(raw, "retries", "int")?;
             if n < 1.0 {
                 return Ok(None);
             }
@@ -974,19 +973,72 @@ pub(super) fn retry_plan(
         None if task.until.is_empty() => return Ok(None),
         None => 3,
     };
-    let delay = match &task.delay {
-        // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`.
-        Some(raw) => match number(raw, "delay")? {
-            d if d < 0.0 => Duration::from_secs(1),
-            d => Duration::from_secs_f64(d),
+    // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`, then `time.sleep`,
+    // which refuses NaN and anything its nanosecond clock cannot hold.
+    let (delay, unsleepable) = match &task.delay {
+        Some(raw) => match number(raw, "delay", "float")? {
+            d if d.is_nan() => (Duration::MAX, Some(SLEEP_NAN)),
+            d if d < 0.0 => (Duration::from_secs(1), None),
+            d if d * 1e9 > i64::MAX as f64 => (Duration::MAX, Some(PYTIME_OUT_OF_RANGE)),
+            d => (Duration::from_secs_f64(d), None),
         },
-        None => Duration::from_secs(5),
+        None => (Duration::from_secs(5), None),
     };
     Ok(Some(Retry {
         retries,
         delay,
         until: task.until.clone(),
+        unsleepable,
     }))
+}
+
+/// One item's retry plan, or the failed result it reports instead of running: its `retries` or
+/// `delay` did not render, or the task's `timeout` is out of range.
+pub(super) type ItemRetry = Result<Option<Retry>, TaskResult>;
+
+/// The largest `timeout` the reference accepts (`_alarm_timeout.py`, `_MAX_TIMEOUT`).
+const MAX_TIMEOUT: u64 = 100_000_000;
+
+/// Each item's retry plan, rendered against its own variables: the reference post-validates
+/// `retries` and `delay` once per item. An item whose render fails reports that failure and the
+/// other items run: measured on ansible-core 2.19.12, a loop with `retries: "{{ item.r }}"` over
+/// `r: 1`, `r: 2`, `r: x` and `r: 0` retries the first once and the second twice, fails the
+/// third alone with `Task failed: Error processing keyword 'retries': The value 'x' could not be
+/// converted to 'int'.`, and runs the fourth once with no `attempts`. A skipped item renders
+/// nothing.
+///
+/// A `timeout` over [`MAX_TIMEOUT`] fails each item that runs, after the retry plan rendered, as
+/// the reference's alarm refuses it at the first attempt: measured on ansible-core 2.19.12,
+/// `timeout: 100000001` fails every item of a loop with `Task failed: Timeout 100000001 is
+/// invalid, it must be between 0 and 100000000.` and runs nothing. Every deadline behind this
+/// point is then a sum that fits.
+pub(super) fn retry_plans(task: &PlayTask, items: &[Item], templar: &Templar) -> Vec<ItemRetry> {
+    let failed = |msg: String| {
+        let mut failed = TaskResult::failed_with(format!("Task failed: {msg}"));
+        failed.0.insert("changed".into(), json!(false));
+        failed
+    };
+    items
+        .iter()
+        .map(|item| {
+            if item.skipped.is_some() {
+                return Ok(None);
+            }
+            let plan = retry_plan(task, Some(item), templar).map_err(|e| failed(e.0))?;
+            match task.timeout {
+                Some(t) if t > MAX_TIMEOUT => Err(failed(format!(
+                    "Timeout {t} is invalid, it must be between 0 and {MAX_TIMEOUT}."
+                ))),
+                _ => Ok(plan),
+            }
+        })
+        .collect()
+}
+
+/// Whether any item of [`retry_plans`] retries or failed to render, which sends the task down
+/// the one-item-at-a-time path.
+pub(super) fn any_retried(plans: &[ItemRetry]) -> bool {
+    plans.iter().any(|plan| !matches!(plan, Ok(None)))
 }
 
 /// Whether the attempt loop stops here: the `until` conditions all hold, or - when the task gave
@@ -1255,7 +1307,7 @@ fn sub_task(
         files: sub
             .files
             .iter()
-            .map(|(arg, blob)| volant_protocol::StagedFile {
+            .map(|(arg, blob)| StagedFile {
                 arg: arg.clone(),
                 blob: blob.hash.clone(),
             })
@@ -1300,7 +1352,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
     // action: every sub-task, every wait for the host to come back. Past it, the item's result is
     // the timeout's, never whatever the plugin would have made of the time it had left.
     let limit = task.timeout.filter(|t| *t > 0);
-    let ends = limit.map(|t| Instant::now() + Duration::from_secs(t));
+    let ends = limit.and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
     let expired = || ends.is_some_and(|e| Instant::now() >= e);
     let capped =
         |d: Duration| ends.map_or(d, |e| d.min(e.saturating_duration_since(Instant::now())));
@@ -1355,7 +1407,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     return Ok(timeout_result());
                 }
                 let built = match sub_task(task, item, &probe, union, interpreters, asked) {
-                    Ok(built) => bounded(built),
+                    Ok(built) => built,
                     Err(failure) => return Ok(failure),
                 };
                 let left = deadline.saturating_duration_since(Instant::now());
@@ -1374,8 +1426,11 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                         std::future::pending::<()>().await;
                     }
                 };
+                let sent_before = *batch_id;
                 let once = async {
                     relink.relink(link, attempt).await?;
+                    // What is left once the connection is up, not before it.
+                    let built = bounded(built);
                     *batch_id += 1;
                     let (mut flat, ended) =
                         send_batch(link, host, *batch_id, vec![built], stop, stop_broken, logs)
@@ -1397,14 +1452,43 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                     Ok(Ok(Some(result))) => result,
                     Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
                     Ok(Err(why)) => gone(&why),
-                    Err(_) => gone(&format!("no answer after {} seconds", left.as_secs_f64())),
+                    Err(_) => {
+                        // A probe that went out may still be running on the host, and the agent
+                        // drops any `RunBatch` that arrives while a batch runs: left there, it
+                        // would swallow the next sub-task and leave it unanswered. Cancelled, or,
+                        // when the agent does not say it stopped, the link replaced like one the
+                        // host outlived.
+                        // Both waits past the deadline still give way to an interruption.
+                        if *batch_id != sent_before {
+                            let id = *batch_id;
+                            let mut watcher = stop.clone();
+                            let stopped = async move {
+                                if watcher.wait_for(|stopped| *stopped).await.is_err() {
+                                    std::future::pending::<()>().await;
+                                }
+                            };
+                            let settle = async {
+                                if link.stop_batch(id, CANCEL_GRACE).await {
+                                    return Ok(());
+                                }
+                                relink.relink(link, attempt).await
+                            };
+                            tokio::select! {
+                                settled = settle => settled.map_err(|why| {
+                                    Err(format!("replacing a link busy with a probe: {why}"))
+                                })?,
+                                () = stopped => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                            }
+                        }
+                        gone(&format!("no answer after {} seconds", left.as_secs_f64()))
+                    }
                 });
                 continue;
             }
         };
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
-            Ok(built) => bounded(built),
+            Ok(built) => built,
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
@@ -1416,6 +1500,24 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         if let Err(err) = blob_preflight(link, host, &tasks, union, &sub.files, logs).await {
             return Ok(TaskResult::failed_with(err));
         }
+        // The transfer ran on the item's time. Past its end the module is not sent, so a `copy`
+        // whose upload outlived `timeout` leaves `dest` alone and reports the timeout; before
+        // it, the module gets what is left after the transfer.
+        if expired() {
+            sweep_staged(
+                link,
+                host,
+                batch_id,
+                &tasks[0],
+                union,
+                stop,
+                stop_broken,
+                logs,
+            )
+            .await;
+            return Ok(timeout_result());
+        }
+        let tasks: Vec<Task> = tasks.into_iter().map(bounded).collect();
         let (mut flat, ended) =
             send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
         let result = flat.pop().flatten();
@@ -1550,10 +1652,63 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
             Attempt::Done(r) => return Ok(Some(r)),
             Attempt::Again(left) => lefts.push(left),
         }
+        if let Some(failed) = retry.sleep_failure() {
+            return Ok(Some(failed));
+        }
         if wait_or_stop(retry.delay, stop, stop_broken).await.is_none() {
             return Ok(None);
         }
     }
+}
+
+/// Takes off the host the files a sub-task staged and never ran with, the item's deadline having
+/// passed during the transfer: a staged file can hold a rendered secret, and would otherwise stay
+/// until the link closes. A `stat` stages them under `path`, and the agent removes every staged
+/// file once its task ran; the reference's temporary directory goes when its alarm ends the
+/// action (`TaskExecutor`'s `cleanup`). Nothing is read of the answer.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the link, the batch counter and the run's interruption a batch needs"
+)]
+async fn sweep_staged<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    batch_id: &mut u64,
+    built: &Task,
+    union: Option<&Union>,
+    stop: &mut watch::Receiver<bool>,
+    stop_broken: &mut bool,
+    logs: &mut Vec<String>,
+) {
+    let (Some(ran_under), Some(stat)) = (&built.payload, union.and_then(|u| u.payload("stat")))
+    else {
+        return;
+    };
+    if built.files.is_empty() {
+        return;
+    }
+    let args = ["follow", "get_checksum", "get_mime", "get_attributes"]
+        .into_iter()
+        .map(|key| (key.to_string(), json!(false)))
+        .collect();
+    let sweep = Task {
+        module: "stat".into(),
+        args,
+        timeout: Some(CANCEL_GRACE.as_secs()),
+        force_python: stat.force_python,
+        payload: Some(stat.under(&ran_under.interpreter)),
+        files: built
+            .files
+            .iter()
+            .map(|file| StagedFile {
+                arg: "path".into(),
+                blob: file.blob.clone(),
+            })
+            .collect(),
+        ..Task::default()
+    };
+    *batch_id += 1;
+    let _ = send_batch(link, host, *batch_id, vec![sweep], stop, stop_broken, logs).await;
 }
 
 /// Waits `delay`, or gives up when the run is interrupted, before it or during it. A zero delay
@@ -1564,7 +1719,9 @@ pub(super) async fn wait_or_stop(
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
 ) -> Option<()> {
-    let deadline = tokio::time::Instant::now() + delay;
+    // `sleep` rather than a sum with `now`, which would overflow for a delay that large.
+    let sleep = tokio::time::sleep(delay);
+    tokio::pin!(sleep);
     loop {
         if *stop.borrow() {
             return None;
@@ -1573,7 +1730,7 @@ pub(super) async fn wait_or_stop(
             return Some(());
         }
         tokio::select! {
-            () = tokio::time::sleep_until(deadline) => return Some(()),
+            () = &mut sleep => return Some(()),
             res = stop.changed(), if !*stop_broken => {
                 if res.is_err() {
                     *stop_broken = true;
@@ -2049,6 +2206,10 @@ async fn send_batch<C: AgentChannel>(
             }
         };
         match msg {
+            // A frame of another batch is a late answer to one this link gave up on, and
+            // belongs to nothing awaited here.
+            Ok(Some(FromAgent::TaskResult { batch, .. } | FromAgent::BatchDone { batch, .. }))
+                if batch != id => {}
             Ok(Some(FromAgent::TaskResult {
                 index,
                 mut result,
@@ -2324,6 +2485,46 @@ pub(super) fn record_facts(
     removed
 }
 
+/// Writes the facts a controller-side `set_fact` or `include_vars` answered, once `failed_when`
+/// has judged the task. A failed task writes none, `ignore_errors` or not, and a loop is judged
+/// whole, as [`record_facts`] judges a host's: measured on ansible-core 2.19.12, a `set_fact` or
+/// an `include_vars` under `failed_when: true` and `ignore_errors: true` leaves its names
+/// undefined at the next task, and so does a `set_fact` loop whose last item failed.
+///
+/// Only the `set_fact` values whose own render read a managed host are data. Measured on
+/// ansible-core 2.19.12: a fact the playbook wrote can still name the variable a `debug: var:`
+/// shows, so writing every fact as data would fail a play with no host value anywhere in it.
+pub(super) fn record_local_facts(
+    vars: &mut VarStore,
+    task: &PlayTask,
+    items: &[Item],
+    hosts: &[String],
+    results: &[(Option<Value>, TaskResult)],
+) {
+    let set_fact = match short_name(&task.module) {
+        "set_fact" => true,
+        "include_vars" => false,
+        _ => return,
+    };
+    if results.iter().any(|(_, r)| r.failed()) {
+        return;
+    }
+    for (item, (_, result)) in items.iter().zip(results) {
+        let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, value) in facts {
+            for host in hosts {
+                if set_fact && item.args_untrusted.contains(key) {
+                    vars.set_untrusted_fact(host, key, value.clone());
+                } else {
+                    vars.set_fact(host, key, value.clone());
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn fact_targets(task: &PlayTask, host: &str, live: &[String]) -> Vec<String> {
     if task.runs_once() && !live.is_empty() {
         live.to_vec()
@@ -2499,7 +2700,6 @@ mod tests {
                 &task(spec.name),
                 &item,
                 &step,
-                std::slice::from_ref(&"h1".to_string()),
                 &templar,
                 &store,
                 0,
@@ -2568,7 +2768,6 @@ mod tests {
             &written,
             &item,
             &step,
-            std::slice::from_ref(&"h1".to_string()),
             &templar,
             &store,
             0,
@@ -3291,6 +3490,53 @@ mod tests {
         /// which is what a real agent busy with a batch does.
         hangs_when_empty: bool,
         ledger: crate::profile::Ledger,
+        /// How long writing one blob frame takes, for a transfer over a slow link.
+        transfer_takes: Duration,
+        /// Set to run batches one at a time, as the agent does.
+        busy: Option<Box<Busy>>,
+    }
+
+    /// Batches run the way `volant-agent`'s runner runs them: one at a time, each `RunBatch` it
+    /// accepts taking the next script (`None` runs until cancelled), and a `RunBatch` that
+    /// arrives while another batch runs dropped, as `runner::is_cancelled` drops it.
+    struct Busy {
+        scripts: std::collections::VecDeque<Option<Vec<FromAgent>>>,
+        running: Option<u64>,
+        dropped: Vec<u64>,
+        /// Whether a `Cancel` of the running batch is answered with its `BatchDone`.
+        confirms_cancel: bool,
+    }
+
+    impl FakeAgent {
+        /// A fake running `scripts` one batch at a time; see [`Busy`].
+        fn busy(scripts: Vec<Option<Vec<FromAgent>>>, confirms_cancel: bool) -> Self {
+            FakeAgent {
+                hangs_when_empty: true,
+                busy: Some(Box::new(Busy {
+                    scripts: scripts.into(),
+                    running: None,
+                    dropped: Vec::new(),
+                    confirms_cancel,
+                })),
+                ..FakeAgent::answering(Vec::new())
+            }
+        }
+    }
+
+    /// `msg` as if the agent sent it for batch `id`.
+    fn for_batch(msg: FromAgent, id: u64) -> FromAgent {
+        match msg {
+            FromAgent::TaskResult {
+                index, result, ran, ..
+            } => FromAgent::TaskResult {
+                batch: id,
+                index,
+                result,
+                ran,
+            },
+            FromAgent::BatchDone { outcome, .. } => FromAgent::BatchDone { batch: id, outcome },
+            other => other,
+        }
     }
 
     impl FakeAgent {
@@ -3302,6 +3548,8 @@ mod tests {
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
                 ledger: crate::profile::Ledger::default(),
+                transfer_takes: Duration::ZERO,
+                busy: None,
             }
         }
 
@@ -3320,17 +3568,38 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.sent.push(msg.clone());
+            if let (Some(busy), ToAgent::RunBatch { id, .. }) = (&mut self.busy, msg) {
+                if busy.running.is_some() {
+                    busy.dropped.push(*id);
+                } else {
+                    busy.running = Some(*id);
+                    let script = busy.scripts.pop_front().flatten().unwrap_or_default();
+                    self.answers
+                        .extend(script.into_iter().map(|m| for_batch(m, *id)));
+                }
+            }
             Ok(())
         }
 
         async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            if !self.transfer_takes.is_zero() {
+                tokio::time::sleep(self.transfer_takes).await;
+            }
             self.frames.push((self.sent.len(), bytes.to_vec()));
             Ok(())
         }
 
         async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
             match self.answers.pop_front() {
-                Some(answer) => Ok(Some(answer)),
+                Some(answer) => {
+                    if let (Some(busy), FromAgent::BatchDone { batch, .. }) =
+                        (&mut self.busy, &answer)
+                        && busy.running == Some(*batch)
+                    {
+                        busy.running = None;
+                    }
+                    Ok(Some(answer))
+                }
                 None if self.hangs_when_empty => std::future::pending().await,
                 None => Ok(None),
             }
@@ -3338,6 +3607,16 @@ mod tests {
 
         async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
             self.sent.push(ToAgent::Cancel { id });
+            let Some(busy) = &mut self.busy else {
+                return true;
+            };
+            if busy.running != Some(id) || !busy.confirms_cancel {
+                return false;
+            }
+            busy.running = None;
+            self.answers.retain(|m| {
+                !matches!(m, FromAgent::TaskResult { batch, .. } | FromAgent::BatchDone { batch, .. } if *batch == id)
+            });
             true
         }
 
@@ -3906,6 +4185,61 @@ mod tests {
                 .collect(),
             ..union_named(hash)
         }
+    }
+
+    /// A batch reads only the frames of its own id. A probe abandoned at a deadline after a
+    /// reconnection can still answer on the link, and those late frames reach the next batch
+    /// first; filed there, they become its first sub-task's result, and their `BatchDone` ends
+    /// it before its own answer arrives.
+    ///
+    /// What would make this red: the batch id of `TaskResult` or `BatchDone` not compared with
+    /// the one awaited, which returns the stale `probe` result for batch 2.
+    #[tokio::test]
+    async fn a_batch_ignores_the_frames_of_another_batch() {
+        let mut stop = watch::channel(false).1;
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        let mut answers = one_result(1, json!({"msg": "probe"})).to_vec();
+        answers.extend(one_result(2, json!({"msg": "mine"})));
+        let mut agent = FakeAgent::answering(answers);
+        let tasks = vec![protocol_task(&task("ping"), &bare_item(), None)];
+        let (received, ended) = run_agent_batch(
+            &mut agent,
+            "h1",
+            2,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert!(matches!(ended, Ok(BatchOutcome::Completed)), "{ended:?}");
+        let result = received[0].clone().expect("a result").0;
+        assert_eq!(result["msg"], json!("mine"));
+
+        // Batch 2 ends without a result of its own: the stale one is not taken for it.
+        let mut answers = one_result(1, json!({"msg": "probe"})).to_vec();
+        answers.push(FromAgent::BatchDone {
+            batch: 2,
+            outcome: BatchOutcome::Completed,
+        });
+        let mut agent = FakeAgent::answering(answers);
+        let tasks = vec![protocol_task(&task("ping"), &bare_item(), None)];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            2,
+            tasks,
+            None,
+            &[],
+            &mut stop,
+            &mut stop_broken,
+            &mut logs,
+        )
+        .await;
+        assert!(received[0].is_none(), "{received:?}");
     }
 
     /// What the agent answers for a batch of one task that ran to its end.
@@ -4792,7 +5126,7 @@ mod tests {
         assert_eq!(built.module, "copy");
         assert_eq!(
             built.files,
-            [volant_protocol::StagedFile {
+            [StagedFile {
                 arg: "src".into(),
                 blob: "cd".into(),
             }]
@@ -5110,7 +5444,7 @@ mod tests {
         // A staged file counts only when it went up for this batch, and the check has no memory
         // to consult: the agent consumed the one it had for the task before.
         let mut staging = tasks;
-        staging[0].files = vec![volant_protocol::StagedFile {
+        staging[0].files = vec![StagedFile {
             arg: "src".into(),
             blob: "cd".into(),
         }];
@@ -5133,7 +5467,7 @@ mod tests {
             &bare_item(),
             Some((&module_payload("zz"), "/usr/bin/python3")),
         );
-        staging.files = vec![volant_protocol::StagedFile {
+        staging.files = vec![StagedFile {
             arg: "src".into(),
             blob: blob.hash.clone(),
         }];
@@ -5333,7 +5667,7 @@ mod tests {
         for copy in copies {
             assert_eq!(
                 copy.files,
-                [volant_protocol::StagedFile {
+                [StagedFile {
                     arg: "src".into(),
                     blob: blob.hash.clone(),
                 }]
@@ -5650,6 +5984,81 @@ mod tests {
         );
     }
 
+    /// A `delay` Python's clock cannot hold fails the item where the reference's `time.sleep`
+    /// raises, never panicking the controller, and a wait of the longest `Duration` still ends
+    /// on the run's stop.
+    ///
+    /// What would make this red: `Duration::from_secs_f64` on `1e20`, which panics; the plan
+    /// carrying no failure for it; or a sum of that wait with the present instant, which panics.
+    #[tokio::test]
+    async fn an_enormous_delay_does_not_panic() {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut t = task("command");
+        t.retries = Some(json!(1));
+        t.delay = Some(json!(1e20));
+        let retry = retry_plan(&t, Some(&bare_item()), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        assert_eq!(retry.delay, Duration::MAX);
+        let failed = retry.sleep_failure().expect("the sleep fails");
+        assert_eq!(msg(&failed), PYTIME_OUT_OF_RANGE);
+        let (tx, mut stop) = watch::channel(false);
+        tx.send(true).expect("the run stops");
+        assert_eq!(wait_or_stop(retry.delay, &mut stop, &mut false).await, None);
+    }
+
+    /// The plugin path ends an item at a `delay` the reference's sleep refuses, after the retry
+    /// line, as the other two paths do.
+    ///
+    /// What would make this red: the check left out of `run_plugin_attempts`, which waits the
+    /// longest `Duration` there is.
+    #[tokio::test]
+    async fn a_plugin_s_unsleepable_delay_fails_the_item() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
+            ]
+            .concat(),
+        );
+        let mut t = retried_copy(1);
+        t.delay = Some(json!(1e20));
+        let (ran, lefts) = tokio::time::timeout(
+            Duration::from_secs(10),
+            copy_attempts(&t, copy_args("/tmp/v/sleepless"), &mut agent, &mut stop),
+        )
+        .await
+        .expect("the item ended rather than waited");
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert_eq!(msg(&result), PYTIME_OUT_OF_RANGE);
+        assert_eq!(result.0["changed"], json!(false));
+        assert_eq!(lefts, [1]);
+    }
+
+    /// An item deadline past what an `Instant` holds is no deadline, not a panic. The driver
+    /// refuses such a `timeout` before the item starts; this is the plugin loop on its own.
+    ///
+    /// What would make this red: the deadline summed with the present instant unchecked.
+    #[tokio::test]
+    async fn an_item_deadline_that_overflows_is_no_deadline() {
+        let mut stop = watch::channel(false).1;
+        let mut t = task("copy");
+        t.timeout = Some(u64::MAX);
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+            ]
+            .concat(),
+        );
+        let _ = copy_attempts(&t, copy_args("/tmp/v/far"), &mut agent, &mut stop).await;
+        assert_eq!(modules_sent(&agent)[0], "stat");
+    }
+
     /// A negative `delay` waits one second, as `task_executor.py` has it (`if delay < 0: delay =
     /// 1`), and zero waits nothing.
     ///
@@ -5718,6 +6127,70 @@ mod tests {
         assert!(!result.0.contains_key("attempts"), "{result:?}");
         assert_eq!(lefts, Vec::<u32>::new());
         assert_eq!(modules_sent(&agent), ["stat"]);
+    }
+
+    /// A plugin's file transfer runs on the item's `timeout`. A transfer that outlives it leaves
+    /// the module unsent, the staged file taken off the host by a `stat` that stages it, and the
+    /// item timed out, the way the reference's alarm ends the action wherever it stands; one that
+    /// leaves time gives the module what is left after it, not what was left before. The fake's
+    /// transfer sleeps past the deadline rather than racing it, and the test reads what was
+    /// sent, not how long it took.
+    ///
+    /// What would make this red: the module sent after a transfer that used up the item's time,
+    /// which replaces `dest` and then reports the timeout (`["stat", "copy"]`); the staged file
+    /// left on the host (`["stat"]`); or the module's timeout computed before the transfer (3).
+    #[tokio::test]
+    async fn a_plugin_s_transfer_runs_on_the_item_s_time() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let answers = || {
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+            ]
+            .concat()
+        };
+        let mut t = task("copy");
+        t.timeout = Some(1);
+        let mut agent = FakeAgent::answering(
+            [
+                answers(),
+                one_result(2, json!({"stat": {"exists": true}})).to_vec(),
+            ]
+            .concat(),
+        );
+        agent.transfer_takes = Duration::from_millis(1100);
+        let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
+        // The second `stat` takes the staged file, which the agent removes after it.
+        assert_eq!(modules_sent(&agent), ["stat", "stat"]);
+        let swept = &batches_sent(&agent)[1][0];
+        assert_eq!(
+            swept.files,
+            [StagedFile {
+                arg: "path".into(),
+                blob: blob.hash.clone()
+            }]
+        );
+
+        t.timeout = Some(3);
+        let mut agent = FakeAgent::answering(
+            [
+                answers(),
+                one_result(2, json!({"changed": true, "dest": "/tmp/v/late"})).to_vec(),
+            ]
+            .concat(),
+        );
+        agent.transfer_takes = Duration::from_millis(1100);
+        let _ = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+        assert_eq!(modules_sent(&agent), ["stat", "copy"]);
+        let given = agent.sent.iter().find_map(|m| match m {
+            ToAgent::RunBatch { tasks, .. } if tasks[0].module == "copy" => tasks[0].timeout,
+            _ => None,
+        });
+        assert!(given.is_some_and(|t| t < 3), "{given:?}");
     }
 
     /// `until` reads the result the whole sequence ended with, judged by the task's conditions,
@@ -6467,9 +6940,10 @@ mod tests {
         /// The `connect_timeout` each try was given.
         connect_timeouts: Vec<Option<Duration>>,
         retired: Vec<FakeAgent>,
-        /// Raised a tenth of a second after the first try starts, for a test of the run being
-        /// interrupted while it waits.
+        /// Raised a tenth of a second after try number `stop_on` starts, for a test of the run
+        /// being interrupted while it waits.
         stop: Option<watch::Sender<bool>>,
+        stop_on: usize,
         /// A millisecond in place of the reference's seconds, so the schedule's shape is tested
         /// without its length (`the_pause_doubles_from_one_second_up_to_twelve`), unless a test
         /// needs a pause long enough to be interrupted.
@@ -6485,6 +6959,7 @@ mod tests {
                 connect_timeouts: Vec::new(),
                 retired: Vec::new(),
                 stop: None,
+                stop_on: 1,
                 pause: Duration::from_millis(1),
             }
         }
@@ -6498,7 +6973,9 @@ mod tests {
         ) -> Result<(), String> {
             self.attempts += 1;
             self.connect_timeouts.push(connect_timeout);
-            if let Some(stop) = self.stop.take() {
+            if self.attempts == self.stop_on
+                && let Some(stop) = self.stop.take()
+            {
                 // A moment later, so that it lands inside whatever wait follows this try.
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -7164,6 +7641,93 @@ mod tests {
         };
         assert_eq!(timeouts(&relink.retired[0]), [Some(2); 4]);
         assert_eq!(timeouts(relink.retired.last().expect("a probe")), [Some(1)]);
+    }
+
+    /// A probe the item's deadline abandoned is cancelled on the host. The agent runs one batch
+    /// at a time and drops a `RunBatch` that arrives while another runs, so a probe left running
+    /// swallows the next item's first batch, whose answer then never comes. The fake runs
+    /// batches the way the agent does; the next batch is bounded, so the defect fails the test
+    /// rather than hanging it. An agent that does not confirm the cancel has its link replaced.
+    ///
+    /// What would make this red: the probe dropped without a `Cancel` (the next batch is
+    /// dropped and never answered), or an unconfirmed cancel leaving the busy link in place.
+    #[tokio::test]
+    async fn a_probe_abandoned_at_the_deadline_is_cancelled() {
+        fn fresh() -> FakeAgent {
+            FakeAgent::busy(vec![Some(raw_answer(0, 0, "next\n").to_vec())], true)
+        }
+        for confirms in [true, false] {
+            let mut stop = watch::channel(false).1;
+            let mut agent = before_the_reboot(None);
+            let probing = FakeAgent::busy(
+                vec![None, Some(raw_answer(0, 0, "next\n").to_vec())],
+                confirms,
+            );
+            let mut relink = Scripted::new(vec![Try::Up(probing)]);
+            relink.after = Some(fresh);
+            let result = reboot_item_under(
+                Some(2),
+                json!({}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
+            .await
+            .expect("the item ran to its end");
+            assert_eq!(result, TaskResult::timed_out(2), "{confirms}");
+            // A confirmed cancel keeps the link; an unconfirmed one replaces it.
+            assert_eq!(relink.attempts, if confirms { 1 } else { 2 }, "{confirms}");
+            let next = vec![protocol_task(&task("command"), &bare_item(), None)];
+            let (received, _) = tokio::time::timeout(
+                Duration::from_secs(10),
+                run_agent_batch(
+                    &mut agent,
+                    "h1",
+                    1000,
+                    next,
+                    None,
+                    &[],
+                    &mut stop,
+                    &mut false,
+                    &mut Vec::new(),
+                ),
+            )
+            .await
+            .expect("the next batch was answered rather than dropped");
+            let answered = received[0].clone().expect("a result").0;
+            assert_eq!(answered["stdout"], json!("next\n"), "{confirms}");
+        }
+    }
+
+    /// An interruption ends the waits an abandoned probe leaves behind it: the cancel that goes
+    /// unconfirmed, then the reconnection that replaces the busy link, which here never comes up.
+    /// The stop is raised once that reconnection has started, so it lands in that wait.
+    ///
+    /// What would make this red: the reconnection awaited without watching the stop, which waits
+    /// for as long as it takes (the item's thirty-second bound).
+    #[tokio::test]
+    async fn an_interrupt_ends_the_wait_behind_an_abandoned_probe() {
+        let (raise, mut stop) = watch::channel(false);
+        let mut agent = before_the_reboot(None);
+        let probing = FakeAgent::busy(vec![None], false);
+        let mut relink = Scripted::new(vec![Try::Up(probing), Try::Hangs]);
+        relink.stop = Some(raise);
+        relink.stop_on = 2;
+        let ran = reboot_item_under(
+            Some(2),
+            json!({}),
+            &mut agent,
+            &mut relink,
+            false,
+            &mut stop,
+        )
+        .await;
+        assert!(
+            matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
+            "{ran:?}"
+        );
+        assert_eq!(relink.attempts, 2);
     }
 
     /// A `shutdown` that answered and then took the link down reports its answer: a refusal

@@ -30,11 +30,11 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, PluginStart, Relinker, Retry, chosen_interpreter, fact_targets, failed_task_value,
-    finish, judge_attempt, notify, python_for, record_facts, record_registered,
-    requested_interpreter, retry_plan, reuse_or_connect, run_agent_batch, run_local,
-    run_plugin_attempts, running_host_vars, step_tasks, take_warnings, unresolved_notify,
-    wait_or_stop,
+    Attempt, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter, fact_targets,
+    failed_task_value, finish, judge_attempt, notify, python_for, record_facts, record_local_facts,
+    record_registered, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch,
+    run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
+    unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -493,7 +493,7 @@ pub(super) async fn drive_host(
     if let Some(grown) = driver.stepped_over(0..pos).await {
         pos += grown;
     }
-    let mut batch_id: u64 = 0;
+    let mut batch_id = first_batch_id();
     // The handlers this host has asked for and not yet run, as indices into `compiled.handlers`.
     // Never twice: measured, a handler notified by two tasks runs once.
     let mut notified: Vec<usize> = Vec::new();
@@ -639,7 +639,7 @@ pub(super) async fn drive_host(
         // Set when the batch's one task retries. A retried task is alone in its batch, so this
         // says how the whole batch runs: item by item, attempt by attempt, rather than in one
         // trip to the agent.
-        let mut batch_retry: Option<Retry> = None;
+        let mut batch_retry: Option<Vec<ItemRetry>> = None;
         // Set when the batch's one task is backed by an action plugin, which is alone in its
         // batch the way a retried task is.
         let mut batch_action: Option<PluginBatch> = None;
@@ -1051,23 +1051,20 @@ pub(super) async fn drive_host(
                         (true, Some(to)) => vec![to.clone()],
                         _ => register_hosts.clone(),
                     };
-                    let retry = match retry_plan(task, items.first(), &templar) {
-                        Ok(retry) => retry,
-                        Err(err) => {
-                            deferred_error = Some((pos, err));
-                            break;
-                        }
-                    };
+                    let plans = retry_plans(task, &items, &templar);
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
                     let mut lefts: Vec<Vec<u32>> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
-                    for item in &items {
+                    for (item, plan) in items.iter().zip(&plans) {
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
                             s.clone()
+                        } else if let Err(failed) = plan {
+                            failed.clone()
                         } else {
+                            let retry = plan.as_ref().ok().and_then(Option::as_ref);
                             let mut attempt = 0;
                             loop {
                                 attempt += 1;
@@ -1079,7 +1076,6 @@ pub(super) async fn drive_host(
                                     task,
                                     item,
                                     step,
-                                    &fact_hosts,
                                     &templar,
                                     &store,
                                     verbosity,
@@ -1096,12 +1092,15 @@ pub(super) async fn drive_host(
                                 let Some(ran) = ran else {
                                     break 'run;
                                 };
-                                let Some(retry) = &retry else {
+                                let Some(retry) = retry else {
                                     break finish(task, item, ran, &templar);
                                 };
                                 match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
                                     Attempt::Again(left) => mine.push(left),
+                                }
+                                if let Some(failed) = retry.sleep_failure() {
+                                    break failed;
                                 }
                                 if driver.sleep_between(retry.delay).await.is_none() {
                                     break 'run;
@@ -1126,12 +1125,11 @@ pub(super) async fn drive_host(
                             })
                             .await;
                     }
-                    record_registered(
-                        &mut store.lock().expect("vars lock"),
-                        task,
-                        &register_hosts,
-                        &results,
-                    );
+                    {
+                        let mut vars = store.lock().expect("vars lock");
+                        record_registered(&mut vars, task, &register_hosts, &results);
+                        record_local_facts(&mut vars, task, &items, &fact_hosts, &results);
+                    }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
                     // body from `-v` on, measured: the dump is what puts the body on the line,
@@ -1221,18 +1219,13 @@ pub(super) async fn drive_host(
                     {
                         break;
                     }
-                    let retry = match retry_plan(task, items.first(), &templar) {
-                        Ok(retry) => retry,
-                        Err(err) => {
-                            deferred_error = Some((pos, err));
-                            break;
-                        }
-                    };
+                    let plans = retry_plans(task, &items, &templar);
+                    let retried = any_retried(&plans);
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
                     // A task an action plugin backs does the same, one trip per sub-task.
-                    if (retry.is_some() || action.is_some()) && !batch.is_empty() {
+                    if (retried || action.is_some()) && !batch.is_empty() {
                         break;
                     }
                     batch_action = action.map(|kind| PluginBatch {
@@ -1243,7 +1236,7 @@ pub(super) async fn drive_host(
                     batch_escalation = escalation;
                     batch_delegate = delegate_name;
                     batch_transport = Some(transport);
-                    batch_retry = retry;
+                    batch_retry = retried.then_some(plans);
                     // A looping task ends the batch because its items travel with
                     // `ignore_errors` set, so the agent runs all of them the way Ansible does.
                     // Only `report_task` may decide the task failed, from the aggregate, and
@@ -1470,8 +1463,8 @@ pub(super) async fn drive_host(
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
-                let retry = batch_retry.clone();
-                if retry.is_some() {
+                let plans = batch_retry.clone();
+                if plans.is_some() {
                     decided = true;
                     names = items
                         .iter()
@@ -1482,6 +1475,14 @@ pub(super) async fn drive_host(
                     if item.skipped.is_some() {
                         continue;
                     }
+                    let retry = match plans.as_ref().map(|p| &p[ii]) {
+                        Some(Err(failed)) => {
+                            received[0][ii] = Some(failed.clone());
+                            continue;
+                        }
+                        Some(Ok(retry)) => retry.as_ref(),
+                        None => None,
+                    };
                     let mut warnings = Vec::new();
                     let start = PluginStart {
                         kind,
@@ -1504,7 +1505,7 @@ pub(super) async fn drive_host(
                         &start,
                         &step.task,
                         item,
-                        retry.as_ref(),
+                        retry,
                         plan.python.as_deref(),
                         &interpreters,
                         asked.as_deref(),
@@ -1521,6 +1522,11 @@ pub(super) async fn drive_host(
                         Ok(None) => {
                             stopped = true;
                             break;
+                        }
+                        // An item that does not retry comes back as the module answered, and
+                        // the other items' `decided` results have had their conditions.
+                        Ok(Some(result)) if decided && retry.is_none() => {
+                            received[0][ii] = Some(finish(&step.task, item, result, &templar));
                         }
                         Ok(Some(result)) => received[0][ii] = Some(result),
                         // The link lost or the run interrupted: this item has no result and the
@@ -1560,7 +1566,7 @@ pub(super) async fn drive_host(
                     break 'run;
                 }
                 outcome
-            } else if let Some(retry) = batch_retry.clone() {
+            } else if let Some(plans) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
                 let task = &c.steps[*index].task;
@@ -1591,6 +1597,13 @@ pub(super) async fn drive_host(
                 // sit between the two result lines, so the items do not retry together.
                 'items: for (ii, built) in step_tasks(task, items, &python, &mut received[0]) {
                     let item = &items[ii];
+                    let retry = match &plans[ii] {
+                        Err(failed) => {
+                            received[0][ii] = Some(failed.clone());
+                            continue 'items;
+                        }
+                        Ok(retry) => retry.as_ref(),
+                    };
                     let mut attempt = 0;
                     loop {
                         attempt += 1;
@@ -1618,12 +1631,20 @@ pub(super) async fn drive_host(
                         // The agent ended without a result for this item. Left unreported, the
                         // way the loop below leaves a task the agent never reached.
                         let Some(raw) = raw else { continue 'items };
-                        match judge_attempt(task, item, raw, attempt, &retry, &templar) {
+                        let Some(retry) = retry else {
+                            received[0][ii] = Some(finish(task, item, raw, &templar));
+                            continue 'items;
+                        };
+                        match judge_attempt(task, item, raw, attempt, retry, &templar) {
                             Attempt::Done(r) => {
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
                             Attempt::Again(left) => lefts[ii].push(left),
+                        }
+                        if let Some(failed) = retry.sleep_failure() {
+                            received[0][ii] = Some(failed);
+                            continue 'items;
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
                             file_timings(
@@ -1763,8 +1784,14 @@ pub(super) async fn drive_host(
                     record_registered(&mut vars, task, &targets, &results);
                     // Only here, and never on the `run_local` path above: this is where a
                     // managed host's own words arrive, and `set_fact` writes its own facts with
-                    // the trust each of them earned.
-                    record_facts(&mut vars, &targets, &results)
+                    // the trust each of them earned. Under `delegate_facts` they are the
+                    // delegate's, as on the controller-side path; the registered result stays
+                    // with the host the task was written for.
+                    let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
+                        (true, Some(to)) => std::slice::from_ref(to),
+                        _ => &targets[..],
+                    };
+                    record_facts(&mut vars, fact_hosts, &results)
                 };
                 // A name, never a value, so there is nothing in it for `no_log` to hide.
                 for key in removed {
@@ -2299,10 +2326,29 @@ impl Driver<'_> {
     }
 }
 
+/// Where one host's batch ids start for one play: a range 2^32 wide, handed out once per
+/// process, so no id is used twice on a link. Links outlive the play that opened them and are
+/// shared by every driver that reaches the host, and a batch reads only the frames of its own id:
+/// an id seen again would take a late frame left on the link for its own.
+fn first_batch_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::testing::task;
     use super::*;
+
+    /// Each host's run of each play numbers its batches in a range of its own.
+    ///
+    /// What would make this red: the counter starting at zero for every play, which gives a
+    /// link that outlived its play a batch id it has already answered.
+    #[test]
+    fn batch_ids_start_in_a_range_of_their_own() {
+        let (a, b) = (first_batch_id(), first_batch_id());
+        assert!(b >= a + (1 << 32), "{a} {b}");
+    }
 
     /// The ledger is filed at the end of a batch and on both ways a stopped run leaves one, the
     /// plugin loop and the retry loop, so an interrupted run's profile keeps the attempts the

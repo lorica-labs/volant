@@ -255,6 +255,198 @@ fn a_pause_runs_once_for_the_first_host() {
     assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
 }
 
+/// A play whose pattern matches no host is skipped whole, so the pre-flight does not refuse a
+/// prompting `pause` in it even on a terminal. Measured on ansible-core 2.19.12 under `script`
+/// (a terminal on standard input): `skipping: no hosts matched`, the next play runs, exit 0.
+///
+/// What would make this red: the pause pre-flight run over a play nothing reaches, which refuses
+/// with exit 4 a playbook the reference runs to its end.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
+    let command = format!(
+        "'{}' playbook '{}'",
+        env!("CARGO_BIN_EXE_volant"),
+        fixture("controller/pause-no-host.yml")
+    );
+    // util-linux `script` runs the command with a terminal on its standard input; `-e` passes
+    // its exit code through.
+    let mut child = Command::new("script")
+        .args(["-qec", &command, "/dev/null"])
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("this test needs util-linux `script` to give the run a terminal");
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("script is waitable").is_none() {
+        if started.elapsed() >= PROBE_DEADLINE {
+            let _ = child.kill();
+            panic!("volant under script did not finish within {PROBE_DEADLINE:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let out = child.wait_with_output().expect("script output");
+    let text = String::from_utf8_lossy(&out.stdout).replace('\r', "");
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("skipping: no hosts matched"), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+}
+
+/// A controller-side `set_fact` or `include_vars` that failed keeps none of the facts it answered,
+/// `ignore_errors` or not, and a loop is judged whole. Measured on ansible-core 2.19.12 with this
+/// fixture: `"msg": "False False False"`, recap `ok=4 ... ignored=3`.
+///
+/// What would make this red: the facts written as the module runs, before `failed_when` has
+/// judged the result (`"True True True"`).
+#[test]
+fn a_failed_controller_side_task_keeps_none_of_its_facts() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/failed-facts.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""msg": "False False False""#), "{text}");
+}
+
+/// `retries` is rendered per item, on the agent path, the controller-side one and an action
+/// plugin's. Measured on ansible-core 2.19.12 with these fixtures, for each task: one retry line
+/// for `r: 1`, two for `r: 2`, the item `r: x` failed alone with `"changed": false` and
+/// `"msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be
+/// converted to 'int'."`, `r: 0` run once, and the registered `attempts` read `1,2,-,-`. The
+/// `r: 0` item still has its `changed_when` applied: no `"changed": true` under the `command`,
+/// one under the `copy`.
+///
+/// What would make this red: the plan rendered once, against the first item, which retries
+/// every item once and runs `r: x` (`1,1,1,1`); or an item that does not retry, in a task
+/// another item retries, reported without its conditions.
+#[test]
+fn retries_are_rendered_per_item() {
+    let check = |text: &str, tasks: &[&str], changed: usize| {
+        for task in tasks {
+            assert!(
+                text.contains(&format!(r#""msg": "{task} 1,2,-,-""#)),
+                "{text}"
+            );
+            for (left, count) in [(2, 1), (1, 2)] {
+                assert_eq!(
+                    text.matches(&format!("[localhost]: {task} ({left} retries left)."))
+                        .count(),
+                    count,
+                    "{text}"
+                );
+            }
+        }
+        assert_eq!(
+            text.matches(
+                r#""changed": false, "msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be converted to 'int'.""#
+            )
+            .count(),
+            tasks.len(),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches(r#""changed": true"#).count(),
+            changed,
+            "{text}"
+        );
+    };
+    let out = volant_within(
+        &["playbook", &fixture("controller/retries-per-item.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    check(&text, &["remote", "local"], 0);
+    // `copy` names a Python module, which the run builds before it starts.
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let out = volant_within_env(
+        &[
+            "playbook",
+            &fixture("controller/retries-per-item-plugin.yml"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    check(&text, &["plugin"], 1);
+}
+
+/// `retries` and `delay` are converted as the reference converts them, and a `delay` its
+/// `time.sleep` refuses fails the item after the retry line. Measured on ansible-core 2.19.12
+/// with this fixture, for both tasks: `nan` and `1e20` each print `(1 retries left)` then fail
+/// with `Task failed: Invalid value NaN (not a number)` and `Task failed: timestamp out of range
+/// for C PyTime_t`; `delay: x` fails `... could not be converted to 'float'.`; `retries: '2.5'`
+/// fails `... could not be converted to 'int'.`; `retries: true` retries once.
+///
+/// What would make this red: the huge delay waited out (the test's deadline) or NaN taken for
+/// it; `'int'` in the `delay` message; or `'2.5'` truncated into two retries.
+#[test]
+fn retries_and_delay_are_converted_as_the_reference_does() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/retry-values.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for task in ["remote", "local"] {
+        assert_eq!(
+            text.matches(&format!("[localhost]: {task} (1 retries left)."))
+                .count(),
+            3,
+            "{text}"
+        );
+    }
+    for msg in [
+        "Task failed: Invalid value NaN (not a number)",
+        "Task failed: timestamp out of range for C PyTime_t",
+        "Task failed: Error processing keyword 'delay': The value 'x' could not be converted to 'float'.",
+        "Task failed: Error processing keyword 'retries': The value '2.5' could not be converted to 'int'.",
+    ] {
+        assert_eq!(
+            text.matches(&format!(r#""changed": false, "msg": "{msg}""#))
+                .count(),
+            2,
+            "{msg}: {text}"
+        );
+    }
+}
+
+/// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller
+/// side alike, and the play goes on. Measured on ansible-core 2.19.12 with this fixture: both
+/// items of the `command` loop fail with `Task failed: Timeout 9223372036854775807 is invalid,
+/// it must be between 0 and 100000000.`, the `debug` with the same sentence for 100000001, and
+/// `after` runs.
+///
+/// What would make this red: the timeout taken as it stands, whose deadline overflows and
+/// panics the agent (the host then reads unreachable), or runs the `debug`.
+#[test]
+fn a_timeout_out_of_range_fails_the_task() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/timeout-out-of-range.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(
+        text.matches(r#""msg": "Task failed: Timeout 9223372036854775807 is invalid, it must be between 0 and 100000000.""#)
+            .count(),
+        2,
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""msg": "Task failed: Timeout 100000001 is invalid, it must be between 0 and 100000000.""#),
+        "{text}"
+    );
+    assert!(!text.contains(r#""msg": "x""#), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+}
+
 /// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
 /// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
 /// registered result has no `warnings` key. The driver shows every result's `warnings` that way,
@@ -2987,6 +3179,24 @@ fn a_task_that_did_not_change_does_not_notify() {
         ),
         "{text}"
     );
+}
+
+/// A failure `ignore_errors` swallowed notifies nothing, even though a failed `command` reports
+/// `changed: true`: the reference files a notification from the ok branch of
+/// `_process_pending_results` alone. Measured on ansible-core 2.19.12 with this fixture: no
+/// `RUNNING HANDLER`, recap `ok=2 changed=1 ... ignored=1`, exit 0.
+///
+/// What would make this red: the notification filed for any changed result, failed or not.
+#[test]
+fn an_ignored_failure_does_not_notify() {
+    let out = volant_within(
+        &["playbook", &fixture("handlers/ignored-failure.yml")],
+        std::time::Duration::from_secs(20),
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(!text.contains("RUNNING HANDLER"), "{text}");
 }
 
 /// `--force-handlers` runs the handlers of a host that failed, and the failure still stands.
@@ -6145,6 +6355,33 @@ fn limit_narrows_before_the_batches_are_cut() {
         text.contains(r#"ok: [h2] => {"msg": "h2,h3 / h2,h3 / h2,h3"}"#),
         "ansible_play_hosts_all is the limited set, not the inventory's full one: {text}"
     );
+}
+
+/// A module run on the delegate under `delegate_facts` files its facts under the delegate, and
+/// its registered result under the host the task was written for. Measured on ansible-core
+/// 2.19.12 with this fixture: `ok: [h1 -> h3]`, then `"msg": "True none True"`.
+///
+/// What would make this red: the facts of a remote result filed under the delegating host, as
+/// they were before (`"none True True"`).
+#[test]
+fn a_remote_result_under_delegate_facts_lands_on_the_delegate() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            &fixture("delegate/inv.ini"),
+            &fixture("delegate/delegate-facts-remote.yml"),
+        ],
+        std::time::Duration::from_secs(120),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("ok: [h1 -> h3]"), "{text}");
+    assert!(text.contains(r#""msg": "True none True""#), "{text}");
 }
 
 /// `run_once`, `delegate_to` and `delegate_facts` on the campaign's own fixture.

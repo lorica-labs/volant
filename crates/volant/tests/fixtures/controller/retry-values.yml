@@ -1,0 +1,15 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: remote
+      command: "false"
+      loop: [{r: 1, d: "nan"}, {r: 1, d: "1e20"}, {r: 1, d: "x"}, {r: "2.5", d: 0}, {r: true, d: "0.0"}]
+      retries: "{{ item.r }}"
+      delay: "{{ item.d }}"
+      ignore_errors: true
+    - name: local
+      assert: {that: false}
+      loop: [{r: 1, d: "nan"}, {r: 1, d: "1e20"}, {r: 1, d: "x"}, {r: "2.5", d: 0}, {r: true, d: "0.0"}]
+      retries: "{{ item.r }}"
+      delay: "{{ item.d }}"
+      ignore_errors: true

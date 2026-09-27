@@ -366,10 +366,11 @@ fn answer(
                 let load_state = status.get("LoadState").and_then(Value::as_str);
                 is_systemd = load_state.is_some_and(|state| state != "not-found");
                 let is_masked = load_state == Some("masked");
-                if is_systemd && !is_masked {
-                    if let Some(error) = status.get("LoadError").and_then(Value::as_str) {
-                        return Ok(reply.fail(format!("Error loading unit file '{unit}': {error}")));
-                    }
+                if is_systemd
+                    && !is_masked
+                    && let Some(error) = status.get("LoadError").and_then(Value::as_str)
+                {
+                    return Ok(reply.fail(format!("Error loading unit file '{unit}': {error}")));
                 }
             }
         } else if !err.is_empty() && rc == 1 && err.contains("Failed to parse bus message") {

@@ -150,6 +150,11 @@ pub fn enabled_names() -> Vec<String> {
         .collect()
 }
 
+const _: () = assert!(
+    cfg!(panic = "unwind"),
+    "natives::run needs an unwinding build to turn a native's panic into a failed task"
+);
+
 /// Runs `native`, turning a panic into a failed task so the agent lives on to run the rest of
 /// the batch. Failed rather than handed back: the panic may come after the native changed the
 /// host, and the payload must never run over a half-made change.

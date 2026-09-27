@@ -22,7 +22,13 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
             if undefined_option || terms.iter().any(super::holds_undefined) {
                 return Err(Error::from(ErrorKind::UndefinedError));
             }
-            lookup(state, &name, &terms, kwargs, &base_dir)
+            let wantlist = kwargs.get::<Option<bool>>("wantlist")?.unwrap_or(false);
+            let results = lookup(state, &name, &terms, kwargs, &base_dir)?;
+            Ok(if wantlist {
+                Value::from(results)
+            } else {
+                shaped(results)
+            })
         },
     );
 }
@@ -31,15 +37,15 @@ fn invalid(msg: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidOperation, msg.into())
 }
 
-/// `lookup('env'|'file'|'vars'|'pipe'|'template', term...)`. One term gives a scalar, several
-/// give a list. `first_found` reads all its terms as one search.
+/// `lookup('env'|'file'|'vars'|'pipe'|'template', term...)`: the plugin's own list, one result
+/// per term. `first_found` reads all its terms as one search.
 fn lookup(
     state: &State,
     name: &str,
     terms: &[Value],
     kwargs: Kwargs,
     base_dir: &Path,
-) -> Result<Value, Error> {
+) -> Result<Vec<Value>, Error> {
     if matches!(name, "first_found" | "ansible.builtin.first_found") {
         return first_found(state, terms, kwargs, base_dir);
     }
@@ -135,18 +141,24 @@ fn lookup(
         };
         results.push(found);
     }
-    Ok(scalar_or_list(results))
+    Ok(results)
 }
 
-/// The shape every lookup plugin's result takes once it has gone through `lookup()`, not
-/// `query()`: no result is the empty string, one result is that value with its own type, several
-/// are a list. Every plugin answers through this same rule, `fileglob` included - measured on
-/// ansible-core 2.19.12: `lookup('fileglob', 'files/a.txt')` with one match answers a bare string
-/// (`type_debug` -> `str`), not a one-element list.
-fn scalar_or_list(mut results: Vec<Value>) -> Value {
+/// The shape a plugin's list takes through `lookup()` without `wantlist=True`, read from
+/// ansible-core 2.19.12's `_invoke_lookup` and measured there: no result stays an empty list,
+/// one result is that value with its own type (`lookup('fileglob', 'files/a.txt')` answers
+/// `type_debug` -> `str`), several are joined with `,` when every one is a string
+/// (`lookup('env', 'HOME', 'USER')` -> `/home/user,user`) and stay a list otherwise.
+fn shaped(mut results: Vec<Value>) -> Value {
     match results.len() {
-        0 => Value::from(""),
         1 => results.remove(0),
+        n if n > 1 && results.iter().all(|v| v.kind() == ValueKind::String) => Value::from(
+            results
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         _ => Value::from(results),
     }
 }
@@ -335,9 +347,7 @@ fn lookup_error(name: &str, e: &TemplateError) -> Error {
 /// two static `with_fileglob` patterns of the `airgap` role, or a relative one under a search
 /// entry - is globbed at that directory directly. Only files match, several terms concatenate
 /// into one list before it is sorted whole. The result then goes through the same shaping every
-/// other plugin's does (`scalar_or_list`): no match anywhere is the empty string, one match is a
-/// bare string - measured on ansible-core 2.19.12, `lookup('fileglob', 'files/a.txt')` with a
-/// single match answers `type_debug` -> `str`, not a one-element list - and several are a list.
+/// other plugin's does ([`shaped`]).
 ///
 /// The result is controller content, not tainted: a matched name is a path the pattern's author
 /// named and the controller's filesystem confirmed, the same standing `lookup('first_found')`
@@ -347,7 +357,7 @@ fn fileglob(
     terms: &[Value],
     kwargs: Kwargs,
     base_dir: &Path,
-) -> Result<Value, Error> {
+) -> Result<Vec<Value>, Error> {
     kwargs.assert_all_used()?;
     let search = search_path(state, base_dir);
     let mut out: Vec<String> = Vec::new();
@@ -365,7 +375,7 @@ fn fileglob(
         }
     }
     out.sort();
-    Ok(scalar_or_list(out.into_iter().map(Value::from).collect()))
+    Ok(out.into_iter().map(Value::from).collect())
 }
 
 /// The glob part of a pattern: everything after its last `/`, or the whole pattern when it names
@@ -461,7 +471,7 @@ fn first_found(
     terms: &[Value],
     kwargs: Kwargs,
     base_dir: &Path,
-) -> Result<Value, Error> {
+) -> Result<Vec<Value>, Error> {
     let mut options = Options {
         files: kwargs.get::<Option<Value>>("files")?.unwrap_or_default(),
         paths: kwargs.get::<Option<Value>>("paths")?.unwrap_or_default(),
@@ -485,11 +495,11 @@ fn first_found(
             .into_iter()
             .find(|p| p.exists())
         {
-            return Ok(Value::from(found_path(found.display().to_string())?));
+            return Ok(vec![Value::from(found_path(found.display().to_string())?)]);
         }
     }
     if options.skip {
-        return Ok(Value::from(Vec::<Value>::new()));
+        return Ok(Vec::new());
     }
     Err(invalid("No file was found when using first_found."))
 }
@@ -806,7 +816,7 @@ mod tests {
     /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
     /// matched and not just the extension, a directory whose own name matches the pattern
     /// (`k3s-selinux-dir.rpm`, `images-dir.tar.gz`) proves a directory never matches, and the
-    /// result is sorted. Two matches each, so both stay a list under `scalar_or_list`.
+    /// result is sorted. Two matches each: a list with `wantlist=True`, a comma join without.
     ///
     /// What would make this red: the absolute pattern read as a search-path entry instead of
     /// globbed directly, a directory counted as a match, or the result left in read-dir order.
@@ -822,7 +832,7 @@ mod tests {
         let rpm = dir.pattern("k3s-selinux*.rpm");
         assert_eq!(
             t.render(
-                &format!("{{{{ lookup('fileglob', '{rpm}') }}}}"),
+                &format!("{{{{ lookup('fileglob', '{rpm}', wantlist=True) }}}}"),
                 &Map::new()
             )
             .unwrap(),
@@ -842,14 +852,18 @@ mod tests {
                 &Map::new()
             )
             .unwrap(),
-            json!([dir.full("images-1.tar.gz"), dir.full("images-2.tar.gz")])
+            json!(format!(
+                "{},{}",
+                dir.full("images-1.tar.gz"),
+                dir.full("images-2.tar.gz")
+            ))
         );
     }
 
     /// A pattern with no directory of its own: `files/` of the search path wins over the entry
     /// itself when both would match, and the entry itself only when `files/` has nothing at
     /// all - measured behaviour of `plugins/lookup/fileglob.py`, read on the dev machine. Each
-    /// case has exactly one match, so `scalar_or_list` answers a bare string, not a list.
+    /// case has exactly one match, so `lookup()` answers a bare string, not a list.
     ///
     /// What would make this red: reading the entry itself before `files/`, or merging matches
     /// from both instead of stopping at the first that has any.
@@ -884,18 +898,36 @@ mod tests {
         );
     }
 
-    /// No match anywhere is the empty string, never an error - the same `scalar_or_list` gives
-    /// `lookup('env')` and every other plugin with nothing to answer, and what the reference's
-    /// own `ret = []` becomes once `lookup()` (not `query()`) joins it.
+    /// No match anywhere is an empty list, never an error: measured on ansible-core 2.19.12,
+    /// `lookup('fileglob', 'nope*')` answers `type_debug` -> `list`, printed `[]`, since
+    /// `lookup()` only unwraps or joins a result that has something in it.
     #[test]
-    fn fileglob_with_no_match_is_the_empty_string_not_an_error() {
+    fn fileglob_with_no_match_is_an_empty_list_not_an_error() {
         let role = Role::new("fileglob-empty");
         let t = templar(&role.dir);
         assert_eq!(
             t.render("{{ lookup('fileglob', 'nope*.txt') }}", &role.vars())
                 .unwrap(),
-            json!("")
+            json!([])
         );
+    }
+
+    /// Measured on ansible-core 2.19.12: `lookup()` joins several results with `,` when all are
+    /// strings (`lookup('env', 'HOME', 'USER')` -> `/home/user,user`), keeps the list when one is
+    /// not (`lookup('vars', 'l1', 'l2')` with `l2: [1]`), and `wantlist=True` keeps it always.
+    #[test]
+    fn lookup_joins_several_string_results_with_a_comma() {
+        let t = Templar::new(std::env::temp_dir());
+        let vars = json!({"x": "a", "y": "b", "l": [1]});
+        let r = |text: &str| t.render(text, vars.as_object().unwrap()).unwrap();
+        assert_eq!(r("{{ lookup('vars', 'x', 'y') }}"), json!("a,b"));
+        assert_eq!(r("{{ lookup('vars', 'x', 'l') }}"), json!(["a", [1]]));
+        assert_eq!(r("{{ lookup('vars', 'x') }}"), json!("a"));
+        assert_eq!(
+            r("{{ lookup('vars', 'x', 'y', wantlist=True) }}"),
+            json!(["a", "b"])
+        );
+        assert_eq!(r("{{ lookup('vars', 'x', wantlist=True) }}"), json!(["a"]));
     }
 
     /// `ansible.builtin.fileglob` answers exactly as the bare name does (A9: minijinja accepts

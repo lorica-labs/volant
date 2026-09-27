@@ -798,12 +798,12 @@ fn with_lookup_items(
             Value::String(format!("{subdir}s")),
         );
     }
-    let found = templar.evaluate(&format!("lookup({lookup:?}, *{TERMS})"), &scope)?;
-    // `wantlist=True` for the two lookups this runs: `lookup()` answers no result with an empty
-    // string and one result bare, and neither of them can find an empty name.
+    let found = templar.evaluate(
+        &format!("lookup({lookup:?}, *{TERMS}, wantlist=True)"),
+        &scope,
+    )?;
     let list = match found {
         Value::Array(list) => list,
-        Value::String(s) if s.is_empty() => Vec::new(),
         one => vec![one],
     };
     Ok((list, tainted))

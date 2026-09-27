@@ -1625,6 +1625,8 @@ pub(super) fn protocol_task(
 pub(super) trait AgentChannel {
     fn memory(&mut self) -> &mut BlobMemory;
     async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()>;
+    /// Sends the blob frame a `put_blob` is followed by.
+    async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()>;
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
@@ -1715,6 +1717,10 @@ impl AgentChannel for AgentLink {
         self.send(msg).await
     }
 
+    async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.send_bytes(bytes).await
+    }
+
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
         self.recv().await
     }
@@ -1775,15 +1781,18 @@ async fn place_blob<C: AgentChannel>(
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
     let has = ToAgent::HasBlob { hash: hash.into() };
-    if !staged && blob_state(link, host, hash, &has, logs).await? {
+    if !staged && blob_state(link, host, hash, &has, None, logs).await? {
         return Ok(true);
     }
+    let bytes = volant_protocol::encoding::b64_decode(b64)
+        .map_err(|err| format!("decoding the blob {hash}: {err}"))?;
     let put = ToAgent::PutBlob {
         hash: hash.into(),
-        zip_b64: b64.into(),
+        len: bytes.len() as u64,
+        encoding: volant_protocol::BlobEncoding::Raw,
         staged,
     };
-    blob_state(link, host, hash, &put, logs).await
+    blob_state(link, host, hash, &put, Some(&bytes), logs).await
 }
 
 /// Puts on the host every file a sub-task stages, whatever the link put there before: the
@@ -1832,11 +1841,17 @@ async fn blob_state<C: AgentChannel>(
     host: &str,
     hash: &str,
     msg: &ToAgent,
+    frame: Option<&[u8]>,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
     link.ask(msg)
         .await
         .map_err(|err| format!("asking the agent about the blob {hash}: {err}"))?;
+    if let Some(frame) = frame {
+        link.ask_bytes(frame)
+            .await
+            .map_err(|err| format!("sending the blob {hash}: {err}"))?;
+    }
     loop {
         match link.answer().await {
             Ok(Some(FromAgent::BlobState {
@@ -3258,6 +3273,8 @@ mod tests {
     /// An agent that answers what the test scripted, and remembers what a link remembers.
     struct FakeAgent {
         sent: Vec<ToAgent>,
+        /// Each blob frame, with the count of messages sent before it.
+        frames: Vec<(usize, Vec<u8>)>,
         answers: std::collections::VecDeque<FromAgent>,
         memory: BlobMemory,
         /// Whether a fake that has run out of answers holds the line open instead of closing it,
@@ -3270,6 +3287,7 @@ mod tests {
         fn answering(answers: Vec<FromAgent>) -> Self {
             FakeAgent {
                 sent: Vec::new(),
+                frames: Vec::new(),
                 answers: answers.into(),
                 memory: BlobMemory::default(),
                 hangs_when_empty: false,
@@ -3292,6 +3310,11 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.sent.push(msg.clone());
+            Ok(())
+        }
+
+        async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            self.frames.push((self.sent.len(), bytes.to_vec()));
             Ok(())
         }
 
@@ -5212,6 +5235,10 @@ mod tests {
 
         async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
             self.agent.ask(msg).await
+        }
+
+        async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            self.agent.ask_bytes(bytes).await
         }
 
         async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {

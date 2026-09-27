@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Map, Value, json};
-use volant_protocol::encoding::{b64_decode, b64_encode};
+use volant_protocol::encoding::{b64_decode, deflate};
 use volant_protocol::frame::{read_frame, write_frame};
-use volant_protocol::{FromAgent, LogLevel, PythonPayload, StagedFile, Task, TaskResult, ToAgent};
+use volant_protocol::{
+    BlobEncoding, FromAgent, LogLevel, PythonPayload, StagedFile, Task, TaskResult, ToAgent,
+};
 
 /// The agent answers for a payload it does not hold, keeps one whose bytes match its name, and
 /// refuses one whose bytes do not - each with a `BlobState` the controller can wait on.
@@ -35,6 +37,10 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
     {
         let mut send = |msg: &ToAgent| {
             write_frame(&mut stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
+            // A `put_blob` is always followed by its blob: here, the zip magic.
+            if matches!(msg, ToAgent::PutBlob { .. }) {
+                write_frame(&mut stdin, b"PK\x03\x04").unwrap();
+            }
             stdin.flush().unwrap();
         };
         let mut recv = || -> FromAgent {
@@ -56,7 +62,8 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
 
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
             staged: false,
         });
         assert_eq!(
@@ -98,7 +105,8 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         );
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
             staged: false,
         });
         assert_eq!(
@@ -117,7 +125,8 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
         let wrong = "0".repeat(64);
         send(&ToAgent::PutBlob {
             hash: wrong.clone(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
             staged: false,
         });
         match recv() {
@@ -169,6 +178,10 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
     {
         let mut send = |msg: &ToAgent| {
             write_frame(&mut stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
+            // A `put_blob` is always followed by its blob: here, the zip magic.
+            if matches!(msg, ToAgent::PutBlob { .. }) {
+                write_frame(&mut stdin, b"PK\x03\x04").unwrap();
+            }
             stdin.flush().unwrap();
         };
         let mut recv = || -> FromAgent {
@@ -196,7 +209,8 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
         });
         send(&ToAgent::PutBlob {
             hash: hash.clone(),
-            zip_b64: "UEsDBA==".into(),
+            len: 4,
+            encoding: BlobEncoding::Raw,
             staged: false,
         });
 
@@ -568,17 +582,101 @@ fn a_cache_others_can_write_is_not_swept() {
     assert_eq!(entries(&cache), vec![stale]);
 }
 
+/// A deflated blob lands as the bytes it inflates to, under their hash.
+///
+/// What would make this red: the hash checked on the frame's bytes rather than on the inflated
+/// ones, which refuses every deflated blob; or the frame stored as it came, which leaves a zlib
+/// stream where the Python server expects a zip.
+#[test]
+fn a_deflated_blob_is_kept_under_the_hash_of_its_inflated_bytes() {
+    let scratch = Scratch::new("deflated");
+    let mut link = Link::open(&scratch.0);
+    let zip = b"PK\x03\x04 a stored zip compresses well ".repeat(200);
+    let hash = blake3::hash(&zip).to_hex().to_string();
+    let packed = deflate(&zip);
+    assert!(packed.len() < zip.len());
+    link.put_frame(
+        &hash,
+        zip.len() as u64,
+        BlobEncoding::Deflate,
+        false,
+        &packed,
+    );
+    assert_eq!(
+        link.recv(),
+        FromAgent::BlobState {
+            hash: hash.clone(),
+            present: true
+        }
+    );
+    assert_eq!(fs::read(cache_dir(&scratch.0).join(&hash)).unwrap(), zip);
+}
+
+/// A blob cut short, a bomb, or a frame longer than the blob is refused with a log saying why,
+/// leaves nothing behind, and leaves the stream in step for the next blob.
+///
+/// What would make this red: the inflate ceiling removed (the bomb lands, 16 MiB where 64 KiB
+/// were announced); the length check removed (the raw blob cut short is kept as it came, until
+/// the hash notices); the frame after `put_blob` left unread (the next message is taken for
+/// the blob, and the agent answers nothing the controller can read).
+#[test]
+fn a_truncated_or_oversized_blob_is_refused_and_says_why() {
+    let scratch = Scratch::new("refused");
+    let mut link = Link::open(&scratch.0);
+    let zip = b"PK\x03\x04 a stored zip compresses well ".repeat(200);
+    let hash = blake3::hash(&zip).to_hex().to_string();
+    let len = zip.len() as u64;
+    let packed = deflate(&zip);
+    let bomb = deflate(&vec![0u8; 16 * 1024 * 1024]);
+    let cases = [
+        (len, BlobEncoding::Raw, &zip[..zip.len() - 10], "decoded to"),
+        (
+            len,
+            BlobEncoding::Deflate,
+            &packed[..packed.len() / 2],
+            "does not inflate",
+        ),
+        (
+            64 * 1024,
+            BlobEncoding::Deflate,
+            &bomb[..],
+            "more than 65536 bytes",
+        ),
+        (8, BlobEncoding::Raw, &zip[..], "longer than the 8 bytes"),
+    ];
+    for (announced, encoding, frame, why) in cases {
+        link.put_frame(&hash, announced, encoding, false, frame);
+        match link.recv() {
+            FromAgent::Log { level, message } => {
+                assert_eq!(level, LogLevel::Error);
+                assert!(
+                    message.starts_with(&format!("storing payload {hash}: "))
+                        && message.contains(why),
+                    "{message}"
+                );
+            }
+            other => panic!("expected the refusal's log for {why}, got {other:?}"),
+        }
+        assert_eq!(
+            link.recv(),
+            FromAgent::BlobState {
+                hash: hash.clone(),
+                present: false
+            },
+            "{why}"
+        );
+        assert!(!cache_dir(&scratch.0).join(&hash).exists(), "{why}");
+    }
+    assert_eq!(link.put(&zip), hash, "the stream is still in step");
+}
+
 /// A staged file the agent refuses is named a file in the log, not a payload.
 #[test]
 fn a_refused_staged_file_is_logged_as_a_file() {
     let scratch = Scratch::new("refused-file");
     let mut link = Link::open(&scratch.0);
     let wrong = "0".repeat(64);
-    link.send(&ToAgent::PutBlob {
-        hash: wrong.clone(),
-        zip_b64: b64_encode(b"a file"),
-        staged: true,
-    });
+    link.put_frame(&wrong, 6, BlobEncoding::Raw, true, b"a file");
     match link.recv() {
         FromAgent::Log { message, .. } => {
             assert!(
@@ -792,11 +890,7 @@ impl Link {
 
     fn put_as(&mut self, bytes: &[u8], staged: bool) -> String {
         let hash = blake3::hash(bytes).to_hex().to_string();
-        self.send(&ToAgent::PutBlob {
-            hash: hash.clone(),
-            zip_b64: b64_encode(bytes),
-            staged,
-        });
+        self.put_frame(&hash, bytes.len() as u64, BlobEncoding::Raw, staged, bytes);
         assert_eq!(
             self.recv(),
             FromAgent::BlobState {
@@ -805,6 +899,25 @@ impl Link {
             }
         );
         hash
+    }
+
+    /// Sends a `put_blob` and the frame after it, as they are given, without waiting.
+    fn put_frame(
+        &mut self,
+        hash: &str,
+        len: u64,
+        encoding: BlobEncoding,
+        staged: bool,
+        frame: &[u8],
+    ) {
+        self.send(&ToAgent::PutBlob {
+            hash: hash.into(),
+            len,
+            encoding,
+            staged,
+        });
+        let stdin = self.stdin.as_mut().expect("the link is open");
+        write_frame(&mut *stdin, frame).unwrap();
     }
 
     /// Runs one batch and returns every task's result, in order.

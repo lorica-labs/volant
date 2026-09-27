@@ -276,9 +276,14 @@ impl AgentLink {
     }
 
     pub async fn send(&mut self, msg: &ToAgent) -> std::io::Result<()> {
-        let payload = serde_json::to_vec(msg)?;
-        self.stdin().write_all(&header(payload.len())?).await?;
-        self.stdin().write_all(&payload).await?;
+        self.send_bytes(&serde_json::to_vec(msg)?).await
+    }
+
+    /// Writes `bytes` as one frame, as they are: a message's JSON, or the blob a `put_blob` is
+    /// followed by.
+    pub async fn send_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.stdin().write_all(&header(bytes.len())?).await?;
+        self.stdin().write_all(bytes).await?;
         self.stdin().flush().await
     }
 
@@ -563,6 +568,42 @@ mod tests {
             .spawn()
             .expect("cat is on PATH");
         AgentLink::new(child).expect("a link over it")
+    }
+
+    /// An agent that speaks the protocol before this one is refused at the handshake with the
+    /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
+    ///
+    /// What would make this red: the version check dropped from `handshake`, or the version left
+    /// at 5, where this agent would be accepted and then take the first blob frame for a
+    /// malformed message.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_agent_that_speaks_protocol_five_is_refused_at_the_handshake() {
+        let ready = br#"{"type":"ready","protocol":5,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;
+        let len = u32::try_from(ready.len()).unwrap().to_be_bytes();
+        let octal: String = len
+            .iter()
+            .chain(ready.iter())
+            .map(|byte| format!("\\{byte:03o}"))
+            .collect();
+        let child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '{octal}'; cat > /dev/null"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("sh is on PATH");
+        let err = AgentLink::new(child)
+            .unwrap()
+            .handshake()
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "agent 0.1.0-alpha.7 speaks protocol 5, this controller speaks 6"
+        );
     }
 
     /// What a link was told about a payload dies with that link, so a connection lost and

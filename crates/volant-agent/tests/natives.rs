@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Map, Value, json};
-use volant_protocol::encoding::{b64_decode, b64_encode};
+use volant_protocol::encoding::b64_decode;
 use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{
-    ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Ran, StagedFile, Task, TaskResult,
-    ToAgent,
+    BlobEncoding, ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Ran, StagedFile, Task,
+    TaskResult, ToAgent,
 };
 
 /// Through the real agent binary: a task naming a module with an enabled native runs it and
@@ -110,9 +110,11 @@ fn a_native_reads_the_files_staged_for_its_task() {
     let hash = blake3::hash(bytes).to_hex().to_string();
     agent.send(&ToAgent::PutBlob {
         hash: hash.clone(),
-        zip_b64: b64_encode(bytes),
+        len: bytes.len() as u64,
+        encoding: BlobEncoding::Raw,
         staged: true,
     });
+    agent.send_bytes(bytes);
     assert_eq!(
         agent.recv(),
         FromAgent::BlobState {
@@ -360,9 +362,11 @@ impl Agent {
         let hash = blake3::hash(bytes).to_hex().to_string();
         self.send(&ToAgent::PutBlob {
             hash: hash.clone(),
-            zip_b64: b64_encode(bytes),
+            len: bytes.len() as u64,
+            encoding: BlobEncoding::Raw,
             staged,
         });
+        self.send_bytes(bytes);
         assert_eq!(
             self.recv(),
             FromAgent::BlobState {
@@ -376,6 +380,11 @@ impl Agent {
     fn send(&mut self, msg: &ToAgent) {
         write_frame(&mut self.stdin, &serde_json::to_vec(msg).unwrap()).unwrap();
         self.stdin.flush().unwrap();
+    }
+
+    /// The blob frame a `put_blob` is always followed by.
+    fn send_bytes(&mut self, bytes: &[u8]) {
+        write_frame(&mut self.stdin, bytes).unwrap();
     }
 
     fn recv(&mut self) -> FromAgent {

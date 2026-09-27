@@ -1,9 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The two encodings both ends of the wire have to agree on byte for byte.
+//! The encodings both ends of the wire have to agree on byte for byte.
 //!
-//! Written here rather than pulled in: the agent is uploaded to every managed host, and one
-//! codec of forty lines is cheaper than a dependency for two calls. One copy for both crates, so
-//! the controller and the agent cannot read the same text two ways.
+//! Base64 is written here rather than pulled in: the agent is uploaded to every managed host, and
+//! one codec of forty lines is cheaper than a dependency for two calls. Deflate is not forty
+//! lines, so it comes from `miniz_oxide`, pure Rust. One copy for both crates, so the controller
+//! and the agent cannot read the same bytes two ways.
+
+/// The most a blob may decode to. The agent refuses a `put_blob` announcing more before it reads
+/// a byte of the frame after it.
+pub const BLOB_LIMIT: usize = 256 * 1024 * 1024;
+
+/// `bytes` as a zlib stream at level 6: the adler-32 at its end lets [`inflate`] refuse a stream
+/// damaged on the way, before the blake3 of the result is even taken.
+pub fn deflate(bytes: &[u8]) -> Vec<u8> {
+    miniz_oxide::deflate::compress_to_vec_zlib(bytes, 6)
+}
+
+/// The bytes a [`deflate`] stream holds, refused once they would pass `limit`, and refused when
+/// the stream is truncated or its checksum is wrong. Never allocates past `limit`.
+pub fn inflate(bytes: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(bytes, limit).map_err(|err| {
+        match err.status {
+            miniz_oxide::inflate::TINFLStatus::HasMoreOutput => {
+                format!("the deflated blob holds more than {limit} bytes")
+            }
+            status => format!("the deflated blob does not inflate: {status:?}"),
+        }
+    })
+}
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -141,6 +165,41 @@ mod tests {
             assert_eq!(b64_decode(&b64_encode(&bytes)).unwrap(), bytes);
         }
         assert_eq!(b64_encode(b"abc"), "YWJj");
+    }
+
+    /// Deflate round-trips, and its output is a zlib stream a stock decoder reads: the header
+    /// bytes below are the ones zlib writes at its default level.
+    #[test]
+    fn deflate_round_trips_through_inflate() {
+        let bytes = b"PK".repeat(1000);
+        let packed = deflate(&bytes);
+        assert!(packed.len() < bytes.len() / 10, "{} bytes", packed.len());
+        assert_eq!(packed[0], 0x78);
+        assert_eq!(inflate(&packed, bytes.len()).unwrap(), bytes);
+        assert_eq!(inflate(&deflate(b""), 0).unwrap(), b"");
+    }
+
+    /// The ceiling holds. What would make this red: `inflate` without its limit, which hands a
+    /// stream of 1 KiB that inflates to 1 MiB back whole to a caller that announced 1000 bytes.
+    #[test]
+    fn inflate_refuses_a_stream_past_its_limit() {
+        let bomb = deflate(&vec![0u8; 1024 * 1024]);
+        let err = inflate(&bomb, 1000).unwrap_err();
+        assert!(err.contains("more than 1000 bytes"), "{err}");
+    }
+
+    /// A stream cut short or with a flipped byte is refused, never returned as the bytes it held
+    /// so far.
+    #[test]
+    fn inflate_refuses_a_truncated_or_damaged_stream() {
+        let bytes: Vec<u8> = (0..20_000u32).map(|n| (n * 7 % 251) as u8).collect();
+        let packed = deflate(&bytes);
+        assert!(inflate(&packed[..packed.len() - 1], bytes.len()).is_err());
+        assert!(inflate(&packed[..packed.len() / 2], bytes.len()).is_err());
+        let mut flipped = packed.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 1;
+        assert!(inflate(&flipped, bytes.len()).is_err());
     }
 
     /// The SHA-1 `copy` compares, by known answer: `sha1("hello\n")`, which `stat` reported

@@ -16,6 +16,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+miniz_oxide.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1_smol.workspace = true

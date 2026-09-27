@@ -181,7 +181,10 @@ smoke-embedded: agent-musl
     env -u VOLANT_AGENT_DIR XDG_CACHE_HOME="$work/cache" ./volant playbook -i inv.ini site.yml
     cmp cache/volant/agents/*/volant-agent "$agents/volant-agent"
 
-# Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING)
+# Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING). The
+# native module tests among them change the machine they run on: they go to the host
+# VOLANT_TARGET_HOST names, through your own ssh configuration, and to localhost only on a CI
+# runner; with neither they fail and say so.
 ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }

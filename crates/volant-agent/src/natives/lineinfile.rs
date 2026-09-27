@@ -23,10 +23,10 @@ use regex::bytes::{Regex, RegexBuilder};
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, access, add_path_info, bool_param,
-    check, check_names, clock, flag, group_account, module_args, native_run, null, os_error,
-    owner_account, parse_mode, path_param, selinux_enabled, set_fs_attributes_diff, str_param,
-    umask,
+    Account, ArgSpec, BackupError, Clock, FsError, ModeError, Stop as Halt, access, add_path_info,
+    backup_local, bool_param, check, check_names, chown_if_permitted, clock, flag, group_account,
+    module_args, native_run, null, os_error, owner_account, parse_mode, path_param,
+    selinux_enabled, set_fs_attributes_diff, str_param, umask,
 };
 use super::setup::run_output;
 use super::{Native, NativeRun};
@@ -223,7 +223,8 @@ fn request<'a>(params: &'a Map<String, Value>, clock: Clock) -> Result<Request<'
     let (insertafter, insertbefore, validate) = (
         text("insertafter")?,
         text("insertbefore")?,
-        text("validate")?,
+        // `valid = not validate`: an empty one is no `validate` at all.
+        text("validate")?.filter(|validate| !validate.is_empty()),
     );
     let path = path_param(params, "path")?;
     let mode = Some(params["mode"].clone()).filter(|mode| !mode.is_null());
@@ -337,7 +338,11 @@ fn edit(request: &Request, context: &Context, clock: Clock) -> Result<Map<String
             makedirs(path)?;
         }
         if request.backup && exists {
-            backup = backup_local(path).map_err(|err| fail(err, None))?;
+            backup = match backup_local(path) {
+                Ok(name) => name,
+                Err(BackupError::Exists(name)) => return Err(format!("{name} exists").into()),
+                Err(BackupError::Failed(msg)) => return Err(fail(msg, None)),
+            };
         }
         write_changes(request, &lines.concat(), &context.remote_tmp, clock)?;
     }
@@ -564,8 +569,12 @@ fn preflight(request: &Request, exists: bool, tmpdir: &str) -> Result<(), String
     if exists && has_xattrs(request.path) {
         return Err("the file has extended attributes".into());
     }
-    // `backup_local` copies the flags `lsattr` shows with `chattr`.
-    if exists && request.backup && has_flags(request.path) {
+    // The rename fails on an immutable or append-only file, with an exception the Python
+    // module words; `backup_local` copies the flags `lsattr` shows with `chattr`.
+    if exists && has_flags(request.path, IMMUTABLE | APPEND) {
+        return Err("the file is immutable or append-only".into());
+    }
+    if exists && request.backup && has_flags(request.path, !AUTOMATIC) {
         return Err("the file has inode flags".into());
     }
     let Some(validate) = request.validate.filter(|validate| validate.contains("%s")) else {
@@ -575,6 +584,12 @@ fn preflight(request: &Request, exists: bool, tmpdir: &str) -> Result<(), String
     // in every argument.
     if validate.matches('%').count() != 1 || validate.contains(['$', '~']) {
         return Err("validate is formatted or expanded by Python".into());
+    }
+    // Where the `shlex` crate and Python's `shlex.split` part ways: the crate reads `#` as a
+    // comment, drops a backslash before a backtick in double quotes, and keeps a carriage
+    // return inside a word.
+    if validate.contains(['#', '`', '\r', '\\']) {
+        return Err("validate would not split as Python splits it".into());
     }
     if !tmpdir
         .bytes()
@@ -602,12 +617,16 @@ fn has_xattrs(path: &str) -> bool {
     size != 0 && !(size < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP))
 }
 
-/// Whether the file has an inode flag a fresh copy on the same file system would not get: any
-/// but ext4's extents and inline data. `lsattr` fails where the flags cannot be read, and the
-/// reference then copies none.
+/// `FS_IMMUTABLE_FL` and `FS_APPEND_FL`.
+const IMMUTABLE: libc::c_long = 0x10;
+const APPEND: libc::c_long = 0x20;
+/// The flags a fresh copy on the same file system gets anyway: ext4's extents and inline data.
+const AUTOMATIC: libc::c_long = 0x0008_0000 | 0x1000_0000;
+
+/// Whether the file has one of the inode flags in `mask`. `lsattr` fails where the flags cannot
+/// be read, and the reference then copies none; a file that cannot be opened counts as flagged.
 #[cfg(target_os = "linux")]
-fn has_flags(path: &str) -> bool {
-    const AUTOMATIC: libc::c_long = 0x0008_0000 | 0x1000_0000;
+fn has_flags(path: &str, mask: libc::c_long) -> bool {
     let Ok(file) = fs::File::open(path) else {
         return true;
     };
@@ -620,7 +639,7 @@ fn has_flags(path: &str) -> bool {
             &raw mut flags,
         )
     };
-    rc == 0 && flags & !AUTOMATIC != 0
+    rc == 0 && flags & mask != 0
 }
 
 /// Elsewhere the native hands every task back before it gets here.
@@ -630,7 +649,7 @@ fn has_xattrs(_: &str) -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn has_flags(_: &str) -> bool {
+fn has_flags(_: &str, _: libc::c_long) -> bool {
     true
 }
 
@@ -683,68 +702,6 @@ fn parent(path: &str) -> &str {
         Some(0) => "/",
         Some(at) => &path[..at],
         None => "",
-    }
-}
-
-/// `backup_local`: `<path>.<pid>.<local time>~`, a copy with the file's mode, times and owner.
-fn backup_local(path: &str) -> Result<String, String> {
-    let name = format!("{path}.{}.{}", std::process::id(), local_stamp());
-    let failed = |_| format!("Could not make backup of '{path}' to '{name}'.");
-    let meta = fs::metadata(path).map_err(failed)?;
-    fs::copy(path, &name).map_err(failed)?;
-    set_times(&name, &meta).map_err(failed)?;
-    chown_if_permitted(&name, &meta).map_err(failed)?;
-    Ok(name)
-}
-
-/// `time.strftime("%Y-%m-%d@%H:%M:%S~", time.localtime())`.
-fn local_stamp() -> String {
-    // SAFETY: `time` accepts a null pointer; `tm` is plain data that `localtime_r` fills.
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&raw const now, &raw mut tm) };
-    format!(
-        "{:04}-{:02}-{:02}@{:02}:{:02}:{:02}~",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec
-    )
-}
-
-/// `shutil.copystat`'s times: `meta`'s access and modification times, to the nanosecond.
-fn set_times(path: &str, meta: &fs::Metadata) -> io::Result<()> {
-    let path = CString::new(path).map_err(io::Error::other)?;
-    let times = [
-        libc::timespec {
-            tv_sec: meta.atime() as _,
-            tv_nsec: meta.atime_nsec() as _,
-        },
-        libc::timespec {
-            tv_sec: meta.mtime() as _,
-            tv_nsec: meta.mtime_nsec() as _,
-        },
-    ];
-    // SAFETY: `times` holds the two entries `utimensat` reads.
-    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-/// `os.chown(path, uid, gid)` of `meta`'s owner when it differs, a refusal ignored.
-fn chown_if_permitted(path: &str, meta: &fs::Metadata) -> io::Result<()> {
-    let now = fs::metadata(path)?;
-    if (now.uid(), now.gid()) == (meta.uid(), meta.gid()) {
-        return Ok(());
-    }
-    match std::os::unix::fs::chown(path, Some(meta.uid()), Some(meta.gid())) {
-        Err(err) if err.raw_os_error() != Some(libc::EPERM) => Err(err),
-        _ => Ok(()),
     }
 }
 
@@ -1185,6 +1142,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
+    use super::super::common::backup_copy;
     use super::super::common::golden::{Scratch, differences, within};
     use super::*;
 
@@ -1526,6 +1484,14 @@ mod tests {
                 true,
                 "line added",
             ),
+            (
+                "validate-empty",
+                Some("a=1\n"),
+                json!({"line": "b=2", "validate": ""}),
+                Some("a=1\nb=2\n"),
+                true,
+                "line added",
+            ),
         ];
         let mut found = Vec::new();
         for (case, before, mut args, want, changed, msg) in cases {
@@ -1540,6 +1506,8 @@ mod tests {
                 continue;
             };
             let left = fs::read_to_string(&path).ok();
+            // A failure gets its `changed` from the dispatcher.
+            let result = crate::modules::module_result(result.0);
             let got = (left.as_deref(), &result.0["changed"], &result.0["msg"]);
             if got != (want, &json!(changed), &json!(msg)) {
                 found.push(format!("{case}: {got:?}"));
@@ -1685,6 +1653,101 @@ mod tests {
         }
     }
 
+    /// Two `backup: true` edits of one file in a row, well inside one second, as a role's
+    /// consecutive tasks run: two backups under two names, each holding the file as it was
+    /// before its own edit, as the reference leaves them (its number is a new module pid each
+    /// task).
+    ///
+    /// What would make this red: the number shared by every task of the agent (the second edit
+    /// then finds the name taken and hands back, or overwrote the first backup before the fix).
+    #[test]
+    fn two_backups_of_one_file_keep_their_own_content() {
+        let (scratch, context) = scratch("lineinfile-backups");
+        let path = scratch.path("f.conf");
+        write(&path, "a=1\n", 0o644);
+        let mut names = Vec::new();
+        for line in ["b=2", "c=3"] {
+            let args = json!({"path": path, "line": line, "backup": true});
+            let NativeRun::Done(result) = ask(&args, &context) else {
+                panic!("{args} was handed back");
+            };
+            names.push(result.0["backup"].as_str().unwrap().to_string());
+        }
+        assert_ne!(names[0], names[1]);
+        assert_eq!(fs::read_to_string(&names[0]).unwrap(), "a=1\n");
+        assert_eq!(fs::read_to_string(&names[1]).unwrap(), "a=1\nb=2\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a=1\nb=2\nc=3\n");
+        let pattern = format!(
+            r"^{}\.\d+\.\d{{4}}-\d{{2}}-\d{{2}}@\d{{2}}:\d{{2}}:\d{{2}}~$",
+            regex::escape(&path)
+        );
+        for name in &names {
+            assert!(
+                Regex::new(&pattern).unwrap().is_match(name.as_bytes()),
+                "{name} does not have the reference's shape"
+            );
+        }
+    }
+
+    /// A backup never goes over a file that already has its name: the copy is refused and the
+    /// file there is left as it was, which the native turns into a hand-back.
+    ///
+    /// What would make this red: the backup opened with `create` instead of `create_new`.
+    #[test]
+    fn a_backup_never_overwrites_a_file() {
+        let (scratch, _) = scratch("lineinfile-backup-taken");
+        let path = scratch.path("f.conf");
+        let taken = scratch.path("f.conf.1.2026-01-01@00:00:00~");
+        write(&path, "a=1\n", 0o644);
+        write(&taken, "older backup\n", 0o644);
+        assert!(matches!(
+            backup_copy(&path, &taken),
+            Err(BackupError::Exists(_))
+        ));
+        assert_eq!(fs::read_to_string(&taken).unwrap(), "older backup\n");
+    }
+
+    /// An immutable file goes to the Python module untouched: the rename would fail there, and
+    /// the module words that exception. Setting the flag needs root.
+    ///
+    /// What would make this red: the flag check dropped, the native then failing with its own
+    /// wording after the temporary file was written.
+    #[test]
+    fn an_immutable_file_is_handed_back() {
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: only root can make a file immutable");
+            return;
+        }
+        let (scratch, context) = scratch("lineinfile-immutable");
+        let path = scratch.path("f.conf");
+        write(&path, "a=1\n", 0o644);
+        let file = fs::File::open(&path).unwrap();
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        let mut flags: libc::c_long = 0;
+        // SAFETY: both ioctls read or write one `long`.
+        let set = unsafe {
+            libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
+                flags |= IMMUTABLE;
+                libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
+            }
+        };
+        if !set {
+            eprintln!("skipped: this file system takes no immutable flag");
+            return;
+        }
+        let before = snapshot(&scratch);
+        let answer = ask(&json!({"path": path, "line": "b=2"}), &context);
+        let after = snapshot(&scratch);
+        flags &= !IMMUTABLE;
+        // SAFETY: as above.
+        unsafe { libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) };
+        assert!(
+            matches!(answer, NativeRun::Fallback(_)),
+            "an immutable file was answered"
+        );
+        assert_eq!(after, before);
+    }
+
     /// A `validate` that fails leaves the file as it was, with the reference's message: the
     /// exit code and the standard error, newline kept. The backup the reference makes before
     /// validating is made. A `validate` without `%s` fails with the reference's own message.
@@ -1723,7 +1786,7 @@ mod tests {
                     .ends_with('~')
             })
             .count();
-        assert!(backups >= 1, "no backup was made");
+        assert_eq!(backups, 2, "one backup per task");
     }
 
     /// Outside the subset, and wherever the reference would warn, convert or refuse, the task
@@ -1780,6 +1843,10 @@ mod tests {
             ),
             (
                 json!({"line": "b=2", "validate": "test -s %s %d"}),
+                &context,
+            ),
+            (
+                json!({"line": "b=2", "validate": "test -s %s # non-empty"}),
                 &context,
             ),
             (json!({"line": "b=2", "mode": "0o644"}), &context),

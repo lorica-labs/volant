@@ -40,7 +40,10 @@ use volant_protocol::{
 fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     let scratch = Scratch::new("dispatch");
     let mut agent = Agent::spawn(&scratch.0);
-    assert_eq!(agent.hello(), ["setup", "stat", "file", "volant_echo"]);
+    assert_eq!(
+        agent.hello(),
+        ["setup", "stat", "file", "apt", "volant_echo"]
+    );
 
     let (result, ran) = agent.run_one(1, task("ansible.modules.volant_echo", json!({"x": 1})));
     assert_eq!(ran.path, ExecPath::Native, "{ran:?}");
@@ -68,7 +71,13 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     assert_eq!(ran.path, ExecPath::Python, "{ran:?}");
     assert_python_ran(&result);
 
-    let (result, ran) = agent.run_one(4, task("ansible.modules.apt", json!({"name": "x"})));
+    let (result, ran) = agent.run_one(
+        4,
+        task(
+            "ansible.modules.lineinfile",
+            json!({"path": "/x", "line": "y"}),
+        ),
+    );
     assert_eq!(
         ran.path,
         ExecPath::Python,

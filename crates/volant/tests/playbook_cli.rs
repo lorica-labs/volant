@@ -7751,16 +7751,19 @@ fn shell_executable_selects_the_interpreter() {
 /// A fake controller-side Python, so the wiring below is proved without an ansible-core on the
 /// machine running the tests -- and without the 631 KB the real helper would build.
 ///
-/// It answers the one request the controller makes and then holds its end of the pipe open: the
-/// controller writes the request before it reads the answer, and a helper that had already exited
-/// would break that write instead of answering it. Every start appends a line to `starts.log`,
+/// It answers the two requests the controller makes, the playbook's plugin directories and then
+/// the build, and holds its end of the pipe open: the controller writes each request before it
+/// reads the answer, and a helper that had already exited would break that write instead of
+/// answering it. Every start appends a line to `starts.log`,
 /// which is what counts them.
 fn fake_python(dir: &Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let answer = br#"{"zip_b64":"UEsDBA==","modules":{"lineinfile":{"module_fqn":"ansible.modules.lineinfile","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#;
-    let len = u32::try_from(answer.len()).unwrap().to_be_bytes();
-    let mut frame = len.to_vec();
-    frame.extend_from_slice(answer);
+    let mut frame = Vec::new();
+    for body in [&b"{}"[..], &answer[..]] {
+        frame.extend_from_slice(&u32::try_from(body.len()).unwrap().to_be_bytes());
+        frame.extend_from_slice(body);
+    }
     std::fs::write(dir.join("answer.bin"), &frame).unwrap();
     let script = dir.join("python");
     std::fs::write(
@@ -8213,9 +8216,7 @@ fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
     };
     let first = run();
     assert!(first.contains(r#""p.ping": "pong""#), "{first}");
-    let kept = std::fs::read_dir(cache.join("volant").join("unions"))
-        .map(|entries| entries.count())
-        .unwrap_or(0);
+    let kept = std::fs::read_dir(cache.join("volant").join("unions")).map_or(0, Iterator::count);
     assert!(
         kept > 0,
         "the first run kept no union, so nothing is proven"

@@ -13,14 +13,31 @@ By default Volant runs a play the way Ansible's `linear` strategy does: the host
 
 With `batching` on, a host carries on through its tasks instead of waiting at each one, and only stops at a synchronization point:
 
-- a `run_once` task
+- a `run_once` or `pause` task
 - a task whose text names another host's state through `hostvars`, `ansible_play_hosts` or `ansible_play_batch`
+- a task that reads such a name indirectly: through the body of a template whose `src` is fixed, or through a variable whose definition reads another host, however many variables the chain goes through
+- a delegated task, since the host it acts on may not have got there yet
+- a task that reads a controller file after a task that may have written one, such as a `fetch`
 - a point where an include or a handler flush adds steps to the play
 - the end of the play
+
+A synchronization point holds on both sides: no host runs past it until every host has finished the step before it.
+
+A few more things end a batch without making every host wait: a task that registers a result, a module that can return facts (`set_fact`, `setup`, `package_facts`, any module from a collection or a role's `library/`), and a task that calls a lookup. The tasks after them are rendered only once they have run.
 
 <HostTimeline />
 
 It changes the order tasks run in, not what they do. The recap is the same either way. What can differ is a dependency the text does not show: with batching on, one host may reach task five before another host has run task one.
+
+## What it cannot see
+
+Batching decides from the playbook's text. A dependency that the text never spells out has no mark, and nothing waits for it:
+
+- a network service another host is still installing: `wait_for: host=db1 port=5432`, a `uri` call, `psql -h db1`, any client that names a host literally;
+- a file on a host named literally, a shared filesystem, or a database or queue where two hosts' tasks meet;
+- anything a `shell` or `command` task does to another machine.
+
+A computed read such as `vars[name]` or `lookup('vars', name)` keeps the synchronization point, since the text cannot say which host it reads. Under the reference, and under Volant's default, every task is a barrier, so these orderings hold without anyone writing them down. Turn batching on only for plays whose hosts do not depend on each other in these ways.
 
 ## Turning it on
 

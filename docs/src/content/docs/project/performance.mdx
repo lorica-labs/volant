@@ -1,0 +1,124 @@
+---
+title: Performance
+description: Two measured workloads, the configuration behind them, the commands that reproduce them, and where the remaining time goes.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import BarChart from '../../../components/BarChart.astro';
+
+Volant is measured on two real workloads, each run by a recipe in the repository. Every figure on this page comes from those recipes.
+
+On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures.
+
+<BarChart
+  title="Two workloads, two converged hosts"
+  subtitle="Median of three timed passes, 2026-09-27. Reference: ansible-core 2.19.12, <code>pipelining = True</code>. Shorter is faster."
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: 'Four Galaxy roles', values: [26.435, 0.529] },
+    { label: 'k3s-ansible site.yml', values: [50.519, 23.477] },
+  ]}
+/>
+
+The two ratios are far apart because the roles change nothing on a converged host, so most of the reference's time there goes to the machinery around each module, and Volant removes most of that. The k3s playbook restarts services and runs install scripts on every pass, and that work takes as long under either engine. [What is left](#what-is-left) breaks it down.
+
+## Configuration
+
+| | |
+|---|---|
+| Managed hosts | two Ubuntu 24.04 hosts, 4 cores each, on an overlay network |
+| Controller | Ubuntu 26.04, 8 cores |
+| Volant | release build of `e57fbe5` (`v0.1.0-alpha.7-74-ge57fbe5`), default settings: native modules on, one ssh connection per host, `--facts auto`, batching off |
+| Reference | ansible-core 2.19.12, `pipelining = True`, `forks` left at its default of 5, every other setting at its default |
+| Roles workload | `geerlingguy.security` 3.0.2, `geerlingguy.nginx` 3.3.1, `geerlingguy.git` 3.0.1 and `geerlingguy.pip` 3.1.2 in one play, `become: true`, facts gathered, 56 tasks per host |
+| k3s workload | the k3s-ansible playbooks at a pinned commit, k3s v1.31.12+k3s1, one server and one agent, the cluster installed first by a pass of the reference |
+| Passes | one untimed warm-up pass per engine, then three timed passes of each, median reported |
+
+Every timed pass has its `PLAY RECAP` compared with the first one, across both engines. A difference would mean the engines did different work, and the recipe would fail. On the roles every pass ended on `ok=28 changed=0 skipped=28` per host. On k3s every pass ended on `ok=34 changed=2 skipped=69` for the server and `ok=19 changed=3 skipped=54` for the agent. The `changed` tasks are the real work described under [What is left](#what-is-left).
+
+The individual passes:
+
+| Workload | Volant (s) | ansible-core (s) |
+|---|---|---|
+| Four Galaxy roles | 0.530, 0.529, 0.524 | 26.408, 26.438, 26.435 |
+| k3s-ansible | 24.150, 23.448, 23.477 | 51.121, 50.519, 50.505 |
+
+## Reproducing the figures
+
+Both recipes build Volant in release mode, run against the hosts you name, and print the medians and the ratio. The controller needs ansible-core 2.19.12 installed with `uv tool install`, and the account on the hosts needs `sudo` without a password.
+
+```sh
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench 3
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench-k3s 3
+```
+
+<Aside type="caution">
+Both recipes change the hosts they run on. `just bench` installs the four roles' packages and configuration. `just bench-k3s` installs k3s, measures, then removes it. Use machines you can wipe.
+</Aside>
+
+Every timed Volant pass also writes its profile through `VOLANT_PROFILE_JSON`, under `target/bench/`, so a surprising number can be traced to the task that caused it. The tables below come from those files.
+
+## Where the time went
+
+The *before* column is the same workload measured on 2026-09-24 with the Volant of that day, on the same machines. The *after* column is the median pass of 2026-09-27. Times are per host.
+
+### Four Galaxy roles
+
+| Step | 2026-09-24 | 2026-09-27 |
+|---|---|---|
+| Building the Python module union on the controller | 3,799 ms | 15.3 ms, read from the cache |
+| `apt`, 8 tasks, packages installed, cache fresh | 5,495 ms | 38.4 ms, native |
+| `setup`, gathering facts | 1,094 ms | 47.6 ms, native |
+| `systemd`, 3 tasks | 730 ms | 52.4 ms, native |
+| `file` ×8, `lineinfile` ×8, `stat` ×5 | 725 ms | 52.8 ms, native |
+| Opening the connections | 555 ms | 172.6 ms |
+| Preparing tasks on the controller | 181 ms | 25.0 ms |
+| Frames and blobs on the wire | 30 ms | 27.1 ms |
+| Waiting for the other host at each task | 124 ms | 10.6 ms |
+| **Wall clock, two hosts** | **12.66 s** (reference 26.23 s) | **0.529 s** (reference 26.435 s) |
+
+All 66 module tasks of the median pass, 33 per host, were answered by a native module. None was handed back, so no Python server started on either host.
+
+### k3s-ansible
+
+Where the two hosts differ, the figures are the server's.
+
+| Step | 2026-09-24 | 2026-09-27 |
+|---|---|---|
+| Building the Python module union, collections included | 5,700 ms | 30.6 ms, read from the cache |
+| Restarting the k3s service, server and agent | 8,500 + 4,990 ms | 8,269 + 4,763 ms, native `systemd` |
+| `service_facts` | 3,280 ms | 2,485 ms, native |
+| `package_facts` | 2,100 ms | 168 ms, native |
+| `apt: name=policycoreutils update_cache=true` | 1,910 ms | 2,205 ms, handed back to Python |
+| Gathering facts | 1,790 ms | 55 ms, native |
+| Preparing tasks on the controller | 1,976 ms | 185 ms |
+| Opening the connections | 1,131 ms | 350 ms |
+| Waiting for the other host at each task (agent) | 370 ms | 253 ms |
+| **Wall clock, two hosts** | **37.53 s** (reference 50.19 s) | **23.477 s** (reference 50.519 s) |
+
+In the median pass, 28 tasks ran natively, 11 were handed back to the Python module, and 5 ran a module with no native version (`ansible.posix.sysctl` and `wait_for`).
+
+## What is left
+
+On k3s most of Volant's 23.5 seconds is work the playbook asks for:
+
+- the restarts of the k3s service, about 8.3 seconds on the server and 4.8 on the agent, spent in `systemctl` and k3s itself;
+- the k3s install script, about 1.4 to 1.5 seconds per host;
+- 13 `command` tasks, such as `k3s --version`, about 3.1 seconds across both hosts.
+
+Both engines pay for these the same way, because they are processes running on the host.
+
+Two steps are held back by what the reference itself does:
+
+- `service_facts` runs the commands ansible-core runs (`systemctl list-unit-files`, `service --status-all` and one `systemctl show` per unit) so that its answer is the same. The native module runs them side by side where the reference runs them one after the other, and they still make up most of its 2.4 seconds. It cannot go below them while it reads the same sources.
+- The playbook's `apt` task sets `update_cache` without `cache_valid_time`, so the reference runs `apt-get update` on every pass. The native `apt` only answers a task with nothing to do, so this one goes to the Python module, and the cache refresh is most of its 2.2 seconds.
+
+Those two steps together cost 4.5 to 4.7 seconds per host. Making them faster would mean reading other sources than the reference reads, and that decision is left to a later release.
+
+<Aside type="note">
+These figures describe two playbooks on two hosts. Your own numbers depend on your network latency, on what your tasks do, on how many of them a native module covers, and on how many hosts you drive at once. `--profile` shows the split for your own run: see [Command line](/reference/cli/#run-and-output).
+</Aside>
+
+[Decision record 0008](/decisions/0008-native-modules-and-speed/) explains the choices behind these numbers and the options that were measured and dropped.

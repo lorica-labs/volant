@@ -90,22 +90,40 @@ Some tasks add a connection:
 - Escalation. A host that uses `become` holds a second connection, to an agent running as the target user. It is kept until the end of the play, so a play of escalated tasks starts one escalated agent, not one per task. A host holds at most one escalated connection at a time: escalating to a different user replaces it.
 - Delegation. A delegated task runs over the delegate's own connection, with the delegate's settings. A host whose play delegates to three other hosts holds those three connections alongside its own.
 
+## One connection per host
+
+All the `ssh` runs Volant makes for one inventory host share a single OpenSSH connection: the version check, the agent upload, the link to the agent and the escalated link. Volant adds `-o ControlMaster=auto -o ControlPath=<dir>/<name> -o ControlPersist=30s` to its command line, so only the first run pays for the key exchange and the authentication. The shared connection stays open for 30 seconds after its last session, and a run started in that window reuses it.
+
+The sockets live in `$XDG_RUNTIME_DIR/volant-cm`. Without a usable runtime directory they go to `/tmp/volant-cm-<uid>`, created at mode 0700. Whoever can create a socket there could hand your next `ssh` a connection of their own, so a directory that is not yours, or not at mode 0700, is refused. The run then prints `[WARNING]: ssh connections are not shared` with the reason and carries on with one connection per run.
+
+The socket name is a hash of the inventory name and every `ssh` option the host connects with, plus what `ssh -G` resolves from your configuration files. A connection opened for one user, key, port or `ProxyJump` never serves a host that asks for another, and a `HostName` changed in `~/.ssh/config` between two runs gets a new connection. Two inventory aliases of one machine get two connections, because a single one shared by fifty aliases runs into the server's `MaxSessions` limit.
+
+Volant leaves sharing to you when you already configure it. It adds nothing when:
+
+- `ansible_ssh_common_args` or `ansible_ssh_extra_args` mention `ControlMaster`, `ControlPath` or `ControlPersist`, or pass `-S` or `-M`;
+- your ssh configuration already sets one of them for that host, as `ssh -G` reports it;
+- the `ssh` arguments ask for debug output with `-v`;
+- `[volant] ssh_control_master = false` or `VOLANT_SSH_CONTROL_MASTER=0`, see [Configuration](/reference/configuration/#volant-ssh-control-master).
+
+An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions ride the same connection too.
+
+OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
+
 ## File descriptors
 
 Each connection is a separate `ssh` process and costs the controller three file descriptors. With escalation, a run can hold two connections per host: the host's own and one escalated.
 
+At startup Volant raises its own soft limit on open files up to the hard limit, capped at 1,048,576. Most Linux systems ship a hard limit far above what a run needs, so nothing has to be done.
+
 :::caution
-With the usual `ulimit -n 1024`, the controller runs out of file descriptors at about 169 escalating hosts. `ssh` then stops starting, and the hosts it happens to hit are reported unreachable although nothing is wrong with them.
+A hard limit of 1024 still stops a run at about 330 connections, or about 169 escalating hosts. `ssh` then stops starting, and the hosts it happens to hit are reported unreachable although nothing is wrong with them. In bash, `ulimit -n 1024` lowers the hard limit along with the soft one.
 :::
 
-Raise the limit before a run that wide:
+Check both limits before a run that wide:
 
 ```sh
-ulimit -n 4096
-volant playbook -i inventory.ini site.yml
+ulimit -Sn; ulimit -Hn
 ```
-
-An escalated connection also costs one extra `ssh` session for the `sudo` probe, two when a password is needed. There is no `ControlMaster` multiplexing yet, so every one of those sessions is paid for separately.
 
 ## Not there yet
 

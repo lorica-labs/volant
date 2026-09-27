@@ -12,13 +12,12 @@ Volant is in pre-alpha. This page lists what comes next, roughly in order. It de
 
 The goal is to run well-known Galaxy roles end to end and produce the same recap as `ansible-playbook`. Four already do, as published: [decision record 0007](/decisions/0007-action-plugins/#results) has the runs.
 
-## Then: speed
+## Then: more speed
 
-- Native versions of the most common modules in the agent, falling back to the Python path when an argument needs it.
-- Native fact gathering.
-- A faster warm Python server.
-- Fewer synchronization points, found by analyzing the playbook.
-- Compression and a leaner wire format.
+Native versions of the common modules, native fact gathering, a cache for the Python module union, one ssh connection per host and compressed blobs are in. The [performance page](/project/performance/) has the figures. What remains:
+
+- `service_facts` and an `apt` task that refreshes its cache on every run, the two steps that hold the k3s workload back. Both are bound by commands the reference itself runs.
+- Native versions of more modules, and wider subsets for the existing ones.
 
 ## Then: ready for daily use
 

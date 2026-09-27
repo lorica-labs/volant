@@ -107,6 +107,14 @@ These options read the playbooks and stop. They never connect to a host and neve
   Print without colors.
 </Option>
 
+<Option name="--facts" arg="auto|python|native" default="auto">
+  Where gathered facts come from. `auto` uses the agent's native `setup` when every fact the plays can read is one it produces, and ansible-core's `setup` module otherwise. `python` always runs the Python module, to compare against. `native` always asks the agent's collector, and facts it does not produce are then undefined. On a host other than Debian or Ubuntu the native collector hands the task back to the Python module whatever this option says. See [Facts](/variables/facts/#native-facts).
+</Option>
+
+<Option name="--profile">
+  After the recap, print on standard error where the run's time went: the controller's phases per host, then for each module the path its tasks took (`native`, `python` or `fallback`), their times, and why a native module handed a task back. The first line says where facts came from and why.
+</Option>
+
 ## Environment variables
 
 Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
@@ -121,6 +129,18 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 <Option name="VOLANT_BATCHING" arg="1" config="[volant] batching">
   Turns on [cross-host batching](/hosts/batching/).
+</Option>
+
+<Option name="VOLANT_NATIVE_MODULES" arg="0" config="[volant] native_modules">
+  With `0`, every task runs ansible-core's Python module instead of the agent's native version. See [Native modules](/internals/python/#native-modules).
+</Option>
+
+<Option name="VOLANT_SSH_CONTROL_MASTER" arg="0" config="[volant] ssh_control_master">
+  With `0`, every `ssh` run opens its own connection instead of sharing one per inventory host.
+</Option>
+
+<Option name="VOLANT_PROFILE_JSON" arg="FILE">
+  Write the run's profile to this file, one JSON object per line: the native modules each agent reported, then the phases, then one line per task with its module, path, hand-back reason and times in microseconds. It is written whatever became of the run, and a file that cannot be written only prints a warning.
 </Option>
 
 ## Not there yet

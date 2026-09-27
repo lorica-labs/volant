@@ -27,6 +27,7 @@ Volant pays those costs once per run:
 - A small static agent is uploaded to each host the first time and cached there. Later runs reuse it.
 - The controller keeps one SSH connection per host open for the whole run and streams tasks over it.
 - Python modules travel to the host once, in a single archive. A Python server on the host loads the shared code once and forks a child for each task.
+- The agent answers common modules, such as `apt`, `systemd`, `file` and fact gathering, in Rust when a task's arguments allow it, and hands every other case to the Python module.
 
 <Flow
   lanes={[
@@ -55,24 +56,24 @@ Volant pays those costs once per run:
 
 ## Measured
 
-These numbers come from a 35-task playbook against one Ubuntu 24.04 host. It installs packages, creates directories, edits a configuration file line by line and keeps a service running, all under `become: true`. Each figure is the median of three passes against a host that had already converged, so every pass did the same work. The full method is in [decision record 0006](/decisions/0006-warm-python-path/).
+These numbers come from two real workloads against two Ubuntu 24.04 hosts. The first applies four published Galaxy roles, `geerlingguy.security`, `nginx`, `git` and `pip`, to hosts they have already converged. The second is the official k3s-ansible playbook against an installed cluster. Each figure is the median of three passes, measured on 2026-09-27 with `just bench` and `just bench-k3s`, and both engines ended every pass on the same recap. The reference is ansible-core 2.19.12 with `pipelining = True`.
 
 <BarChart
-  title="Wall clock for a 35-task playbook"
-  subtitle="One host, <code>become: true</code>, median of three runs. Shorter is faster."
+  title="Two workloads, two converged hosts"
+  subtitle="Median of three passes, 2026-09-27. Shorter is faster."
   unit="s"
-  decimals={2}
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12, pipelining' }, { name: 'Volant', accent: true }]}
   rows={[
-    { label: 'Volant', value: 7.9, highlight: true, note: '226 ms per task' },
-    { label: 'ansible-core, pipelining', value: 19.72, note: '564 ms per task, 2.5× Volant' },
-    { label: 'ansible-core, defaults', value: 27.69, note: '791 ms per task, 3.5× Volant' },
+    { label: 'Four Galaxy roles', values: [26.435, 0.529] },
+    { label: 'k3s-ansible', values: [50.519, 23.477] },
   ]}
 />
 
-A module that does real work still takes as long as that work. `apt` spends about 755 ms talking to `dpkg` under either engine. Volant removes the overhead around a module, not the module itself.
+A task that does real work still takes as long as that work. Most of Volant's time on k3s goes to restarting the k3s service, running its install script and the other commands the playbook asks for, which cost the same under either engine.
 
 <Aside type="note">
-These figures describe one playbook on one host. Your own numbers depend on your network latency, on what your tasks do, and on how many hosts you drive at once.
+These figures describe two playbooks on two hosts. Your own numbers depend on your network latency, on what your tasks do, and on how many hosts you drive at once. The [performance page](/project/performance/) gives the full configuration, the commands that reproduce the figures, and where the time goes step by step.
 </Aside>
 
 ## What Volant promises

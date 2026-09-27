@@ -377,6 +377,46 @@ fn retries_are_rendered_per_item() {
     check(&text, &["plugin"], 1);
 }
 
+/// `retries` and `delay` are converted as the reference converts them, and a `delay` its
+/// `time.sleep` refuses fails the item after the retry line. Measured on ansible-core 2.19.12
+/// with this fixture, for both tasks: `nan` and `1e20` each print `(1 retries left)` then fail
+/// with `Task failed: Invalid value NaN (not a number)` and `Task failed: timestamp out of range
+/// for C PyTime_t`; `delay: x` fails `... could not be converted to 'float'.`; `retries: '2.5'`
+/// fails `... could not be converted to 'int'.`; `retries: true` retries once.
+///
+/// What would make this red: the huge delay waited out (the test's deadline) or NaN taken for
+/// it; `'int'` in the `delay` message; or `'2.5'` truncated into two retries.
+#[test]
+fn retries_and_delay_are_converted_as_the_reference_does() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/retry-values.yml")],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for task in ["remote", "local"] {
+        assert_eq!(
+            text.matches(&format!("[localhost]: {task} (1 retries left)."))
+                .count(),
+            3,
+            "{text}"
+        );
+    }
+    for msg in [
+        "Task failed: Invalid value NaN (not a number)",
+        "Task failed: timestamp out of range for C PyTime_t",
+        "Task failed: Error processing keyword 'delay': The value 'x' could not be converted to 'float'.",
+        "Task failed: Error processing keyword 'retries': The value '2.5' could not be converted to 'int'.",
+    ] {
+        assert_eq!(
+            text.matches(&format!(r#""changed": false, "msg": "{msg}""#))
+                .count(),
+            2,
+            "{msg}: {text}"
+        );
+    }
+}
+
 /// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller
 /// side alike, and the play goes on. Measured on ansible-core 2.19.12 with this fixture: both
 /// items of the `command` loop fail with `Task failed: Timeout 9223372036854775807 is invalid,

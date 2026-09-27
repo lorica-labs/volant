@@ -1099,6 +1099,9 @@ pub(super) async fn drive_host(
                                     Attempt::Done(r) => break r,
                                     Attempt::Again(left) => mine.push(left),
                                 }
+                                if let Some(failed) = retry.sleep_failure() {
+                                    break failed;
+                                }
                                 if driver.sleep_between(retry.delay).await.is_none() {
                                     break 'run;
                                 }
@@ -1638,6 +1641,10 @@ pub(super) async fn drive_host(
                                 continue 'items;
                             }
                             Attempt::Again(left) => lefts[ii].push(left),
+                        }
+                        if let Some(failed) = retry.sleep_failure() {
+                            received[0][ii] = Some(failed);
+                            continue 'items;
                         }
                         if driver.sleep_between(retry.delay).await.is_none() {
                             file_timings(

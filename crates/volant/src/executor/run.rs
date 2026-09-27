@@ -380,9 +380,7 @@ async fn pause(
     // Python's clock counts nanoseconds in a signed 64-bit integer, and the reference fails a
     // pause it cannot hold rather than wait it out. Measured on ansible-core 2.19.12.
     if asked.is_some_and(|(seconds, _)| seconds > i64::MAX / 1_000_000_000) {
-        return Some(TaskResult::failed_with(
-            "Task failed: timestamp out of range for C PyTime_t",
-        ));
+        return Some(TaskResult::failed_with(PYTIME_OUT_OF_RANGE));
     }
     let prompting = asked.is_none() || item.args.contains_key("prompt");
     if prompting && interactive {
@@ -911,6 +909,30 @@ pub(super) struct Retry {
     pub(super) delay: Duration,
     /// The conditions that end the loop. Empty means "the result did not fail".
     until: Vec<String>,
+    /// What `time.sleep(delay)` raises in the reference, for a delay it refuses.
+    unsleepable: Option<&'static str>,
+}
+
+/// `time.sleep` on a value Python's clock, nanoseconds in a signed 64-bit integer, cannot hold.
+const PYTIME_OUT_OF_RANGE: &str = "Task failed: timestamp out of range for C PyTime_t";
+
+/// `time.sleep(float('nan'))`.
+const SLEEP_NAN: &str = "Task failed: Invalid value NaN (not a number)";
+
+impl Retry {
+    /// The failure the reference's wait between two attempts raises for a `delay` its
+    /// `time.sleep` refuses, in place of the wait: the item ends there, after the retry line.
+    /// Measured on ansible-core 2.19.12: `retries: 1` on a failing `command` with `delay: 1e20`
+    /// prints `(1 retries left)`, then fails the item with `{"changed": false, "msg": "Task
+    /// failed: timestamp out of range for C PyTime_t"}`, and `delay: nan` with `Task failed:
+    /// Invalid value NaN (not a number)`.
+    pub(super) fn sleep_failure(&self) -> Option<TaskResult> {
+        self.unsleepable.map(|msg| {
+            let mut failed = TaskResult::failed_with(msg);
+            failed.0.insert("changed".into(), json!(false));
+            failed
+        })
+    }
 }
 
 /// `item` is the one whose variables `retries` and `delay` are rendered against.
@@ -921,23 +943,28 @@ pub(super) fn retry_plan(
 ) -> Result<Option<Retry>, TemplateError> {
     let empty = HostVars::default();
     let vars = item.map_or(&empty, |i| &i.vars);
-    let number = |raw: &Value, keyword: &str| -> Result<f64, TemplateError> {
+    // `retries` is the reference's `isa='int'`, which refuses a value it would truncate (its
+    // `Decimal` check: `'2.5'` and `2.5` fail, `'2.0'` and `true` pass), and `delay` its
+    // `isa='float'`. Measured on ansible-core 2.19.12, both messages included.
+    let number = |raw: &Value, keyword: &str, isa: &str| -> Result<f64, TemplateError> {
         let rendered = templar.render_value(raw, vars)?;
-        match &rendered {
-            Value::Number(n) => n.as_f64().ok_or_else(|| TemplateError(String::new())),
-            Value::String(s) => s.trim().parse::<f64>().map_err(|_| TemplateError(String::new())),
-            _ => Err(TemplateError(String::new())),
-        }
-        .map_err(|_| {
-            TemplateError(format!(
-                "Error processing keyword '{keyword}': The value {} could not be converted to 'int'.",
-                crate::playbook::python_repr(&rendered)
-            ))
-        })
+        let n = match &rendered {
+            Value::Bool(b) => Some(f64::from(u8::from(*b))),
+            Value::Number(n) => n.as_f64(),
+            Value::String(s) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        };
+        n.filter(|n| isa == "float" || (n.is_finite() && n.fract() == 0.0))
+            .ok_or_else(|| {
+                TemplateError(format!(
+                    "Error processing keyword '{keyword}': The value {} could not be converted to '{isa}'.",
+                    crate::playbook::python_repr(&rendered)
+                ))
+            })
     };
     let retries = match &task.retries {
         Some(raw) => {
-            let n = number(raw, "retries")?;
+            let n = number(raw, "retries", "int")?;
             if n < 1.0 {
                 return Ok(None);
             }
@@ -946,20 +973,22 @@ pub(super) fn retry_plan(
         None if task.until.is_empty() => return Ok(None),
         None => 3,
     };
-    let delay = match &task.delay {
-        // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`.
-        Some(raw) => match number(raw, "delay")? {
-            d if d < 0.0 => Duration::from_secs(1),
-            // Past what a `Duration` holds the wait never ends, rather than the controller
-            // panicking on the conversion.
-            d => Duration::try_from_secs_f64(d).unwrap_or(Duration::MAX),
+    // `if delay < 0: delay = 1` in ansible-core 2.19.12 `task_executor.py`, then `time.sleep`,
+    // which refuses NaN and anything its nanosecond clock cannot hold.
+    let (delay, unsleepable) = match &task.delay {
+        Some(raw) => match number(raw, "delay", "float")? {
+            d if d.is_nan() => (Duration::MAX, Some(SLEEP_NAN)),
+            d if d < 0.0 => (Duration::from_secs(1), None),
+            d if d * 1e9 > i64::MAX as f64 => (Duration::MAX, Some(PYTIME_OUT_OF_RANGE)),
+            d => (Duration::from_secs_f64(d), None),
         },
-        None => Duration::from_secs(5),
+        None => (Duration::from_secs(5), None),
     };
     Ok(Some(Retry {
         retries,
         delay,
         until: task.until.clone(),
+        unsleepable,
     }))
 }
 
@@ -1596,6 +1625,9 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
         match judge_attempt(task, item, raw, attempt, retry, start.templar) {
             Attempt::Done(r) => return Ok(Some(r)),
             Attempt::Again(left) => lefts.push(left),
+        }
+        if let Some(failed) = retry.sleep_failure() {
+            return Ok(Some(failed));
         }
         if wait_or_stop(retry.delay, stop, stop_broken).await.is_none() {
             return Ok(None);
@@ -4039,7 +4071,6 @@ mod tests {
         }
     }
 
-    /// What the agent answers for a batch of one task that ran to its end.
     /// A batch reads only the frames of its own id. A probe abandoned at a deadline after a
     /// reconnection can still answer on the link, and those late frames reach the next batch
     /// first; filed there, they become its first sub-task's result, and their `BatchDone` ends
@@ -4095,6 +4126,7 @@ mod tests {
         assert!(received[0].is_none(), "{received:?}");
     }
 
+    /// What the agent answers for a batch of one task that ran to its end.
     fn one_result(batch: u64, result: Value) -> [FromAgent; 2] {
         [
             FromAgent::TaskResult {
@@ -5836,17 +5868,12 @@ mod tests {
         );
     }
 
-    /// A negative `delay` waits one second, as `task_executor.py` has it (`if delay < 0: delay =
-    /// 1`), and zero waits nothing.
+    /// A `delay` Python's clock cannot hold fails the item where the reference's `time.sleep`
+    /// raises, never panicking the controller, and a wait of the longest `Duration` still ends
+    /// on the run's stop.
     ///
-    /// What would make this red: a negative delay clamped to zero, which retries a flapping
-    /// service in a tight loop where the reference paces it.
-    /// A `delay` past what a `Duration` holds, and a wait that long, never panic the
-    /// controller: the plan holds the longest wait there is, and the wait still ends on the
-    /// run's stop.
-    ///
-    /// What would make this red: `Duration::from_secs_f64` on `1e20`, or a sum of that wait
-    /// with the present instant, either of which panics.
+    /// What would make this red: `Duration::from_secs_f64` on `1e20`, which panics; the plan
+    /// carrying no failure for it; or a sum of that wait with the present instant, which panics.
     #[tokio::test]
     async fn an_enormous_delay_does_not_panic() {
         let templar = Templar::new(PathBuf::from("."));
@@ -5857,9 +5884,43 @@ mod tests {
             .unwrap()
             .expect("a retry plan");
         assert_eq!(retry.delay, Duration::MAX);
+        let failed = retry.sleep_failure().expect("the sleep fails");
+        assert_eq!(msg(&failed), PYTIME_OUT_OF_RANGE);
         let (tx, mut stop) = watch::channel(false);
         tx.send(true).expect("the run stops");
         assert_eq!(wait_or_stop(retry.delay, &mut stop, &mut false).await, None);
+    }
+
+    /// The plugin path ends an item at a `delay` the reference's sleep refuses, after the retry
+    /// line, as the other two paths do.
+    ///
+    /// What would make this red: the check left out of `run_plugin_attempts`, which waits the
+    /// longest `Duration` there is.
+    #[tokio::test]
+    async fn a_plugin_s_unsleepable_delay_fails_the_item() {
+        let blob = hello_blob();
+        let mut stop = watch::channel(false).1;
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                vec![state(&blob.hash, true)],
+                one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
+            ]
+            .concat(),
+        );
+        let mut t = retried_copy(1);
+        t.delay = Some(json!(1e20));
+        let (ran, lefts) = tokio::time::timeout(
+            Duration::from_secs(10),
+            copy_attempts(&t, copy_args("/tmp/v/sleepless"), &mut agent, &mut stop),
+        )
+        .await
+        .expect("the item ended rather than waited");
+        let result = ran.expect("the item ran").expect("nothing stopped it");
+        assert_eq!(msg(&result), PYTIME_OUT_OF_RANGE);
+        assert_eq!(result.0["changed"], json!(false));
+        assert_eq!(lefts, [1]);
     }
 
     /// An item deadline past what an `Instant` holds is no deadline, not a panic. The driver
@@ -5882,6 +5943,11 @@ mod tests {
         assert_eq!(modules_sent(&agent)[0], "stat");
     }
 
+    /// A negative `delay` waits one second, as `task_executor.py` has it (`if delay < 0: delay =
+    /// 1`), and zero waits nothing.
+    ///
+    /// What would make this red: a negative delay clamped to zero, which retries a flapping
+    /// service in a tight loop where the reference paces it.
     #[test]
     fn a_negative_delay_waits_one_second() {
         let templar = Templar::new(PathBuf::from("."));

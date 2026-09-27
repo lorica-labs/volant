@@ -36,4 +36,9 @@
         ;;
     esac
     file "$agents"/*
+    # volant_echo is a native for the agent's own tests: a release agent must not carry it.
+    if grep -alq volant_echo "$agents"/volant-agent*; then
+      echo "a release agent carries the test-only native volant_echo"
+      exit 1
+    fi
     echo "VOLANT_EMBED_AGENTS_DIR=$agents" >> "$GITHUB_ENV"

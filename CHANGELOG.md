@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Answer common modules natively in the agent: `setup`, `stat`, `file`, `apt` (when nothing needs doing), `systemd` and `systemd_service`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`. A native module gives the reference module's result, key for key, when a task's arguments stay within what it implements. Otherwise it hands the task to the Python module before it changes anything on the host. `dnf` and every other module still run in Python. ([#230](https://github.com/lorica-labs/volant/pull/230), [#246](https://github.com/lorica-labs/volant/pull/246), [#248](https://github.com/lorica-labs/volant/pull/248), [#250](https://github.com/lorica-labs/volant/pull/250), [#251](https://github.com/lorica-labs/volant/pull/251), [#252](https://github.com/lorica-labs/volant/pull/252), [#254](https://github.com/lorica-labs/volant/pull/254), [#256](https://github.com/lorica-labs/volant/pull/256))
+- Gather facts natively on Debian and Ubuntu: the collectors of `gather_subset: min`, the processor and memory facts and the default routes and addresses. Volant uses the native collector only when every fact the run can read is one it produces, and ansible-core's `setup` otherwise. `--facts auto|python|native` overrides the choice. ([#237](https://github.com/lorica-labs/volant/pull/237), [#242](https://github.com/lorica-labs/volant/pull/242), [#249](https://github.com/lorica-labs/volant/pull/249))
+- `--profile` prints where a run's time went after the recap, on standard error, with the path each module's tasks took and why a native module handed a task back. `VOLANT_PROFILE_JSON=<file>` writes the same data as JSON lines. ([#236](https://github.com/lorica-labs/volant/pull/236))
+- `[volant] native_modules` (`VOLANT_NATIVE_MODULES`) and `[volant] ssh_control_master` (`VOLANT_SSH_CONTROL_MASTER`), both on by default, turn native modules and ssh connection sharing off. ([#236](https://github.com/lorica-labs/volant/pull/236), [#238](https://github.com/lorica-labs/volant/pull/238))
+- Add the `extract` filter. ([#222](https://github.com/lorica-labs/volant/pull/222))
 - Run `copy` as an action plugin: `stat` the destination, then `file` or a staged `copy`, sending nothing when the file already matches.
 - Run `package` as an action plugin: pick the module from the host's package manager, gathered with a filtered `setup` when it is not already a fact.
 - Run `service` as an action plugin: pick the module from the host's init system (`use:`, then a fact, then a filtered `setup`), falling back to the `service` module for a name none of the known backends carries rather than failing the task.
@@ -25,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Share one OpenSSH connection per inventory host (`ControlMaster`, a `ControlPath` of Volant's own, `ControlPersist=30s`), unless your ssh configuration or `ansible_ssh_*_args` already set up sharing. At startup Volant raises its soft limit on open files up to the hard limit. ([#238](https://github.com/lorica-labs/volant/pull/238))
+- Cache the union of Python modules on the controller between runs, under `$XDG_CACHE_HOME/volant/unions/`. It is rebuilt whenever a source file of ansible-core or a collection, the interpreter, `ansible.cfg` or the `ANSIBLE_*` environment changes. ([#235](https://github.com/lorica-labs/volant/pull/235))
+- Protocol version 6 sends module blobs and staged files as raw bytes, compressed with deflate, instead of base64 inside JSON. A controller and an agent of different versions refuse each other, as before. ([#253](https://github.com/lorica-labs/volant/pull/253))
+- The Python server on the host imports a module while that module's first child runs, so later tasks of the same module start with it loaded. ([#244](https://github.com/lorica-labs/volant/pull/244))
+- Host variables are read through shared layers instead of being merged and copied for every task. ([#239](https://github.com/lorica-labs/volant/pull/239))
+- Under the `batching` opt-in, a host also waits in front of a task that reads another host through a template body, a variable's definition or `delegate_to`. Batching stays off by default. ([#245](https://github.com/lorica-labs/volant/pull/245))
+- A filter given an undefined value now lets it through as ansible-core does, so `nope | dict2items | default('x')` gives `x`. `join`, `string`, `quote`, `sum` and the `~` operator now fail when their input holds an undefined value anywhere inside, as the reference does, where they used to render a partial value and report the task green. ([#228](https://github.com/lorica-labs/volant/pull/228), [#229](https://github.com/lorica-labs/volant/pull/229), [#234](https://github.com/lorica-labs/volant/pull/234))
+- A registered result no longer carries the module's top-level `invocation`, as in the reference. The items of a loop keep theirs. ([#236](https://github.com/lorica-labs/volant/pull/236))
 - Agents are looked up in `VOLANT_AGENT_DIR` first, then among the agents built into the controller, then beside the executable.
 - Release archives no longer contain the agents. They are still published on their own, in the `volant-agent-*` archives.
 - A `copy`, `template` or `unarchive` task whose `src` was named by a managed host is now rejected before the file is looked up, rather than sent the way the reference sends it: a host that controls a command's output or a fact could otherwise have any file the operator can read copied to it.
@@ -32,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A task whose loop names an undefined variable reads its `when` first, and is skipped when it is false, as in the reference. ([#223](https://github.com/lorica-labs/volant/pull/223))
+- A looped `include_tasks` or `include_role` whose items all skip prints its `skipping:` line and counts the host as skipped. ([#227](https://github.com/lorica-labs/volant/pull/227))
 - A cached agent on a host is reused only if it is the exact binary the controller would upload. A different build that reported the same version used to be run as the agent. Reusing a cached agent now needs an agent for the host's architecture on the controller; the release controller embeds both.
 - A controller started through a symbolic link finds its agents next to the file the link points at. On macOS it used to look in the directory of the link.
 - A file staged for a module belongs to the connection that sent it. Two links to one host no longer consume each other's files, and a staged file left by a cancelled batch, a lost link or a killed agent is cleaned up. ([#191](https://github.com/lorica-labs/volant/pull/191))

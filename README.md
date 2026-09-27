@@ -35,17 +35,9 @@ Volant reads the playbooks, roles and inventories you already have, in Ansible's
 
 ## Why it is fast
 
-`ansible-playbook` starts a fresh Python interpreter on the host for every task. Volant uploads a small static agent once, keeps one connection per host open for the whole run, and runs Python modules in a warm server that forks a child per task.
+`ansible-playbook` starts a fresh Python interpreter on the host for every task. Volant uploads a small static agent once and keeps one ssh connection per host for the whole run. The agent answers common modules such as `apt`, `systemd`, `file`, `lineinfile` and fact gathering in Rust when a task's arguments allow it, and runs every other module in a warm Python server that forks a child per task.
 
-On a 35-task playbook against one host, with privilege escalation, median of three runs:
-
-| Engine | Wall clock | Per task |
-|---|---|---|
-| **Volant** | **7.90 s** | **226 ms** |
-| ansible-core with `pipelining = True` | 19.72 s | 564 ms |
-| ansible-core with default settings | 27.69 s | 791 ms |
-
-Four published Galaxy roles, `geerlingguy.security`, `nginx`, `git` and `pip`, also run unmodified against real hosts, end on the same recap as ansible-core 2.19.12, and take about half the time of the pipelined reference ([decision record 0007](https://volant.sh/decisions/0007-action-plugins/)). The method and the caveats are on the [home page of the documentation](https://volant.sh/).
+On four published Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) against two converged Ubuntu 24.04 hosts, Volant takes 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s. On the official k3s-ansible playbook it takes 23.477 s against 50.519 s. Both engines end on the same recap. Measured on 2026-09-27 with `just bench` and `just bench-k3s`; the configuration and the method are on the [performance page](https://volant.sh/project/performance/).
 
 ## Install
 
@@ -92,7 +84,7 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 | **Plays** | `pre_tasks`, roles with dependencies and argument specs, `tasks`, `post_tasks`, handlers with `listen` and `flush_handlers`, `serial` |
 | **Tasks** | `when`, `loop`, `register`, `until`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, tags, `run_once`, `delegate_to` |
 | **Structure** | blocks with `rescue` and `always`, `import_*` and `include_*` for tasks, roles and playbooks |
-| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, modules from installed collections, and `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` as [action plugins](https://volant.sh/reference/action-plugins/) |
+| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, native versions of `setup`, `stat`, `file`, `apt`, `systemd`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`, modules from installed collections, and `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` as [action plugins](https://volant.sh/reference/action-plugins/) |
 | **Hosts** | static INI inventories, `group_vars` and `host_vars`, the full host-pattern grammar, SSH with keys, `become` through `sudo`, fact gathering |
 | **Listings** | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`, byte for byte like Ansible |
 

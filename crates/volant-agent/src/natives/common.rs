@@ -18,7 +18,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-pub use super::setup::{Clock, Stop, run as run_program};
+pub use super::setup::{Clock, Stop, run as run_program, run_captured};
 
 /// `Stop::TimedOut` once the task's deadline has passed, `Stop::Cancelled` once the controller
 /// has cancelled it: for a loop of the native's own that can run long.
@@ -68,6 +68,28 @@ pub struct ArgSpec {
     pub aliases: &'static [&'static str],
     /// The reference's default, `Value::Null` where it has none.
     pub default: fn() -> Value,
+}
+
+/// An argument without a default.
+pub const fn null(name: &'static str) -> ArgSpec {
+    ArgSpec {
+        name,
+        aliases: &[],
+        default: || Value::Null,
+    }
+}
+
+/// A `type='bool'` argument and its default.
+pub const fn flag(name: &'static str, default: bool) -> ArgSpec {
+    ArgSpec {
+        name,
+        aliases: &[],
+        default: if default {
+            || Value::Bool(true)
+        } else {
+            || Value::Bool(false)
+        },
+    }
 }
 
 /// The `invocation` a native returns: `{"module_args": ...}` holding every argument of `spec`,
@@ -411,7 +433,7 @@ fn perm_bits(user: char, perm: char, prev: u32, is_dir: bool) -> u32 {
 
 /// The process umask, read without setting it (`/proc/self/status`, Linux 4.7 and later): the
 /// agent's threads would see a temporary `umask(0)`.
-fn umask() -> Result<u32, ModeError> {
+pub fn umask() -> Result<u32, ModeError> {
     fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {
@@ -442,6 +464,29 @@ pub fn set_fs_attributes(
     group: Option<&Account>,
     mode: Option<&Value>,
 ) -> Result<bool, FsError> {
+    set_fs_attributes_diff(path, owner, group, mode, &mut Map::new())
+}
+
+/// `set_fs_attributes`, filling `diff` as the reference fills its `diff` argument: `before` and
+/// `after` maps holding the `owner` and `group` ids and the `mode` text of each attribute about
+/// to change, written before the change is tried.
+pub fn set_fs_attributes_diff(
+    path: &str,
+    owner: Option<&Account>,
+    group: Option<&Account>,
+    mode: Option<&Value>,
+    diff: &mut Map<String, Value>,
+) -> Result<bool, FsError> {
+    let mut record = |key: &str, before: Value, after: Value| {
+        for (side, value) in [("before", before), ("after", after)] {
+            if let Value::Object(map) = diff
+                .entry(side)
+                .or_insert_with(|| Value::Object(Map::new()))
+            {
+                map.insert(key.to_string(), value);
+            }
+        }
+    };
     let mut changed = false;
     let lstat = |changed: bool| {
         fs::symlink_metadata(path).map_err(|err| FsError::Raised(os_error(&err, path), changed))
@@ -456,6 +501,7 @@ pub fn set_fs_attributes(
             }
         };
         if current != uid {
+            record("owner", current.into(), uid.into());
             std::os::unix::fs::lchown(path, Some(uid), None)
                 .map_err(|_| FsError::Failed(failure(path, "chown failed".into())))?;
             changed = true;
@@ -470,6 +516,7 @@ pub fn set_fs_attributes(
             }
         };
         if current != gid {
+            record("group", current.into(), gid.into());
             std::os::unix::fs::lchown(path, None, Some(gid))
                 .map_err(|_| FsError::Failed(failure(path, "chgrp failed".into())))?;
             changed = true;
@@ -488,6 +535,11 @@ pub fn set_fs_attributes(
             Err(ModeError::Unsupported(why)) => return Err(FsError::Raised(why, changed)),
         };
         if prev != mode {
+            record(
+                "mode",
+                format!("0{prev:03o}").into(),
+                format!("0{mode:03o}").into(),
+            );
             // Python's chmod of a link goes through it and puts the target back; no native
             // sets a mode on a link.
             if meta.file_type().is_symlink() {
@@ -1044,11 +1096,22 @@ pub mod golden {
                 *value = placeholder.into();
                 continue;
             }
-            match value {
-                Value::String(text) => *text = text.replace(&scratch.0, "<golden-tmp>"),
-                Value::Object(inner) => mask(inner, scratch),
-                _ => {}
+            mask_value(value, scratch);
+        }
+    }
+
+    /// The scratch directory written `<golden-tmp>` in a value, inside lists (`lineinfile`'s
+    /// `diff`) as well as maps.
+    fn mask_value(value: &mut Value, scratch: &Scratch) {
+        match value {
+            Value::String(text) => *text = text.replace(&scratch.0, "<golden-tmp>"),
+            Value::Object(inner) => mask(inner, scratch),
+            Value::Array(items) => {
+                for item in items {
+                    mask_value(item, scratch);
+                }
             }
+            _ => {}
         }
     }
 

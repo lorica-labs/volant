@@ -42,7 +42,7 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     let mut agent = Agent::spawn(&scratch.0);
     assert_eq!(
         agent.hello(),
-        ["setup", "stat", "file", "apt", "volant_echo"]
+        ["setup", "stat", "file", "lineinfile", "apt", "volant_echo"]
     );
 
     let (result, ran) = agent.run_one(1, task("ansible.modules.volant_echo", json!({"x": 1})));

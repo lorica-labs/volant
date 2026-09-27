@@ -873,6 +873,16 @@ pub fn run(
     program: &Path,
     args: &[&str],
 ) -> Result<Option<(i32, String)>, Stop> {
+    Ok(run_captured(env, clock, program, args)?.map(|(rc, stdout, _)| (rc, stdout)))
+}
+
+/// `run`, with the standard error as well.
+pub fn run_captured(
+    env: &BTreeMap<String, String>,
+    clock: Clock,
+    program: &Path,
+    args: &[&str],
+) -> Result<Option<(i32, String, String)>, Stop> {
     let timeout = match clock.deadline {
         Some(deadline) => Some(
             deadline
@@ -901,6 +911,7 @@ pub fn run(
                 .and_then(|rc| i32::try_from(rc).ok())
                 .unwrap_or(-1),
             result.0["stdout"].as_str().unwrap_or_default().to_string(),
+            result.0["stderr"].as_str().unwrap_or_default().to_string(),
         ))),
         Run::Done(_) => Ok(None),
     }

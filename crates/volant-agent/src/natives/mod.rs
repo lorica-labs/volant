@@ -30,6 +30,7 @@ mod copy;
 #[cfg(unix)]
 mod file;
 mod group;
+#[cfg(unix)]
 mod lineinfile;
 mod package_facts;
 mod service_facts;
@@ -102,6 +103,7 @@ pub const NATIVES: &[Native] = &[
     #[cfg(unix)]
     file::NATIVE,
     copy::NATIVE,
+    #[cfg(unix)]
     lineinfile::NATIVE,
     systemd::NATIVE,
     apt::NATIVE,

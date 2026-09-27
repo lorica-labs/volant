@@ -340,7 +340,7 @@ fn answer(
         return Err("the module reads this systemctl path differently".into());
     }
     let mut env = context.environment.clone();
-    if let Some(dir) = xdg_default(&var, unsafe { libc::geteuid() }) {
+    if let Some(dir) = xdg_default(var, unsafe { libc::geteuid() }) {
         env.insert("XDG_RUNTIME_DIR".into(), dir);
     }
     let host = Host {

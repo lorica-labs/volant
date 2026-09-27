@@ -53,7 +53,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | Module | How it runs |
 |---|---|
 | `add_host` | not supported yet: needs the `add_host` action plugin |
-| `apt` | Python module |
+| `apt` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `apt_key` | Python module |
 | `apt_repository` | Python module |
 | `assemble` | not supported yet: needs the `assemble` action plugin |

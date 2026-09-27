@@ -31,6 +31,7 @@ use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::{Scope, VarStore, load_vars_file};
 
 use coordinator::run_batch;
+pub(crate) use driver::{expressions, strings, task_strings};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

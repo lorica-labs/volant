@@ -287,6 +287,8 @@ struct Request {
     network: bool,
     /// `None` when the module would find no directory to read.
     fact_path: Option<String>,
+    /// `filter` as the reference converts it; empty keeps every fact.
+    filter: Vec<String>,
 }
 
 /// The module's result, or the reason to hand the task back.
@@ -300,14 +302,17 @@ fn answer(
     let facts = collect(&request, root, context, clock)?;
     let mut invocation = invocation(SPEC, args);
     invocation["module_args"]["gather_subset"] = Value::from(request.gather_subset);
+    if !matches!(args.get("filter"), None | Some(Value::Null)) {
+        invocation["module_args"]["filter"] = Value::from(request.filter);
+    }
     let mut result = Map::new();
     result.insert("ansible_facts".into(), Value::Object(facts));
     result.insert("invocation".into(), invocation);
     Ok(result)
 }
 
-/// The arguments, checked for what the native reproduces exactly: a subset it collects, no
-/// filter, and a fact path the module would find empty.
+/// The arguments, checked for what the native reproduces exactly: a subset it collects, a filter
+/// of strings, and a fact path the module would find empty.
 fn request(args: &Map<String, Value>) -> Result<Request, String> {
     if let Some(key) = args
         .keys()
@@ -315,11 +320,18 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
     {
         return Err(format!("argument '{key}' is outside the native setup"));
     }
-    match args.get("filter") {
-        None | Some(Value::Null) => {}
-        Some(Value::Array(filter)) if filter.is_empty() => {}
-        Some(_) => return Err("a filter is outside the native setup".into()),
-    }
+    // `type='list', elements='str'`: a string is split on commas; a number would be converted
+    // to text, which is left to the module.
+    let filter: Vec<String> = match args.get("filter") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::String(text)) => text.split(',').map(str::to_string).collect(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_string))
+            .collect::<Option<_>>()
+            .ok_or("filter holds something other than strings")?,
+        Some(_) => return Err("filter is not a list of strings".into()),
+    };
     match args.get("gather_timeout") {
         None | Some(Value::Null) => {}
         Some(timeout) if timeout.is_i64() => {}
@@ -342,6 +354,7 @@ fn request(args: &Map<String, Value>) -> Result<Request, String> {
         hardware: collectors.contains("hardware"),
         network: collectors.contains("network"),
         fact_path,
+        filter,
     })
 }
 
@@ -554,31 +567,181 @@ fn collect(
         ssh_pub_keys::collect(&host)?,
         user::collect(&host)?,
     ];
-    let mut facts = Map::new();
-    let add = |facts: &mut Map<String, Value>, collected: Map<String, Value>| {
-        for (name, value) in collected {
-            facts.insert(format!("ansible_{}", name.replace('-', "_")), value);
-        }
+    let prefixed = |collected: Map<String, Value>| -> Map<String, Value> {
+        collected
+            .into_iter()
+            .map(|(name, value)| (format!("ansible_{}", name.replace('-', "_")), value))
+            .collect()
     };
-    for collected in collected {
-        add(&mut facts, collected);
-    }
-    add(&mut facts, network);
+    let mut groups: Vec<Map<String, Value>> = collected.into_iter().map(prefixed).collect();
+    groups.push(prefixed(network));
     if request.hardware {
-        // The reference counts processors by the architecture the platform collector found.
-        let architecture = facts
-            .get("ansible_architecture")
+        // The reference counts processors by the architecture the platform collector found,
+        // whatever the filter keeps.
+        let architecture = groups
+            .iter()
+            .find_map(|group| group.get("ansible_architecture"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        add(&mut facts, hardware::collect(root, &architecture));
+        groups.push(prefixed(hardware::collect(root, &architecture)));
     }
-    facts.insert(
+    let mut meta = Map::new();
+    meta.insert(
         "gather_subset".into(),
         Value::from(request.gather_subset.clone()),
     );
-    facts.insert("module_setup".into(), Value::Bool(true));
+    meta.insert("module_setup".into(), Value::Bool(true));
+    groups.push(meta);
+    let mut facts = Map::new();
+    for group in groups {
+        filtered(group, &request.filter, &mut facts);
+    }
     Ok(facts)
+}
+
+/// The facts of one collector that `filter` keeps, added to `facts` in the reference's order:
+/// `AnsibleFactCollector._filter` in ansible-core 2.19.12 walks the patterns, and for each one
+/// the collector's facts, and keeps a fact whose name matches the pattern (fnmatch), or matches
+/// it with `ansible_` in front when the pattern starts with none of `ansible_`, `facter` and
+/// `ohai`. An empty pattern keeps everything, and so does an empty filter. The collectors'
+/// metadata (`gather_subset`, `module_setup`) is filtered like any collector's facts.
+fn filtered(group: Map<String, Value>, filter: &[String], facts: &mut Map<String, Value>) {
+    if filter.is_empty() {
+        facts.extend(group);
+        return;
+    }
+    for pattern in filter {
+        let prefixed = (!pattern.starts_with("ansible_")
+            && !pattern.starts_with("facter")
+            && !pattern.starts_with("ohai"))
+        .then(|| format!("ansible_{pattern}"));
+        for (name, value) in &group {
+            if pattern.is_empty()
+                || fnmatch(name, pattern)
+                || prefixed.as_deref().is_some_and(|p| fnmatch(name, p))
+            {
+                facts.insert(name.clone(), value.clone());
+            }
+        }
+    }
+}
+
+/// One element of a pattern, as `fnmatch.translate` reads it.
+enum Glob {
+    Star,
+    Any,
+    Char(char),
+    /// `[...]`: negated, and its members as ranges (a single character is a range of one).
+    Set(bool, Vec<(char, char)>),
+}
+
+/// Python's `fnmatch.fnmatch` on a POSIX host: case-sensitive, over the whole name, with `*`,
+/// `?` and `[...]` read as `fnmatch.translate` reads them.
+fn fnmatch(name: &str, pattern: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let mut globs = Vec::new();
+    let mut i = 0;
+    while i < pat.len() {
+        let c = pat[i];
+        i += 1;
+        match c {
+            '*' => globs.push(Glob::Star),
+            '?' => globs.push(Glob::Any),
+            '[' => {
+                let mut j = i;
+                if pat.get(j) == Some(&'!') {
+                    j += 1;
+                }
+                if pat.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < pat.len() && pat[j] != ']' {
+                    j += 1;
+                }
+                // An unclosed `[` is a character like any other.
+                if j >= pat.len() {
+                    globs.push(Glob::Char('['));
+                    continue;
+                }
+                globs.push(glob_set(&pat[i..j]));
+                i = j + 1;
+            }
+            c => globs.push(Glob::Char(c)),
+        }
+    }
+    let one = |glob: &Glob, c: char| match glob {
+        Glob::Star => false,
+        Glob::Any => true,
+        Glob::Char(g) => *g == c,
+        Glob::Set(negated, members) => {
+            members.iter().any(|(lo, hi)| (*lo..=*hi).contains(&c)) != *negated
+        }
+    };
+    let text: Vec<char> = name.chars().collect();
+    let (mut p, mut s) = (0, 0);
+    // The last `*` seen, and the position in the name it is currently taken to end at.
+    let mut star: Option<(usize, usize)> = None;
+    while s < text.len() {
+        if p < globs.len() && matches!(globs[p], Glob::Star) {
+            star = Some((p, s));
+            p += 1;
+        } else if p < globs.len() && one(&globs[p], text[s]) {
+            p += 1;
+            s += 1;
+        } else if let Some((sp, ss)) = star {
+            star = Some((sp, ss + 1));
+            p = sp + 1;
+            s = ss + 1;
+        } else {
+            return false;
+        }
+    }
+    globs[p..].iter().all(|g| matches!(g, Glob::Star))
+}
+
+/// What sits between the brackets, read as `fnmatch.translate` reads it: a leading `!`
+/// negates; a `-` between two characters is a range, but not the first one (nor the one right
+/// after a range's end), and a trailing one is literal; a range whose ends are reversed is
+/// dropped with both its ends. A set left empty matches nothing, and negated matches anything.
+fn glob_set(stuff: &[char]) -> Glob {
+    let negated = stuff.first() == Some(&'!');
+    let mut chunks: Vec<Vec<char>> = Vec::new();
+    let mut from = 0;
+    let mut k = if negated { 2 } else { 1 };
+    while let Some(at) = stuff
+        .get(k..)
+        .and_then(|rest| rest.iter().position(|c| *c == '-'))
+    {
+        chunks.push(stuff[from..k + at].to_vec());
+        from = k + at + 1;
+        k += at + 3;
+    }
+    let last = stuff.get(from..).unwrap_or_default().to_vec();
+    match chunks.last_mut() {
+        Some(previous) if last.is_empty() => previous.push('-'),
+        _ => chunks.push(last),
+    }
+    for k in (1..chunks.len()).rev() {
+        let (Some(&end), Some(&start)) = (chunks[k - 1].last(), chunks[k].first()) else {
+            continue;
+        };
+        if end > start {
+            chunks[k - 1].pop();
+            let tail = chunks.remove(k);
+            chunks[k - 1].extend_from_slice(&tail[1..]);
+        }
+    }
+    if negated && let Some(first) = chunks.first_mut() {
+        first.remove(0);
+    }
+    let mut members: Vec<(char, char)> = chunks.iter().flatten().map(|c| (*c, *c)).collect();
+    for pair in chunks.windows(2) {
+        if let (Some(&lo), Some(&hi)) = (pair[0].last(), pair[1].first()) {
+            members.push((lo, hi));
+        }
+    }
+    Glob::Set(negated, members)
 }
 
 /// The next message on `answer`, waiting as long as it takes while polling the task's cancel,
@@ -1219,8 +1382,9 @@ BUG_REPORT_URL="https://bugs.debian.org/"
 
     /// The arguments the native takes, and the ones it leaves to the module.
     ///
-    /// What would make this red: a filter answered unfiltered, an argument the reference refuses
-    /// answered, or a fact path the module would expand or glob read as given.
+    /// What would make this red: a filter the module would convert answered as given, an
+    /// argument the reference refuses answered, or a fact path the module would expand or glob
+    /// read as given.
     #[test]
     fn arguments_outside_the_native_are_handed_back() {
         let args = |v: Value| v.as_object().unwrap().clone();
@@ -1235,9 +1399,17 @@ BUG_REPORT_URL="https://bugs.debian.org/"
                 .fact_path,
             None
         );
+        assert_eq!(
+            request(&args(json!({"gather_subset": ["min"], "filter": "a,b"})))
+                .unwrap()
+                .filter,
+            ["a", "b"],
+            "split on commas, as type='list' splits a string"
+        );
         for refused in [
-            json!({"gather_subset": ["min"], "filter": ["ansible_pkg_mgr"]}),
-            json!({"gather_subset": ["min"], "filter": "*"}),
+            json!({"gather_subset": ["min"], "filter": [1]}),
+            json!({"gather_subset": ["min"], "filter": 5}),
+            json!({"gather_subset": ["min"], "filter": {"a": 1}}),
             json!({"gather_subset": ["min"], "gather_timeout": "10"}),
             json!({"gather_subset": ["min"], "fact_path": "~/facts"}),
             json!({"gather_subset": ["min"], "fact_path": "facts"}),
@@ -1327,6 +1499,105 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         let facts = &answer(&args, &root, &context, unbounded()).unwrap()["ansible_facts"];
         assert_eq!(facts["ansible_processor_vcpus"], json!(1));
         assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
+
+        // The `package` plugin's own gather, and the processor count read through a filter
+        // that leaves out the architecture it is counted by.
+        for (args, facts) in [
+            (
+                json!({"gather_subset": "!all", "filter": "ansible_pkg_mgr"}),
+                json!({"ansible_pkg_mgr": "apt"}),
+            ),
+            (
+                json!({"gather_subset": ["!all"], "filter": ["service_mgr", "gather_subset"]}),
+                json!({"ansible_service_mgr": "systemd", "gather_subset": ["!all"]}),
+            ),
+            (
+                json!({"gather_subset": ["!all", "hardware"], "filter": ["processor_vcpus"]}),
+                json!({"ansible_processor_vcpus": 1}),
+            ),
+        ] {
+            let result = answer(args.as_object().unwrap(), &root, &context, unbounded()).unwrap();
+            assert_eq!(result["ansible_facts"], facts, "{args}");
+            let converted = match &args["filter"] {
+                Value::String(one) => json!([one]),
+                list => list.clone(),
+            };
+            assert_eq!(result["invocation"]["module_args"]["filter"], converted);
+        }
+    }
+
+    /// `filter` as ansible-core 2.19.12 applies it. Each pattern was run through the reference's
+    /// own `AnsibleFactCollector._filter` (Python 3.13.15) over these names, one pattern at a
+    /// time and then three together; the lists are what it kept, in its order.
+    ///
+    /// What would make this red: the `ansible_` retry left out (`pkg_mgr`, `eth[!0]`) or made
+    /// for a pattern that starts with `ansible_`, `facter` or `ohai`; a match that is not over
+    /// the whole name, or not case-sensitive; a bracket set read otherwise than
+    /// `fnmatch.translate` reads it (negation, a leading `]`, an unclosed `[`, a reversed range,
+    /// a hyphen at either end); or an empty pattern not keeping everything.
+    #[test]
+    fn a_filter_keeps_what_the_reference_keeps() {
+        let names = [
+            "ansible_pkg_mgr",
+            "ansible_service_mgr",
+            "ansible_memtotal_mb",
+            "ansible_eth0",
+            "ansible_eth1",
+            "ansible_eth3",
+            "ansible_eth-",
+            "gather_subset",
+            "module_setup",
+            "ansible_distribution_version",
+            "facter_x",
+            "ansible_]x",
+            "ansible_[x",
+            "ansible_!x",
+            "Ansible_pkg_mgr",
+        ];
+        let group: Map<String, Value> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| ((*name).to_string(), json!(i)))
+            .collect();
+        let kept = |filter: &[&str]| -> Vec<String> {
+            let filter: Vec<String> = filter.iter().map(|p| (*p).to_string()).collect();
+            let mut facts = Map::new();
+            filtered(group.clone(), &filter, &mut facts);
+            facts.keys().cloned().collect()
+        };
+        let cases: &[(&str, &[&str])] = &[
+            ("ansible_pkg_mgr", &["ansible_pkg_mgr"]),
+            ("pkg_mgr", &["ansible_pkg_mgr"]),
+            ("*_mb", &["ansible_memtotal_mb"]),
+            ("ansible_eth[0-2]", &["ansible_eth0", "ansible_eth1"]),
+            ("eth[!0]", &["ansible_eth1", "ansible_eth3", "ansible_eth-"]),
+            ("[a]nsible_pkg*", &["ansible_pkg_mgr"]),
+            ("gather_subset", &["gather_subset"]),
+            ("distribution?version", &["ansible_distribution_version"]),
+            ("[z-a]*", &[]),
+            ("ansible_[!]x", &[]),
+            ("ansible_[]]x", &["ansible_]x"]),
+            ("ansible_[", &[]),
+            ("*[x", &["ansible_[x"]),
+            ("facter*", &["facter_x"]),
+            ("ohai*", &[]),
+            ("ansible_eth[1-]", &["ansible_eth1", "ansible_eth-"]),
+            ("ansible_eth[-1]", &["ansible_eth1", "ansible_eth-"]),
+            ("ansible_eth[!]", &[]),
+            ("ansible_eth[a-c-e3]", &["ansible_eth3", "ansible_eth-"]),
+            ("ANSIBLE_*", &[]),
+            ("*[0-9]", &["ansible_eth0", "ansible_eth1", "ansible_eth3"]),
+        ];
+        for (pattern, expected) in cases {
+            assert_eq!(kept(&[pattern]), *expected, "{pattern}");
+        }
+        for everything in [&[""][..], &["*"], &[]] {
+            assert_eq!(kept(everything), names, "{everything:?}");
+        }
+        assert_eq!(
+            kept(&["*_mb", "pkg_mgr", "ansible_pkg*"]),
+            ["ansible_memtotal_mb", "ansible_pkg_mgr"]
+        );
     }
 
     /// A task environment that changes the locale or the time zone hands back: the module would
@@ -1344,6 +1615,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
                 hardware: false,
                 network: false,
                 fact_path: None,
+                filter: Vec::new(),
             };
             let Err(Stop::HandBack(reason)) =
                 collect(&request, &fake.root(), &context, unbounded())
@@ -1375,6 +1647,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             hardware: false,
             network: false,
             fact_path: None,
+            filter: Vec::new(),
         };
         let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
         else {
@@ -1407,6 +1680,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             hardware: false,
             network: false,
             fact_path: None,
+            filter: Vec::new(),
         };
         let started = Instant::now();
         let clock = Clock {
@@ -1453,6 +1727,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             hardware: false,
             network: false,
             fact_path: None,
+            filter: Vec::new(),
         };
         let asked = std::cell::Cell::new(0);
         let cancelled = || {
@@ -1501,6 +1776,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             hardware: false,
             network: true,
             fact_path: None,
+            filter: Vec::new(),
         };
         let started = Instant::now();
         // Answers only once the probe and `lsb_release` are long done, so that the cancel
@@ -1544,6 +1820,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             hardware: false,
             network: false,
             fact_path: None,
+            filter: Vec::new(),
         };
         let Err(Stop::HandBack(reason)) = collect(&request, &fake.root(), &context, unbounded())
         else {

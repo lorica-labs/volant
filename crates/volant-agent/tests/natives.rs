@@ -48,6 +48,7 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
             "file",
             "systemd",
             "systemd_service",
+            "apt",
             "volant_echo"
         ]
     );
@@ -78,7 +79,13 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     assert_eq!(ran.path, ExecPath::Python, "{ran:?}");
     assert_python_ran(&result);
 
-    let (result, ran) = agent.run_one(4, task("ansible.modules.apt", json!({"name": "x"})));
+    let (result, ran) = agent.run_one(
+        4,
+        task(
+            "ansible.modules.lineinfile",
+            json!({"path": "/x", "line": "y"}),
+        ),
+    );
     assert_eq!(
         ran.path,
         ExecPath::Python,

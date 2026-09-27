@@ -7,6 +7,7 @@ pub mod cli;
 pub(crate) mod compile;
 pub mod config;
 pub(crate) mod executor;
+pub(crate) mod facts_read;
 pub mod inventory;
 pub mod keywords;
 pub(crate) mod listing;

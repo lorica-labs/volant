@@ -22,7 +22,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, playbook, preflight, python};
+use crate::{agent, facts_read, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -265,20 +265,22 @@ async fn run_all(
     //
     // A collection's module the plays name is resolved by the same helper first, and refused
     // here, by name, when its collection is not installed or serves it through an action plugin.
-    let python_modules = python::modules_for_run(&compiled.iter().flatten().collect::<Vec<_>>())
-        .map_err(|e| Refusal::or(4, e))?;
+    let walked: Vec<_> = playbooks
+        .iter()
+        .zip(&compiled)
+        .flat_map(|(pb, steps)| pb.plays.iter().map(|play| play.dir.as_path()).zip(steps))
+        .collect();
+    let reach = python::Reach::walk(&walked).map_err(|e| Refusal::or(4, e))?;
+    let python_modules = python::modules_for_run(&reach);
     let named: Vec<(String, String)> = compiled
         .iter()
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    // The run's native policy goes on whatever union came back, built or kept from an earlier
-    // run: a union nobody armed keeps `Natives::default()`, which is natives off.
     let python = python::union_for(&python_modules, &named, &mut |warning| {
         out.warning(&warning, false);
     })
-    .map_err(|e| Refusal::or(4, e))?
-    .map(|union| armed(union, &config, args));
+    .map_err(|e| Refusal::or(4, e))?;
     profile.phase(None, Phase::Union, micros(building));
 
     let agents = agent::AgentSource::discover();
@@ -382,6 +384,30 @@ async fn run_all(
     let extra_for_check = extra.clone();
     let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
     store.set_forks(forks);
+    // Where `setup` gets its facts, decided once for the whole run from everything its plays can
+    // read. The run's native policy goes on whatever union came back, built or kept from an
+    // earlier run: a union nobody armed keeps `Natives::default()`, which is natives off.
+    let facts = match args.facts {
+        Facts::Auto if config.native_modules => {
+            let plays: Vec<_> = playbooks
+                .iter()
+                .zip(&compiled)
+                .flat_map(|(pb, steps)| pb.plays.iter().zip(steps))
+                .collect();
+            let (facts, why) = facts_read::decide(&facts_read::facts_read(&plays, &reach, &store));
+            profile.facts(why);
+            facts
+        }
+        Facts::Auto => {
+            profile.facts("python (native modules are off)".into());
+            Facts::Python
+        }
+        forced => {
+            profile.facts(format!("{forced:?} (--facts)").to_lowercase());
+            forced
+        }
+    };
+    let python = python.map(|union| armed(union, config.native_modules, facts));
     let (run_tags, skip_tags) = selection.lists();
     store.set_tags(run_tags, skip_tags);
     let mut state = RunState {
@@ -485,13 +511,10 @@ async fn run_all(
 }
 
 /// `union` under the run's native policy: `[volant] native_modules` or `VOLANT_NATIVE_MODULES`,
-/// and `--facts`.
-fn armed(union: python::Union, config: &Config, args: &PlaybookArgs) -> python::Union {
+/// and where `setup` gets its facts.
+fn armed(union: python::Union, enabled: bool, facts: Facts) -> python::Union {
     python::Union {
-        natives: Natives {
-            enabled: config.native_modules,
-            facts: args.facts,
-        },
+        natives: Natives { enabled, facts },
         ..union
     }
 }
@@ -712,7 +735,7 @@ mod tests {
             let args =
                 PlaybookArgs::try_parse_from(["volant"].iter().chain(extra).chain(&["site.yml"]))
                     .unwrap();
-            armed(union.clone(), config, &args)
+            armed(union.clone(), config.native_modules, args.facts)
                 .payload(module)
                 .expect("the union holds it")
                 .force_python

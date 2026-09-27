@@ -122,9 +122,9 @@ fn fqdn(host: &Host, node: &str) -> Result<String, String> {
         let Some(address) = words.next() else {
             continue;
         };
-        let address = address.parse::<IpAddr>().map_err(|_| {
-            format!("/etc/hosts has an address the native does not read: {address}")
-        })?;
+        let address = address
+            .parse::<IpAddr>()
+            .map_err(|_| "/etc/hosts has an address the native does not read".to_string())?;
         lines.push((address, words.collect()));
     }
     let mut addresses = lines

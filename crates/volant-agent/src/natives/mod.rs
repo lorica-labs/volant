@@ -255,4 +255,151 @@ mod tests {
         page.sort_unstable();
         assert_eq!(ours, page);
     }
+
+    /// A hand-back provoked with a secret-looking value, for the reason guard below: the case,
+    /// the secret, and the reason the native gave (`None` when it did not hand back). A native
+    /// whose input is a host file or a command's output adds its cases from its own fake host.
+    #[cfg(target_os = "linux")]
+    pub(super) type Probe = (&'static str, &'static str, Option<String>);
+
+    /// A hand-back reason reaches the profile and its JSON file, which get shared: it names the
+    /// argument and why the native leaves it, never the value, a file's content or a command's
+    /// output, any of which can be a secret. One row per hand-back site that once quoted one.
+    ///
+    /// What would make this red: a reason that quotes a `regexp`, a `validate` program, a mode,
+    /// a state, an account, an id, a unit or package name the task gave, an apt source's URI,
+    /// suite, component, type, option value or line, a unit line, or a `PATH` entry.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_hand_back_reason_never_quotes_an_argument_value() {
+        use serde_json::json;
+
+        let scratch = common::golden::Scratch::new("reason-values");
+        let file = scratch.path("config.yaml");
+        std::fs::write(&file, "token: K3S0SECRET0E\n").unwrap();
+        std::fs::create_dir(scratch.path(".tmp")).unwrap();
+        let context = Context {
+            remote_tmp: scratch.path(".tmp"),
+            ..Context::default()
+        };
+        // Natives that take the value as an argument, run as the agent runs them.
+        let by_args = [
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "^token: K3S0SECRET0A**", "line": "x"}),
+                "K3S0SECRET0A",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "K3S0SECRET0B*+", "line": "x"}),
+                "K3S0SECRET0B",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "regexp": "(?<K3S0SECRET0C>x)", "line": "x"}),
+                "K3S0SECRET0C",
+            ),
+            (
+                "lineinfile",
+                json!({"path": file, "insertafter": "K3S0SECRET0D**", "line": "x"}),
+                "K3S0SECRET0D",
+            ),
+            (
+                "lineinfile",
+                json!({
+                    "path": file,
+                    "search_string": "token: K3S0SECRET0E",
+                    "line": "token: K3S0SECRET0F",
+                    "validate": "/nonexistent/K3S0SECRET0G %s",
+                }),
+                "K3S0SECRET0",
+            ),
+            (
+                "copy",
+                json!({"src": file, "dest": scratch.path("copied"), "mode": "+75318642"}),
+                "75318642",
+            ),
+            (
+                "file",
+                json!({"path": file, "state": "K3S0SECRET0H"}),
+                "K3S0SECRET0H",
+            ),
+            (
+                "file",
+                json!({"path": file, "owner": "+4815162342"}),
+                "4815162342",
+            ),
+            (
+                "user",
+                json!({"name": "volant-reason-probe", "group": "+4815162343"}),
+                "4815162343",
+            ),
+            (
+                "user",
+                json!({"name": "volant-reason-probe", "groups": ["+4815162344"]}),
+                "4815162344",
+            ),
+            (
+                "group",
+                json!({"name": "volant-reason-probe", "gid": "K3S0SECRET0L"}),
+                "K3S0SECRET0L",
+            ),
+            (
+                "group",
+                json!({"name": "volant-reason-probe", "state": "K3S0SECRET0M"}),
+                "K3S0SECRET0M",
+            ),
+            ("group", json!({"name": "K3S0SECRET0N:x"}), "K3S0SECRET0N"),
+            (
+                "systemd",
+                json!({"name": "volant-reason-probe.service", "state": "K3S0SECRET0O"}),
+                "K3S0SECRET0O",
+            ),
+            (
+                "systemd",
+                json!({"name": "K3S0SECRET0P.service", "masked": true}),
+                "K3S0SECRET0P",
+            ),
+            (
+                "systemd",
+                json!({"name": "K3S0SECRET0Q*.service", "state": "started"}),
+                "K3S0SECRET0Q",
+            ),
+            (
+                "setup",
+                json!({"gather_subset": ["k3s0secret0k"]}),
+                "k3s0secret0k",
+            ),
+        ];
+        let mut probes: Vec<Probe> = by_args
+            .into_iter()
+            .map(|(name, args, secret)| {
+                let ran = run(
+                    find(name).unwrap(),
+                    args.as_object().unwrap(),
+                    &context,
+                    &|| false,
+                );
+                let reason = match ran {
+                    NativeRun::Fallback(reason) => Some(reason),
+                    _ => None,
+                };
+                (name, secret, reason)
+            })
+            .collect();
+        // Natives that read the value from a host file or a command's output, on a fake host.
+        probes.extend(apt::tests::secret_probes());
+        probes.extend(package_facts::secret_probes());
+        probes.extend(service_facts::secret_probes());
+
+        let mut leaks = Vec::new();
+        for (case, secret, reason) in probes {
+            match reason {
+                Some(reason) if reason.contains(secret) => leaks.push(format!("{case}: {reason}")),
+                Some(_) => {}
+                None => leaks.push(format!("{case} did not hand back on {secret}")),
+            }
+        }
+        assert!(leaks.is_empty(), "reasons quote a value: {leaks:#?}");
+    }
 }

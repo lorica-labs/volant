@@ -36,6 +36,10 @@ pub const NATIVE: Native = Native {
     run: |_, _, _| NativeRun::Fallback("the native package_facts reads a Linux host".into()),
 };
 
+/// The reason guard's cases, for `natives::tests`.
+#[cfg(all(test, target_os = "linux"))]
+pub(super) use imp::tests::secret_probes;
+
 #[cfg(unix)]
 mod imp {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -271,7 +275,7 @@ mod imp {
         }
         for dir in dirs.into_iter().filter(|dir| !dir.is_empty()) {
             if !dir.starts_with('/') {
-                return Err(format!("PATH holds the relative directory {dir}"));
+                return Err("PATH holds a relative directory".into());
             }
             let path = root.path(&format!("{}/{name}", dir.trim_end_matches('/')));
             let executable = std::fs::metadata(&path)
@@ -486,10 +490,7 @@ mod imp {
                 .insert(prefix.clone(), &entry.trust)
                 .is_some_and(|seen| *seen != entry.trust)
             {
-                return Err(format!(
-                    "{} {} is given two different Signed-By or Trusted",
-                    entry.uri, entry.suite
-                ));
+                return Err("a source is given two different Signed-By or Trusted".into());
             }
             if !entry.binary {
                 continue;
@@ -501,14 +502,14 @@ mod imp {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || ".-".contains(c))
                 {
-                    return Err(format!("the component {component} is not a plain name"));
+                    return Err("a component is not a plain name".into());
                 }
                 for arch in archs {
                     packages.push(format!("{prefix}{component}_binary-{arch}_Packages"));
                 }
             }
             if packages.is_empty() {
-                return Err(format!("{} {} names no component", entry.uri, entry.suite));
+                return Err("a source names no component".into());
             }
             sources.push(Source { prefix, packages });
         }
@@ -560,10 +561,10 @@ mod imp {
             let binary = match kind {
                 "deb" => true,
                 "deb-src" => false,
-                _ => return Err(format!("the source type {kind} is not deb")),
+                _ => return Err("a source type is not deb".into()),
             };
             let [uri, suite, components @ ..] = &words[..] else {
-                return Err(format!("the source line {line:?} is incomplete"));
+                return Err("a source line is incomplete".into());
             };
             let mut archs = None;
             let mut trust = [None, None];
@@ -576,10 +577,10 @@ mod imp {
                     "signed-by" => trust[0] = Some(value.to_string()),
                     "trusted" => trust[1] = Some(value.to_string()),
                     "target" | "inrelease-path" | "snapshot" | "include" | "exclude" => {
-                        return Err(format!("the source option {option} changes its lists"));
+                        return Err(format!("the source option {key} changes its lists"));
                     }
                     _ if key.ends_with('+') || key.ends_with('-') => {
-                        return Err(format!("the source option {option} changes its lists"));
+                        return Err(format!("the source option {key} changes its lists"));
                     }
                     _ => {}
                 }
@@ -665,9 +666,7 @@ mod imp {
                     Some(false) => continue,
                     Some(true) => {}
                     None => {
-                        return Err(format!(
-                            "the source field Enabled: {value} is not a boolean"
-                        ));
+                        return Err("the source field Enabled is not a boolean".into());
                     }
                 }
             }
@@ -686,7 +685,7 @@ mod imp {
                 let binary = match kind.as_str() {
                     "deb" => true,
                     "deb-src" => false,
-                    _ => return Err(format!("the source type {kind} is not deb")),
+                    _ => return Err("a source type is not deb".into()),
                 };
                 for uri in words("URIs") {
                     for suite in words("Suites") {
@@ -705,13 +704,37 @@ mod imp {
         Ok(())
     }
 
+    /// The schemes other than http(s) apt's methods take, named when a source uses one.
+    const OTHER_SCHEMES: &[&str] = &[
+        "mirror",
+        "mirror+file",
+        "mirror+http",
+        "mirror+https",
+        "file",
+        "cdrom",
+        "copy",
+        "ftp",
+        "tor+http",
+        "tor+https",
+        "rsh",
+        "ssh",
+    ];
+
     /// apt's `URItoFileName` of `<uri>/dists/<suite>/`: the URI without its scheme, `/` turned
     /// into `_`. Only plain http(s) URIs and suites, which it leaves otherwise alone.
     pub(super) fn prefix(uri: &str, suite: &str) -> Result<String, String> {
         let rest = uri
             .strip_prefix("http://")
             .or_else(|| uri.strip_prefix("https://"))
-            .ok_or_else(|| format!("the source {uri} is not http or https"))?;
+            .ok_or_else(|| {
+                // Only a scheme on this list, which the code owns, is named: whatever the file
+                // holds past it, or in its place, can carry credentials.
+                let scheme = uri.split_once(':').map(|(scheme, _)| scheme);
+                match OTHER_SCHEMES.iter().find(|known| Some(**known) == scheme) {
+                    Some(known) => format!("the source scheme {known} is not http or https"),
+                    None => "a source whose scheme is not http or https".to_string(),
+                }
+            })?;
         let plain = |text: &str, extra: &str| {
             !text.is_empty()
                 && text
@@ -719,10 +742,10 @@ mod imp {
                     .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
         };
         if !plain(rest, ".-/:") || rest.contains("//") {
-            return Err(format!("the source {uri} is not a plain URI"));
+            return Err("a source URI is not a plain one".into());
         }
         if !plain(suite, ".-/") || suite.ends_with('/') {
-            return Err(format!("the suite {suite} is not a plain name"));
+            return Err("a suite is not a plain name".into());
         }
         let rest = rest.trim_end_matches('/');
         Ok(format!(
@@ -952,7 +975,7 @@ mod imp {
     }
 
     #[cfg(test)]
-    mod tests {
+    pub(super) mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::time::Duration;
 
@@ -960,6 +983,147 @@ mod imp {
 
         use super::*;
         use crate::natives::setup::unbounded;
+
+        /// The reason guard's cases (`natives::tests`): apt sources and a `PATH` whose every
+        /// field the native hands back on holds a secret-looking value.
+        #[cfg(target_os = "linux")]
+        pub(in crate::natives) fn secret_probes() -> Vec<crate::natives::tests::Probe> {
+            let example = "/etc/apt/sources.list.d/example.list";
+            let line = "deb [signed-by=/usr/share/keyrings/example.gpg] \
+                        https://repo.example.org/debian stable main";
+            let edited = |from: &str, to: &str| {
+                let tree = Tree::new(HOST);
+                tree.edit(example, from, to);
+                tree
+            };
+            let written = |path: &str, content: &str| {
+                let tree = Tree::new(HOST);
+                tree.write(path, content);
+                tree
+            };
+            let cases = vec![
+                (
+                    "package_facts scheme",
+                    "K3S0SECRET1A",
+                    edited("https://repo.", "K3S0SECRET1A:repo."),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts user info",
+                    "K3S0SECRET1B",
+                    edited("https://repo.", "https://user:K3S0SECRET1B@repo."),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts suite",
+                    "K3S0SECRET1C",
+                    edited("stable main", "sta~K3S0SECRET1C main"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts component",
+                    "K3S0SECRET1D",
+                    edited("stable main", "stable ma!nK3S0SECRET1D"),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts incomplete line",
+                    "K3S0SECRET1E",
+                    written(
+                        "/etc/apt/sources.list",
+                        "deb http://K3S0SECRET1E.example.org/debian\n",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts line type",
+                    "K3S0SECRET1F",
+                    written(
+                        "/etc/apt/sources.list",
+                        "deb-K3S0SECRET1F http://archive.example.org/debian stable main\n",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts option",
+                    "K3S0SECRET1G",
+                    edited("deb [signed-by=", "deb [target=K3S0SECRET1G signed-by="),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts option +",
+                    "K3S0SECRET1H",
+                    edited("deb [signed-by=", "deb [arch+=K3S0SECRET1H signed-by="),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts no component",
+                    "k3s0secret1i",
+                    edited(
+                        "https://repo.example.org/debian stable main",
+                        "https://k3s0secret1i.example.org/debian stable",
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts two Signed-By",
+                    "k3s0secret1j",
+                    written(
+                        example,
+                        &format!(
+                            "{}\n{}\n",
+                            line.replace("stable", "k3s0secret1j"),
+                            line.replace("stable", "k3s0secret1j")
+                                .replace("example.gpg", "other.gpg"),
+                        ),
+                    ),
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts Enabled",
+                    "K3S0SECRET1K",
+                    {
+                        let tree = Tree::new(HOST);
+                        let path = "/etc/apt/sources.list.d/ubuntu.sources";
+                        let full = tree.0.join(path.trim_start_matches('/'));
+                        let text = std::fs::read_to_string(&full).unwrap();
+                        std::fs::write(full, format!("{text}Enabled: K3S0SECRET1K\n")).unwrap();
+                        tree
+                    },
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts deb822 type",
+                    "K3S0SECRET1L",
+                    {
+                        let tree = Tree::new(HOST);
+                        tree.edit(
+                            "/etc/apt/sources.list.d/ubuntu.sources",
+                            "Types: deb\n",
+                            "Types: K3S0SECRET1L\n",
+                        );
+                        tree
+                    },
+                    "/usr/bin:/bin",
+                ),
+                (
+                    "package_facts PATH",
+                    "K3S0SECRET1M",
+                    Tree::new(HOST),
+                    "K3S0SECRET1M:/usr/bin",
+                ),
+            ];
+            cases
+                .into_iter()
+                .map(|(case, secret, tree, path)| {
+                    let reason = match tree.answer_with(json!({}), &[("PATH", path)]) {
+                        Err(Stop::HandBack(reason)) => Some(reason),
+                        _ => None,
+                    };
+                    (case, secret, reason)
+                })
+                .collect()
+        }
 
         /// A host as files: `=== <path>` starts each file, the lines up to the next header are its
         /// content. `/usr/bin/python3` stands for the interpreter the reference respawns under.
@@ -1612,7 +1776,7 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| tree.write("/etc/apt/sources.list.d/my repo.list", "")),
                 ),
                 (
-                    "the component ma!n is not a plain name",
+                    "a component is not a plain name",
                     Box::new(|tree| tree.edit(example, "stable main", "stable ma!n")),
                 ),
                 (
@@ -1620,15 +1784,15 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| tree.edit(example, "stable main", "stable")),
                 ),
                 (
-                    "the suite sta~ble is not a plain name",
+                    "a suite is not a plain name",
                     Box::new(|tree| tree.edit(example, "stable main", "sta~ble main")),
                 ),
                 (
-                    "is not a plain URI",
+                    "a source URI is not a plain one",
                     Box::new(|tree| tree.edit(example, "https://repo.", "https://user@repo.")),
                 ),
                 (
-                    "is incomplete",
+                    "a source line is incomplete",
                     Box::new(|tree| {
                         tree.write(
                             "/etc/apt/sources.list",
@@ -1637,7 +1801,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source type deb-foo is not deb",
+                    "a source type is not deb",
                     Box::new(|tree| {
                         tree.write(
                             "/etc/apt/sources.list",
@@ -1646,7 +1810,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source option target=Packages changes its lists",
+                    "the source option target changes its lists",
                     Box::new(|tree| {
                         tree.edit(
                             example,
@@ -1656,7 +1820,7 @@ Description: time zone and daylight-saving time data
                     }),
                 ),
                 (
-                    "the source option arch+=i386 changes its lists",
+                    "the source option arch+ changes its lists",
                     Box::new(|tree| {
                         tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=");
                     }),
@@ -1666,7 +1830,7 @@ Description: time zone and daylight-saving time data
                     Box::new(|tree| append(tree, ubuntu, "Snapshot: yes\n")),
                 ),
                 (
-                    "the source type rpm is not deb",
+                    "a source type is not deb",
                     Box::new(|tree| tree.edit(ubuntu, "Types: deb\n", "Types: rpm\n")),
                 ),
             ];
@@ -1681,10 +1845,7 @@ Description: time zone and daylight-saving time data
                 Err(Stop::HandBack(reason)) => reason,
                 other => panic!("a relative PATH answered: {other:?}"),
             };
-            assert!(
-                given.contains("PATH holds the relative directory bin"),
-                "{given}"
-            );
+            assert!(given.contains("PATH holds a relative directory"), "{given}");
             // A `deb-src` twin with the same `Signed-By` and a `sources.list` that exists are
             // read, and change nothing.
             let tree = Tree::new(HOST);

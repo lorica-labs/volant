@@ -253,7 +253,9 @@ fn request<'a>(params: &'a Map<String, Value>, clock: Clock) -> Result<Request<'
     Ok(Request {
         path,
         present,
-        regexp: regexp.map(compile).transpose()?,
+        regexp: regexp
+            .map(|pattern| compile("regexp", pattern))
+            .transpose()?,
         search_string: search_string.map(str::as_bytes),
         line,
         insertafter,
@@ -433,8 +435,8 @@ fn present(
     };
     let insertbefore = request.insertbefore;
     let ins = match (insertafter, insertbefore) {
-        (Some(after), _) if !matches!(after, "BOF" | "EOF") => Some(compile(after)?),
-        (_, Some(before)) if before != "BOF" => Some(compile(before)?),
+        (Some(after), _) if !matches!(after, "BOF" | "EOF") => Some(compile("insertafter", after)?),
+        (_, Some(before)) if before != "BOF" => Some(compile("insertbefore", before)?),
         _ => None,
     };
     let firstmatch = request.firstmatch;
@@ -769,13 +771,14 @@ fn message(msg: String) -> Map<String, Value> {
 }
 
 /// `re.compile(to_bytes(pattern))`, as a Rust expression that matches exactly the lines the
-/// Python one would find with `search`, or the reason there is none.
-fn compile(pattern: &str) -> Result<Regex, String> {
-    let rust = translate(pattern)?;
+/// Python one would find with `search`, or the reason there is none. The reason names the
+/// argument `name` and never quotes the pattern, which can carry a secret.
+fn compile(name: &str, pattern: &str) -> Result<Regex, String> {
+    let rust = translate(pattern).map_err(|why| format!("{name} holds {why}"))?;
     RegexBuilder::new(&rust)
         .unicode(false)
         .build()
-        .map_err(|err| format!("{pattern:?} does not compile: {err}"))
+        .map_err(|_| format!("{name} is an expression the Rust engine refuses"))
 }
 
 /// What the last item of the branch being read is, for Python's repeat rules.
@@ -844,9 +847,7 @@ fn translate(pattern: &str) -> Result<String, String> {
                         out.push('>');
                         at += end + 1;
                     } else {
-                        return Err(format!(
-                            "{pattern:?} holds a (? group other than (?: and (?P<name>"
-                        ));
+                        return Err("a (? group other than (?: and (?P<name>".into());
                     }
                 } else {
                     out.push('(');
@@ -891,7 +892,7 @@ fn translate(pattern: &str) -> Result<String, String> {
                     char::from(byte).to_string()
                 };
                 if last != Last::Item {
-                    return Err(format!("{pattern:?} repeats what Python refuses to repeat"));
+                    return Err("a repeat of what Python refuses to repeat".into());
                 }
                 out.push_str(&repeat);
                 match bytes.get(at) {
@@ -899,7 +900,7 @@ fn translate(pattern: &str) -> Result<String, String> {
                         out.push('?');
                         at += 1;
                     }
-                    Some(b'+') => return Err(format!("{pattern:?} holds a possessive repeat")),
+                    Some(b'+') => return Err("a possessive repeat".into()),
                     _ => {}
                 }
                 last = Last::Repeat;
@@ -962,7 +963,10 @@ fn escape(bytes: &[u8], at: usize, in_set: bool) -> Result<(Item, usize), String
         }
         // Back references, octal escapes, `\Z`, and letters Python refuses.
         _ if letter.is_ascii_alphanumeric() => {
-            return Err(format!("\\{} has no exact counterpart", char::from(letter)));
+            return Err(format!(
+                "the escape \\{} with no exact counterpart",
+                char::from(letter)
+            ));
         }
         _ => Item::Byte(letter),
     };
@@ -1539,7 +1543,7 @@ mod tests {
             (r"#x ", &[(b"#x y", true)]),
         ];
         for (pattern, lines) in cases {
-            let regex = compile(pattern).unwrap_or_else(|err| panic!("{pattern}: {err}"));
+            let regex = compile("regexp", pattern).unwrap_or_else(|err| panic!("{pattern}: {err}"));
             for (line, want) in *lines {
                 assert_eq!(regex.is_match(line), *want, "{pattern} on {line:?}");
             }
@@ -1558,7 +1562,10 @@ mod tests {
             r"[a",
             r"a\",
         ] {
-            assert!(compile(refused).is_err(), "{refused} was accepted");
+            assert!(
+                compile("regexp", refused).is_err(),
+                "{refused} was accepted"
+            );
         }
     }
 

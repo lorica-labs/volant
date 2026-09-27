@@ -90,8 +90,8 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `slurp` | Python module |
 | `stat` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `subversion` | Python module |
-| `systemd` | Python module |
-| `systemd_service` | Python module |
+| `systemd` | natively in the agent when its arguments allow it, as a Python module otherwise |
+| `systemd_service` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `sysvinit` | Python module |
 | `tempfile` | Python module |
 | `uri` | not supported yet: needs the `uri` action plugin |

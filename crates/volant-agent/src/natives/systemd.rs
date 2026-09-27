@@ -15,34 +15,25 @@
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use serde_json::{Map, Value};
-use volant_protocol::TaskResult;
 
 use crate::modules::Context;
-use crate::natives::common::{ArgSpec, invocation};
-use crate::natives::setup::{self, Clock, Root, Stop, py_space, py_strip};
-use crate::natives::{Native, NativeRun};
+use crate::natives::Native;
+use crate::natives::common::{
+    ArgSpec, Clock, Stop, bool_param, check_names, clock, invocation, native_run, str_param,
+};
+use crate::natives::setup::{self, Root, py_space, py_strip};
 
 pub const NATIVE: Native = Native {
     name: "systemd",
     aliases: &["systemd_service"],
     enabled: true,
     run: |args, context, cancelled| {
-        let clock = Clock {
-            deadline: context.timeout.map(|timeout| Instant::now() + timeout),
-            cancelled,
-        };
-        match answer(args, context, clock, "/etc") {
-            Ok(result) => NativeRun::Done(TaskResult(result)),
-            Err(Stop::HandBack(reason)) => NativeRun::Fallback(reason),
-            // What the Python path answers when the module outlives the task's `timeout`.
-            Err(Stop::TimedOut) => NativeRun::Done(TaskResult::timed_out(
-                context.timeout.unwrap_or_default().as_secs(),
-            )),
-            Err(Stop::Cancelled) => NativeRun::Cancelled,
-        }
+        native_run(
+            answer(args, context, clock(context, cancelled), "/etc"),
+            context,
+        )
     },
 };
 
@@ -130,38 +121,16 @@ fn request<'a>(
     args: &Map<String, Value>,
     params: &'a Map<String, Value>,
 ) -> Result<Request<'a>, String> {
-    for key in args.keys() {
-        if !SPEC
-            .iter()
-            .any(|arg| arg.name == key || arg.aliases.contains(&key.as_str()))
-        {
-            return Err(format!("argument {key} is unknown here"));
-        }
-    }
-    for arg in SPEC {
-        let names = std::iter::once(arg.name).chain(arg.aliases.iter().copied());
-        if names.filter(|name| args.contains_key(*name)).count() > 1 {
-            return Err(format!("{} is given under more than one name", arg.name));
-        }
-    }
+    check_names(SPEC, args)?;
     // The module converts `"yes"`, `1` and the like, and a number given as a string, and shows
     // the converted value in `invocation`; it also words the refusals. Only JSON's own types
     // are read here.
     let optional_bool = |name: &str| match &params[name] {
         Value::Null => Ok(None),
-        Value::Bool(value) => Ok(Some(*value)),
-        _ => Err(format!("{name} is not a boolean")),
+        _ => bool_param(params, name).map(Some),
     };
-    let flag = |name: &str| {
-        params[name]
-            .as_bool()
-            .ok_or_else(|| format!("{name} is not a boolean"))
-    };
-    let unit = match &params["name"] {
-        Value::Null => None,
-        Value::String(unit) => Some(unit.as_str()),
-        _ => return Err("name is not a string".into()),
-    };
+    let flag = |name: &str| bool_param(params, name);
+    let unit = str_param(params, "name")?;
     let state = match &params["state"] {
         Value::Null => None,
         Value::String(state) if STATES.contains(&state.as_str()) => Some(state.as_str()),
@@ -584,8 +553,11 @@ mod tests {
     use std::time::Duration;
 
     use serde_json::json;
+    use volant_protocol::TaskResult;
 
     use super::*;
+    use crate::natives::NativeRun;
+    use crate::natives::common::golden::within;
     use crate::natives::setup::unbounded;
 
     /// `systemctl show cron` on an Ubuntu 24.04 host (systemd 255), with its `InvocationID`
@@ -1105,22 +1077,14 @@ esac"#,
         let mut context = fake.context();
         context.timeout = Some(Duration::from_secs(1));
         let task = args(json!({"name": "u", "state": "started"}));
-        let within = |f: Box<dyn FnOnce() -> NativeRun + Send>| {
-            let (sent, got) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = sent.send(f());
-            });
-            got.recv_timeout(Duration::from_secs(30))
-                .expect("the native did not stop at the task's timeout or cancel")
-        };
         let (task1, context1) = (task.clone(), context.clone());
-        let run = within(Box::new(move || (NATIVE.run)(&task1, &context1, &|| false)));
+        let run = within(30, move || (NATIVE.run)(&task1, &context1, &|| false));
         let NativeRun::Done(result) = run else {
             panic!("a timeout is an answer")
         };
         assert_eq!(result, TaskResult::timed_out(1));
         context.timeout = None;
-        let run = within(Box::new(move || (NATIVE.run)(&task, &context, &|| true)));
+        let run = within(30, move || (NATIVE.run)(&task, &context, &|| true));
         assert!(matches!(run, NativeRun::Cancelled));
     }
 }

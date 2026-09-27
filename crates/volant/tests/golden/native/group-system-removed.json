@@ -1,0 +1,20 @@
+{
+  "_ansible_no_log": false,
+  "action": "group",
+  "changed": true,
+  "invocation": {
+    "module_args": {
+      "force": false,
+      "gid": null,
+      "gid_max": null,
+      "gid_min": null,
+      "local": false,
+      "name": "volantgrp",
+      "non_unique": false,
+      "state": "absent",
+      "system": false
+    }
+  },
+  "name": "volantgrp",
+  "state": "absent"
+}

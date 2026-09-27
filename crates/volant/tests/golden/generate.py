@@ -692,9 +692,11 @@ NATIVE_USER = "volantshape"
 # A group of its own, not the user's name: `userdel` deletes a primary group named after the user,
 # which would leave `group-removed` nothing to remove.
 NATIVE_GROUP = "volantgrp"
-# The account's home, which no case creates; removed before and after all the same, since a
-# `user` task that leaves `create_home` at its default creates it.
+# The account's home, which `user-created-home` creates (`useradd -m`); removed before and after
+# all the same.
 NATIVE_HOME = "/nonexistent-volantshape"
+# Where `user-home-moved` points the account, which nothing creates.
+NATIVE_HOME_MOVED = "/nonexistent-volantshape-moved"
 STAT_VOLATILE = [f"stat.{key}" for key in ("atime", "mtime", "ctime", "inode", "dev", "version")]
 # The `systemctl show` properties that move while a unit runs: times, process ids, the invocation,
 # resource counters. Every other `status` value is compared.
@@ -1260,10 +1262,21 @@ def natives():
     # The account and group are removed before the first case that creates them, in case an
     # interrupted run left them behind (`group-created` would record "no change"), and again in
     # `always`, which runs even when a case fails.
+    # Accounts first: `groupdel` refuses a group that is still an account's primary one. The
+    # account `user-same-name-group` names after the group, and the user group
+    # `user-created-home` gets, go too.
     removal = [
-        {"name": f"cleanup-{module}", module: {"name": who, "state": "absent"}, "become": True}
-        for module, who in (("user", NATIVE_USER), ("group", NATIVE_GROUP))
-    ] + [{"name": "cleanup-home", "file": {"path": NATIVE_HOME, "state": "absent"}, "become": True}]
+        {"name": f"cleanup-{name}", module: {"name": who, "state": "absent"}, "become": True}
+        for name, module, who in (
+            ("user", "user", NATIVE_USER),
+            ("user-named-group", "user", NATIVE_GROUP),
+            ("group", "group", NATIVE_GROUP),
+            ("user-group", "group", NATIVE_USER),
+        )
+    ] + [
+        {"name": f"cleanup-{name}", "file": {"path": path, "state": "absent"}, "become": True}
+        for name, path in (("home", NATIVE_HOME), ("home-moved", NATIVE_HOME_MOVED))
+    ]
     if sudo:
         tasks.extend(dict(task, name=f"{task['name']}-before") for task in removal)
     account = {
@@ -1293,7 +1306,58 @@ def natives():
     )
     case("user-removed", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
     case("user-absent-missing", "user", {"name": NATIVE_USER, "state": "absent"}, same, become=True)
+    # The account again, from the module's defaults: `create_home` left true makes `useradd -m`
+    # create NATIVE_HOME from the skeleton, and no `group` gives it a user group of its own name,
+    # a second group for the membership cases. `groups` and `comment` at creation too.
+    home_account = {
+        "name": NATIVE_USER,
+        "uid": 64998,
+        "home": NATIVE_HOME,
+        "groups": [NATIVE_GROUP],
+        "comment": "Volant shape",
+    }
+    # The user group's gid is the next free one on the machine that records.
+    case("user-created-home", "user", home_account, changed, volatile=["group"], become=True)
+    case("user-home-same", "user", home_account, same, volatile=["group"], become=True)
+    # A uid, a primary group given by name (usermod takes its gid) and a comment, at once.
+    case(
+        "user-comment-uid-group",
+        "user",
+        {"name": NATIVE_USER, "uid": 64997, "group": NATIVE_GROUP, "comment": "Volant shape 2"},
+        changed,
+        become=True,
+    )
+    # The memberships, from volantgrp alone: `-a -G` adds one; `append` where only a removal
+    # differs runs nothing; without `append` the missing one goes; `[]` clears; a string is split
+    # on commas; `""` clears too.
+    member = {"name": NATIVE_USER}
+    case("user-groups-append", "user", dict(member, groups=[NATIVE_USER], append=True), changed, become=True)
+    case("user-groups-append-same", "user", dict(member, groups=[NATIVE_GROUP], append=True), same, become=True)
+    case("user-groups-remove", "user", dict(member, groups=[NATIVE_USER]), changed, become=True)
+    case("user-groups-cleared", "user", dict(member, groups=[]), changed, become=True)
+    case("user-groups-string", "user", dict(member, groups=f"{NATIVE_GROUP},{NATIVE_USER}"), changed, become=True)
+    case("user-groups-empty-string", "user", dict(member, groups=""), changed, become=True)
+    case("user-groups-cleared-same", "user", dict(member, groups=[]), same, become=True)
+    # `usermod -d` alone: `create_home: false`, so nothing creates the new home.
+    case("user-home-moved", "user", dict(member, home=NATIVE_HOME_MOVED, create_home=False), changed, become=True)
+    # Its own group as primary again, so `userdel` takes that group with the account.
+    case("user-group-back", "user", dict(member, group=NATIVE_USER, create_home=False), changed, volatile=["group"], become=True)
+    case("user-removed-home", "user", {"name": NATIVE_USER, "state": "absent"}, changed, become=True)
+    # An account named after an existing group: `useradd -N`, no user group; and `-r`.
+    case(
+        "user-same-name-group",
+        "user",
+        {"name": NATIVE_GROUP, "uid": 64996, "system": True, "create_home": False, "home": NATIVE_HOME},
+        changed,
+        become=True,
+    )
+    case("user-same-name-group-removed", "user", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
+    case("group-gid-changed", "group", {"name": NATIVE_GROUP, "gid": 64995}, changed, become=True)
     case("group-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
+    system_group = {"name": NATIVE_GROUP, "gid": 64999, "system": True}
+    case("group-system-created", "group", system_group, changed, become=True)
+    case("group-system-same", "group", system_group, same, become=True)
+    case("group-system-removed", "group", {"name": NATIVE_GROUP, "state": "absent"}, changed, become=True)
 
     block = {"block": tasks}
     if sudo:
@@ -1352,9 +1416,10 @@ def natives():
     finally:
         os.umask(umask)
     if sudo:
-        left = [f"{db} {who}" for db, who in (("passwd", NATIVE_USER), ("group", NATIVE_GROUP)) if _succeeds("getent", db, who)]
+        accounts = [("passwd", NATIVE_USER), ("passwd", NATIVE_GROUP), ("group", NATIVE_GROUP), ("group", NATIVE_USER)]
+        left = [f"{db} {who}" for db, who in accounts if _succeeds("getent", db, who)]
         left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
-        left += [NATIVE_HOME] * os.path.exists(NATIVE_HOME)
+        left += [home for home in (NATIVE_HOME, NATIVE_HOME_MOVED) if os.path.exists(home)]
         if left:
             print(f"still on this machine: {', '.join(left)}; remove by hand", file=sys.stderr)
             return 1

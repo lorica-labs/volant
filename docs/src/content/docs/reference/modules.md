@@ -78,20 +78,20 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `known_hosts` | Python module |
 | `lineinfile` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `mount_facts` | Python module |
-| `package_facts` | Python module |
+| `package_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `ping` | Python module |
 | `pip` | Python module |
 | `replace` | Python module |
 | `rpm_key` | Python module |
 | `script` | not supported yet: needs the `script` action plugin |
-| `service_facts` | Python module |
+| `service_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `set_stats` | not supported yet: needs the `set_stats` action plugin |
 | `setup` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `slurp` | Python module |
 | `stat` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `subversion` | Python module |
-| `systemd` | Python module |
-| `systemd_service` | Python module |
+| `systemd` | natively in the agent when its arguments allow it, as a Python module otherwise |
+| `systemd_service` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `sysvinit` | Python module |
 | `tempfile` | Python module |
 | `uri` | not supported yet: needs the `uri` action plugin |

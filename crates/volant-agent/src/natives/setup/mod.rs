@@ -833,7 +833,7 @@ impl Host<'_> {
 
 /// `module.get_bin_path(name)`: the first executable file of that name along `PATH`, with
 /// `/sbin`, `/usr/sbin` and `/usr/local/sbin` added when missing.
-fn bin_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
+pub fn bin_path(root: &Root, env: &BTreeMap<String, String>, name: &str) -> Option<PathBuf> {
     let mut dirs: Vec<String> = env
         .get("PATH")
         .map(String::as_str)
@@ -974,7 +974,7 @@ fn is_executable_file(path: &Path) -> bool {
 
 /// Python's `str.isspace` for one character: Rust's whitespace plus the four separators
 /// `\x1c`-`\x1f`.
-fn py_space(c: char) -> bool {
+pub fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
 }
 

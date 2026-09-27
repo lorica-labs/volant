@@ -669,6 +669,7 @@ pub fn realpath(path: &str) -> Result<String, String> {
 mod tests {
     use serde_json::json;
 
+    #[cfg(target_os = "linux")]
     use super::super::setup::unbounded;
     use super::*;
 
@@ -927,7 +928,7 @@ esac"#,
 /// What the natives' tests compare against: the recordings of ansible-core 2.19.12 under
 /// `crates/volant/tests/golden/native/`, taken on a scratch directory like the one the golden
 /// test builds.
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub mod golden {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

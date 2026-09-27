@@ -670,7 +670,7 @@ fn write_changes(
         let argv = shlex::split(&validate.replace("%s", &tmp.0)).unwrap_or_default();
         let (program, args) = argv
             .split_first()
-            .ok_or_else(|| fail(format!("validate names no program: {validate}"), None))?;
+            .ok_or_else(|| fail("validate names no program".into(), None))?;
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         match run_output(&BTreeMap::new(), clock, Path::new(program), &args)? {
             Ok((0, _, _)) => {}
@@ -1662,6 +1662,26 @@ mod tests {
             "an immutable file was answered"
         );
         assert_eq!(after, before);
+    }
+
+    /// A `validate` that splits into no program fails without quoting the command, which can
+    /// carry a secret: the reference, whose `shlex.split` raises on it, quotes none of it. The
+    /// up-front check hands such a `validate` back, so only the write itself reaches this.
+    ///
+    /// What would make this red: the message carrying the `validate` value.
+    #[test]
+    fn a_validate_naming_no_program_is_not_quoted() {
+        let (scratch, context) = scratch("lineinfile-no-program");
+        let args = json!({"path": scratch.path("f.conf"), "line": "b=2", "validate": "'secret %s"});
+        let cancelled = || false;
+        let clock = clock(&context, &cancelled);
+        let params = module_args(SPEC, args.as_object().unwrap());
+        let request = request(&params, clock).ok().unwrap();
+        let Err(Stop::Fail(fail)) = write_changes(&request, b"b=2\n", &context.remote_tmp, clock)
+        else {
+            panic!("the write did not fail");
+        };
+        assert_eq!(fail["msg"], "validate names no program");
     }
 
     /// A `validate` that fails leaves the file as it was, with the reference's message: the

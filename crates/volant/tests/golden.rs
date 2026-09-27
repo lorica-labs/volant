@@ -1870,6 +1870,65 @@ fn only_a_host_outside_the_native_setup_excuses_its_hand_back() {
     );
 }
 
+/// Whether a `package_facts` hand-back is the host's apt sources naming a scheme other than
+/// http(s), which the native does not read (`the source <uri> is not http or https`), rather
+/// than the native failing on a host it should answer.
+#[cfg(target_os = "linux")]
+fn package_facts_host_exit(reason: &str) -> bool {
+    reason.starts_with("the source ")
+        && reason.ends_with(" is not http or https")
+        && !reason.starts_with("the source http://")
+        && !reason.starts_with("the source https://")
+}
+
+/// A `package_facts` handed back because the host's apt sources use another scheme (the CI
+/// runner's `mirror+file:`) is said and passes; handed back for anything else, it is red, so a
+/// host whose sources are all http(s) still has to be answered natively.
+///
+/// What would make this red: the exception widened to every hand-back, to an http(s) source, or
+/// to another module.
+#[cfg(target_os = "linux")]
+#[test]
+fn only_a_source_scheme_excuses_a_package_facts_hand_back() {
+    let judge = |module: &str, reason: &str| {
+        let profile = NativeProfile {
+            natives: Some(vec!["package_facts".into(), "stat".into()]),
+            tasks: vec![serde_json::json!({
+                "host": "localhost", "task": "c", "module": module, "path": "fallback", "reason": reason,
+            })],
+        };
+        let spec = serde_json::json!({"module": module, "expect": "native"});
+        let mut failures = Vec::new();
+        check_native_path("c", &spec, &profile, &mut failures);
+        failures
+    };
+    for scheme in [
+        "the source mirror+file:/etc/apt/apt-mirrors.txt is not http or https",
+        "the source mirror://mirrors.example.org/list is not http or https",
+    ] {
+        assert_eq!(judge("package_facts", scheme), Vec::<String>::new());
+        assert_eq!(
+            judge("stat", scheme),
+            vec![format!(
+                "case c: path fallback ({scheme}), index says native"
+            )]
+        );
+    }
+    for other in [
+        "the source http://archive.example.org/ubuntu is not http or https",
+        "x_Packages is a list no configured source names",
+        "python3-apt is not installed for /usr/bin/python3",
+        "the source https://archive.example.org/ubuntu/ is not a plain URI",
+    ] {
+        assert_eq!(
+            judge("package_facts", other),
+            vec![format!(
+                "case c: path fallback ({other}), index says native"
+            )]
+        );
+    }
+}
+
 /// The path the case's own module took, against the one it must take: the index's when the agent
 /// declared a native for the module, `python` otherwise. A plugin's sub-tasks (`copy`'s `stat`)
 /// have lines of their own under the same task and are not the case's.
@@ -1934,6 +1993,21 @@ fn check_native_path(
             eprintln!(
                 "case {case}: this host is outside the native setup's subset{why}: compared on \
                  the Python answer"
+            );
+            continue;
+        }
+        // A host whose apt sources use a scheme the native does not name lists for (GitHub's
+        // runner reads `mirror+file:`, measured) hands `package_facts` back: said, and compared
+        // on the Python answer. Only that reason: on a host with http(s) sources alone, any
+        // hand-back is still red.
+        if native
+            && module == "package_facts"
+            && got == "fallback"
+            && line["reason"].as_str().is_some_and(package_facts_host_exit)
+        {
+            eprintln!(
+                "case {case}: this host's apt sources are outside the native package_facts{why}: \
+                 compared on the Python answer"
             );
             continue;
         }

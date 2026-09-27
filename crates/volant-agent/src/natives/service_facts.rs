@@ -169,9 +169,18 @@ mod imp {
             }
             Ok((sysv.expect("received"), systemd.expect("received")))
         })?;
+        // A deadline or a cancel on either side wins over the other side's hand-back: handing
+        // back would run the module again, past a deadline already spent.
+        let (sysv, systemd) = match (sysv, systemd) {
+            (Ok(sysv), Ok(systemd)) => (sysv, systemd),
+            (Err(stop @ (Stop::TimedOut | Stop::Cancelled)), _)
+            | (_, Err(stop @ (Stop::TimedOut | Stop::Cancelled)))
+            | (Err(stop), _)
+            | (_, Err(stop)) => return Err(stop),
+        };
         // `all_services.update(...)`, SysV first.
         let mut services = Map::new();
-        for (name, service) in sysv?.into_iter().chain(systemd?) {
+        for (name, service) in sysv.into_iter().chain(systemd) {
             services.insert(name, Value::Object(service));
         }
         if services.is_empty() {
@@ -904,6 +913,39 @@ esac
                     "{path}: the hung command was waited for"
                 );
             }
+        }
+
+        /// A SysV hand-back does not win over systemd's deadline or cancel: the task ends with
+        /// the stop, not with a hand-back that would run the module past its deadline.
+        ///
+        /// What would make this red: the SysV result read before systemd's stop.
+        #[test]
+        fn a_stop_wins_over_a_hand_back_from_the_other_listing() {
+            let script = SYSTEMCTL.replacen(
+                "#!/bin/sh\n",
+                "#!/bin/sh\n[ \"$1\" = list-unit-files ] && exec sleep 60\n",
+                1,
+            );
+            let host = Host::new();
+            host.command("/usr/sbin/service", "#!/bin/sh\nexit 3\n");
+            host.command("/usr/bin/systemctl", &script);
+            let started = Instant::now();
+            let never = || false;
+            let clock = Clock {
+                deadline: Some(Instant::now() + Duration::from_millis(500)),
+                cancelled: &never,
+            };
+            let answer = host.answer_with(clock);
+            assert!(matches!(answer, Err(Stop::TimedOut)), "{answer:?}");
+            let calls = AtomicUsize::new(0);
+            let soon = || calls.fetch_add(1, Ordering::Relaxed) > 3;
+            let clock = Clock {
+                deadline: None,
+                cancelled: &soon,
+            };
+            let answer = host.answer_with(clock);
+            assert!(matches!(answer, Err(Stop::Cancelled)), "{answer:?}");
+            assert!(started.elapsed() < Duration::from_secs(30));
         }
 
         /// A unit name a shell rewrites is sent through the shell, as the reference sends it:

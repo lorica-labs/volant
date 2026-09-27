@@ -44,8 +44,8 @@ mod linux {
     use super::NativeRun;
     use crate::modules::Context;
     use crate::natives::common::{
-        Account, ArgSpec, Clock, Group, Stop, bool_param, check_names, clock, group_account,
-        invocation, lookup_group, native_run, str_param,
+        Account, ArgSpec, Clock, Group, Stop, bool_param, check_names, clock, files_first,
+        group_account, invocation, lookup_group, native_run, str_param,
     };
     use crate::natives::setup::{self, Root};
 
@@ -54,14 +54,8 @@ mod linux {
         context: &Context,
         cancelled: &dyn Fn() -> bool,
     ) -> NativeRun {
-        native_run(
-            answer(args, context, clock(context, cancelled), NSSWITCH),
-            context,
-        )
+        native_run(answer(args, context, clock(context, cancelled)), context)
     }
-
-    /// Where the C library reads which sources answer for accounts and groups.
-    pub const NSSWITCH: &str = "/etc/nsswitch.conf";
 
     /// `group`'s `argument_spec` in ansible-core 2.19.12.
     const SPEC: &[ArgSpec] = &[
@@ -178,10 +172,10 @@ mod linux {
     }
 
     /// The host checks made before anything else: a Debian or Ubuntu host, where the module
-    /// takes its generic `User` and its `Linux` group class, with SELinux off, whose `nsswitch`
-    /// (the file `nsswitch`) asks `files` first for accounts and groups: another source first
-    /// answers `pwd` and `grp` with entries the commands, which edit the files, never see.
-    pub fn host_gate(nsswitch: &str) -> Result<(), String> {
+    /// takes its generic `User` and its `Linux` group class, with SELinux off, whose
+    /// `nsswitch.conf` asks `files` first for accounts and groups: another source first answers
+    /// `pwd` and `grp` with entries the commands, which edit the files, never see.
+    pub fn host_gate() -> Result<(), String> {
         let os_release = std::fs::read_to_string("/etc/os-release")
             .map_err(|err| format!("reading /etc/os-release: {err}"))?;
         let id = os_release
@@ -195,30 +189,14 @@ mod linux {
         if crate::natives::common::selinux_enabled() {
             return Err("SELinux is on".into());
         }
-        let conf = std::fs::read_to_string(nsswitch).ok();
         for db in ["passwd", "group"] {
-            if !files_first(conf.as_deref(), db) {
+            if !files_first(db) {
                 return Err(format!(
                     "nsswitch.conf asks another source before files for {db}"
                 ));
             }
         }
         Ok(())
-    }
-
-    /// Whether `conf`, the text of `nsswitch.conf` if there is one, asks `files` first for `db`.
-    /// glibc's default without the file is `files` first as well. The rule of
-    /// `common::lookup`, which keeps its own copy private.
-    pub fn files_first(conf: Option<&str>, db: &str) -> bool {
-        let Some(conf) = conf else {
-            return true;
-        };
-        conf.lines()
-            .filter_map(|line| line.split('#').next()?.trim().strip_prefix(db))
-            .find_map(|rest| rest.trim_start().strip_prefix(':'))
-            .is_none_or(|sources| {
-                matches!(sources.split_whitespace().next(), Some("files" | "compat"))
-            })
     }
 
     /// `module.get_bin_path(name, required=True)` along the module's `PATH`. A missing command
@@ -328,12 +306,11 @@ mod linux {
         args: &Map<String, Value>,
         context: &Context,
         clock: Clock,
-        nsswitch: &str,
     ) -> Result<Map<String, Value>, Stop> {
         let invocation = invocation(SPEC, args);
         let params = invocation["module_args"].as_object().unwrap();
         let request = request(args, params)?;
-        host_gate(nsswitch)?;
+        host_gate()?;
         let found = find_group(request.name, clock)?;
         let name = request.name;
         // Decided, and the command found, before anything runs.
@@ -462,7 +439,7 @@ mod linux {
             /// name service before `files`), checks the documented hand-back through `ask` and
             /// says so: the caller then stops, having checked what this host allows.
             pub fn outside(&self, ask: Ask) -> bool {
-                let Err(reason) = host_gate(NSSWITCH) else {
+                let Err(reason) = host_gate() else {
                     return false;
                 };
                 let answer = ask(&args(json!({"name": "root"})), &self.context);
@@ -483,11 +460,11 @@ mod linux {
             }
         }
 
-        /// A native's answer to a task on this host's own `nsswitch.conf`.
+        /// A native's answer to a task, as the agent runs it.
         pub type Ask = fn(&Map<String, Value>, &Context) -> Result<Map<String, Value>, Stop>;
 
         fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, Stop> {
-            answer(args, context, unbounded(), NSSWITCH)
+            answer(args, context, unbounded())
         }
 
         fn bin_of(context: &Context, name: &str) -> String {
@@ -638,43 +615,6 @@ mod linux {
             }
             assert_eq!(fakes.argv("groupadd"), None);
             assert_eq!(fakes.argv("groupdel"), None);
-        }
-
-        /// A host whose `nsswitch.conf` puts another source before `files` for accounts or
-        /// groups hands back before any command; `files` or `compat` first does not, nor does a
-        /// host without the file.
-        ///
-        /// What would make this red: the gate not reading `nsswitch.conf`, which lets `groupmod`
-        /// edit a file entry that `grp`, asking the directory first, does not answer with.
-        #[test]
-        fn another_name_service_before_files_hands_back() {
-            let fakes = Fakes::new("group-nsswitch", &["groupmod"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let conf = fakes.scratch.path("nsswitch.conf");
-            for text in [
-                "passwd: files\ngroup: sss files\n",
-                "passwd: sss files\ngroup: files\n",
-            ] {
-                std::fs::write(&conf, text).unwrap();
-                let answer = answer(
-                    &args(json!({"name": "root", "gid": 5})),
-                    &fakes.context,
-                    unbounded(),
-                    &conf,
-                );
-                assert!(
-                    matches!(answer, Err(Stop::HandBack(_))),
-                    "{text:?} was answered"
-                );
-            }
-            assert_eq!(fakes.argv("groupmod"), None);
-            std::fs::write(&conf, "# sss\npasswd: compat\ngroup:\tfiles systemd\n").unwrap();
-            let args = args(json!({"name": "root", "gid": 5}));
-            answer(&args, &fakes.context, unbounded(), &conf).unwrap();
-            assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
-            assert!(files_first(None, "group"));
         }
     }
 }

@@ -272,7 +272,7 @@ fn lookup(
 
 /// Whether `nsswitch.conf` asks `files` first for `db`, so that an entry found there is the one
 /// the C library returns. glibc's default, without the file, is `files` first as well.
-fn files_first(db: &str) -> bool {
+pub(crate) fn files_first(db: &str) -> bool {
     let Ok(conf) = fs::read_to_string("/etc/nsswitch.conf") else {
         return true;
     };

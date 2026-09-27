@@ -661,6 +661,13 @@ fn from_timestamp(sec: i64, nsec: i64) -> (i64, i64) {
 }
 
 /// The local zone's offset from UTC at `seconds`, as the C library reads it.
+#[cfg_attr(
+    target_env = "musl",
+    expect(
+        deprecated,
+        reason = "libc marks `time_t` deprecated on musl ahead of its 64-bit change"
+    )
+)]
 fn utc_offset(seconds: i64) -> Option<libc::c_long> {
     let time = libc::time_t::try_from(seconds).ok()?;
     // SAFETY: `tm` is plain data, and `localtime_r` writes it whole or returns null.

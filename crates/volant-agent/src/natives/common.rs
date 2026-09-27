@@ -718,6 +718,109 @@ pub fn realpath(path: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{path} does not resolve"))
 }
 
+/// `os.path.dirname(path)`, for a path without repeated slashes.
+pub fn parent(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(0) => "/",
+        Some(at) => &path[..at],
+        None => "",
+    }
+}
+
+/// Whether the path, or the file a link there names, carries any extended attribute, ACLs
+/// included: what `shutil.copystat` would copy.
+#[cfg(target_os = "linux")]
+pub fn has_xattrs(path: &str) -> bool {
+    let Ok(path) = CString::new(path) else {
+        return true;
+    };
+    // SAFETY: a null buffer of size 0 asks only for the size of the list.
+    let size = unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
+    size != 0 && !(size < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP))
+}
+
+/// `FS_IMMUTABLE_FL` and `FS_APPEND_FL`.
+pub const IMMUTABLE: libc::c_long = 0x10;
+pub const APPEND: libc::c_long = 0x20;
+/// The flags a fresh copy on the same file system gets anyway: ext4's extents and inline data.
+pub const AUTOMATIC: libc::c_long = 0x0008_0000 | 0x1000_0000;
+
+/// Whether the file at `path` (a link followed) has one of the inode flags in `mask`. `lsattr`
+/// fails where the flags cannot be read, and the reference then copies none; a file that cannot
+/// be opened counts as flagged.
+#[cfg(target_os = "linux")]
+pub fn has_flags(path: &str, mask: libc::c_long) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return true;
+    };
+    let mut flags: libc::c_long = 0;
+    // SAFETY: FS_IOC_GETFLAGS writes one `long` through the pointer.
+    let rc = unsafe {
+        libc::ioctl(
+            std::os::fd::AsRawFd::as_raw_fd(&file),
+            libc::FS_IOC_GETFLAGS,
+            &raw mut flags,
+        )
+    };
+    rc == 0 && flags & mask != 0
+}
+
+/// Elsewhere a native hands every task back before it gets here.
+#[cfg(not(target_os = "linux"))]
+pub fn has_xattrs(_: &str) -> bool {
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn has_flags(_: &str, _: libc::c_long) -> bool {
+    true
+}
+
+/// Where `subprocess` finds `program`: as given with a `/`, otherwise along `PATH`, or
+/// `/bin:/usr/bin` without one.
+pub fn exec_path(program: &str) -> Option<String> {
+    let runnable = |path: &str| {
+        fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        return runnable(program).then(|| program.to_string());
+    }
+    std::env::var("PATH")
+        .unwrap_or_else(|_| "/bin:/usr/bin".into())
+        .split(':')
+        .map(|dir| format!("{}/{program}", if dir.is_empty() { "." } else { dir }))
+        .find(|candidate| runnable(candidate))
+}
+
+/// Why a `validate` holding `%s` would not run as the reference runs `validate % path`, or
+/// `Ok` when it would. `what` names the path in the reason.
+pub fn validate_runs_as_python(validate: &str, path: &str, what: &str) -> Result<(), String> {
+    // `validate % path` is Python's formatting, and `run_command` expands `~` and `$VAR` in
+    // every argument.
+    if validate.matches('%').count() != 1 || validate.contains(['$', '~']) {
+        return Err("validate is formatted or expanded by Python".into());
+    }
+    // Where the `shlex` crate and Python's `shlex.split` part ways: the crate reads `#` as a
+    // comment, drops a backslash before a backtick in double quotes, and keeps a carriage return
+    // inside a word.
+    if validate.contains(['#', '`', '\r', '\\']) {
+        return Err("validate would not split as Python splits it".into());
+    }
+    if !path
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
+    {
+        return Err(format!("{what} would be split or expanded in validate"));
+    }
+    let argv = shlex::split(&validate.replace("%s", path))
+        .ok_or("validate does not split as a command line")?;
+    let program = argv.first().ok_or("validate names no program")?;
+    if exec_path(program).is_none() {
+        return Err(format!("{program} cannot be run"));
+    }
+    Ok(())
+}
+
 /// Backups this agent has named so far.
 static BACKUPS: AtomicU64 = AtomicU64::new(0);
 
@@ -728,6 +831,9 @@ pub enum BackupError {
     Exists(String),
     /// The reference's exception text; the backup may be partly written.
     Failed(String),
+    /// The task's `timeout` ran out, or the controller cancelled it, during the copy: the backup
+    /// is left partly written, as a killed module leaves it.
+    Stopped(Stop),
 }
 
 /// `backup_local`: a copy of `path` named `<path>.<number>.<%Y-%m-%d@%H:%M:%S>~`, with the
@@ -737,15 +843,17 @@ pub enum BackupError {
 /// agent, whose pid every task shares, so two backups of one file in the same second would
 /// share a name. The number here is the agent's pid followed by a sequence number of this run,
 /// at least four digits, never reused; and a name some file already has is never overwritten.
-pub fn backup_local(path: &str) -> Result<String, BackupError> {
+pub fn backup_local(path: &str, clock: Clock) -> Result<String, BackupError> {
     let seq = BACKUPS.fetch_add(1, Ordering::Relaxed) + 1;
     let name = format!("{path}.{}{seq:04}.{}", std::process::id(), local_stamp());
-    backup_copy(path, &name)?;
+    backup_copy(path, &name, clock)?;
     Ok(name)
 }
 
-/// `preserved_copy(path, name)` into a file created for it, never over one that exists.
-pub fn backup_copy(path: &str, name: &str) -> Result<(), BackupError> {
+/// `preserved_copy(path, name)` into a file created for it, never over one that exists. The
+/// deadline and the cancel are looked at before every 1 MiB copied: a backup can be of a disk
+/// image.
+pub fn backup_copy(path: &str, name: &str, clock: Clock) -> Result<(), BackupError> {
     let failed = |_: io::Error| {
         BackupError::Failed(format!("Could not make backup of '{path}' to '{name}'."))
     };
@@ -763,7 +871,14 @@ pub fn backup_copy(path: &str, name: &str) -> Result<(), BackupError> {
         }
         Err(err) => return Err(failed(err)),
     };
-    io::copy(&mut source, &mut copy).map_err(failed)?;
+    let mut block = vec![0; 1024 * 1024];
+    loop {
+        check(clock).map_err(BackupError::Stopped)?;
+        match io::Read::read(&mut source, &mut block).map_err(failed)? {
+            0 => break,
+            n => io::Write::write_all(&mut copy, &block[..n]).map_err(failed)?,
+        }
+    }
     drop(copy);
     fs::set_permissions(name, fs::Permissions::from_mode(meta.mode() & 0o7777)).map_err(failed)?;
     set_times(name, &meta).map_err(failed)?;

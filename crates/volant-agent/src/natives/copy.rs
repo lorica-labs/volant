@@ -25,10 +25,11 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, BackupError, Clock, FsError, ModeError, Stop as Halt, access, add_path_info,
-    backup_local, bool_param, check, check_names, clock, flag, group_account, module_args,
-    native_run, null, owner_account, parse_mode, path_param, realpath, selinux_enabled,
-    set_fs_attributes, str_param, umask,
+    APPEND, AUTOMATIC, Account, ArgSpec, BackupError, Clock, FsError, IMMUTABLE, ModeError,
+    Stop as Halt, access, add_path_info, backup_local, bool_param, check, check_names, clock, flag,
+    group_account, has_flags, has_xattrs, module_args, native_run, null, owner_account, parent,
+    parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param, umask,
+    validate_runs_as_python,
 };
 use super::setup::run_output;
 use super::{Native, NativeRun};
@@ -302,10 +303,11 @@ fn copy(request: &Request, clock: Clock) -> Result<Map<String, Value>, Stop> {
         preflight(request, &dest, exists, link)?;
         check(clock)?;
         if request.backup && exists {
-            backup_file = Some(match backup_local(&dest) {
+            backup_file = Some(match backup_local(&dest, clock) {
                 Ok(name) => name,
                 Err(BackupError::Exists(name)) => return Err(format!("{name} exists").into()),
                 Err(BackupError::Failed(msg)) => return Err(Stop::Fail(message(msg))),
+                Err(BackupError::Stopped(halt)) => return Err(Stop::Clock(halt)),
             });
         }
         let failed = |_| Stop::Fail(message(format!("Failed to copy '{src}' to '{dest}'.")));
@@ -361,12 +363,18 @@ fn preflight(request: &Request, dest: &str, exists: bool, link: bool) -> Result<
     }
     // `rename` crosses neither file systems nor mounts, and cannot replace a mount point.
     let mount = mount_id(dir, true).ok_or("the mount of the destination cannot be read")?;
-    if mount_id(request.src, false) != Some(mount) {
-        return Err("the staged source is on another mount than the destination".into());
+    let at_dir = (dir_meta.dev(), Some(mount));
+    let src_meta = fs::symlink_metadata(request.src).map_err(|err| format!("src: {err}"))?;
+    if crosses((src_meta.dev(), mount_id(request.src, false)), at_dir) {
+        return Err(
+            "the staged source is on another file system or mount than the destination".into(),
+        );
     }
     let here = fs::symlink_metadata(dest).ok();
-    if here.is_some() && mount_id(dest, false) != Some(mount) {
-        return Err("the destination is a mount point".into());
+    if let Some(meta) = &here
+        && crosses((meta.dev(), mount_id(dest, false)), at_dir)
+    {
+        return Err("the destination is a mount point or a subvolume of its own".into());
     }
     // A sticky directory keeps others' files from being replaced or unlinked.
     // SAFETY: a plain getter.
@@ -381,48 +389,35 @@ fn preflight(request: &Request, dest: &str, exists: bool, link: bool) -> Result<
     if has_flags(dir, APPEND) {
         return Err("the directory is append-only".into());
     }
-    if exists && !link {
-        // `shutil.copystat` gives the source the destination's extended attributes.
-        if has_xattrs(dest) {
-            return Err("the destination has extended attributes".into());
-        }
-        if has_flags(dest, IMMUTABLE | APPEND) {
-            return Err("the destination is immutable or append-only".into());
-        }
+    if exists && !link && has_flags(dest, IMMUTABLE | APPEND) {
+        return Err("the destination is immutable or append-only".into());
+    }
+    // `shutil.copystat` gives the source the destination's extended attributes, and
+    // `preserved_copy` gives them to the backup, through a link too.
+    if exists && (!link || request.backup) && has_xattrs(dest) {
+        return Err("the destination has extended attributes".into());
+    }
+    // `preserved_copy` gives the backup the flags `lsattr` shows, through a link too.
+    if exists && request.backup && has_flags(dest, !AUTOMATIC) {
+        return Err("the destination has inode flags the backup would carry".into());
     }
     // The empty file standing for the link takes the directory's default ACL, which
     // `copystat` then gives the source.
     if link && has_xattrs(dir) {
         return Err("the directory has extended attributes".into());
     }
-    let Some(validate) = request.validate.filter(|validate| validate.contains("%s")) else {
-        return Ok(());
-    };
-    // `validate % src` is Python's formatting, and `run_command` expands `~` and `$VAR` in
-    // every argument.
-    if validate.matches('%').count() != 1 || validate.contains(['$', '~']) {
-        return Err("validate is formatted or expanded by Python".into());
+    match request.validate.filter(|validate| validate.contains("%s")) {
+        Some(validate) => validate_runs_as_python(validate, request.src, "src"),
+        None => Ok(()),
     }
-    // Where the `shlex` crate and Python's `shlex.split` part ways: the crate reads `#` as a
-    // comment, drops a backslash before a backtick in double quotes, and keeps a carriage return
-    // inside a word.
-    if validate.contains(['#', '`', '\r', '\\']) {
-        return Err("validate would not split as Python splits it".into());
-    }
-    if !request
-        .src
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
-    {
-        return Err("src would be split or expanded in validate".into());
-    }
-    let argv = shlex::split(&validate.replace("%s", request.src))
-        .ok_or("validate does not split as a command line")?;
-    let program = argv.first().ok_or("validate names no program")?;
-    if exec_path(program).is_none() {
-        return Err(format!("{program} cannot be run"));
-    }
-    Ok(())
+}
+
+/// Whether a rename between two places, each given by its device and its mount (`None` where the
+/// kernel does not say), would fail with EXDEV or EBUSY. The two can differ apart: a btrfs
+/// subvolume has a device of its own on its parent's mount, and a bind mount shows its file
+/// system's device on a mount of its own.
+fn crosses(a: (u64, Option<u64>), b: (u64, Option<u64>)) -> bool {
+    a.0 != b.0 || a.1.is_none() || a.1 != b.1
 }
 
 /// The source given the task's mode, then owner and group, then `validate` run on it, as the
@@ -527,15 +522,6 @@ fn touch(path: &str) -> io::Result<()> {
 
 fn is_link(path: &str) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
-}
-
-/// `os.path.dirname`, for a path without repeated slashes.
-fn parent(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(0) => "/",
-        Some(at) => &path[..at],
-        None => "",
-    }
 }
 
 /// `os.path.join(dir, name)`.
@@ -773,70 +759,10 @@ fn mount_id(path: &str, follow: bool) -> Option<u64> {
     Some(u64::from_ne_bytes(buf.0[144..152].try_into().ok()?))
 }
 
-/// Whether the path carries any extended attribute, ACLs included.
-#[cfg(target_os = "linux")]
-fn has_xattrs(path: &str) -> bool {
-    let Ok(path) = CString::new(path) else {
-        return true;
-    };
-    // SAFETY: a null buffer of size 0 asks only for the size of the list.
-    let size = unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
-    size != 0 && !(size < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP))
-}
-
-/// `FS_IMMUTABLE_FL` and `FS_APPEND_FL`.
-const IMMUTABLE: libc::c_long = 0x10;
-const APPEND: libc::c_long = 0x20;
-
-/// Whether the file has one of the inode flags in `mask`. A file that cannot be opened counts as
-/// flagged.
-#[cfg(target_os = "linux")]
-fn has_flags(path: &str, mask: libc::c_long) -> bool {
-    let Ok(file) = fs::File::open(path) else {
-        return true;
-    };
-    let mut flags: libc::c_long = 0;
-    // SAFETY: FS_IOC_GETFLAGS writes one `long` through the pointer.
-    let rc = unsafe {
-        libc::ioctl(
-            std::os::fd::AsRawFd::as_raw_fd(&file),
-            libc::FS_IOC_GETFLAGS,
-            &raw mut flags,
-        )
-    };
-    rc == 0 && flags & mask != 0
-}
-
 /// Elsewhere the native hands every task back before it gets here.
 #[cfg(not(target_os = "linux"))]
 fn mount_id(_: &str, _: bool) -> Option<u64> {
     None
-}
-
-#[cfg(not(target_os = "linux"))]
-fn has_xattrs(_: &str) -> bool {
-    true
-}
-
-#[cfg(not(target_os = "linux"))]
-fn has_flags(_: &str, _: libc::c_long) -> bool {
-    true
-}
-
-/// Where `subprocess` finds `program`: as given with a `/`, otherwise along `PATH`, or
-/// `/bin:/usr/bin` without one.
-fn exec_path(program: &str) -> Option<String> {
-    let runnable = |path: &str| {
-        fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
-    };
-    if program.contains('/') {
-        return runnable(program).then(|| program.to_string());
-    }
-    std::env::var("PATH")
-        .unwrap_or_else(|_| "/bin:/usr/bin".into())
-        .split(':')
-        .map(|dir| format!("{}/{program}", if dir.is_empty() { "." } else { dir }))
-        .find(|candidate| runnable(candidate))
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1000,6 +926,8 @@ mod tests {
             "copy-module-validate-fail",
             "copy-module-no-dir",
             "copy-module-remote-src",
+            "copy-module-checksum",
+            "copy-module-dest-link",
         ] {
             let entry = &index[case];
             let recording = fs::read_to_string(format!("{GOLDEN}/{case}.json")).unwrap();
@@ -1016,7 +944,10 @@ mod tests {
                 let content = content.as_str().unwrap().to_string();
                 let src = stage(&scratch, &content);
                 args["src"] = src.clone().into();
-                args["checksum"] = sha1(&content).into();
+                // The plugin's sum only where the task gave none.
+                if args.get("checksum").is_none() {
+                    args["checksum"] = sha1(&content).into();
+                }
                 args["_original_basename"] = ".staged".into();
                 args["follow"] = false.into();
                 staged = Some((src.clone(), fs::metadata(&src).unwrap().ino(), content));
@@ -1076,8 +1007,9 @@ mod tests {
 
     /// The branches the golden play does not reach, each against what ansible-core 2.19.12's
     /// module answered with the same files and arguments (measured by running
-    /// `python -m ansible.modules.copy` on an arguments file, no action plugin): a wrong
-    /// `checksum`, a link as `dest` without and with `follow` (with a backup), a dangling link,
+    /// `python -m ansible.modules.copy` on an arguments file, no action plugin): a link as `dest`
+    /// without `follow` (its target kept, which the recorded `copy-module-dest-link` does not
+    /// read) and with it (with a backup), a dangling link,
     /// the same content with another mode, `force: false`, a directory as `dest` with and
     /// without its slash, an unknown owner, `validate` without `%s`, a file replaced, and an
     /// invalid mode. A failure gets the `changed: false` ansible-core's task executor adds, as
@@ -1107,14 +1039,6 @@ mod tests {
             compare(name, want, ours, &scratch, &[], &mut found)
         };
         let path = |name: &str| format!("{t}/{name}");
-
-        case(
-            "checksum-wrong",
-            "one\n",
-            json!({"dest": "<t>/c.txt", "checksum": "0000"}),
-            r#"{"changed": false, "checksum": "c7059bb19433cc3cabaa6236c83d56668a843dd2", "expected_checksum": "0000", "failed": true, "msg": "Copied file does not match the expected checksum. Transfer failed."}"#,
-        );
-        let checksum_left = after(&path("c.txt"), None);
 
         write(&path("tgt"), "target\n", 0o640);
         std::os::unix::fs::symlink("tgt", path("lnk")).unwrap();
@@ -1236,7 +1160,6 @@ mod tests {
             "backup_content": "target\n",
         });
         for (name, left, want) in [
-            ("checksum-wrong", checksum_left, json!({"exists": false})),
             ("dest-link", link_left.0, file("one\n", "0644")),
             ("dest-link target", link_left.1, file("target\n", "0640")),
             ("dest-link-follow link", json!(follow_left.0), json!(true)),
@@ -1260,12 +1183,14 @@ mod tests {
     /// Every case outside the subset hands back with every file as it was, the staged source
     /// included: options the native leaves to Python, arguments `AnsibleModule` would convert or
     /// refuse, paths the reference reads another way, directories it would create, a
-    /// destination that is a directory or has extended attributes, the parent a file, a
-    /// `validate` Python would format, expand or split otherwise or cannot run, and a task
-    /// `environment`.
+    /// destination that is a directory, the parent a file, a task `environment`; and, on the
+    /// fixture file and on a link to it with `backup`, a `validate` Python would format, expand
+    /// or split otherwise or cannot run, inode flags or extended attributes the backup would
+    /// carry. The file systems the tests run on take user xattrs and the owner's `nodump` flag;
+    /// one that does not fails the test saying so.
     ///
-    /// What would make this red: any of these answered, or a hand-back after the backup, the
-    /// link's replacement or the move.
+    /// What would make this red: any of these answered, or a hand-back after the backup or the
+    /// link's replacement (the snapshot then holds a backup file, or a file where the link was).
     #[test]
     fn copy_hands_back_before_changing_anything() {
         let scratch = scratch("copy-back");
@@ -1318,13 +1243,6 @@ mod tests {
                 "dest a directory",
                 json!({"dest": format!("{t}/d"), "_original_basename": "sub.txt"}),
             ),
-            ("validate expands", json!({"validate": "test -s $HOME%s"})),
-            ("validate formats", json!({"validate": "test %d %s"})),
-            ("validate comment", json!({"validate": "test -s %s # x"})),
-            (
-                "validate program missing",
-                json!({"validate": "volant-no-such-program %s"}),
-            ),
         ] {
             hand_back(name, extra, &plain);
         }
@@ -1333,6 +1251,36 @@ mod tests {
             ..Context::default()
         };
         hand_back("environment", json!({}), &environment);
+
+        // The cases decided after the backup would be written or the link replaced, played on
+        // the fixture file and on the link to it: a hand-back that came after either shows in
+        // the snapshot as a backup file or a link turned into a file.
+        let link = scratch.path("l");
+        for dest in [&file, &link] {
+            for (name, validate) in [
+                ("validate expands", "test -s $HOME%s"),
+                ("validate formats", "test %d %s"),
+                ("validate comment", "test -s %s # x"),
+                ("validate program missing", "volant-no-such-program %s"),
+            ] {
+                hand_back(
+                    &format!("{name}, dest {dest}"),
+                    json!({"dest": dest, "validate": validate}),
+                    &plain,
+                );
+            }
+        }
+
+        // `preserved_copy` would give the backup the file's inode flags, through the link too.
+        set_flags(&file, NODUMP);
+        for dest in [&file, &link] {
+            hand_back(
+                &format!("nodump flag, dest {dest}"),
+                json!({"dest": dest}),
+                &plain,
+            );
+        }
+        set_flags(&file, 0);
 
         let name = CString::new(file.clone()).unwrap();
         // SAFETY: the name and the value outlive the call.
@@ -1345,16 +1293,57 @@ mod tests {
                 0,
             )
         };
-        if set == 0 {
-            hand_back("dest with xattrs", json!({"dest": file}), &plain);
-        } else {
-            eprintln!("this file system takes no user xattrs: that case is not checked");
+        assert_eq!(
+            set, 0,
+            "this file system takes no user xattrs, which the test needs"
+        );
+        for dest in [&file, &link] {
+            hand_back(
+                &format!("xattrs, dest {dest}"),
+                json!({"dest": dest}),
+                &plain,
+            );
         }
         assert!(found.is_empty(), "{found:#?}");
     }
 
+    /// `FS_NODUMP_FL`, which a file's owner may set.
+    const NODUMP: libc::c_long = 0x40;
+
+    /// `chattr =` the flags in `flags` (and the ones the file system keeps) on `path`.
+    fn set_flags(path: &str, flags: libc::c_long) {
+        let file = fs::File::open(path).unwrap();
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        let mut now: libc::c_long = 0;
+        // SAFETY: both ioctls read or write one `long` through the pointer.
+        let rc = unsafe {
+            libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut now);
+            now = (now & AUTOMATIC) | flags;
+            libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const now)
+        };
+        assert_eq!(
+            rc, 0,
+            "this file system takes no inode flags, which the test needs"
+        );
+    }
+
+    /// The same device on the same mount is not a crossing; another device (a btrfs subvolume,
+    /// on its parent's mount), another mount (a bind mount, same device), or a mount the kernel
+    /// does not tell are.
+    ///
+    /// What would make this red: either comparison dropped, or an unknown mount trusted.
+    #[test]
+    fn a_rename_crosses_a_device_or_a_mount() {
+        assert!(!crosses((1, Some(7)), (1, Some(7))));
+        assert!(crosses((2, Some(7)), (1, Some(7))), "a subvolume");
+        assert!(crosses((1, Some(8)), (1, Some(7))), "a bind mount");
+        assert!(crosses((1, None), (1, Some(7))), "an unknown mount");
+    }
+
     /// A staged source on another mount than the destination hands back with both untouched:
     /// `rename` would fail with EXDEV, and the reference would copy through a file of its own.
+    /// `/dev/shm` is a tmpfs of its own on the machines this runs on; where it is not, the test
+    /// fails saying so rather than checking nothing.
     ///
     /// What would make this red: the mount check dropped, which renames across and fails, or
     /// answers after the backup.
@@ -1362,18 +1351,17 @@ mod tests {
     fn a_source_on_another_mount_is_handed_back() {
         let scratch = scratch("copy-mount");
         let other = format!("/dev/shm/volant-copy-{}", std::process::id());
-        if fs::write(&other, "far\n").is_err()
-            || mount_id(&other, false) == mount_id(&scratch.0, true)
-        {
-            let _ = fs::remove_file(&other);
-            eprintln!("/dev/shm is not another mount here: the case is not checked");
-            return;
-        }
+        fs::write(&other, "far\n").expect("/dev/shm is writable, which the test needs");
+        let apart = mount_id(&other, false) != mount_id(&scratch.0, true);
         let dest = scratch.path("n.txt");
         write(&dest, "near\n", 0o644);
         let answer = ask(&json!({"src": other, "dest": dest, "backup": true}));
         let kept = fs::read_to_string(&other);
         let _ = fs::remove_file(&other);
+        assert!(
+            apart,
+            "/dev/shm shares /var/tmp's mount here, which the test needs apart"
+        );
         assert!(
             matches!(answer, NativeRun::Fallback(_)),
             "answered across mounts"
@@ -1384,6 +1372,27 @@ mod tests {
             fs::read_dir(&scratch.0).unwrap().count(),
             2,
             "a backup was made"
+        );
+    }
+
+    /// A backup that outlives the task's deadline, or meets the controller's cancel, stops
+    /// between two blocks.
+    ///
+    /// What would make this red: the backup copied in one go, without its clock.
+    #[test]
+    fn a_backup_stops_at_the_cancel() {
+        let scratch = scratch("copy-backup-cancel");
+        let big = scratch.path("big");
+        write(&big, &"x".repeat(3 * 1024 * 1024), 0o644);
+        let cancelled = || true;
+        let clock = Clock {
+            deadline: None,
+            cancelled: &cancelled,
+        };
+        let copied = super::super::common::backup_copy(&big, &scratch.path("big~"), clock);
+        assert!(
+            matches!(copied, Err(BackupError::Stopped(Halt::Cancelled))),
+            "{copied:?}"
         );
     }
 

@@ -129,6 +129,50 @@ fn a_cancel_stops_a_hung_validate() {
     );
 }
 
+/// Root replacing a file another account owns leaves it that account's: `atomic_move` gives the
+/// staged file the replaced file's owner and group before the rename. The agent runs under
+/// `sudo -n`, as under `become`, over a file of the account running the test.
+///
+/// What would make this red: the `chown` to the replaced file's owner dropped, which leaves the
+/// file root's, on disk and in the answer's `uid`.
+#[test]
+#[ignore = "needs passwordless `sudo -n`; runs under `just ssh-test`"]
+fn ssh_root_replacing_a_file_keeps_its_owner() {
+    use std::os::unix::fs::MetadataExt;
+    assert!(
+        Command::new("sudo")
+            .args(["-n", "true"])
+            .status()
+            .is_ok_and(|status| status.success()),
+        "this test needs passwordless `sudo -n`"
+    );
+    let scratch = Scratch::new("owner");
+    let dest = scratch.0.join("dest.txt");
+    std::fs::write(&dest, "old\n").unwrap();
+    let mine = std::fs::metadata(&dest).unwrap();
+    assert_ne!(
+        mine.uid(),
+        0,
+        "run as an ordinary account, whose file root replaces"
+    );
+    let mut agent = Agent::spawn_as_root(&scratch.0);
+    agent.hello();
+    let (result, ran) = agent.copy(1, b"new\n", json!({"dest": dest}), None);
+    drop(agent);
+    let left = std::fs::metadata(&dest).unwrap();
+    let content = std::fs::read_to_string(&dest).unwrap();
+    // The agent's cache and staging directories are root's.
+    let _ = Command::new("sudo")
+        .args(["-n", "rm", "-rf"])
+        .arg(&scratch.0)
+        .status();
+    assert_eq!(ran.path, ExecPath::Native, "{:?}", ran.reason);
+    assert_eq!(content, "new\n");
+    assert_eq!((left.uid(), left.gid()), (mine.uid(), mine.gid()));
+    assert_eq!(result.0["uid"], mine.uid(), "{result:?}");
+    assert_eq!(result.0["gid"], mine.gid(), "{result:?}");
+}
+
 /// A `copy` task as the action plugin sends it, with `src` staged from `hash`, and a payload the
 /// agent does not hold: the Python path would show as that path's own failure.
 fn copy_task(args: Value, hash: &str, timeout: Option<u64>) -> Task {
@@ -166,8 +210,23 @@ impl Agent {
     /// An agent whose `remote_tmp` is `dir`, so its staging is this test's own and on the same
     /// file system as the destination.
     fn spawn(dir: &Path) -> Agent {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_volant-agent"))
-            .env("VOLANT_REMOTE_TMP", dir)
+        let mut command = Command::new(env!("CARGO_BIN_EXE_volant-agent"));
+        command.env("VOLANT_REMOTE_TMP", dir);
+        Agent::start(command)
+    }
+
+    /// `spawn`, the agent running as root through `sudo -n`, as under `become`.
+    fn spawn_as_root(dir: &Path) -> Agent {
+        let mut command = Command::new("sudo");
+        command
+            .args(["-n", "env"])
+            .arg(format!("VOLANT_REMOTE_TMP={}", dir.display()))
+            .arg(env!("CARGO_BIN_EXE_volant-agent"));
+        Agent::start(command)
+    }
+
+    fn start(mut command: Command) -> Agent {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

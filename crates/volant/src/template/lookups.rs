@@ -406,7 +406,9 @@ fn fileglob_dirs(pattern: &str, search: &[PathBuf]) -> Vec<PathBuf> {
 /// One directory read non-recursively for the files (not the directories) whose name matches a
 /// shell glob pattern (`*`, `?`, `[...]`, `[!...]`), Python's `fnmatch` set. A directory that
 /// does not exist, or a pattern that fails to compile, matches nothing rather than erroring: the
-/// reference's own `glob.glob` answers the same way for a directory that is not there.
+/// reference's own `glob.glob` answers the same way for a directory that is not there. A name
+/// starting with `.` matches only a pattern starting with `.`, as `glob.glob` without
+/// `include_hidden` does.
 fn glob_files(dir: &Path, pattern: &str) -> Vec<String> {
     let Ok(re) = regex::Regex::new(&fnmatch_to_regex(pattern)) else {
         return Vec::new();
@@ -414,6 +416,7 @@ fn glob_files(dir: &Path, pattern: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
+    let include_hidden = pattern.starts_with('.');
     entries
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_file())
@@ -421,7 +424,7 @@ fn glob_files(dir: &Path, pattern: &str) -> Vec<String> {
             entry
                 .file_name()
                 .to_str()
-                .is_some_and(|name| re.is_match(name))
+                .is_some_and(|name| (include_hidden || !name.starts_with('.')) && re.is_match(name))
         })
         .map(|entry| entry.path().display().to_string())
         .collect()
@@ -808,6 +811,38 @@ mod tests {
                 .filter(|name| names.iter().any(|n| name.to_str() == Some(n)))
                 .map(|name| self.path.join(name).display().to_string())
                 .collect()
+        }
+    }
+
+    /// Measured with the reference's Python 3.13 (`glob.glob`, `include_hidden=False` by
+    /// default, which `fileglob.py` never changes): a name starting with `.` matches only a
+    /// pattern that starts with `.` itself. `*`, `?h*` and `[.]h*` skip `.h.txt`; `.*` and the
+    /// literal `.h.txt` find it.
+    ///
+    /// What would make this red: a wildcard matching a dot-file, or a dot pattern missing one.
+    #[test]
+    fn fileglob_skips_dot_files_unless_the_pattern_starts_with_a_dot() {
+        let dir = Dir::new("hidden");
+        dir.write(".h.txt").write("a.txt");
+        let t = Templar::new(dir.path.clone());
+        let hidden = dir.path.join(".h.txt").display().to_string();
+        for (glob, want) in [
+            ("*", json!([dir.path.join("a.txt").display().to_string()])),
+            ("?h*", json!([])),
+            ("[.]h*", json!([])),
+            (".*", json!([hidden])),
+            (".h.txt", json!([hidden])),
+        ] {
+            let pattern = dir.pattern(glob);
+            assert_eq!(
+                t.render(
+                    &format!("{{{{ lookup('fileglob', '{pattern}', wantlist=True) }}}}"),
+                    &Map::new()
+                )
+                .unwrap(),
+                want,
+                "{glob}"
+            );
         }
     }
 

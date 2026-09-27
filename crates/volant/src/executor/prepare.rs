@@ -1035,6 +1035,9 @@ mod tests {
         let modules = BTreeMap::from([
             ("stat".to_string(), facts("stat", true)),
             ("setup".to_string(), facts("setup", true)),
+            // Built under their own names: `ansible.builtin.` never takes a `library/` module.
+            ("ansible.builtin.stat".to_string(), facts("stat", true)),
+            ("ansible.builtin.setup".to_string(), facts("setup", true)),
             // The module a `library/lineinfile.py` builds.
             ("lineinfile".to_string(), facts("lineinfile", false)),
             // A collection's name `runtime.yml` redirects to `ansible.builtin.setup`: the helper

@@ -8436,6 +8436,41 @@ fn library_directories_join_the_search_in_the_reference_s_order() {
     std::fs::remove_dir_all(&root).expect("the probe directory is removed");
 }
 
+/// Measured on ansible-core 2.19.12 with a `library/ping.py` beside the playbook answering
+/// `lib`: `ping` and `ansible.legacy.ping` run it, `ansible.builtin.ping` runs ansible-core's and
+/// answers `pong` (`_find_fq_plugin` searches only the package for `ansible.builtin`, while
+/// `ansible.legacy` goes through the `library` search). The same run's gathering, which the
+/// reference runs as `ansible.legacy.setup`, gets a `library/setup.py`'s facts.
+///
+/// What would make this red: `ansible.builtin.ping` filed under the short name, which hands it
+/// the library's module; or the gathering named `ansible.builtin.setup`, which skips the
+/// playbook's `setup`.
+#[test]
+fn a_library_module_answers_its_short_name_and_never_ansible_builtin() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-builtin");
+    let library = dir.join("library");
+    ping_module(&library, "lib");
+    std::fs::write(
+        library.join("setup.py"),
+        "from ansible.module_utils.basic import AnsibleModule\n\
+         m = AnsibleModule(argument_spec={}, supports_check_mode=True)\n\
+         m.exit_json(changed=False, ansible_facts={'probe_from': 'lib'})\n",
+    )
+    .expect("the module");
+    std::fs::write(
+        dir.join("p.yml"),
+        "- hosts: localhost\n  tasks:\n    - ping:\n      register: a\n    - ansible.builtin.ping:\n      register: b\n    - ansible.legacy.ping:\n      register: c\n    - debug: msg=\"{{ a.ping }} {{ b.ping }} {{ c.ping }} {{ probe_from | default('core') }}\"\n",
+    )
+    .expect("the play");
+    let (code, msgs, text) = ping_run(&python, &dir.join("cache"), &[&dir.join("p.yml")]);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(msgs, ["lib pong lib lib"], "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// A controller interpreter with ansible-core, which a task an action plugin backs needs for its
 /// sub-tasks: `VOLANT_PYTHON` when it is set, else the one beside an `ansible-playbook` on `PATH`
 /// (where a `uv tool` or `pipx` install puts it), else `python3`. `None` after saying why, so a

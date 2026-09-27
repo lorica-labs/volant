@@ -100,7 +100,7 @@ pub struct Union {
     /// `zip_data` already encoded, so re-encoding raw bytes for the frame would decode and
     /// encode the same 631 KB for nothing.
     pub zip_b64: String,
-    /// Keyed by [`payload_key`]: `ping` and `ansible.builtin.ping` are one entry, and
+    /// Keyed by [`payload_key`]: `ping` and `ansible.legacy.ping` are one entry, and
     /// `ansible.posix.sysctl` is its own, whatever else in the run is called `sysctl`.
     pub modules: BTreeMap<String, ModuleFacts>,
     /// A collection's module a role file named and the controller's ansible-core did not resolve
@@ -127,12 +127,16 @@ impl Union {
 
 /// The key a module's facts are filed under in [`Union::modules`], and looked up by.
 ///
-/// A builtin keeps its short name, so the three spellings of `ping` are one entry. Every other
-/// name is kept whole: two collections may each ship a `sysctl`, and a collection may ship a
-/// module named like a builtin, so a key shortened to the last segment would hand a task the
-/// module of whichever of them was built last.
+/// A builtin written bare or as `ansible.legacy.` keeps its short name, so those two spellings of
+/// `ping` are one entry: both search a playbook's or a role's `library/` first. `ansible.builtin.`
+/// is kept whole, because ansible-core looks that name up among its own modules alone
+/// (`_find_fq_plugin`): measured on 2.19.12 with a `library/ping.py`, `ping` and
+/// `ansible.legacy.ping` run it and `ansible.builtin.ping` runs ansible-core's. Every other name
+/// is kept whole too: two collections may each ship a `sysctl`, and a collection may ship a module
+/// named like a builtin, so a key shortened to the last segment would hand a task the module of
+/// whichever of them was built last.
 pub fn payload_key(module: &str) -> &str {
-    if volant_protocol::modules::is_builtin(module) {
+    if volant_protocol::modules::is_builtin(module) && !module.starts_with("ansible.builtin.") {
         short_name(module)
     } else {
         module
@@ -996,7 +1000,7 @@ fn exchange<W: Write, R: Read>(
         .context("the python helper's answer carries no module facts")?;
     for (name, value) in built {
         // Keyed by `payload_key` whatever the playbook wrote, so `ping` and
-        // `ansible.builtin.ping` in one run are one entry, a collection's `sysctl` is never
+        // `ansible.legacy.ping` in one run are one entry, a collection's `sysctl` is never
         // another's, and `prepare` finds what was built for a task by the same function.
         facts.insert(payload_key(name).to_string(), module_facts(name, value)?);
     }
@@ -1191,7 +1195,8 @@ mod tests {
             union.modules[payload_key("community.general.sysctl")].module_fqn,
             "ansible_collections.community.general.plugins.modules.sysctl"
         );
-        assert_eq!(payload_key("ansible.builtin.ping"), "ping");
+        // `ansible.builtin.ping` is never the `ping` a `library/` shadows.
+        assert_eq!(payload_key("ansible.builtin.ping"), "ansible.builtin.ping");
         assert_eq!(payload_key("ansible.legacy.ping"), "ping");
         let built = modules_to_build([
             "ansible.posix.sysctl",
@@ -1201,7 +1206,12 @@ mod tests {
         ]);
         assert_eq!(
             built.iter().map(String::as_str).collect::<Vec<_>>(),
-            ["ansible.posix.sysctl", "community.general.sysctl", "ping"]
+            [
+                "ansible.builtin.ping",
+                "ansible.posix.sysctl",
+                "community.general.sysctl",
+                "ping"
+            ]
         );
     }
 
@@ -1853,20 +1863,25 @@ mod tests {
         assert!(err.contains("ping"), "{err}");
     }
 
-    /// The facts are keyed by the short module name whatever spelling the playbook used, so one
-    /// module asked for under two names is one entry.
+    /// The facts are keyed by the short module name for a bare or `ansible.legacy.` spelling, so
+    /// one module asked for under both is one entry; `ansible.builtin.` keeps its own entry.
     ///
     /// What would make this red: keying by the request string, which hands a map keyed
-    /// `ansible.builtin.ping` to a caller that looks its task's module up by its short name and
-    /// finds nothing - or, worse, an empty fact set.
+    /// `ansible.legacy.ping` to a caller that looks its task's module up by its short name and
+    /// finds nothing; or `ansible.builtin.ping` folded into `ping`, which a `library/ping.py`
+    /// then answers.
     #[test]
     fn the_facts_are_keyed_by_the_short_module_name() {
-        let answer = br#"{"zip_b64": "UEsD", "modules": {"ansible.builtin.ping": {"module_fqn":
-            "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
-            "extensions": {}}}}"#;
-        let asked = ["ansible.builtin.ping".to_string()];
+        let answer = br#"{"zip_b64": "UEsD", "modules": {"ansible.legacy.ping": {"module_fqn":
+            "ansible.legacy.ping", "profile": "legacy", "rlimit_nofile": 0,
+            "extensions": {}}, "ansible.builtin.ping": {"module_fqn": "ansible.modules.ping",
+            "profile": "legacy", "rlimit_nofile": 0, "extensions": {}}}}"#;
+        let asked = ["ansible.legacy.ping", "ansible.builtin.ping"].map(str::to_string);
         let union = exchange(Vec::new(), framed(answer), &asked).unwrap().0;
-        assert_eq!(union.modules.keys().collect::<Vec<_>>(), ["ping"]);
+        assert_eq!(
+            union.modules.keys().collect::<Vec<_>>(),
+            ["ansible.builtin.ping", "ping"]
+        );
     }
 
     /// An empty blob is refused on the controller. What would make this red: letting it through,

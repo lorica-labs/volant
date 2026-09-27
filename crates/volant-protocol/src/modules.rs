@@ -240,6 +240,8 @@ pub const NATIVE_ENABLED: &[&str] = &[
     "setup",
     "stat",
     "file",
+    "systemd",
+    "systemd_service",
     "apt",
     "package_facts",
     "service_facts",

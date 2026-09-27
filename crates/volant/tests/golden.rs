@@ -2234,6 +2234,7 @@ fn a_native_module_returns_the_reference_s_own_keys() {
                 same_names(case, &reference, &ours, &mut failures);
                 keep_live(&mut reference);
                 keep_live(&mut ours);
+                live_branches(case, &reference, &mut failures);
                 reference
             }
             Some("exact" | "keys") => native_file(&format!("{case}.json")),
@@ -2305,22 +2306,54 @@ fn same_names(case: &str, reference: &Value, ours: &Value, failures: &mut Vec<St
     }
 }
 
-/// What `natives()` keeps of `package_facts` and `service_facts` (`LIVE_KEEP`), kept on both
-/// sides of a live comparison: the rest of the machine's packages and units move between the two
-/// runs (the apt hook starts `packagekit`, timers fire) for reasons no native controls.
+/// What a live comparison keeps of `package_facts` and `service_facts`, on both sides: the rest
+/// of the machine's packages and units move between the two runs (the apt hook starts
+/// `packagekit`, timers fire) for reasons no native controls. One unit per `service_facts`
+/// branch: `cron.service` and `systemd-journald.service` from `list-units` (the first with its
+/// status replaced by `list-unit-files`), `cron` from the SysV listing, and every template
+/// (`name@.service`), which only `list-unit-files` names and whose `show` fails into `unknown`.
 #[cfg(target_os = "linux")]
 fn keep_live(result: &mut Value) {
     let keep: [(&str, &[&str]); 2] = [
         ("packages", &["bash"]),
-        ("services", &["cron.service", "systemd-journald.service"]),
+        (
+            "services",
+            &["cron.service", "systemd-journald.service", "cron"],
+        ),
     ];
     for (key, names) in keep {
         if let Some(Value::Object(map)) = result
             .get_mut("ansible_facts")
             .and_then(|facts| facts.get_mut(key))
         {
-            map.retain(|name, _| names.contains(&name.as_str()));
+            map.retain(|name, _| {
+                names.contains(&name.as_str()) || (key == "services" && name.ends_with("@.service"))
+            });
         }
+    }
+}
+
+/// The reference's kept units, once `keep_live` has run, must hold a SysV entry and a template:
+/// without them the comparison would not see those two branches, and would pass on a machine
+/// that lacks them.
+#[cfg(target_os = "linux")]
+fn live_branches(case: &str, reference: &Value, failures: &mut Vec<String>) {
+    let Some(services) = reference["ansible_facts"]["services"].as_object() else {
+        return;
+    };
+    if services
+        .get("cron")
+        .is_none_or(|cron| cron["source"] != "sysv")
+    {
+        failures.push(format!(
+            "case {case}: the reference lists no SysV cron, so the SysV branch goes unchecked"
+        ));
+    }
+    if !services.keys().any(|name| name.ends_with("@.service")) {
+        failures.push(format!(
+            "case {case}: the reference lists no template unit, so the unit file branch goes \
+             unchecked"
+        ));
     }
 }
 

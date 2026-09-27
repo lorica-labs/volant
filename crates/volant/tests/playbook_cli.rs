@@ -255,6 +255,45 @@ fn a_pause_runs_once_for_the_first_host() {
     assert!(!text.contains("\nh2 "), "h2 has no recap entry: {text}");
 }
 
+/// A play whose pattern matches no host is skipped whole, so the pre-flight does not refuse a
+/// prompting `pause` in it even on a terminal. Measured on ansible-core 2.19.12 under `script`
+/// (a terminal on standard input): `skipping: no hosts matched`, the next play runs, exit 0.
+///
+/// What would make this red: the pause pre-flight run over a play nothing reaches, which refuses
+/// with exit 4 a playbook the reference runs to its end.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
+    let command = format!(
+        "'{}' playbook '{}'",
+        env!("CARGO_BIN_EXE_volant"),
+        fixture("controller/pause-no-host.yml")
+    );
+    // util-linux `script` runs the command with a terminal on its standard input; `-e` passes
+    // its exit code through.
+    let mut child = Command::new("script")
+        .args(["-qec", &command, "/dev/null"])
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("this test needs util-linux `script` to give the run a terminal");
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("script is waitable").is_none() {
+        if started.elapsed() >= PROBE_DEADLINE {
+            let _ = child.kill();
+            panic!("volant under script did not finish within {PROBE_DEADLINE:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let out = child.wait_with_output().expect("script output");
+    let text = String::from_utf8_lossy(&out.stdout).replace('\r', "");
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("skipping: no hosts matched"), "{text}");
+    assert!(text.contains(r#""msg": "after""#), "{text}");
+}
+
 /// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
 /// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
 /// registered result has no `warnings` key. The driver shows every result's `warnings` that way,

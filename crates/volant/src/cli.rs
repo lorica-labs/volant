@@ -246,9 +246,16 @@ async fn run_all(
     // The second half of the pre-flight: what a role or an imported file brought in is refused
     // by its own name too, and before the first connection like everything else.
     let checking = std::time::Instant::now();
-    for plays in &compiled {
-        for play in plays {
-            preflight::check_steps(play)?;
+    let terminal = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    for (pb, steps) in playbooks.iter().zip(&compiled) {
+        for (play, compiled) in pb.plays.iter().zip(steps) {
+            // Resolved quietly: `play_hosts` prints the pattern warnings when the play starts.
+            let matched = inventory.resolve(&play.hosts).hosts.iter().any(|h| {
+                limit
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(&h.name))
+            });
+            preflight::check_steps(compiled, terminal && matched)?;
         }
     }
     preflight_micros += micros(checking);

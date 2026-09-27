@@ -14,11 +14,10 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
-use volant_protocol::encoding::b64_encode;
 use volant_protocol::frame::{read_frame, write_frame};
 use volant_protocol::{
-    BatchOutcome, ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Ran, StagedFile, Task,
-    TaskResult, ToAgent,
+    BatchOutcome, BlobEncoding, ExecPath, FromAgent, PROTOCOL_VERSION, PythonPayload, Ran,
+    StagedFile, Task, TaskResult, ToAgent,
 };
 
 /// A changed `copy` moves the staged file over `dest`: the content arrives, the staged file is
@@ -188,9 +187,12 @@ impl Agent {
         let hash = blake3::hash(bytes).to_hex().to_string();
         self.send(&ToAgent::PutBlob {
             hash: hash.clone(),
-            zip_b64: b64_encode(bytes),
+            len: bytes.len() as u64,
+            encoding: BlobEncoding::Raw,
             staged: true,
         });
+        write_frame(&mut self.stdin, bytes).unwrap();
+        self.stdin.flush().unwrap();
         assert_eq!(
             self.recv(),
             FromAgent::BlobState {

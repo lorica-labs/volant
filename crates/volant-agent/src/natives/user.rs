@@ -1036,7 +1036,7 @@ mod linux {
             let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
             let defs = fakes.scratch.path("login.defs");
             for (text, mode) in [
-                ("UMASK\t\t027\nHOME_MODE\t0750\n", 0o750),
+                ("HOME_MODE\t0750\nUMASK\t\t077\n", 0o750),
                 ("UMASK 077\n", 0o700),
                 ("# HOME_MODE 0700\nUMASK 022 \n", 0o755),
             ] {

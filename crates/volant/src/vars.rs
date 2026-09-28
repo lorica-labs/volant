@@ -68,6 +68,28 @@ impl HostVars {
         self.map.insert(key, value)
     }
 
+    /// Lays the `ansible_facts` a module just returned over these variables, as ansible-core's
+    /// `TaskExecutor._execute` does to the copy `changed_when`, `failed_when` and `until` read:
+    /// the flat names through `clean_facts()`, and the namespaced copy one level down, under
+    /// `ansible_facts.ansible_facts`. That nesting is the reference's own: it hands
+    /// `namespace_facts()`, which returns `{'ansible_facts': ...}`, straight to `combine_vars`.
+    /// Measured on ansible-core 2.19.12: a module returning `ansible_y` is `ansible_y` and
+    /// `ansible_facts.ansible_facts.y` to its own `failed_when`, and `ansible_facts.y` is
+    /// undefined there. Every name is a managed host's.
+    pub fn returned_facts(&mut self, facts: &Map<String, Value>) {
+        let (flat, namespaced, _) = split_facts(facts);
+        let mut namespace = self
+            .get("ansible_facts")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        namespace.insert("ansible_facts".into(), Value::Object(namespaced));
+        self.insert_untrusted("ansible_facts".into(), Value::Object(namespace));
+        for (key, value) in flat {
+            self.insert_untrusted(key, value);
+        }
+    }
+
     /// Reads a name the way a template reads it: the inventory-wide values first, because they
     /// were merged last, then the facts no layer of the map outranks, then the host's own map.
     /// Everything that asks for a name by hand rather than through a render goes through here,
@@ -363,6 +385,33 @@ fn strip_internal_keys(value: &mut Value) {
     }
 }
 
+/// A module's `ansible_facts` the two ways the reference files them: the names that land flat,
+/// through `clean_facts()`, and the copy `namespace_facts()` makes, the prefix `setup` returned
+/// taken off except on `ansible_local`. The third list holds the restricted names
+/// `clean_facts()` took out of the flat half.
+fn split_facts(
+    facts: &Map<String, Value>,
+) -> (Map<String, Value>, Map<String, Value>, Vec<String>) {
+    let mut flat = Map::new();
+    let mut namespaced = Map::new();
+    let mut restricted = Vec::new();
+    for (key, value) in facts {
+        if restricted_fact(key) {
+            restricted.push(key.clone());
+        } else if !key.starts_with("_ansible_") {
+            let mut value = value.clone();
+            strip_internal_keys(&mut value);
+            flat.insert(key.clone(), value);
+        }
+        let bare = match key.strip_prefix("ansible_") {
+            Some(bare) if key != "ansible_local" => bare,
+            _ => key,
+        };
+        namespaced.insert(bare.to_string(), value.clone());
+    }
+    (flat, namespaced, restricted)
+}
+
 /// An inventory name without its domain, which is what `inventory_hostname_short` reports.
 fn short_name(host: &str) -> String {
     host.split('.').next().unwrap_or(host).to_string()
@@ -561,27 +610,15 @@ impl VarStore {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        let mut removed = Vec::new();
-        for (key, value) in facts {
-            if restricted_fact(key) {
-                if self.warned_restricted.insert(key.clone()) {
-                    removed.push(key.clone());
-                }
-            } else if !key.starts_with("_ansible_") {
-                let mut flat = value.clone();
-                strip_internal_keys(&mut flat);
-                gathered.insert(key.clone(), flat);
-            }
-            // ansible-core's `namespace_facts()`: the prefix `setup` returned comes off, except
-            // on `ansible_local`.
-            let bare = match key.strip_prefix("ansible_") {
-                Some(bare) if key != "ansible_local" => bare,
-                _ => key,
-            };
-            namespace.insert(bare.to_string(), value.clone());
-        }
+        let (flat, namespaced, restricted) = split_facts(facts);
+        gathered.extend(flat);
+        namespace.extend(namespaced);
         gathered.insert("ansible_facts".into(), Value::Object(namespace));
         self.forget_host(host);
+        let mut removed: Vec<String> = restricted
+            .into_iter()
+            .filter(|key| self.warned_restricted.insert(key.clone()))
+            .collect();
         // The reference's order is a Python set's; name order at least reads the same each run.
         removed.sort();
         removed

@@ -8484,3 +8484,38 @@ fn the_tag_options_reach_ansible_run_tags_and_ansible_skip_tags() {
     }
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
+
+/// `failed_when` reads the facts its own task returned: measured on ansible-core 2.19.12,
+/// `set_fact: {seen: 1}` passes `failed_when: seen is not defined`, and an `include_vars`
+/// passes a `failed_when` naming a variable its file defines.
+///
+/// What would make this red: the conditions judged against the variables the task started with,
+/// which fails both tasks.
+#[test]
+fn failed_when_sees_the_fact_its_own_set_fact_returned() {
+    let dir = std::env::temp_dir().join(format!("volant-ownfacts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    std::fs::write(dir.join("iv.yml"), "ivar: 1\n").expect("a vars file");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - set_fact: {seen: 1}\n\
+         \x20     failed_when: seen is not defined\n\
+         \x20   - include_vars: {file: iv.yml}\n\
+         \x20     failed_when: ivar is not defined\n",
+    )
+    .expect("a playbook");
+    let out = volant(&[
+        "playbook",
+        "-i",
+        dir.join("inv.ini").to_str().expect("a path"),
+        play.to_str().expect("a path"),
+    ]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("ok=2 "), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -670,11 +670,7 @@ fn apply_conditions(
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return Ok(result);
     }
-    let mut vars = item.vars.clone();
-    if let Some(reg) = &task.register {
-        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
-    }
-    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
+    let vars = condition_vars(task, item, &result);
     if !task.changed_when.is_empty() {
         let changed = all_hold(&task.changed_when, &vars, templar)?;
         result.0.insert("changed".into(), json!(changed));
@@ -686,6 +682,45 @@ fn apply_conditions(
         result.0.insert("failed".into(), json!(failed));
     }
     Ok(result)
+}
+
+/// The variables `changed_when`, `failed_when` and `until` read for one result: the item's, with
+/// the facts the result returned laid over them, then the registered name and `result`.
+///
+/// ansible-core's `TaskExecutor._execute` updates its copy of the variables with
+/// `result['ansible_facts']` before it judges, and registers the result again after that, so a
+/// fact never hides the registered name. `set_fact` and `include_vars` write theirs as they are,
+/// unless `delegate_facts` sends them to the delegate, which leaves them out of sight here; any
+/// other module's go through [`HostVars::returned_facts`], `delegate_facts` or not. `debug` is
+/// the one module whose facts are never read. Measured on ansible-core 2.19.12: `set_fact:
+/// {seen: 1}` passes `failed_when: seen is not defined`, a module's fact wins over a `-e` of the
+/// same name, and a delegated `set_fact` under `delegate_facts: true` does not see its own fact.
+fn condition_vars(task: &PlayTask, item: &Item, result: &TaskResult) -> HostVars {
+    let mut vars = item.vars.clone();
+    if let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) {
+        let delegated =
+            task.delegate_to.as_deref().is_some_and(|to| !to.is_empty()) && task.delegates_facts();
+        match short_name(&task.module) {
+            "debug" => {}
+            "set_fact" | "include_vars" if delegated => {}
+            // The trust `record_local_facts` gives the same names once they are written.
+            name @ ("set_fact" | "include_vars") => {
+                for (key, value) in facts {
+                    if name == "set_fact" && item.args_untrusted.contains(key) {
+                        vars.insert_untrusted(key.clone(), value.clone());
+                    } else {
+                        vars.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            _ => vars.returned_facts(facts),
+        }
+    }
+    if let Some(reg) = &task.register {
+        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
+    }
+    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
+    vars
 }
 
 fn all_hold(
@@ -1059,12 +1094,7 @@ pub(super) fn until_holds(
     if retry.until.is_empty() {
         return Ok(!result.failed());
     }
-    let mut vars = item.vars.clone();
-    if let Some(reg) = &task.register {
-        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
-    }
-    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
-    all_hold(&retry.until, &vars, templar)
+    all_hold(&retry.until, &condition_vars(task, item, result), templar)
 }
 
 /// What one run of a retried task decides.
@@ -3454,6 +3484,53 @@ mod tests {
         )
         .unwrap();
         assert!(r.failed());
+    }
+
+    /// `changed_when`, `failed_when` and `until` read the facts the task itself returned, laid
+    /// out as ansible-core 2.19.12's `TaskExecutor._execute` lays them before judging: a module's
+    /// flat and cleaned, its namespaced copy one level down; a `set_fact`'s as written, unless
+    /// `delegate_facts` sends them away; the registered name above them all.
+    ///
+    /// What would make this red: the conditions reading the item's variables alone (`x` is
+    /// undefined), the restricted names left in (`ansible_host` reads `evil`), the namespace
+    /// merged one level up as the store merges it, a delegated `set_fact` seeing its fact, or a
+    /// fact written after the registered name, which hides it.
+    #[test]
+    fn failed_when_changed_when_and_until_read_the_facts_the_task_returned() {
+        let templar = Templar::new(std::env::temp_dir());
+        let item = bare_item();
+        let returned = || {
+            result(
+                json!({"changed": false, "ansible_facts": {"x": 1, "ansible_y": 2, "ansible_host": "evil"}}),
+            )
+        };
+        let mut t = task("ns.coll.facts");
+        t.failed_when = vec![
+            "x != 1 or ansible_y != 2 or ansible_facts.ansible_facts.y != 2 or ansible_facts.y is defined or ansible_host is defined"
+                .into(),
+        ];
+        t.changed_when = vec!["x == 1".into()];
+        let r = finish(&t, &item, returned(), &templar);
+        assert!(!r.failed(), "{:?}", r.0);
+        assert_eq!(r.0["changed"], json!(true), "{:?}", r.0);
+        t.until = vec!["x == 1".into()];
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        assert!(until_holds(&t, &item, &returned(), &retry, &templar).unwrap());
+
+        let mut t = task("ns.coll.facts");
+        t.register = Some("x".into());
+        t.failed_when = vec!["x is not mapping".into()];
+        assert!(!finish(&t, &item, returned(), &templar).failed());
+
+        let seen = || result(json!({"changed": false, "ansible_facts": {"seen": 1}}));
+        let mut t = task("set_fact");
+        t.failed_when = vec!["seen is not defined".into()];
+        assert!(!finish(&t, &item, seen(), &templar).failed());
+        t.delegate_to = Some("h2".into());
+        t.delegate_facts = Some(true);
+        assert!(finish(&t, &item, seen(), &templar).failed());
     }
 
     /// A `run_once` step's registered variable and facts are written for every live host of the

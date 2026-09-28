@@ -8715,3 +8715,78 @@ fn a_raw_argument_on_a_core_module_fails_only_that_task() {
     assert!(!text.contains("never"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A loop's later items read what its earlier items left: their facts and their registered
+/// result. Measured on ansible-core 2.19.12 with this play, message for message: `acc` ends at
+/// `[1, 2]`; item 2 of a `debug` sees item 1's registered result with its `item`; item 2 of a
+/// `command` echoes item 1's `stdout`; an `include_vars` reads the file name its first file
+/// defined; an item that failed under `failed_when` still leaves its facts; a `when` sees the
+/// fact the item before set; and a templated key the item before set passes `failed_when`.
+///
+/// What would make this red: the items rendered once before any of them runs, which ends `acc`
+/// at `[2]` and leaves every item reading nothing of the others.
+#[test]
+fn a_loop_item_sees_what_the_items_before_it_left() {
+    let dir = std::env::temp_dir().join(format!("volant-carry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    std::fs::write(dir.join("a.yml"), "nextfile: b.yml\n").expect("a vars file");
+    std::fs::write(dir.join("b.yml"), "bvar: fromb\n").expect("a vars file");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - set_fact: {acc: \"{{ (acc | default([])) + [item] }}\"}\n\
+         \x20     loop: [1, 2]\n\
+         \x20   - debug: {msg: \"acc={{ acc }}\"}\n\
+         \x20   - debug: {msg: \"{{ item }}-{{ (r.msg ~ '-' ~ r.item) if r is defined else 'x-noitem' }}\"}\n\
+         \x20     loop: [1, 2]\n\
+         \x20     register: r\n\
+         \x20   - command: \"echo {{ item }}-{{ r2.stdout if r2 is defined else 'x' }}\"\n\
+         \x20     loop: [1, 2]\n\
+         \x20     register: r2\n\
+         \x20   - debug: {msg: \"r2={{ r2.results | map(attribute='stdout') | join(',') }}\"}\n\
+         \x20   - include_vars: {file: \"{{ nextfile | default('a.yml') }}\"}\n\
+         \x20     loop: [1, 2]\n\
+         \x20   - debug: {msg: \"bvar={{ bvar }}\"}\n\
+         \x20   - set_fact: {f: \"{{ item }}\", g: \"{{ f | default('none') }}-{{ item }}\"}\n\
+         \x20     loop: [1, 2]\n\
+         \x20     failed_when: item == 1\n\
+         \x20     register: r4\n\
+         \x20     ignore_errors: true\n\
+         \x20   - debug: {msg: \"g={{ r4.results | map(attribute='ansible_facts') | map(attribute='g') | join(',') }}\"}\n\
+         \x20   - set_fact: {w: \"{{ item }}\"}\n\
+         \x20     loop: [1, 2]\n\
+         \x20     when: item == 1 or w is defined\n\
+         \x20     register: r6\n\
+         \x20   - debug: {msg: \"skipped={{ r6.results | selectattr('skipped', 'defined') | list | length }}\"}\n\
+         \x20   - set_fact: {\"k{{ item }}\": 1}\n\
+         \x20     loop: [1, 2]\n\
+         \x20     failed_when: item == 2 and k1 is not defined\n",
+    )
+    .expect("a playbook");
+    let out = volant(&[
+        "playbook",
+        "-i",
+        dir.join("inv.ini").to_str().expect("a path"),
+        play.to_str().expect("a path"),
+    ]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for msg in [
+        "acc=[1, 2]",
+        "1-x-noitem",
+        "2-1-x-noitem-1",
+        "r2=1-x,2-1-x",
+        "bvar=fromb",
+        "g=none-1,1-2",
+        "skipped=0",
+    ] {
+        assert!(
+            text.contains(&format!("\"msg\": \"{msg}\"")),
+            "{msg}:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

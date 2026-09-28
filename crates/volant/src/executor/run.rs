@@ -21,7 +21,7 @@ use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, ConnectionDefaults, Escalation, Transport};
 use crate::vars::{HostVars, VarStore, load_vars_file};
 
-use super::prepare::{Item, display};
+use super::prepare::{Item, build_item, display};
 use super::{CANCEL_GRACE, LinkKey, Reboots, RunOptions, as_bool_value, python_type};
 
 /// What a `debug: var:` naming a value that came from a managed host reports. The reference's
@@ -833,7 +833,9 @@ fn condition_vars(
                     }
                 }
             }
-            _ => vars.returned_facts(facts),
+            _ => {
+                vars.returned_facts(facts);
+            }
         }
     }
     if let Some(reg) = &task.register {
@@ -841,6 +843,108 @@ fn condition_vars(
     }
     vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     vars
+}
+
+/// What the items of a loop leave for the items after them.
+///
+/// ansible-core runs a loop's items against one set of variables and updates it after each
+/// (`TaskExecutor._execute`, then `_run_loop`): the item's facts, then its registered result. So
+/// item N+1 renders its arguments, its label, its `when` and the rest against what item N left.
+/// Measured on ansible-core 2.19.12, each over `[1, 2]`: `set_fact: {acc: "{{ (acc |
+/// default([])) + [item] }}"}` ends at `[1, 2]`; `register: r` shows item 2 item 1's result,
+/// its `item` included, for `debug` and `command` alike; a module's returned `x` reaches item 2's
+/// arguments; an `include_vars` reads a file name the first file defined; an item that failed
+/// under `failed_when`, or ran under `delegate_facts`, still leaves its facts; a skipped item
+/// leaves its registered result; a `when` sees what the item before set.
+///
+/// Built from the items `prepare` rendered, once each: an item is built again only when what
+/// came before it left something. A variable defined in terms of a carried name keeps the value
+/// it resolved to before the loop.
+#[derive(Default)]
+pub(super) struct Carry {
+    /// Every name an item has left so far.
+    touched: BTreeSet<String>,
+    /// The variables the last item ran with, with what it left laid over them.
+    last: Option<HostVars>,
+}
+
+impl Carry {
+    /// The item to run, `item` itself while nothing was left, otherwise built again over what the
+    /// items before it left. A render that fails fails this item, in the words a task that dies
+    /// before it runs gets.
+    pub(super) fn item(
+        &self,
+        task: &PlayTask,
+        item: &Item,
+        templar: &Templar,
+        warnings: &mut Vec<String>,
+    ) -> Result<Item, TaskResult> {
+        let Some(last) = self.last.as_ref().filter(|_| !self.touched.is_empty()) else {
+            return Ok(item.clone());
+        };
+        let mut vars = item.vars.clone();
+        for name in &self.touched {
+            let Some(value) = last.get(name).cloned() else {
+                continue;
+            };
+            if last.untrusted.contains(name) {
+                vars.insert_untrusted(name.clone(), value);
+            } else {
+                vars.insert(name.clone(), value);
+            }
+        }
+        build_item(
+            task,
+            item.element.clone(),
+            vars,
+            templar,
+            warnings,
+            &mut None,
+        )
+        .map_err(|e| TaskResult::failed_with(format!("Task failed: {}", e.0)))
+    }
+
+    /// Takes in what `item`, the one [`Carry::item`] handed out, left with `result`: its facts,
+    /// then its registered result, the loop variable in it.
+    pub(super) fn after(
+        &mut self,
+        task: &PlayTask,
+        item: &Item,
+        result: &TaskResult,
+        templar: &Templar,
+    ) {
+        let mut vars = item.vars.clone();
+        let facts = result.0.get("ansible_facts").and_then(Value::as_object);
+        if let Some(facts) = facts.filter(|_| short_name(&task.module) != "debug") {
+            match short_name(&task.module) {
+                "set_fact" | "include_vars" => {
+                    let data = set_fact_data(task, item, templar);
+                    for (key, value) in facts {
+                        if data.contains(key) {
+                            vars.insert_untrusted(key.clone(), value.clone());
+                        } else {
+                            vars.insert(key.clone(), value.clone());
+                        }
+                        self.touched.insert(key.clone());
+                    }
+                }
+                _ => {
+                    self.touched.extend(vars.returned_facts(facts));
+                    self.touched.insert("ansible_facts".into());
+                }
+            }
+        }
+        if let Some(reg) = &task.register {
+            let mut registered = result.0.clone();
+            if let Some(element) = &item.element {
+                registered.insert(task.loop_var.clone(), element.clone());
+                registered.insert("ansible_loop_var".into(), json!(task.loop_var));
+            }
+            vars.insert_untrusted(reg.clone(), Value::Object(registered));
+            self.touched.insert(reg.clone());
+        }
+        self.last = Some(vars);
+    }
 }
 
 /// What ansible-core's `maybe_raise_on_result` leaves on a failed final result, once the
@@ -3169,6 +3273,39 @@ mod tests {
             "{:?}",
             r.0
         );
+    }
+
+    /// A module's returned facts reach the next item of its loop, as data, its restricted names
+    /// left out, as ansible-core 2.19.12's `_execute` lays them into the loop's variables:
+    /// measured, a module returning `x: 11` for item 1 renders item 2's `v: "{{ (x | default(10))
+    /// + item }}"` to `13`.
+    ///
+    /// What would make this red: a module's facts not carried, a restricted name carried, or the
+    /// carried name left trusted.
+    #[test]
+    fn a_module_s_facts_reach_the_next_item_of_its_loop() {
+        let templar = Templar::new(PathBuf::from("."));
+        let mut t = task("ns.coll.m");
+        t.loop_items = Some(json!([1, 2]));
+        t.args = vars(json!({"v": "{{ (x | default(10)) + item }}"}));
+        let item_for = |n: u64| {
+            let mut v = HostVars::default();
+            v.insert("item".into(), json!(n));
+            build_item(&t, Some(json!(n)), v, &templar, &mut Vec::new(), &mut None)
+                .expect("the item builds")
+        };
+        let first = item_for(1);
+        assert_eq!(first.args["v"], json!(11));
+        let mut carry = Carry::default();
+        let answer =
+            result(json!({"changed": false, "ansible_facts": {"x": 11, "ansible_host": "evil"}}));
+        carry.after(&t, &first, &answer, &templar);
+        let second = carry
+            .item(&t, &item_for(2), &templar, &mut Vec::new())
+            .expect("the item builds again");
+        assert_eq!(second.args["v"], json!(13));
+        assert!(second.vars.get("ansible_host").is_none());
+        assert!(second.vars.untrusted.contains("x"));
     }
 
     /// A `set_fact` renders its keys and refuses a rendered name that cannot name a variable, in

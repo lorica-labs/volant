@@ -76,7 +76,8 @@ impl HostVars {
     /// Measured on ansible-core 2.19.12: a module returning `ansible_y` is `ansible_y` and
     /// `ansible_facts.ansible_facts.y` to its own `failed_when`, and `ansible_facts.y` is
     /// undefined there. Every name is a managed host's.
-    pub fn returned_facts(&mut self, facts: &Map<String, Value>) {
+    /// Returns the flat names written, `ansible_facts` aside.
+    pub fn returned_facts(&mut self, facts: &Map<String, Value>) -> Vec<String> {
         let (flat, namespaced, _) = split_facts(facts);
         let mut namespace = self
             .get("ansible_facts")
@@ -85,9 +86,11 @@ impl HostVars {
             .unwrap_or_default();
         namespace.insert("ansible_facts".into(), Value::Object(namespaced));
         self.insert_untrusted("ansible_facts".into(), Value::Object(namespace));
+        let names = flat.keys().cloned().collect();
         for (key, value) in flat {
             self.insert_untrusted(key, value);
         }
+        names
     }
 
     /// Reads a name the way a template reads it: the inventory-wide values first, because they

@@ -339,10 +339,13 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             // and `check_arguments` knows only the native modules.
             return Ok(());
         }
-        // A collection's module is set aside rather than judged: only the controller's
-        // ansible-core knows which collections are installed, and it is asked once, after both
-        // passes, before the union is built ([`check_resolved`]).
-        if crate::python::is_collection_name(&task.module) {
+        // A collection's module, or a name a `library/` may hold, is set aside rather than
+        // judged: only the controller's ansible-core knows which collections are installed and
+        // what its module path holds, and it is asked once, after both passes, before the union
+        // is built ([`check_resolved`]). A word left in `_raw_params` fails the task when it
+        // runs (`raw_params_refusal`), once the name resolved: `shel: echo hi` is a typo before
+        // it is a module given raw params.
+        if crate::python::is_resolved_name(&task.module) {
             return Ok(());
         }
         bail!(unresolved(&task.name, &task.module));
@@ -361,18 +364,22 @@ fn unresolved_tail(module: &str) -> String {
     )
 }
 
-/// Every `(task, module)` of a compiled play whose module only a collection can answer, set
-/// aside by [`check_task`] for the controller's ansible-core to resolve.
+/// Every `(task, module)` of a compiled play whose module only the controller's ansible-core can
+/// answer, set aside by [`check_task`] for it to resolve.
 pub(crate) fn collection_modules(compiled: &crate::compile::Compiled) -> Vec<(String, String)> {
+    set_aside(compiled)
+        .map(|task| (task.name.clone(), task.module.clone()))
+        .collect()
+}
+
+fn set_aside(compiled: &crate::compile::Compiled) -> impl Iterator<Item = &PlayTask> {
     compiled
         .steps
         .iter()
         .filter(|step| !matches!(step.kind, crate::compile::StepKind::Flush { .. }))
         .map(|step| &step.task)
         .chain(compiled.handlers.iter().map(|handler| &handler.task))
-        .filter(|task| crate::python::is_collection_name(&task.module))
-        .map(|task| (task.name.clone(), task.module.clone()))
-        .collect()
+        .filter(|task| crate::python::is_resolved_name(&task.module))
 }
 
 /// What the controller's ansible-core made of a collection's module a task names, refused
@@ -427,26 +434,29 @@ pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -
     )
 }
 
-/// A collection's module an include brought in, refused unless the union holds it.
+/// A module set aside for the controller, refused unless the union holds it. Run on the plays
+/// before the first connection, and on what an include brings in. A word the loader kept in
+/// `_raw_params` fails the task when it runs (`raw_params_refusal`).
 ///
 /// The union was built before the first connection, from what the plays and their role files
-/// name, and a collection's module is in it only if the controller's ansible-core resolved it to
-/// a module it could build. One that is not was missing, is served by an action plugin, or sits
+/// name, and a set-aside module is in it only if the controller's ansible-core resolved it to a
+/// module it could build. One that is not was missing, is served by an action plugin, or sits
 /// in a file nothing read before the run; the include fails for the host that reached it, before
 /// any of the file's tasks run, like any other refusal of an included file.
 pub(crate) fn check_built(
     expanded: &crate::compile::Compiled,
     union: Option<&crate::python::Union>,
 ) -> anyhow::Result<()> {
-    for (task, module) in collection_modules(expanded) {
-        if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(&module))) {
+    for task in set_aside(expanded) {
+        let (name, module) = (&task.name, &task.module);
+        if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
             // What the controller made of a name it set aside, as the pre-flight says it for one
             // a play names.
-            if let Some(why) = union.and_then(|u| u.refused.get(&module)) {
-                bail!("task '{task}': {why}");
+            if let Some(why) = union.and_then(|u| u.refused.get(module)) {
+                bail!("task '{name}': {why}");
             }
             bail!(
-                "task '{task}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection"
+                "task '{name}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, no module path holds it, it runs through an action plugin, or it is named only in a file nothing read before the first connection"
             );
         }
     }
@@ -682,7 +692,23 @@ mod tests {
             check(&pb).is_ok(),
             "a builtin this release does not run itself has a payload path now"
         );
-        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n");
+        // A name no builtin has is the controller's to answer: a `library/` may hold it. What
+        // it says when nothing does is the reference's typo sentence.
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("set aside for the controller");
+        let text = format!(
+            "{:#}",
+            check_resolved(
+                "Later",
+                "nosuchmodule",
+                &crate::python::Resolved::Missing { collection: None }
+            )
+            .unwrap_err()
+        );
         assert!(
             text.contains("couldn't resolve module/action 'nosuchmodule'"),
             "{text}"
@@ -722,17 +748,47 @@ mod tests {
             ]
         );
         // A word that is not `key=value` is kept by the loader and fails the task when it runs,
-        // as in the reference; a string that is one template, the reference's argument splat,
-        // is refused here, where a task is checked. Red if the loader refuses either (a role's
-        // Windows file would refuse a Linux run), if the stray word stops the run before it
-        // starts, or if nothing refuses the splat (the module runs with an argument it never
-        // declared).
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n",
-            "x.yml",
-        )
-        .unwrap();
-        check(&pb).expect("a stray word fails the task at run time");
+        // as in the reference, whether the name is a collection's or a `library/` module's; a
+        // string that is one template, the reference's argument splat, is refused here, where a
+        // task is checked. Red if the loader refuses either (a role's Windows file would refuse
+        // a Linux run), if the stray word stops the run before it starts, or if nothing refuses
+        // the splat (the module runs with an argument it never declared).
+        let stray = |module: &str| {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Stray\n      {module}: a=1 stray\n"),
+                "x.yml",
+            )
+            .unwrap();
+            check(&pb).expect("set aside before it resolved");
+            let compiled = crate::compile::compile(
+                &pb.plays[0],
+                &crate::roles::RoleSearch::default(),
+                &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+            )
+            .unwrap();
+            let facts = crate::python::ModuleFacts {
+                module_fqn: "fqn".into(),
+                profile: "legacy".into(),
+                rlimit_nofile: 0,
+                extensions: serde_json::Map::new(),
+                core: false,
+            };
+            let union = crate::python::Union {
+                hash: "ab".into(),
+                zip_b64: "UEsDBA==".into(),
+                modules: std::collections::BTreeMap::from([(module.to_string(), facts)]),
+                refused: std::collections::BTreeMap::new(),
+                natives: crate::python::Natives::default(),
+            };
+            check_built(&compiled, Some(&union)).map_err(|err| format!("{err:#}"))
+        };
+        for module in [
+            "ns.coll.mod",
+            "my_library_module",
+            "ansible.windows.win_shell",
+        ] {
+            stray(module).expect("a stray word fails the task at run time");
+        }
         let text =
             refusal("- hosts: all\n  tasks:\n    - name: Splat\n      ns.coll.mod: \"{{ d }}\"\n");
         assert!(
@@ -742,32 +798,13 @@ mod tests {
             "{text}"
         );
         // A builtin's splat too, and a builtin's stray word is left to the run.
-        let text = refusal(
-            "- hosts: all
-  tasks:
-    - name: Splat
-      ping: \"{{ d }}\"
-",
-        );
+        let text = refusal("- hosts: all\n  tasks:\n    - name: Splat\n      ping: \"{{ d }}\"\n");
         assert!(
             text.contains("task 'Splat': module 'ping' takes its arguments from one template"),
             "{text}"
         );
-        let pb = parse(
-            "- hosts: all
-  tasks:
-    - ping: foo
-",
-            "x.yml",
-        )
-        .unwrap();
+        let pb = parse("- hosts: all\n  tasks:\n    - ping: foo\n", "x.yml").unwrap();
         check(&pb).expect("a builtin's stray word fails the task at run time");
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - ansible.windows.win_shell: Get-Service foo\n",
-            "x.yml",
-        )
-        .unwrap();
-        check(&pb).expect("a free-form collection module takes its command line");
         let text =
             refusal("- hosts: all\n  tasks:\n    - name: T\n      ansible.builtin.nosuch: x=1\n");
         assert!(

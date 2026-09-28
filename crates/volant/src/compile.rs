@@ -1151,10 +1151,14 @@ pub(crate) fn compile(
     // `--skip-tags always` still does not. The play's own keywords come down through `empty` like
     // any other task's, except `run_once`: facts are the host's own, and gathering them once for
     // the batch would write one host's hostname onto every host of it.
+    //
+    // Named `ansible.legacy.setup`, as the reference's `gather_facts` plugin runs it: a
+    // `library/setup.py` beside the playbook answers the gathering there, measured on
+    // ansible-core 2.19.12, where `ansible.builtin.setup` would never find it.
     let gather = PlayTask {
         name: "Gathering Facts".to_string(),
         named: true,
-        module: "ansible.builtin.setup".to_string(),
+        module: "ansible.legacy.setup".to_string(),
         tags: {
             let mut tags = empty.tags.clone();
             tags.push("always".to_string());
@@ -3043,7 +3047,7 @@ mod tests {
         };
         let c = gathering(&selection(&[], &[]));
         assert!(c.gathers, "the play asked for facts");
-        assert_eq!(c.steps[0].task.module, "ansible.builtin.setup");
+        assert_eq!(c.steps[0].task.module, "ansible.legacy.setup");
         assert_eq!(c.steps[0].task.name, "Gathering Facts");
         assert_eq!(c.steps[0].kind, StepKind::Task);
         assert!(!listed(&c, 0), "the reference lists no gather step");
@@ -3056,7 +3060,7 @@ mod tests {
         assert!(tagged.gathers, "`always` survives a tag selection");
         let skipped = gathering(&selection(&[], &["always"]));
         assert!(!skipped.gathers, "`--skip-tags always` drops the gather");
-        assert_ne!(skipped.steps[0].task.module, "ansible.builtin.setup");
+        assert_ne!(skipped.steps[0].task.module, "ansible.legacy.setup");
 
         let c = compiled(text);
         assert!(!c.gathers, "`gather_facts: false` gathers nothing");

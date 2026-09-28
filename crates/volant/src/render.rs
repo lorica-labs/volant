@@ -27,6 +27,8 @@ pub struct Renderer {
     color: bool,
     width: usize,
     verbosity: u8,
+    /// Every `[WARNING]:` line written so far, which is never written twice.
+    warned: std::collections::HashSet<String>,
 }
 
 const HOST_COLUMN: usize = 26;
@@ -62,6 +64,7 @@ impl Renderer {
             color,
             width,
             verbosity,
+            warned: std::collections::HashSet::new(),
         }
     }
 
@@ -72,6 +75,7 @@ impl Renderer {
             color,
             width,
             verbosity,
+            warned: std::collections::HashSet::new(),
         }
     }
 
@@ -137,13 +141,18 @@ impl Renderer {
     /// warning as well - measured on ansible-core 2.19.12, that one quotes the playbook's own
     /// source (`['{{ secret }}']`) rather than a rendered value, so there is nothing in it to
     /// hide and the reference does not hide it either.
+    ///
+    /// A line already written is not written again, for the whole run, whichever task or host
+    /// it came from: ansible-core 2.19.12's `Display._warning` keeps every `[WARNING]: <text>`
+    /// it has shown in `_warns` and drops a repeat (`_deduplicate`, keyed by that text alone). A
+    /// registered result still holds every copy, as the reference's does.
     pub fn warning(&mut self, text: &str, censored: bool) {
         let body = if censored { CENSORED } else { text };
-        let _ = writeln!(
-            anstream::stderr(),
-            "{}",
-            self.paint(WARNING, &format!("[WARNING]: {body}"))
-        );
+        let line = format!("[WARNING]: {body}");
+        if !self.warned.insert(line.clone()) {
+            return;
+        }
+        let _ = writeln!(anstream::stderr(), "{}", self.paint(WARNING, &line));
     }
 
     /// The line a failed attempt prints before the task is reported, measured on ansible-core

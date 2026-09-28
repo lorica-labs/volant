@@ -100,7 +100,7 @@ pub struct Union {
     /// `zip_data` already encoded, so re-encoding raw bytes for the frame would decode and
     /// encode the same 631 KB for nothing.
     pub zip_b64: String,
-    /// Keyed by [`payload_key`]: `ping` and `ansible.builtin.ping` are one entry, and
+    /// Keyed by [`payload_key`]: `ping` and `ansible.legacy.ping` are one entry, and
     /// `ansible.posix.sysctl` is its own, whatever else in the run is called `sysctl`.
     pub modules: BTreeMap<String, ModuleFacts>,
     /// A collection's module a role file named and the controller's ansible-core did not resolve
@@ -127,25 +127,30 @@ impl Union {
 
 /// The key a module's facts are filed under in [`Union::modules`], and looked up by.
 ///
-/// A builtin keeps its short name, so the three spellings of `ping` are one entry. Every other
-/// name is kept whole: two collections may each ship a `sysctl`, and a collection may ship a
-/// module named like a builtin, so a key shortened to the last segment would hand a task the
-/// module of whichever of them was built last.
+/// A builtin written bare or as `ansible.legacy.` keeps its short name, so those two spellings of
+/// `ping` are one entry: both search a playbook's or a role's `library/` first. `ansible.builtin.`
+/// is kept whole, because ansible-core looks that name up among its own modules alone
+/// (`_find_fq_plugin`): measured on 2.19.12 with a `library/ping.py`, `ping` and
+/// `ansible.legacy.ping` run it and `ansible.builtin.ping` runs ansible-core's. Every other name
+/// is kept whole too: two collections may each ship a `sysctl`, and a collection may ship a module
+/// named like a builtin, so a key shortened to the last segment would hand a task the module of
+/// whichever of them was built last.
 pub fn payload_key(module: &str) -> &str {
-    if volant_protocol::modules::is_builtin(module) {
+    if volant_protocol::modules::is_builtin(module) && !module.starts_with("ansible.builtin.") {
         short_name(module)
     } else {
         module
     }
 }
 
-/// Whether only an installed collection can answer to this name: qualified, and under neither of
-/// the two prefixes that name ansible-core's own modules. `ansible.builtin.nosuch` is not one: it
-/// is a typo in a namespace ansible-core owns whole, and no collection can supply it.
-pub fn is_collection_name(module: &str) -> bool {
-    module.contains('.')
+/// Whether only the controller's ansible-core can say what this name is: a collection's module,
+/// or a name no builtin has (`my_module`, `ansible.legacy.my_module`), which a `library/` beside
+/// the playbook, in a role, or on the configured path may hold. `ansible.builtin.nosuch` is not
+/// one: it is a typo in a namespace ansible-core owns whole, and nothing can supply it.
+pub fn is_resolved_name(module: &str) -> bool {
+    !module.is_empty()
         && !module.starts_with("ansible.builtin.")
-        && !module.starts_with("ansible.legacy.")
+        && !volant_protocol::modules::is_builtin(module)
 }
 
 /// What the controller's ansible-core makes of one module name it was asked about.
@@ -202,7 +207,7 @@ pub fn is_python_module(module: &str) -> bool {
         import_module, include_module, is_builtin, is_known, short_name,
     };
 
-    if is_collection_name(module) {
+    if is_resolved_name(module) {
         return true;
     }
     is_builtin(module)
@@ -263,7 +268,7 @@ pub fn modules_to_build<'a>(
 /// A literal include target that cannot be is left to the include, which fails the host reaching
 /// it the way the reference does.
 pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<String> {
-    modules_to_build(reach.modules.iter().map(String::as_str))
+    modules_to_build(reach.modules.iter().map(|(module, _)| module.as_str()))
 }
 
 /// Every role and task file a run's plays can reach, read once before the first connection: what
@@ -273,9 +278,14 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
 pub(crate) struct Reach {
     /// The root of every role reached.
     pub(crate) roles: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Every directory whose plugin directories join ansible-playbook's loaders, in the order it
+    /// adds them (`add_all_plugin_dirs`), which is the order they are searched in.
+    pub(crate) plugin_dirs: Vec<std::path::PathBuf>,
     /// Every task file read.
     pub(crate) files: std::collections::BTreeSet<std::path::PathBuf>,
-    modules: Vec<String>,
+    /// Every module a task names, with how many of `plugin_dirs` the reference had added when
+    /// that task runs.
+    modules: Vec<(String, usize)>,
     /// Every task read from a file, with that file and where it resolves its relative paths.
     pub(crate) tasks: Vec<(
         std::path::PathBuf,
@@ -284,43 +294,113 @@ pub(crate) struct Reach {
     )>,
 }
 
+/// One playbook the operator named: the directory it is in, and its plays, an imported file's
+/// spliced in, each with the directory of the file it was written in.
+pub(crate) struct Named<'a> {
+    pub(crate) dir: Option<&'a std::path::Path>,
+    pub(crate) plays: Vec<(&'a std::path::Path, &'a crate::compile::Compiled)>,
+}
+
 impl Reach {
-    /// Walks from every step and handler of `plays`, each with the directory of its play, which
-    /// is where a play handler's include resolves.
+    /// [`Reach::walk_run`] over plays of one playbook with no directory of its own.
+    #[cfg(test)]
     pub(crate) fn walk(
         plays: &[(&std::path::Path, &crate::compile::Compiled)],
     ) -> anyhow::Result<Reach> {
+        Reach::walk_run(&[Named {
+            dir: None,
+            plays: plays.to_vec(),
+        }])
+    }
+
+    /// Walks from every step and handler of each playbook's plays, each with the directory of
+    /// its play, which is where a play handler's include resolves.
+    ///
+    /// The plugin directories are added in the reference's order, measured on ansible-core
+    /// 2.19.12 with a `library/ping.py` placed in each position: every named playbook's
+    /// directory before anything runs (`cli/playbook.py`); then, as each playbook is read, just
+    /// before its plays run, each imported file's directory and each play's roles, a role after
+    /// its dependencies (`Playbook._load_playbook_data`, `Role._load_role_data`); and a role an
+    /// `include_role` brings in when that task runs. A later playbook's roles are therefore not
+    /// searched for an earlier playbook's tasks, and a later playbook's own directory is.
+    pub(crate) fn walk_run(playbooks: &[Named]) -> anyhow::Result<Reach> {
         let mut reach = Reach::default();
-        for &(dir, play) in plays {
-            for step in &play.steps {
-                reach.modules.push(step.task.module.clone());
-                if let Some(role) = &step.origin.role_dir {
-                    reach.role(role, &play.search)?;
-                }
-                let origin = &step.origin;
-                reach.statement(
-                    &step.task,
-                    &origin.file_dir,
-                    origin.role_dir.as_deref(),
-                    &play.search,
-                )?;
+        for playbook in playbooks {
+            if let Some(dir) = playbook.dir {
+                reach.add_dir(dir);
             }
-            for handler in &play.handlers {
-                reach.modules.push(handler.task.module.clone());
-                let role_dir = handler
-                    .role
-                    .and_then(|i| play.roles.get(i))
-                    .and_then(|role| play.search.locate(&role.name).ok());
-                if let Some(role) = &role_dir {
-                    reach.role(role, &play.search)?;
+        }
+        for playbook in playbooks {
+            for &(dir, play) in &playbook.plays {
+                reach.add_dir(dir);
+                for role in &play.roles {
+                    if let Ok(path) = play.search.locate(&role.name) {
+                        reach.add_dir(&path);
+                    }
                 }
-                let file_dir = role_dir
-                    .as_ref()
-                    .map_or_else(|| dir.to_path_buf(), |role| role.join("handlers"));
-                reach.statement(&handler.task, &file_dir, role_dir.as_deref(), &play.search)?;
+            }
+            for &(dir, play) in &playbook.plays {
+                reach.play(dir, play)?;
             }
         }
         Ok(reach)
+    }
+
+    /// `dir`, by its real path, at the end of [`Reach::plugin_dirs`] unless it is there already.
+    /// A playbook or a role inside a collection adds nothing, as in the reference.
+    fn add_dir(&mut self, dir: &std::path::Path) {
+        let Ok(dir) = std::fs::canonicalize(dir) else {
+            return;
+        };
+        if !dir
+            .components()
+            .any(|c| c.as_os_str() == "ansible_collections")
+            && !self.plugin_dirs.contains(&dir)
+        {
+            self.plugin_dirs.push(dir);
+        }
+    }
+
+    /// Records `module` as named by a task that runs now.
+    fn named(&mut self, module: &str) {
+        self.modules
+            .push((module.to_string(), self.plugin_dirs.len()));
+    }
+
+    /// Walks one play's steps and handlers, each task named at the time it runs.
+    fn play(
+        &mut self,
+        dir: &std::path::Path,
+        play: &crate::compile::Compiled,
+    ) -> anyhow::Result<()> {
+        for step in &play.steps {
+            self.named(&step.task.module);
+            if let Some(role) = &step.origin.role_dir {
+                self.role(role, &play.search)?;
+            }
+            let origin = &step.origin;
+            self.statement(
+                &step.task,
+                &origin.file_dir,
+                origin.role_dir.as_deref(),
+                &play.search,
+            )?;
+        }
+        for handler in &play.handlers {
+            self.named(&handler.task.module);
+            let role_dir = handler
+                .role
+                .and_then(|i| play.roles.get(i))
+                .and_then(|role| play.search.locate(&role.name).ok());
+            if let Some(role) = &role_dir {
+                self.role(role, &play.search)?;
+            }
+            let file_dir = role_dir
+                .as_ref()
+                .map_or_else(|| dir.to_path_buf(), |role| role.join("handlers"));
+            self.statement(&handler.task, &file_dir, role_dir.as_deref(), &play.search)?;
+        }
+        Ok(())
     }
 
     fn role(
@@ -337,6 +417,7 @@ impl Reach {
                 self.role(&found, search)?;
             }
         }
+        self.add_dir(dir);
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
                 self.files.insert(path.clone());
@@ -372,7 +453,7 @@ impl Reach {
     ) -> anyhow::Result<()> {
         for task in tasks {
             if !task.module.is_empty() {
-                self.modules.push(task.module.clone());
+                self.named(&task.module);
             }
             self.statement(task, file_dir, role_dir, search)?;
             let origin = crate::compile::Origin {
@@ -429,6 +510,48 @@ impl Reach {
         }
         Ok(())
     }
+}
+
+/// Refuses a run in which one module name finds different files at different points of the
+/// run. The union holds one module per name, built with every directory of
+/// [`Reach::plugin_dirs`] searched; the reference searches only the directories it has added
+/// when the task runs. Measured on ansible-core 2.19.12: with a second named playbook whose role
+/// ships `library/ping.py`, the first playbook's `ping` answers `pong` and the second one's the
+/// role's; after an `include_role` of a role shipping it, the `ping` before answers `pong`.
+///
+/// A name is safe when the first directory whose `library/` holds it was added before the
+/// earliest task naming it, or when none holds it: every task then finds the same file. A name
+/// a plugin's sub-tasks use (`stat` for `copy`) counts as named by the plugin's task.
+pub(crate) fn check_plugin_order(reach: &Reach) -> anyhow::Result<()> {
+    let mut earliest: BTreeMap<String, usize> = BTreeMap::new();
+    for (module, at) in &reach.modules {
+        for name in modules_to_build([module.as_str()]) {
+            let name = name.strip_prefix("ansible.legacy.").unwrap_or(&name);
+            if name.contains('.') {
+                continue;
+            }
+            let first = earliest.entry(name.to_string()).or_insert(*at);
+            *first = (*first).min(*at);
+        }
+    }
+    for (name, at) in earliest {
+        let Some(first) = reach.plugin_dirs.iter().position(|dir| holds(dir, &name)) else {
+            continue;
+        };
+        if first >= at {
+            bail!(
+                "module '{name}' is found in {} only once ansible-playbook has added that directory, after a task naming '{name}' has run with another module under that name. Volant builds one module per name for the whole run and cannot run both. Rename the module in that directory, or run the playbooks apart.",
+                reach.plugin_dirs[first].join("library").display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir`'s `library/` holds the module `name` as the reference's legacy search finds
+/// one built with `mod_type=".py"`: a file `<name>.py`, a link to one included.
+fn holds(dir: &std::path::Path, name: &str) -> bool {
+    dir.join("library").join(format!("{name}.py")).is_file()
 }
 
 /// Every task of a list, blocks and all three of their sections included. A block's own keywords
@@ -491,23 +614,33 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 ///
 /// The union is kept between runs ([`crate::union_cache`]): a run whose entry is still valid
 /// starts no helper at all. `warn` is told, once, when the cache cannot be written.
+///
+/// `plugin_dirs` is every playbook's directory, then every role's, in the order ansible-playbook
+/// adds them to its loaders: their `library/` and `module_utils/` are searched before anything
+/// configured, and the helper is told about them before it resolves or builds anything.
 pub fn union_for(
     modules: &std::collections::BTreeSet<String>,
     named: &[(String, String)],
+    plugin_dirs: &[std::path::PathBuf],
     warn: &mut dyn FnMut(String),
 ) -> anyhow::Result<Option<Union>> {
     if modules.is_empty() {
         return Ok(None);
     }
-    let place = crate::union_cache::Place::here(modules, &collection_names(modules));
-    union_from(PythonBuilder::start, modules, named, place.as_ref(), warn)
+    let place = crate::union_cache::Place::here(modules, &collection_names(modules), plugin_dirs);
+    let start = || {
+        let mut builder = PythonBuilder::start()?;
+        builder.add_plugin_dirs(plugin_dirs)?;
+        Ok(builder)
+    };
+    union_from(start, modules, named, place.as_ref(), warn)
 }
 
-/// The names only an installed collection can answer to, which the helper resolves first.
+/// The names only the controller's ansible-core can answer to, which the helper resolves first.
 fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String> {
     modules
         .iter()
-        .filter(|m| is_collection_name(m))
+        .filter(|m| is_resolved_name(m))
         .cloned()
         .collect()
 }
@@ -558,7 +691,7 @@ fn union_from(
         Err(_)
             if names
                 .iter()
-                .all(|m| is_collection_name(m) && !named.iter().any(|(_, n)| n == m)) =>
+                .all(|m| is_resolved_name(m) && !named.iter().any(|(_, n)| n == m)) =>
         {
             return Ok(None);
         }
@@ -774,6 +907,22 @@ impl PythonBuilder {
         exchange(stdin, &mut self.stdout, modules)
     }
 
+    /// Adds each directory's plugin directories to the helper's loaders, as ansible-playbook
+    /// adds a playbook's and a role's.
+    pub fn add_plugin_dirs(&mut self, dirs: &[std::path::PathBuf]) -> anyhow::Result<()> {
+        let dirs: Vec<&str> = dirs.iter().filter_map(|dir| dir.to_str()).collect();
+        if !dirs.is_empty() {
+            let stdin = self.stdin.as_mut().expect("stdin is open until drop");
+            ask(
+                stdin,
+                &mut self.stdout,
+                &serde_json::json!({ "plugin_dirs": dirs }),
+                "add the plugin directories",
+            )?;
+        }
+        Ok(())
+    }
+
     /// What the controller's ansible-core makes of each name, one answer per name asked.
     pub fn resolve(&mut self, modules: &[String]) -> anyhow::Result<BTreeMap<String, Resolved>> {
         let stdin = self.stdin.as_mut().expect("stdin is open until drop");
@@ -867,7 +1016,7 @@ fn exchange<W: Write, R: Read>(
         .context("the python helper's answer carries no module facts")?;
     for (name, value) in built {
         // Keyed by `payload_key` whatever the playbook wrote, so `ping` and
-        // `ansible.builtin.ping` in one run are one entry, a collection's `sysctl` is never
+        // `ansible.legacy.ping` in one run are one entry, a collection's `sysctl` is never
         // another's, and `prepare` finds what was built for a task by the same function.
         facts.insert(payload_key(name).to_string(), module_facts(name, value)?);
     }
@@ -1062,7 +1211,8 @@ mod tests {
             union.modules[payload_key("community.general.sysctl")].module_fqn,
             "ansible_collections.community.general.plugins.modules.sysctl"
         );
-        assert_eq!(payload_key("ansible.builtin.ping"), "ping");
+        // `ansible.builtin.ping` is never the `ping` a `library/` shadows.
+        assert_eq!(payload_key("ansible.builtin.ping"), "ansible.builtin.ping");
         assert_eq!(payload_key("ansible.legacy.ping"), "ping");
         let built = modules_to_build([
             "ansible.posix.sysctl",
@@ -1072,7 +1222,12 @@ mod tests {
         ]);
         assert_eq!(
             built.iter().map(String::as_str).collect::<Vec<_>>(),
-            ["ansible.posix.sysctl", "community.general.sysctl", "ping"]
+            [
+                "ansible.builtin.ping",
+                "ansible.posix.sysctl",
+                "community.general.sysctl",
+                "ping"
+            ]
         );
     }
 
@@ -1753,20 +1908,25 @@ mod tests {
         assert!(err.contains("ping"), "{err}");
     }
 
-    /// The facts are keyed by the short module name whatever spelling the playbook used, so one
-    /// module asked for under two names is one entry.
+    /// The facts are keyed by the short module name for a bare or `ansible.legacy.` spelling, so
+    /// one module asked for under both is one entry; `ansible.builtin.` keeps its own entry.
     ///
     /// What would make this red: keying by the request string, which hands a map keyed
-    /// `ansible.builtin.ping` to a caller that looks its task's module up by its short name and
-    /// finds nothing - or, worse, an empty fact set.
+    /// `ansible.legacy.ping` to a caller that looks its task's module up by its short name and
+    /// finds nothing; or `ansible.builtin.ping` folded into `ping`, which a `library/ping.py`
+    /// then answers.
     #[test]
     fn the_facts_are_keyed_by_the_short_module_name() {
-        let answer = br#"{"zip_b64": "UEsD", "modules": {"ansible.builtin.ping": {"module_fqn":
-            "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0,
-            "extensions": {}}}}"#;
-        let asked = ["ansible.builtin.ping".to_string()];
+        let answer = br#"{"zip_b64": "UEsD", "modules": {"ansible.legacy.ping": {"module_fqn":
+            "ansible.legacy.ping", "profile": "legacy", "rlimit_nofile": 0,
+            "extensions": {}}, "ansible.builtin.ping": {"module_fqn": "ansible.modules.ping",
+            "profile": "legacy", "rlimit_nofile": 0, "extensions": {}}}}"#;
+        let asked = ["ansible.legacy.ping", "ansible.builtin.ping"].map(str::to_string);
         let union = exchange(Vec::new(), framed(answer), &asked).unwrap().0;
-        assert_eq!(union.modules.keys().collect::<Vec<_>>(), ["ping"]);
+        assert_eq!(
+            union.modules.keys().collect::<Vec<_>>(),
+            ["ansible.builtin.ping", "ping"]
+        );
     }
 
     /// An empty blob is refused on the controller. What would make this red: letting it through,
@@ -1947,7 +2107,7 @@ mod tests {
     /// playbook on a machine that has no ansible-core - including the ones that never needed it.
     #[test]
     fn a_run_with_no_python_module_builds_nothing() {
-        let none = union_for(&std::collections::BTreeSet::new(), &[], &mut |_| {})
+        let none = union_for(&std::collections::BTreeSet::new(), &[], &[], &mut |_| {})
             .expect("nothing to build");
         assert!(none.is_none());
     }
@@ -2104,7 +2264,9 @@ mod tests {
                 &interpreter,
                 &std::collections::BTreeSet::from(["ping".into()]),
                 &[],
-            ),
+                &[],
+            )
+            .expect("no plugin file to vouch for"),
             interpreter: interpreter.path,
             real: interpreter.real,
         }

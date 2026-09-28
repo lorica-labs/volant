@@ -637,18 +637,9 @@ pub(super) fn finish(
     if timed_out(&result) || raw_params_refusal(task).is_some() {
         return result;
     }
-    let mut r = judged(task, item, result, templar);
+    let mut r = apply_conditions(task, item, result, templar);
     settle_failure(&mut r);
     r
-}
-
-/// `changed_when` and `failed_when` applied, a condition that cannot be evaluated failing the
-/// result in its own words.
-fn judged(task: &PlayTask, item: &Item, result: TaskResult, templar: &Templar) -> TaskResult {
-    match apply_conditions(task, item, result, templar) {
-        Ok(r) => r,
-        Err(e) => TaskResult::failed_with(e.0),
-    }
 }
 
 /// Whether a result is the one [`TaskResult::timed_out`] builds: a failure carrying the period
@@ -674,18 +665,23 @@ fn apply_conditions(
     item: &Item,
     mut result: TaskResult,
     templar: &Templar,
-) -> Result<TaskResult, TemplateError> {
+) -> TaskResult {
     result.settle_failed();
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
-        return Ok(result);
+        return result;
     }
     let vars = condition_vars(task, item, &result);
     if !task.changed_when.is_empty() {
-        let changed = all_hold(&task.changed_when, &vars, templar)?;
-        result.0.insert("changed".into(), json!(changed));
+        match all_hold(&task.changed_when, &vars, templar) {
+            Ok(changed) => result.0.insert("changed".into(), json!(changed)),
+            Err(e) => return unevaluable(result, "changed", &e),
+        };
     }
     if !task.failed_when.is_empty() {
-        let failed = all_hold(&task.failed_when, &vars, templar)?;
+        let failed = match all_hold(&task.failed_when, &vars, templar) {
+            Ok(failed) => failed,
+            Err(e) => return unevaluable(result, "failed", &e),
+        };
         result.0.insert("failed_when_result".into(), json!(failed));
         // Over a non-zero rc too: the condition has spoken.
         result.0.insert("failed".into(), json!(failed));
@@ -698,7 +694,28 @@ fn apply_conditions(
                 .insert("failed_when_suppressed_exception".into(), exception);
         }
     }
-    Ok(result)
+    result
+}
+
+/// A result whose `changed_when` or `failed_when` could not be evaluated, as ansible-core's
+/// `_execute` leaves it: every key the module returned kept, `failed` set, and the error under
+/// `changed_when_result` or `failed_when_result`, the conditions after it not evaluated. Its `msg`
+/// is then [`settle_failure`]'s. Measured on ansible-core 2.19.12: `command: "true"` under
+/// `failed_when: nosuch == 1` registers `failed_when_result: "Error while evaluating conditional:
+/// 'nosuch' is undefined"` beside its `rc` and its empty `msg`; `changed_when: a.nokey` registers
+/// `changed_when_result` and never reads a `failed_when: true` behind it; a syntax error reads
+/// `Syntax error in template: unexpected '*'`. The prefixes are the reference's; what follows them
+/// is this engine's wording of the same fault.
+fn unevaluable(mut result: TaskResult, condition: &str, err: &TemplateError) -> TaskResult {
+    let text = match err.0.strip_prefix("syntax error: ") {
+        Some(rest) => format!("Syntax error in template: {rest}"),
+        None => format!("Error while evaluating conditional: {}", err.0),
+    };
+    result.0.insert("failed".into(), json!(true));
+    result
+        .0
+        .insert(format!("{condition}_when_result"), json!(text));
+    result
 }
 
 /// The variables `changed_when`, `failed_when` and `until` read for one result: the item's, with
@@ -746,13 +763,18 @@ fn condition_vars(task: &PlayTask, item: &Item, result: &TaskResult) -> HostVars
 /// `ping` loop item under `failed_when: true`, and a `ping` whose `until: false` ran out, all
 /// register `msg: "Task failed: Action failed: Unknown error."`; a `debug` keeps its own `msg`
 /// and a `command` its empty one. `until` never sees that `msg`: `until: r.msg is defined` over
-/// `failed_when: true` retries.
+/// `failed_when: true` retries. A module result that already carried a truthy `exception` was
+/// normalised as the module's error, and reads `Module failed` instead.
 fn settle_failure(result: &mut TaskResult) {
     if result.failed() {
+        let by = match result.0.get("exception") {
+            Some(e) if !python_falsy(e) => "Module",
+            _ => "Action",
+        };
         result
             .0
             .entry("msg")
-            .or_insert_with(|| json!("Task failed: Action failed: Unknown error."));
+            .or_insert_with(|| json!(format!("Task failed: {by} failed: Unknown error.")));
         result
             .0
             .insert("exception".into(), json!("(traceback unavailable)"));
@@ -1165,7 +1187,7 @@ pub(super) fn judge_attempt(
     // could not be evaluated hands back a result of its own.
     let mut raw = raw;
     raw.0.insert("attempts".into(), json!(attempt));
-    let mut r = judged(task, item, raw, templar);
+    let mut r = apply_conditions(task, item, raw, templar);
     r.0.insert("attempts".into(), json!(attempt));
     match until_holds(task, item, &r, retry, templar) {
         Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
@@ -3433,7 +3455,7 @@ mod tests {
             skipped: None,
         };
         let failed = |r: Value| {
-            let r = apply_conditions(&t, &item, result(r), &templar).unwrap();
+            let r = apply_conditions(&t, &item, result(r), &templar);
             r.0.get("failed").cloned()
         };
         assert_eq!(failed(json!({"ping": "pong"})), Some(json!(false)));
@@ -3457,7 +3479,7 @@ mod tests {
         assert_eq!(failed(json!({"failed": null})), Some(json!(null)));
         let mut t = task("command");
         t.failed_when = vec!["false".into()];
-        let r = apply_conditions(&t, &item, result(json!({"rc": 0})), &templar).unwrap();
+        let r = apply_conditions(&t, &item, result(json!({"rc": 0})), &templar);
         assert_eq!(r.0.get("failed"), Some(&json!(false)), "{:?}", r.0);
     }
 
@@ -3509,7 +3531,7 @@ mod tests {
         ];
         let mut stats = crate::stats::Stats::default();
         for (t, shape, ignore_errors, rescuable) in tasks {
-            let r = apply_conditions(t, &item, result(shape), &templar).unwrap();
+            let r = apply_conditions(t, &item, result(shape), &templar);
             stats.record("h", classify(&r, ignore_errors, rescuable), r.changed());
         }
         let h = stats.host("h");
@@ -3539,8 +3561,7 @@ mod tests {
             &item,
             result(json!({"rc": 1, "changed": true})),
             &templar,
-        )
-        .unwrap();
+        );
         assert!(!r.failed(), "{:?}", r.0);
         assert_eq!(r.0["failed_when_result"], json!(false));
         let r = apply_conditions(
@@ -3548,8 +3569,7 @@ mod tests {
             &item,
             result(json!({"rc": 99, "changed": true})),
             &templar,
-        )
-        .unwrap();
+        );
         assert!(r.failed());
     }
 
@@ -3600,6 +3620,61 @@ mod tests {
         assert!(finish(&t, &item, seen(), &templar).failed());
     }
 
+    /// A `changed_when` or `failed_when` that cannot be evaluated keeps the module's keys, sets
+    /// `failed`, files the error under its own `_when_result` and evaluates nothing after it, as
+    /// ansible-core 2.19.12 does; the `msg` is the unknown error when the module sent none.
+    ///
+    /// What would make this red: the result replaced by one carrying the error as its `msg` (the
+    /// behaviour this replaced), the error filed under the other condition's key, `failed_when`
+    /// evaluated behind a broken `changed_when`, or the syntax prefix lost.
+    #[test]
+    fn a_condition_that_cannot_be_evaluated_keeps_the_result() {
+        let templar = Templar::new(std::env::temp_dir());
+        let item = bare_item();
+        let ran = || result(json!({"changed": true, "msg": "", "rc": 0}));
+        let mut t = task("command");
+        t.failed_when = vec!["nosuch == 1".into()];
+        let r = finish(&t, &item, ran(), &templar);
+        assert!(r.failed(), "{:?}", r.0);
+        assert_eq!(r.0["rc"], json!(0), "{:?}", r.0);
+        assert_eq!(r.0["msg"], json!(""), "{:?}", r.0);
+        assert_eq!(r.0["exception"], json!("(traceback unavailable)"));
+        let why = r.0["failed_when_result"].as_str().unwrap_or_default();
+        assert!(
+            why.starts_with("Error while evaluating conditional: "),
+            "{why}"
+        );
+
+        let mut t = task("command");
+        t.changed_when = vec!["nosuch.key".into()];
+        t.failed_when = vec!["false".into()];
+        let r = finish(&t, &item, ran(), &templar);
+        assert!(r.failed(), "{:?}", r.0);
+        assert!(!r.0.contains_key("failed_when_result"), "{:?}", r.0);
+        assert_eq!(r.0["changed"], json!(true), "{:?}", r.0);
+        let why = r.0["changed_when_result"].as_str().unwrap_or_default();
+        assert!(
+            why.starts_with("Error while evaluating conditional: "),
+            "{why}"
+        );
+
+        let mut t = task("ping");
+        t.failed_when = vec!["1 +* 2".into()];
+        let r = finish(
+            &t,
+            &item,
+            result(json!({"changed": false, "ping": "pong"})),
+            &templar,
+        );
+        assert_eq!(r.0["ping"], json!("pong"), "{:?}", r.0);
+        assert_eq!(
+            r.0["msg"],
+            json!("Task failed: Action failed: Unknown error.")
+        );
+        let why = r.0["failed_when_result"].as_str().unwrap_or_default();
+        assert!(why.starts_with("Syntax error in template: "), "{why}");
+    }
+
     /// A task `failed_when` fails, whose result carries no `msg`, gets the one ansible-core's
     /// `maybe_raise_on_result` gives it, and `exception` with it; a `msg` it has, even empty,
     /// stays. `failed_when: false` over a failure moves `exception` aside. `until` reads the
@@ -3634,6 +3709,19 @@ mod tests {
             &templar,
         );
         assert_eq!(r.0["msg"], json!(""), "{:?}", r.0);
+        // A module result that carried a truthy `exception` of its own reads `Module failed`.
+        let r = finish(
+            &t,
+            &item,
+            result(json!({"changed": false, "exception": "(traceback unavailable)"})),
+            &templar,
+        );
+        assert_eq!(
+            r.0["msg"],
+            json!("Task failed: Module failed: Unknown error."),
+            "{:?}",
+            r.0
+        );
 
         let mut t = task("command");
         t.failed_when = vec!["false".into()];
@@ -6205,7 +6293,17 @@ mod tests {
             panic!("the failure satisfies `until`");
         };
         assert!(r.failed(), "{r:?}");
-        assert!(msg(&r).contains("undefined"), "{r:?}");
+        let why = r.0["changed_when_result"].as_str().unwrap_or_default();
+        assert!(
+            why.starts_with("Error while evaluating conditional: "),
+            "{r:?}"
+        );
+        assert!(why.contains("undefined"), "{r:?}");
+        assert_eq!(
+            msg(&r),
+            "Task failed: Action failed: Unknown error.",
+            "{r:?}"
+        );
         assert_eq!(r.0["attempts"], json!(1), "{r:?}");
     }
 

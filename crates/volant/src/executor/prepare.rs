@@ -334,7 +334,14 @@ pub(super) struct Item {
     /// The task's `ignore_errors` as rendered for this item, when it was written as a template
     /// and the item was not skipped. The readers fall back to the task's keyword without it.
     pub(super) ignore_errors: Option<bool>,
+    /// A `set_fact`'s keys as rendered, once: see `run::set_fact_names`. Each entry is the key as
+    /// written, the name it rendered to, and whether that name holds a managed host's value.
+    pub(super) set_fact_names: std::sync::OnceLock<Result<Vec<FactName>, TaskResult>>,
 }
+
+/// One rendered `set_fact` key: the key as written, the name it rendered to, and whether that
+/// name holds a managed host's value.
+pub(super) type FactName = (String, String, bool);
 
 /// One task's `environment`, layer by layer: the play's, then each block's, then the task's,
 /// each rendered against this item's variables and merged over the ones before it.
@@ -547,6 +554,7 @@ pub(super) fn prepare(
             environment,
             skipped,
             ignore_errors,
+            set_fact_names: std::sync::OnceLock::new(),
         });
     }
     if items.iter().all(|i| i.skipped.is_some()) {

@@ -147,29 +147,45 @@ pub(super) async fn run_local(
 /// but `cacheable` fails with `No key/value pairs provided, at least one is required for this
 /// action to succeed`, without the prefix. A name is data when its value was, or when its own
 /// render read a managed host.
+///
+/// Rendered once per item and kept on it, so that every reader - the module itself, the
+/// conditions, the facts written after the task - sees the same names with the same trust: a key
+/// built from `random` or a `lookup('pipe', ...)` renders differently each time, and matching a
+/// second render against the first would lose which name holds a managed host's value.
 pub(super) fn set_fact_names<'a>(
     item: &'a Item,
     templar: &Templar,
 ) -> Result<Vec<(String, &'a Value, bool)>, TaskResult> {
-    let mut names = Vec::new();
-    for (key, value) in item.args.iter().filter(|(k, _)| *k != "cacheable") {
-        let (name, tainted) = templar
-            .render_value_tainted(&Value::String(key.clone()), &item.vars)
-            .map_err(|e| TaskResult::failed_with(format!("Task failed: {}", e.0)))?;
-        if let Some(why) = invalid_variable_name(&name) {
-            return Err(TaskResult::failed_with(format!("Task failed: {why}")));
+    let rendered = item.set_fact_names.get_or_init(|| {
+        let mut names = Vec::new();
+        for key in item.args.keys().filter(|k| *k != "cacheable") {
+            let (name, tainted) = templar
+                .render_value_tainted(&Value::String(key.clone()), &item.vars)
+                .map_err(|e| TaskResult::failed_with(format!("Task failed: {}", e.0)))?;
+            if let Some(why) = invalid_variable_name(&name) {
+                return Err(TaskResult::failed_with(format!("Task failed: {why}")));
+            }
+            let Value::String(name) = name else {
+                unreachable!("a valid variable name is a string")
+            };
+            names.push((
+                key.clone(),
+                name,
+                tainted || item.args_untrusted.contains(key),
+            ));
         }
-        let Value::String(name) = name else {
-            unreachable!("a valid variable name is a string")
-        };
-        names.push((name, value, tainted || item.args_untrusted.contains(key)));
-    }
-    if names.is_empty() {
-        return Err(TaskResult::failed_with(
-            "No key/value pairs provided, at least one is required for this action to succeed",
-        ));
-    }
-    Ok(names)
+        if names.is_empty() {
+            return Err(TaskResult::failed_with(
+                "No key/value pairs provided, at least one is required for this action to succeed",
+            ));
+        }
+        Ok(names)
+    });
+    let names = rendered.as_ref().map_err(Clone::clone)?;
+    Ok(names
+        .iter()
+        .map(|(key, name, data)| (name.clone(), &item.args[key], *data))
+        .collect())
 }
 
 /// The names a `set_fact` item sets that are data, as [`set_fact_names`] renders them; empty for
@@ -2951,6 +2967,7 @@ mod tests {
                 environment: BTreeMap::new(),
                 ignore_errors: None,
                 skipped: None,
+                set_fact_names: std::sync::OnceLock::new(),
             };
             // Arguments are deliberately empty: what is asserted is that the name is known, not
             // that the module does its work. A module that needs an argument says so in its own
@@ -2985,6 +3002,7 @@ mod tests {
             environment: BTreeMap::new(),
             ignore_errors: None,
             skipped: None,
+            set_fact_names: std::sync::OnceLock::new(),
         }
     }
 
@@ -3280,6 +3298,65 @@ mod tests {
         assert_eq!(data, BTreeSet::from(["k_from_host".to_string()]));
     }
 
+    /// A `set_fact` key that renders to another name each time it is rendered keeps the value
+    /// under it data: the names are rendered once per item and every reader gets that render.
+    /// Measured on ansible-core 2.19.12, a key built from `random` runs; here a `pipe` lookup
+    /// counting its own runs stands in for it.
+    ///
+    /// What would make this red: a reader rendering the keys again, which gets `t_2` where the
+    /// module wrote `t_1`, matches nothing, and writes the managed host's value as trusted - text
+    /// the controller would then render - besides running the lookup once per reader.
+    #[cfg(unix)]
+    #[test]
+    fn a_set_fact_key_that_renders_anew_keeps_its_value_data() {
+        let dir = std::env::temp_dir().join(format!("volant-keyonce-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let counter = dir.join("runs");
+        let templar = Templar::new(PathBuf::from("."));
+        let key = format!(
+            "t_{{{{ lookup('pipe', 'echo x >> {c}; wc -l < {c}') | trim }}}}",
+            c = counter.display()
+        );
+        let mut t = task("set_fact");
+        t.args = vars(json!({ key.clone(): "{{ ro.stdout }}" }));
+        let item = Item {
+            args: vars(json!({ key.clone(): "{{ lookup('pipe', 'id') }}" })),
+            args_untrusted: BTreeSet::from([key.clone()]),
+            ..local_item(json!({}))
+        };
+        let names = set_fact_names(&item, &templar).expect("the key renders");
+        assert_eq!(names[0].0, "t_1");
+        assert!(names[0].2, "the value came from a managed host");
+        assert_eq!(set_fact_names(&item, &templar).unwrap()[0].0, "t_1");
+        let facts = json!({"t_1": "{{ lookup('pipe', 'id') }}"});
+        let result = TaskResult(vars(json!({"ansible_facts": facts, "changed": false})));
+        let mut store = one_host_store();
+        record_local_facts(
+            &mut store,
+            &t,
+            std::slice::from_ref(&item),
+            &["h1".to_string()],
+            &[(None, result.clone())],
+            &templar,
+        );
+        assert!(
+            store
+                .untrusted_of("h1", &crate::vars::Scope::default())
+                .contains("t_1")
+        );
+        let mut judged = t.clone();
+        judged.failed_when = vec!["false".into()];
+        let vars = condition_vars(&judged, &item, &result, &templar);
+        assert!(vars.untrusted.contains("t_1"));
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap().lines().count(),
+            1,
+            "the key's lookup ran once"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an
     /// agent's does: the reference's `TaskExecutor._execute` normalises every task's final
     /// result with `maybe_raise_on_result`, wherever it ran. One that succeeds carries none.
@@ -3501,6 +3578,7 @@ mod tests {
                 environment: BTreeMap::new(),
                 ignore_errors: None,
                 skipped: None,
+                set_fact_names: std::sync::OnceLock::new(),
             };
             validate_argument_spec(&item)
         };
@@ -3662,6 +3740,7 @@ mod tests {
             environment: BTreeMap::new(),
             ignore_errors: None,
             skipped: None,
+            set_fact_names: std::sync::OnceLock::new(),
         };
         let failed = |r: Value| {
             let r = apply_conditions(&t, &item, result(r), &templar);
@@ -3712,6 +3791,7 @@ mod tests {
             environment: BTreeMap::new(),
             ignore_errors: None,
             skipped: None,
+            set_fact_names: std::sync::OnceLock::new(),
         };
         let plain = task("command");
         let mut quiet = task("command");
@@ -3764,6 +3844,7 @@ mod tests {
             environment: BTreeMap::new(),
             ignore_errors: None,
             skipped: None,
+            set_fact_names: std::sync::OnceLock::new(),
         };
         let r = apply_conditions(
             &t,
@@ -6937,6 +7018,7 @@ mod tests {
             environment: BTreeMap::new(),
             ignore_errors: None,
             skipped: None,
+            set_fact_names: std::sync::OnceLock::new(),
         }
     }
 

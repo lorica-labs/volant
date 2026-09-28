@@ -546,7 +546,7 @@ pub(super) fn prepare(
 /// One item of a task, from the variables it runs with - the host's, the loop variable bound and
 /// resolved: its label, its `when`, its arguments, `ignore_errors` and `environment`, each
 /// rendered against those variables. `prepare` builds every item this way before the task runs,
-/// and [`Carry`] builds an item again when the items before it left something behind.
+/// and [`super::run::Carry`] builds one again when the items before it left something behind.
 pub(super) fn build_item(
     task: &PlayTask,
     element: Option<Value>,

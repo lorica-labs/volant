@@ -8415,12 +8415,42 @@ fn a_module_in_the_playbook_s_library_or_a_role_s_runs() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// Sets `path`'s mtime `ago` seconds back, a directory's included. A kept union is only written
+/// when every file and directory it depends on is older than two seconds (the racy-timestamp
+/// rule), so a test that wants one kept ages what it has just written.
+fn backdate(path: &Path, ago: u64) {
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(ago))
+        })
+        .unwrap_or_else(|e| panic!("backdating {}: {e}", path.display()));
+}
+
+/// Every file of the kept unions with its mtime: a run that hits the cache rewrites none.
+fn kept_unions(cache: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
+    let mut out: Vec<_> = std::fs::read_dir(cache.join("volant").join("unions"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
 /// A `library/` written beside the playbook after a run kept its union: the next run builds
 /// again and gets the playbook's `ping`, as ansible-core 2.19.12 does, where it finds the file
 /// before its own module.
 ///
+/// The run gets a `HOME` of its own, aged with everything else it wrote: the helper watches
+/// `~/.ansible` (or `HOME` itself when that is absent), and on a shared machine another run
+/// touching it within two seconds keeps the union out of the cache. A second run with nothing
+/// changed has to hit the kept union, rewriting none of its files, or the third proves nothing.
+///
 /// What would make this red: the kept union's key blind to what the playbook's `library/`
-/// holds. No source the first run kept names a directory that was not there, so the second run
+/// holds. No source the first run kept names a directory that was not there, so the third run
 /// loads the union holding ansible-core's `ping` and prints `pong`.
 #[test]
 fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
@@ -8430,9 +8460,26 @@ fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
     let dir = probe_dir("library-cache");
     std::fs::write(
         dir.join("play.yml"),
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - ping:\n      register: p\n    - debug: var=p.ping\n",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - ping:
+      register: p
+    - debug: var=p.ping
+",
     )
     .expect("the play");
+    let home = dir.join("home");
+    std::fs::create_dir_all(home.join(".ansible").join("tmp")).expect("a home");
+    for path in [
+        dir.join("play.yml"),
+        home.join(".ansible").join("tmp"),
+        home.join(".ansible"),
+        home.clone(),
+        dir.clone(),
+    ] {
+        backdate(&path, 60);
+    }
     let cache = dir.join("cache");
     let run = || {
         let out = volant_within_env(
@@ -8441,6 +8488,7 @@ fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
             &[
                 ("VOLANT_PYTHON", &python),
                 ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+                ("HOME", home.to_str().expect("a path")),
             ],
         );
         let text = format!(
@@ -8453,14 +8501,27 @@ fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
     };
     let first = run();
     assert!(first.contains(r#""p.ping": "pong""#), "{first}");
-    let kept = std::fs::read_dir(cache.join("volant").join("unions")).map_or(0, Iterator::count);
+    let kept = kept_unions(&cache);
     assert!(
-        kept > 0,
-        "the first run kept no union, so nothing is proven"
+        !kept.is_empty(),
+        "the first run kept no union, so nothing is proven:
+{first}"
     );
-    library_module(&dir.join("library"), "ping", "ping");
-    let second = run();
-    assert!(second.contains(r#""p.ping": "ping says x""#), "{second}");
+    let again = run();
+    assert_eq!(
+        kept_unions(&cache),
+        kept,
+        "a run with nothing changed rebuilt the union, so the next one proves nothing:
+{again}"
+    );
+    let library = dir.join("library");
+    library_module(&library, "ping", "ping");
+    // Older than two seconds, so the key can vouch for it, and newer than anything the first
+    // run saw, so its stamp is its own.
+    backdate(&library.join("ping.py"), 10);
+    backdate(&library, 10);
+    let third = run();
+    assert!(third.contains(r#""p.ping": "ping says x""#), "{third}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 

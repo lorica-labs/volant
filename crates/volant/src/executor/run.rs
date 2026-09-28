@@ -3269,6 +3269,14 @@ mod tests {
                 "{{ [1] }}",
                 "Task failed: Invalid variable name of type 'list'.",
             ),
+            (
+                "{{ True }}",
+                "Task failed: Invalid variable name 'True' of type 'bool'.",
+            ),
+            (
+                "{{ None }}",
+                "Task failed: Invalid variable name 'None' of type 'NoneType'.",
+            ),
             ("not", "Task failed: Invalid variable name 'not'."),
             ("None", "Task failed: Invalid variable name 'None'."),
         ] {

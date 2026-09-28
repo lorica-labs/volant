@@ -1325,6 +1325,26 @@ fn conditions(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<Strin
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
     let mut args = Map::new();
     match value {
+        // A `set_fact` key YAML reads as a number, a boolean or null keeps that type into the
+        // name check, as the reference's does: `{1: x}` fails with `Invalid variable name '1' of
+        // type 'int'.`, `{true: x}` with `'True' of type 'bool'`. Written as the template of
+        // that value, the key renders back to it where the keys are rendered.
+        Yaml::Mapping(entries) if short_name(module) == "set_fact" => {
+            for (key, value) in entries {
+                let key = match key {
+                    Yaml::Value(Scalar::Integer(i)) => format!("{{{{ {i} }}}}"),
+                    Yaml::Value(Scalar::FloatingPoint(f)) => format!("{{{{ {f} }}}}"),
+                    Yaml::Value(Scalar::Boolean(true)) => "{{ True }}".to_string(),
+                    Yaml::Value(Scalar::Boolean(false)) => "{{ False }}".to_string(),
+                    Yaml::Value(Scalar::Null) => "{{ None }}".to_string(),
+                    other => other
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("mapping keys must be strings"))?
+                        .to_string(),
+                };
+                args.insert(key, to_json(value)?);
+            }
+        }
         Yaml::Mapping(_) => {
             if let Value::Object(map) = to_json(value)? {
                 args = map;
@@ -1730,6 +1750,25 @@ mod tests {
             got.sort();
             assert_eq!(got, want, "{module}: {text}");
         }
+    }
+
+    /// A `set_fact` key YAML types as a number, a boolean or null is kept as the template of that
+    /// value, so the name check sees the type the reference sees; a string key is kept as written.
+    ///
+    /// What would make this red: the key turned into its text, which the check then reads as the
+    /// name `1` rather than an `int`.
+    #[test]
+    fn a_set_fact_key_keeps_the_type_yaml_gave_it() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, true: c, ~: d, k: e}\n",
+            "x.yml",
+        )
+        .unwrap();
+        let keys: Vec<&str> = first(&pb).args.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            ["{{ 1 }}", "{{ 1.5 }}", "{{ True }}", "{{ None }}", "k"]
+        );
     }
 
     /// A builtin's word that is not `key=value` is kept for the task to fail on when it runs, as

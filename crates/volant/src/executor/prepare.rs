@@ -314,7 +314,6 @@ pub(super) enum Prepared {
 }
 
 /// One loop item (or the whole task when there is no loop), rendered.
-#[derive(Clone)]
 pub(super) struct Item {
     /// The loop element, present only for loops.
     pub(super) element: Option<Value>,
@@ -475,14 +474,80 @@ pub(super) fn prepare(
             vars.map = resolved;
             vars.untrusted = untrusted;
         }
-        items.push(build_item(
-            task,
+        let label = match (&element, &task.loop_label) {
+            (None, _) => None,
+            (Some(_), Some(template)) => Some(display(&templar.render(template, &vars)?)),
+            (Some(el), None) => Some(display(el)),
+        };
+        let mut skipped = None;
+        for condition in &task.when {
+            // A conditional that cannot be evaluated yields to a kept loop error, as there.
+            let holds = templar
+                .condition(condition, &vars)
+                .map_err(|e| loop_error.clone().unwrap_or(e))?;
+            if !holds {
+                let mut r = Map::new();
+                r.insert("changed".into(), json!(false));
+                r.insert("skipped".into(), json!(true));
+                r.insert("skip_reason".into(), json!("Conditional result was False"));
+                r.insert("false_condition".into(), json!(condition));
+                skipped = Some(TaskResult(r));
+                break;
+            }
+        }
+        if skipped.is_none()
+            && let Some(e) = loop_error.take()
+        {
+            return Err(e);
+        }
+        // Rendered argument by argument rather than as one value, because a few arguments are
+        // read back as engine input rather than as data - the name a `debug: var:` compiles -
+        // and the render is the only place that can say which of them came from a host.
+        let (args, args_untrusted) = if skipped.is_some() {
+            (Map::new(), BTreeSet::new())
+        } else {
+            // `assert` reads `that` off the task as written and evaluates it the way `when` is
+            // evaluated, so it is not rendered here: a render error in it would fail the task in
+            // the render's words before the conditional could report it, which the reference's
+            // `finalize_task_arg` for `assert` does not do.
+            let raw = if volant_protocol::modules::short_name(&task.module) == "assert" {
+                let mut raw = task.args.clone();
+                raw.remove("that");
+                std::borrow::Cow::Owned(raw)
+            } else {
+                std::borrow::Cow::Borrowed(&task.args)
+            };
+            let (map, untrusted) = templar.render_map_tainted(&raw, &vars)?;
+            let mut rendered = Value::Object(map);
+            remove_omit(&mut rendered);
+            let Value::Object(map) = rendered else {
+                unreachable!("an object renders to an object")
+            };
+            (map, untrusted)
+        };
+        // Per item, against the item's own variables, and never for an item a `when` left out:
+        // the reference evaluates the conditional before it renders the task's keywords.
+        let ignore_errors = match (&task.ignore_errors, &skipped) {
+            (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, &vars, templar)?),
+            _ => None,
+        };
+        // A skipped item runs nothing, so a layer it could not render is not its problem: the
+        // reference does not evaluate `environment` for a task a `when` left out.
+        let environment = if skipped.is_some() {
+            BTreeMap::new()
+        } else {
+            environment_for(task, &vars, templar, warnings)?
+        };
+        items.push(Item {
             element,
+            label,
+            args,
+            args_untrusted,
             vars,
-            templar,
-            warnings,
-            &mut loop_error,
-        )?);
+            environment,
+            skipped,
+            ignore_errors,
+        });
     }
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));
@@ -541,94 +606,6 @@ pub(super) fn prepare(
         .and_then(|union| union.payload(&task.module))
         .map(Box::new);
     Ok(Prepared::Remote(items, escalation, delegate, payload, None))
-}
-
-/// One item of a task, from the variables it runs with - the host's, the loop variable bound and
-/// resolved: its label, its `when`, its arguments, `ignore_errors` and `environment`, each
-/// rendered against those variables. `prepare` builds every item this way before the task runs,
-/// and [`Carry`] builds an item again when the items before it left something behind.
-pub(super) fn build_item(
-    task: &PlayTask,
-    element: Option<Value>,
-    vars: HostVars,
-    templar: &Templar,
-    warnings: &mut Vec<String>,
-    loop_error: &mut Option<TemplateError>,
-) -> Result<Item, TemplateError> {
-    let label = match (&element, &task.loop_label) {
-        (None, _) => None,
-        (Some(_), Some(template)) => Some(display(&templar.render(template, &vars)?)),
-        (Some(el), None) => Some(display(el)),
-    };
-    let mut skipped = None;
-    for condition in &task.when {
-        // A conditional that cannot be evaluated yields to a kept loop error, as there.
-        let holds = templar
-            .condition(condition, &vars)
-            .map_err(|e| loop_error.clone().unwrap_or(e))?;
-        if !holds {
-            let mut r = Map::new();
-            r.insert("changed".into(), json!(false));
-            r.insert("skipped".into(), json!(true));
-            r.insert("skip_reason".into(), json!("Conditional result was False"));
-            r.insert("false_condition".into(), json!(condition));
-            skipped = Some(TaskResult(r));
-            break;
-        }
-    }
-    if skipped.is_none()
-        && let Some(e) = loop_error.take()
-    {
-        return Err(e);
-    }
-    // Rendered argument by argument rather than as one value, because a few arguments are
-    // read back as engine input rather than as data - the name a `debug: var:` compiles -
-    // and the render is the only place that can say which of them came from a host.
-    let (args, args_untrusted) = if skipped.is_some() {
-        (Map::new(), BTreeSet::new())
-    } else {
-        // `assert` reads `that` off the task as written and evaluates it the way `when` is
-        // evaluated, so it is not rendered here: a render error in it would fail the task in
-        // the render's words before the conditional could report it, which the reference's
-        // `finalize_task_arg` for `assert` does not do.
-        let raw = if volant_protocol::modules::short_name(&task.module) == "assert" {
-            let mut raw = task.args.clone();
-            raw.remove("that");
-            std::borrow::Cow::Owned(raw)
-        } else {
-            std::borrow::Cow::Borrowed(&task.args)
-        };
-        let (map, untrusted) = templar.render_map_tainted(&raw, &vars)?;
-        let mut rendered = Value::Object(map);
-        remove_omit(&mut rendered);
-        let Value::Object(map) = rendered else {
-            unreachable!("an object renders to an object")
-        };
-        (map, untrusted)
-    };
-    // Per item, against the item's own variables, and never for an item a `when` left out:
-    // the reference evaluates the conditional before it renders the task's keywords.
-    let ignore_errors = match (&task.ignore_errors, &skipped) {
-        (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, &vars, templar)?),
-        _ => None,
-    };
-    // A skipped item runs nothing, so a layer it could not render is not its problem: the
-    // reference does not evaluate `environment` for a task a `when` left out.
-    let environment = if skipped.is_some() {
-        BTreeMap::new()
-    } else {
-        environment_for(task, &vars, templar, warnings)?
-    };
-    Ok(Item {
-        element,
-        label,
-        args,
-        args_untrusted,
-        vars,
-        environment,
-        skipped,
-        ignore_errors,
-    })
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what

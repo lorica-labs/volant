@@ -30,11 +30,11 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, Carry, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter,
-    fact_targets, failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal,
-    record_facts, record_local_facts, record_registered, requested_interpreter, retry_plans,
-    reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts, running_host_vars,
-    step_tasks, take_warnings, unresolved_notify, wait_or_stop,
+    Attempt, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter, fact_targets,
+    failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal, record_facts,
+    record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
+    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
+    unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -100,38 +100,6 @@ const FACT_MODULES: [&str; 10] = [
 /// collection's, a role's `library/` - may return `ansible_facts`, so it ends its batch too.
 fn writes_facts(task: &PlayTask) -> bool {
     !is_builtin(&task.module) || FACT_MODULES.contains(&short_name(&task.module))
-}
-
-/// Whether a remote loop's later items can read what its earlier ones leave, so that they have
-/// to run one after another: the task reads its own registered name or `ansible_facts`, or its
-/// module is one of the builtin fact modules. Decided from the unrendered text, as
-/// [`calls_lookup`] is. A controller-side loop always runs item by item and needs no answer.
-///
-/// A collection's or a role's module may return facts of any name, and a later item reading one
-/// by its bare name is not seen: sending every such loop item by item would cost each of them a
-/// trip to the host for a case no playbook in sight writes.
-fn carries_between_items(task: &PlayTask, items: usize) -> bool {
-    if task.loop_items.is_none() || items < 2 {
-        return false;
-    }
-    if is_builtin(&task.module) && FACT_MODULES.contains(&short_name(&task.module)) {
-        return true;
-    }
-    let (text, bare) = task_strings(task);
-    let mut read = BTreeSet::new();
-    for s in &text {
-        for expr in expressions(s) {
-            words(expr, &mut read);
-        }
-    }
-    for s in &bare {
-        words(s, &mut read);
-    }
-    read.contains("ansible_facts")
-        || task
-            .register
-            .as_ref()
-            .is_some_and(|reg| read.contains(reg.as_str()))
 }
 
 /// Whether rendering a task calls a lookup: `lookup`, `query` or `q` in an expression, or a
@@ -1084,27 +1052,15 @@ pub(super) async fn drive_host(
                         (true, Some(to)) => vec![to.clone()],
                         _ => register_hosts.clone(),
                     };
+                    let plans = retry_plans(task, &items, &templar);
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
                     let mut lefts: Vec<Vec<u32>> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
-                    // Item by item, each built over what the ones before it left: see `Carry`.
-                    let mut carry = Carry::default();
-                    let mut ran = Vec::new();
-                    for written in &items {
-                        // A controller-side module reads no `environment`, so a warning its
-                        // second render raises would repeat the first one's.
-                        let (item, rebuilt) =
-                            match carry.item(task, written, &templar, &mut Vec::new()) {
-                                Ok(item) => (item, None),
-                                Err(failed) => (written.clone(), Some(failed)),
-                            };
-                        let plan = &retry_plans(task, std::slice::from_ref(&item), &templar)[0];
+                    for (item, plan) in items.iter().zip(&plans) {
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
-                        let r = if let Some(failed) = rebuilt {
-                            failed
-                        } else if let Some(s) = &item.skipped {
+                        let r = if let Some(s) = &item.skipped {
                             s.clone()
                         } else if let Some(refused) = raw_params_refusal(task) {
                             refused
@@ -1121,7 +1077,7 @@ pub(super) async fn drive_host(
                                 // that can run into it.
                                 let ran = run_local(
                                     task,
-                                    &item,
+                                    item,
                                     step,
                                     &templar,
                                     &store,
@@ -1140,9 +1096,9 @@ pub(super) async fn drive_host(
                                     break 'run;
                                 };
                                 let Some(retry) = retry else {
-                                    break finish(task, &item, ran, &templar);
+                                    break finish(task, item, ran, &templar);
                                 };
-                                match judge_attempt(task, &item, ran, attempt, retry, &templar) {
+                                match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
                                     Attempt::Again(left) => mine.push(left),
                                 }
@@ -1154,11 +1110,9 @@ pub(super) async fn drive_host(
                                 }
                             }
                         };
-                        carry.after(task, &item, &r, &templar);
                         results.push((item.element.clone(), r));
                         labels.push(item.label.clone());
                         lefts.push(mine);
-                        ran.push(item);
                     }
                     if let Some(reason) = unresolved_notify(&c, task, &results) {
                         options.abort.raise(reason);
@@ -1178,7 +1132,14 @@ pub(super) async fn drive_host(
                     {
                         let mut vars = store.lock().expect("vars lock");
                         record_registered(&mut vars, task, &register_hosts, &results, &warnings);
-                        record_local_facts(&mut vars, task, &ran, &fact_hosts, &results, &templar);
+                        record_local_facts(
+                            &mut vars,
+                            task,
+                            &items,
+                            &fact_hosts,
+                            &results,
+                            &templar,
+                        );
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored
@@ -1270,10 +1231,7 @@ pub(super) async fn drive_host(
                         break;
                     }
                     let plans = retry_plans(task, &items, &templar);
-                    // A loop whose later items read what its earlier ones leave runs item by
-                    // item too, down the same road.
-                    let retried = any_retried(&plans)
-                        || (action.is_none() && carries_between_items(task, items.len()));
+                    let retried = any_retried(&plans);
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
@@ -1623,7 +1581,7 @@ pub(super) async fn drive_host(
                     break 'run;
                 }
                 outcome
-            } else if batch_retry.is_some() {
+            } else if let Some(plans) = batch_retry.clone() {
                 decided = true;
                 let (index, items) = &batch[0];
                 let task = &c.steps[*index].task;
@@ -1652,99 +1610,71 @@ pub(super) async fn drive_host(
                 // starts: measured on ansible-core 2.19.12 with a two-item loop whose first item
                 // passed and whose second needed two attempts - the retry lines of the second
                 // sit between the two result lines, so the items do not retry together.
-                //
-                // Each item built over what the ones before it left, as the reference runs them:
-                // see `Carry`. A warning a second render of `environment` raises repeats the one
-                // `prepare` already showed, so it is not shown again.
-                let mut carry = Carry::default();
-                let mut ran: Vec<Item> = Vec::with_capacity(items.len());
-                'items: for (ii, written) in items.iter().enumerate() {
-                    let item = match carry.item(task, written, &templar, &mut Vec::new()) {
-                        Ok(item) => item,
+                'items: for (ii, built) in step_tasks(task, items, &python, &mut received[0]) {
+                    let item = &items[ii];
+                    let retry = match &plans[ii] {
                         Err(failed) => {
-                            received[0][ii] = Some(failed);
-                            ran.push(written.clone());
+                            received[0][ii] = Some(failed.clone());
                             continue 'items;
                         }
+                        Ok(retry) => retry.as_ref(),
                     };
-                    names[ii] = retry_name(task, &item.vars, &templar);
-                    let item_plan =
-                        retry_plans(task, std::slice::from_ref(&item), &templar).remove(0);
-                    let mut sent = vec![None];
-                    let built = step_tasks(task, std::slice::from_ref(&item), &python, &mut sent)
-                        .pop()
-                        .map(|(_, built)| built);
-                    let result: Option<TaskResult> = 'item: {
-                        // Skipped, or a step that cannot travel: `sent` holds its failure.
-                        let Some(built) = built else {
-                            break 'item sent.pop().flatten();
-                        };
-                        let retry = match &item_plan {
-                            Err(failed) => break 'item Some(failed.clone()),
-                            Ok(retry) => retry.as_ref(),
-                        };
-                        let mut attempt = 0;
-                        loop {
-                            attempt += 1;
-                            batch_id += 1;
-                            let (mut flat, ended_one) = run_agent_batch(
-                                link,
-                                &name,
-                                batch_id,
-                                vec![built.clone()],
-                                plan.python.as_deref(),
-                                &[],
-                                &mut driver.stop,
-                                &mut driver.stop_broken,
-                                &mut logs,
-                            )
-                            .await;
-                            let raw = flat.pop().flatten();
-                            if !matches!(
-                                ended_one,
-                                Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
-                            ) {
-                                outcome = ended_one;
-                                ran.push(item);
-                                break 'items;
-                            }
-                            // The agent ended without a result for this item. Left unreported,
-                            // the way the loop below leaves a task the agent never reached.
-                            let Some(raw) = raw else { break 'item None };
-                            let Some(retry) = retry else {
-                                break 'item Some(finish(task, &item, raw, &templar));
-                            };
-                            match judge_attempt(task, &item, raw, attempt, retry, &templar) {
-                                Attempt::Done(r) => break 'item Some(r),
-                                Attempt::Again(left) => lefts[ii].push(left),
-                            }
-                            if let Some(failed) = retry.sleep_failure() {
-                                break 'item Some(failed);
-                            }
-                            if driver.sleep_between(retry.delay).await.is_none() {
-                                file_timings(
-                                    link,
-                                    &options.profile,
-                                    &name,
-                                    &c,
-                                    &[],
-                                    batch[0].0,
-                                    &prepare_micros,
-                                );
-                                break 'run;
-                            }
+                    let mut attempt = 0;
+                    loop {
+                        attempt += 1;
+                        batch_id += 1;
+                        let (mut flat, ended_one) = run_agent_batch(
+                            link,
+                            &name,
+                            batch_id,
+                            vec![built.clone()],
+                            plan.python.as_deref(),
+                            &[],
+                            &mut driver.stop,
+                            &mut driver.stop_broken,
+                            &mut logs,
+                        )
+                        .await;
+                        let raw = flat.pop().flatten();
+                        if !matches!(
+                            ended_one,
+                            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
+                        ) {
+                            outcome = ended_one;
+                            break 'items;
                         }
-                    };
-                    if let Some(left) = result.as_ref().or(item.skipped.as_ref()) {
-                        carry.after(task, &item, left, &templar);
+                        // The agent ended without a result for this item. Left unreported, the
+                        // way the loop below leaves a task the agent never reached.
+                        let Some(raw) = raw else { continue 'items };
+                        let Some(retry) = retry else {
+                            received[0][ii] = Some(finish(task, item, raw, &templar));
+                            continue 'items;
+                        };
+                        match judge_attempt(task, item, raw, attempt, retry, &templar) {
+                            Attempt::Done(r) => {
+                                received[0][ii] = Some(r);
+                                continue 'items;
+                            }
+                            Attempt::Again(left) => lefts[ii].push(left),
+                        }
+                        if let Some(failed) = retry.sleep_failure() {
+                            received[0][ii] = Some(failed);
+                            continue 'items;
+                        }
+                        if driver.sleep_between(retry.delay).await.is_none() {
+                            file_timings(
+                                link,
+                                &options.profile,
+                                &name,
+                                &c,
+                                &[],
+                                batch[0].0,
+                                &prepare_micros,
+                            );
+                            break 'run;
+                        }
                     }
-                    received[0][ii] = result;
-                    ran.push(item);
                 }
-                // The items as they ran are the ones reported: a label, a skip or a registered
-                // name may have changed with what came before.
-                ran.extend(items[ran.len()..].iter().cloned());
-                batch[0].1 = ran;
                 outcome
             } else {
                 batch_id += 1;
@@ -2475,40 +2405,6 @@ mod tests {
         plugin_step::<()>(&[]).expect_err("no step");
     }
     use serde_json::json;
-
-    /// A remote loop runs item by item when a later item can read what an earlier one left: its
-    /// own registered name or `ansible_facts` read anywhere in the task, or a builtin fact module.
-    /// Any other loop keeps its one trip to the host.
-    ///
-    /// What would make this red: every loop sent item by item (a registered name that nothing
-    /// reads, a collection module), or a loop reading its register sent in one batch, whose
-    /// second item then renders before the first has run.
-    #[test]
-    fn a_loop_reading_what_its_items_leave_runs_item_by_item() {
-        let mut t = task("command");
-        t.loop_items = Some(json!([1, 2]));
-        assert!(!carries_between_items(&t, 2));
-        t.register = Some("r".into());
-        assert!(!carries_between_items(&t, 2), "registered, never read");
-        t.args
-            .insert("cmd".into(), json!("echo {{ r.stdout | default('') }}"));
-        assert!(carries_between_items(&t, 2), "read in the arguments");
-        assert!(!carries_between_items(&t, 1), "one item leaves nothing");
-        let mut t = task("command");
-        t.register = Some("r".into());
-        t.when = vec!["r is not defined".into()];
-        assert!(!carries_between_items(&t, 2), "no loop");
-        t.loop_items = Some(json!([1, 2]));
-        assert!(carries_between_items(&t, 2), "read in when");
-        let mut t = task("ns.coll.m");
-        t.loop_items = Some(json!([1, 2]));
-        assert!(!carries_between_items(&t, 2), "a collection module");
-        t.when = vec!["ansible_facts.x is not defined".into()];
-        assert!(carries_between_items(&t, 2), "ansible_facts read");
-        let mut t = task("setup");
-        t.loop_items = Some(json!([1, 2]));
-        assert!(carries_between_items(&t, 2), "a fact module");
-    }
 
     /// Everything a playbook can hide a cross-host read in has to be searched, or a barrier
     /// silently does nothing and the ordering it promised was never there.

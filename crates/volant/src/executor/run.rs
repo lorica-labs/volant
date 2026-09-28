@@ -844,20 +844,50 @@ pub(super) fn notify(
     }
 }
 
-/// Takes the `warnings` off every result of a task, for the driver to show as `[WARNING]:` lines
-/// under it. Measured on ansible-core 2.19.12 for `pause`: the warning is shown once and the
-/// registered result has no such key. Applied to a module's result the same way, unmeasured.
+/// Takes the `warnings` off every result of a task, in item order, for the driver to show as
+/// `[WARNING]:` lines under it and for [`record_registered`] to put back where the reference
+/// registers them. Off the results, because no line the reference prints shows the key: its
+/// callback pops it before it dumps a result.
 pub(super) fn take_warnings(results: &mut [(Option<Value>, TaskResult)]) -> Vec<String> {
     let mut out = Vec::new();
     for (_, result) in results.iter_mut() {
         if let Some(Value::Array(list)) = result.0.remove("warnings") {
-            out.extend(list.into_iter().map(|w| match w {
-                Value::String(s) => s,
-                other => other.to_string(),
-            }));
+            out.extend(list.iter().map(warning_text));
         }
     }
     out
+}
+
+/// A warning as the reference registers and shows it. A string is kept as it is. A module of
+/// ansible-core 2.19 answers a `WarningSummary` object, rendered as `format_event_brief_message`
+/// renders it: the event's `msg`, then each cause its chain follows, joined by `concat_message`
+/// (`left.rstrip(". ") + ": " + right`), a part that already ends with what follows it kept
+/// alone. Anything else is shown as its JSON.
+fn warning_text(warning: &Value) -> String {
+    if let Value::String(text) = warning {
+        return text.clone();
+    }
+    let mut parts = Vec::new();
+    let mut event = warning.get("event");
+    while let Some(msg) = event.and_then(|e| e.get("msg")).and_then(Value::as_str) {
+        parts.push(msg);
+        event = event
+            .and_then(|e| e.get("chain"))
+            .filter(|chain| chain.get("follow") == Some(&Value::Bool(true)))
+            .and_then(|chain| chain.get("event"));
+    }
+    let Some((deepest, outer)) = parts.split_last() else {
+        return warning.to_string();
+    };
+    let mut message = (*deepest).to_string();
+    for part in outer.iter().rev() {
+        message = if part.ends_with(&message) {
+            (*part).to_string()
+        } else {
+            format!("{}: {message}", part.trim_end_matches(['.', ' ']))
+        };
+    }
+    message
 }
 
 /// The reason to end the run when a task that changed notifies a handler the play does not
@@ -2426,11 +2456,18 @@ pub(super) async fn reuse_or_connect<'a>(
 ///
 /// A task with no `register` writes nothing, which is why the check lives here rather than at
 /// each caller: a caller that forgets it writes nothing instead of writing under an empty name.
+///
+/// `warnings` are the ones [`take_warnings`] took off the results. Measured on ansible-core
+/// 2.19.12 with a module calling `module.warn`: the registered result keeps them in `warnings`,
+/// and a loop's keeps every item's there, in item order, with none left on the items
+/// (`TaskExecutor._run_loop` gathers them, `_execute` puts back what its warning context
+/// captured). `pause` warns through `display.warning` instead, and registers no such key.
 pub(super) fn record_registered(
     vars: &mut VarStore,
     task: &PlayTask,
     targets: &[String],
     results: &[(Option<Value>, TaskResult)],
+    warnings: &[String],
 ) {
     let Some(reg) = &task.register else {
         return;
@@ -2441,6 +2478,9 @@ pub(super) fn record_registered(
     // reading `r.invocation` fails there. `-vvv` still shows it, from the result itself.
     if let Value::Object(map) = &mut value {
         map.remove("invocation");
+        if !warnings.is_empty() && short_name(&task.module) != "pause" {
+            map.insert("warnings".into(), json!(warnings));
+        }
     }
     for target in targets {
         vars.set_untrusted_fact(target, reg, value.clone());
@@ -6392,7 +6432,7 @@ mod tests {
         let mut t = task("ping");
         t.register = Some("probe".into());
         let results = vec![(None, TaskResult(vars(value)))];
-        record_registered(store, &t, &["h1".to_string()], &results);
+        record_registered(store, &t, &["h1".to_string()], &results, &[]);
     }
 
     /// A registered result carries no `invocation`, as the reference registers it - measured on
@@ -6428,6 +6468,7 @@ mod tests {
             &t,
             &["h1".to_string()],
             &[(None, result.clone())],
+            &[],
         );
         let seen = store.for_host("h1", &crate::vars::Scope::default());
         assert_eq!(
@@ -6456,6 +6497,7 @@ mod tests {
             &t,
             &["h1".to_string()],
             &[(Some(json!("a")), result)],
+            &[],
         );
         let seen = store.for_host("h1", &crate::vars::Scope::default());
         assert!(
@@ -6463,6 +6505,95 @@ mod tests {
             "{}",
             seen["s"]
         );
+    }
+
+    /// A module's warnings are shown and stay on the registered result, a loop's gathered on the
+    /// aggregate in item order; `pause` registers none. Measured on ansible-core 2.19.12 with a
+    /// `library/` module calling `module.warn("probe warning")`: `[WARNING]: probe warning` above
+    /// `ok:`, and `w` is `{"changed": false, "failed": false, "msg": "done", "warnings":
+    /// ["probe warning"]}`; over `loop: [1, 2]`, one `[WARNING]` line, `w.warnings` holds the
+    /// warning twice and no item has the key.
+    ///
+    /// What would make this red: the warnings left off the registered value, or left on each
+    /// item of a loop instead of the aggregate, or registered for `pause`.
+    #[test]
+    fn a_module_s_warnings_stay_on_its_registered_result() {
+        let warned = || {
+            TaskResult(vars(
+                json!({"changed": false, "msg": "done", "warnings": ["probe warning"]}),
+            ))
+        };
+        let mut store = one_host_store();
+        let mut t = task("warn_probe");
+        t.register = Some("w".into());
+        let seen = |store: &mut VarStore| {
+            store.for_host("h1", &crate::vars::Scope::default())["w"].clone()
+        };
+        let mut results = vec![(None, warned())];
+        let warnings = take_warnings(&mut results);
+        record_registered(&mut store, &t, &["h1".to_string()], &results, &warnings);
+        assert_eq!(
+            seen(&mut store),
+            json!({"changed": false, "msg": "done", "warnings": ["probe warning"]})
+        );
+        assert!(
+            results[0].1.0.get("warnings").is_none(),
+            "shown once, not dumped"
+        );
+
+        t.loop_items = Some(json!([1, 2]));
+        let mut results = vec![(Some(json!(1)), warned()), (Some(json!(2)), warned())];
+        let warnings = take_warnings(&mut results);
+        record_registered(&mut store, &t, &["h1".to_string()], &results, &warnings);
+        let w = seen(&mut store);
+        assert_eq!(
+            w["warnings"],
+            json!(["probe warning", "probe warning"]),
+            "{w}"
+        );
+        assert!(w["results"][0].get("warnings").is_none(), "{w}");
+
+        let mut t = task("pause");
+        t.register = Some("w".into());
+        record_registered(
+            &mut store,
+            &t,
+            &["h1".to_string()],
+            &[(None, TaskResult(vars(json!({"changed": false}))))],
+            &["Not waiting for response to prompt as stdin is not interactive".to_string()],
+        );
+        let w = seen(&mut store);
+        assert!(w.get("warnings").is_none(), "{w}");
+    }
+
+    /// A module's `WarningSummary` is registered and shown as the reference's brief message.
+    /// Measured on ansible-core 2.19.12: `module.warn("probe warning")` arrives as
+    /// `{"event": {"msg": "probe warning", ...}, "__ansible_type": "WarningSummary"}` and is
+    /// registered as the string `probe warning` (`type_debug` says `str`). The chain rule is
+    /// read off `format_event_brief_message` and `concat_message`.
+    ///
+    /// What would make this red: the object shown and registered as its JSON, which prints
+    /// `[WARNING]: {"event":...}`; or a followed cause dropped, or one that is not followed kept.
+    #[test]
+    fn a_warning_summary_is_its_brief_message() {
+        let summary = json!({
+            "event": {"msg": "probe warning", "__ansible_type": "Event"},
+            "__ansible_type": "WarningSummary",
+        });
+        assert_eq!(warning_text(&summary), "probe warning");
+        assert_eq!(warning_text(&json!("plain")), "plain");
+        let chained = |follow: bool, cause: &str| {
+            json!({"event": {"msg": "outer.", "chain": {
+                "msg_reason": "because", "traceback_reason": "tb", "follow": follow,
+                "event": {"msg": cause},
+            }}})
+        };
+        assert_eq!(warning_text(&chained(true, "inner")), "outer: inner");
+        assert_eq!(warning_text(&chained(false, "inner")), "outer.");
+        let repeated = json!({"event": {"msg": "outer: inner", "chain": {
+            "follow": true, "event": {"msg": "inner"},
+        }}});
+        assert_eq!(warning_text(&repeated), "outer: inner");
     }
 
     /// Everything a Python module returns is untrusted, exactly like a native module's result.

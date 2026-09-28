@@ -1300,12 +1300,12 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::Value(Scalar::Boolean(b)) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(b.to_string()));
         }
-        // A collection's module, read as the reference's `parse_kv` reads it: a word without `=`
-        // is kept in `_raw_params`, and a string that does not split is kept whole, for the
-        // pre-flight to refuse when a task is checked. Refused here instead, a role's file for
-        // another platform - read only to build the union - would refuse a run no host of which
-        // reaches it.
-        Yaml::Value(Scalar::String(s)) if crate::python::is_collection_name(module) => {
+        // A collection's module, or a name a `library/` may hold, read as the reference's
+        // `parse_kv` reads it: a word without `=` is kept in `_raw_params`, and a string that
+        // does not split is kept whole, for the pre-flight to refuse once the name resolved.
+        // Refused here instead, a role's file for another platform - read only to build the
+        // union - would refuse a run no host of which reaches it.
+        Yaml::Value(Scalar::String(s)) if crate::python::is_resolved_name(module) => {
             let (options, raw) =
                 crate::splitter::parse_kv(s).unwrap_or((Vec::new(), Some(s.to_string())));
             for (k, v) in options {
@@ -1586,18 +1586,24 @@ mod tests {
     #[test]
     fn a_module_name_is_kept_whatever_it_names() {
         // `file`'s args are given as `key=value` rather than the free-form `echo a`
-        // `nosuchmodule` carries: it is a python module now read by `module_args` like any
-        // other, and `echo a` is not a valid shorthand for it, matching what the reference would
-        // also refuse. `nosuchmodule` is a name this release resolves nothing for, so its
-        // arguments are left unparsed and `echo a` is never looked at. A collection's module is
-        // read like `file`: the controller's ansible-core resolves it before the run, and one
-        // whose arguments were dropped here would run with none.
+        // `ansible.builtin.nosuch` carries: it is a python module now read by `module_args` like
+        // any other, and `echo a` is not a valid shorthand for it, matching what the reference
+        // would also refuse. `ansible.builtin.nosuch` is a name nothing can supply, so its
+        // arguments are left unparsed and `echo a` is never looked at. A collection's module, and
+        // a name a `library/` may hold, are read like `file`: the controller's ansible-core
+        // resolves them before the run, and one whose arguments were dropped here would run with
+        // none. A word that is not `key=value` is kept for the pre-flight to refuse.
         //
         // The parsed arguments are asserted below, not just the module name: a name kept while
         // its arguments parsed into nothing would pass a test that only checked the name, which
         // is exactly the shape the args-dropping bug this fixture was rewritten for took.
         for (module, args_text, expect) in [
-            ("nosuchmodule", "echo a", &[][..]),
+            ("ansible.builtin.nosuch", "echo a", &[][..]),
+            (
+                "my_library_module",
+                "a=1 stray",
+                &[("a", "1"), ("_raw_params", "stray")][..],
+            ),
             (
                 "file",
                 "path=/tmp/x state=touch",

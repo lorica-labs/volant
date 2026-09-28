@@ -327,25 +327,13 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             // and `check_arguments` knows only the native modules.
             return Ok(());
         }
-        // A collection's module is set aside rather than judged: only the controller's
-        // ansible-core knows which collections are installed, and it is asked once, after both
-        // passes, before the union is built ([`check_resolved`]).
-        if crate::python::is_collection_name(&task.module) {
-            // What the loader kept of a string argument that is not `key=value`, refused here
-            // rather than at load, as the reference's `ModuleArgsParser` refuses it after
-            // `parse_kv` kept it: a role file for another platform is parsed for the union and
-            // never checked, so its free-form Windows task cannot refuse a Linux run.
-            if task.args.contains_key("_raw_params")
-                && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
-            {
-                // ansible-core 2.19.12's sentence (`task.py`), which `import_playbook` written as
-                // a task gets too.
-                bail!(
-                    "task '{}': Action '{}' does not support raw params.",
-                    task.name,
-                    task.module
-                );
-            }
+        // A collection's module, or a name a `library/` may hold, is set aside rather than
+        // judged: only the controller's ansible-core knows which collections are installed and
+        // what its module path holds, and it is asked once, after both passes, before the union
+        // is built ([`check_resolved`]). A word left in `_raw_params` is refused once the name
+        // is known to resolve ([`check_built`]), as the reference resolves before it looks at
+        // the arguments: `shel: echo hi` is a typo before it is a module given raw params.
+        if crate::python::is_resolved_name(&task.module) {
             return Ok(());
         }
         bail!(unresolved(&task.name, &task.module));
@@ -364,18 +352,22 @@ fn unresolved_tail(module: &str) -> String {
     )
 }
 
-/// Every `(task, module)` of a compiled play whose module only a collection can answer, set
-/// aside by [`check_task`] for the controller's ansible-core to resolve.
+/// Every `(task, module)` of a compiled play whose module only the controller's ansible-core can
+/// answer, set aside by [`check_task`] for it to resolve.
 pub(crate) fn collection_modules(compiled: &crate::compile::Compiled) -> Vec<(String, String)> {
+    set_aside(compiled)
+        .map(|task| (task.name.clone(), task.module.clone()))
+        .collect()
+}
+
+fn set_aside(compiled: &crate::compile::Compiled) -> impl Iterator<Item = &PlayTask> {
     compiled
         .steps
         .iter()
         .filter(|step| !matches!(step.kind, crate::compile::StepKind::Flush { .. }))
         .map(|step| &step.task)
         .chain(compiled.handlers.iter().map(|handler| &handler.task))
-        .filter(|task| crate::python::is_collection_name(&task.module))
-        .map(|task| (task.name.clone(), task.module.clone()))
-        .collect()
+        .filter(|task| crate::python::is_resolved_name(&task.module))
 }
 
 /// What the controller's ansible-core made of a collection's module a task names, refused
@@ -430,27 +422,39 @@ pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -
     )
 }
 
-/// A collection's module an include brought in, refused unless the union holds it.
+/// A module set aside for the controller, refused unless the union holds it, and then refused if
+/// the loader kept a word of its arguments in `_raw_params`. Run on the plays before the first
+/// connection, and on what an include brings in.
 ///
 /// The union was built before the first connection, from what the plays and their role files
-/// name, and a collection's module is in it only if the controller's ansible-core resolved it to
-/// a module it could build. One that is not was missing, is served by an action plugin, or sits
+/// name, and a set-aside module is in it only if the controller's ansible-core resolved it to a
+/// module it could build. One that is not was missing, is served by an action plugin, or sits
 /// in a file nothing read before the run; the include fails for the host that reached it, before
 /// any of the file's tasks run, like any other refusal of an included file.
+///
+/// The `_raw_params` refusal is ansible-core 2.19.12's sentence (`task.py`), given, as there,
+/// only once the name resolved. A role file for another platform is parsed for the union and
+/// never checked, so its free-form Windows task cannot refuse a Linux run.
 pub(crate) fn check_built(
     expanded: &crate::compile::Compiled,
     union: Option<&crate::python::Union>,
 ) -> anyhow::Result<()> {
-    for (task, module) in collection_modules(expanded) {
-        if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(&module))) {
+    for task in set_aside(expanded) {
+        let (name, module) = (&task.name, &task.module);
+        if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
             // What the controller made of a name it set aside, as the pre-flight says it for one
             // a play names.
-            if let Some(why) = union.and_then(|u| u.refused.get(&module)) {
-                bail!("task '{task}': {why}");
+            if let Some(why) = union.and_then(|u| u.refused.get(module)) {
+                bail!("task '{name}': {why}");
             }
             bail!(
-                "task '{task}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection"
+                "task '{name}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, no module path holds it, it runs through an action plugin, or it is named only in a file nothing read before the first connection"
             );
+        }
+        if task.args.contains_key("_raw_params")
+            && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&module.as_str())
+        {
+            bail!("task '{name}': Action '{module}' does not support raw params.");
         }
     }
     Ok(())
@@ -685,7 +689,23 @@ mod tests {
             check(&pb).is_ok(),
             "a builtin this release does not run itself has a payload path now"
         );
-        let text = refusal("- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n");
+        // A name no builtin has is the controller's to answer: a `library/` may hold it. What
+        // it says when nothing does is the reference's typo sentence.
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("set aside for the controller");
+        let text = format!(
+            "{:#}",
+            check_resolved(
+                "Later",
+                "nosuchmodule",
+                &crate::python::Resolved::Missing { collection: None }
+            )
+            .unwrap_err()
+        );
         assert!(
             text.contains("couldn't resolve module/action 'nosuchmodule'"),
             "{text}"
@@ -724,22 +744,48 @@ mod tests {
                 ("Reload".to_string(), "community.general.ufw".to_string()),
             ]
         );
-        // A word that is not `key=value` is kept by the loader and refused here, where a task is
-        // checked, unless the module is free-form. Red if the loader refuses it instead (a role's
-        // Windows file would refuse a Linux run) or if nothing refuses it (the module runs with
-        // an argument it never declared).
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n");
-        assert!(
-            text.contains("task 'Stray': Action 'ns.coll.mod' does not support raw params."),
-            "{text}"
-        );
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - ansible.windows.win_shell: Get-Service foo\n",
-            "x.yml",
-        )
-        .unwrap();
-        check(&pb).expect("a free-form collection module takes its command line");
+        // A word that is not `key=value` is kept by the loader and refused once the name
+        // resolved, unless the module is free-form. Red if the loader refuses it instead (a
+        // role's Windows file would refuse a Linux run), if nothing refuses it (the module runs
+        // with an argument it never declared), or if it is refused before the name resolved
+        // (`shel: echo hi` would be told it takes no raw params, not that it is a typo).
+        let stray = |module: &str| {
+            let pb = parse(
+                &format!("- hosts: all\n  tasks:\n    - name: Stray\n      {module}: a=1 stray\n"),
+                "x.yml",
+            )
+            .unwrap();
+            check(&pb).expect("set aside before it resolved");
+            let compiled = crate::compile::compile(
+                &pb.plays[0],
+                &crate::roles::RoleSearch::default(),
+                &crate::compile::TagSelection::new(Vec::new(), Vec::new()),
+            )
+            .unwrap();
+            let facts = crate::python::ModuleFacts {
+                module_fqn: "fqn".into(),
+                profile: "legacy".into(),
+                rlimit_nofile: 0,
+                extensions: serde_json::Map::new(),
+                core: false,
+            };
+            let union = crate::python::Union {
+                hash: "ab".into(),
+                zip_b64: "UEsDBA==".into(),
+                modules: std::collections::BTreeMap::from([(module.to_string(), facts)]),
+                refused: std::collections::BTreeMap::new(),
+                natives: crate::python::Natives::default(),
+            };
+            check_built(&compiled, Some(&union)).map_err(|err| format!("{err:#}"))
+        };
+        for module in ["ns.coll.mod", "my_library_module"] {
+            assert_eq!(
+                stray(module).unwrap_err(),
+                format!("task 'Stray': Action '{module}' does not support raw params.")
+            );
+        }
+        stray("ansible.windows.win_shell")
+            .expect("a free-form collection module takes its command line");
         let text =
             refusal("- hosts: all\n  tasks:\n    - name: T\n      ansible.builtin.nosuch: x=1\n");
         assert!(

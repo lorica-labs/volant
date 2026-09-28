@@ -7988,16 +7988,19 @@ fn shell_executable_selects_the_interpreter() {
 /// A fake controller-side Python, so the wiring below is proved without an ansible-core on the
 /// machine running the tests -- and without the 631 KB the real helper would build.
 ///
-/// It answers the one request the controller makes and then holds its end of the pipe open: the
-/// controller writes the request before it reads the answer, and a helper that had already exited
-/// would break that write instead of answering it. Every start appends a line to `starts.log`,
+/// It answers the two requests the controller makes, the playbook's plugin directories and then
+/// the build, and holds its end of the pipe open: the controller writes each request before it
+/// reads the answer, and a helper that had already exited would break that write instead of
+/// answering it. Every start appends a line to `starts.log`,
 /// which is what counts them.
 fn fake_python(dir: &Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let answer = br#"{"zip_b64":"UEsDBA==","modules":{"lineinfile":{"module_fqn":"ansible.modules.lineinfile","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#;
-    let len = u32::try_from(answer.len()).unwrap().to_be_bytes();
-    let mut frame = len.to_vec();
-    frame.extend_from_slice(answer);
+    let mut frame = Vec::new();
+    for body in [&b"{}"[..], &answer[..]] {
+        frame.extend_from_slice(&u32::try_from(body.len()).unwrap().to_be_bytes());
+        frame.extend_from_slice(body);
+    }
     std::fs::write(dir.join("answer.bin"), &frame).unwrap();
     let script = dir.join("python");
     std::fs::write(
@@ -8321,6 +8324,449 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
         String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A module that answers `<name> says <word>`, as a `library/` holds one.
+fn library_module(dir: &Path, name: &str, field: &str) {
+    std::fs::create_dir_all(dir).expect("a library directory");
+    std::fs::write(
+        dir.join(format!("{name}.py")),
+        format!(
+            "from ansible.module_utils.basic import AnsibleModule\n\
+             m = AnsibleModule(argument_spec={{'word': {{'type': 'str', 'default': 'x'}}}})\n\
+             m.exit_json(changed=False, {field}='{name} says ' + m.params['word'])\n"
+        ),
+    )
+    .expect("the module");
+}
+
+/// Measured on ansible-core 2.19.12, `connection: local`: a module in `library/` beside the
+/// playbook and one in a role's `library/` both run, `ok` with the value each returns
+/// (`add_all_plugin_dirs`, from `Playbook._load_playbook_data` and `Role._load_role_data`).
+///
+/// What would make this red: the playbook's or the role's directory not handed to the helper,
+/// which refuses the task with "couldn't resolve module/action"; or a name no builtin has
+/// refused before the controller's ansible-core was asked.
+#[test]
+fn a_module_in_the_playbook_s_library_or_a_role_s_runs() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-modules");
+    library_module(&dir.join("library"), "pb_probe", "msg");
+    let role = dir.join("roles").join("r");
+    library_module(&role.join("library"), "role_probe", "msg");
+    std::fs::create_dir_all(role.join("tasks")).expect("the role's tasks");
+    std::fs::write(
+        role.join("tasks").join("main.yml"),
+        "- role_probe: word=from-role\n  register: r\n- debug: var=r.msg\n",
+    )
+    .expect("the role's tasks");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  roles: [r]\n  tasks:\n    - pb_probe: word=from-playbook\n      register: p\n    - debug: var=p.msg\n",
+    )
+    .expect("the play");
+    let cache = dir.join("cache");
+    let out = volant_within_env(
+        &["playbook", dir.join("play.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#""p.msg": "pb_probe says from-playbook""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""r.msg": "role_probe says from-role""#),
+        "{text}"
+    );
+    // Measured there too: a word that is not `key=value` fails the task with "Action 'pb_probe'
+    // does not support raw params."; Volant refuses the run with it before the first
+    // connection, once the name resolved.
+    std::fs::write(
+        dir.join("stray.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - pb_probe: word=a stray\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &["playbook", dir.join("stray.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(
+        text.contains("Action 'pb_probe' does not support raw params."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// Sets `path`'s mtime `ago` seconds back, a directory's included. A kept union is only written
+/// when every file and directory it depends on is older than two seconds (the racy-timestamp
+/// rule), so a test that wants one kept ages what it has just written.
+fn backdate(path: &Path, ago: u64) {
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(ago))
+        })
+        .unwrap_or_else(|e| panic!("backdating {}: {e}", path.display()));
+}
+
+/// Every file of the kept unions with its mtime: a run that hits the cache rewrites none.
+fn kept_unions(cache: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
+    let mut out: Vec<_> = std::fs::read_dir(cache.join("volant").join("unions"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// A `library/` written beside the playbook after a run kept its union: the next run builds
+/// again and gets the playbook's `ping`, as ansible-core 2.19.12 does, where it finds the file
+/// before its own module.
+///
+/// The run gets a `HOME` of its own, aged with everything else it wrote: the helper watches
+/// `~/.ansible` (or `HOME` itself when that is absent), and on a shared machine another run
+/// touching it within two seconds keeps the union out of the cache. A second run with nothing
+/// changed has to hit the kept union, rewriting none of its files, or the third proves nothing.
+///
+/// What would make this red: the kept union's key blind to what the playbook's `library/`
+/// holds. No source the first run kept names a directory that was not there, so the third run
+/// loads the union holding ansible-core's `ping` and prints `pong`.
+#[test]
+fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-cache");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - ping:
+      register: p
+    - debug: var=p.ping
+",
+    )
+    .expect("the play");
+    let home = dir.join("home");
+    std::fs::create_dir_all(home.join(".ansible").join("tmp")).expect("a home");
+    for path in [
+        dir.join("play.yml"),
+        home.join(".ansible").join("tmp"),
+        home.join(".ansible"),
+        home.clone(),
+        dir.clone(),
+    ] {
+        backdate(&path, 60);
+    }
+    let cache = dir.join("cache");
+    let run = || {
+        let out = volant_within_env(
+            &["playbook", dir.join("play.yml").to_str().expect("a path")],
+            std::time::Duration::from_secs(60),
+            &[
+                ("VOLANT_PYTHON", &python),
+                ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+                ("HOME", home.to_str().expect("a path")),
+            ],
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{text}");
+        text
+    };
+    let first = run();
+    assert!(first.contains(r#""p.ping": "pong""#), "{first}");
+    let kept = kept_unions(&cache);
+    assert!(
+        !kept.is_empty(),
+        "the first run kept no union, so nothing is proven:
+{first}"
+    );
+    let again = run();
+    assert_eq!(
+        kept_unions(&cache),
+        kept,
+        "a run with nothing changed rebuilt the union, so the next one proves nothing:
+{again}"
+    );
+    let library = dir.join("library");
+    library_module(&library, "ping", "ping");
+    // Older than two seconds, so the key can vouch for it, and newer than anything the first
+    // run saw, so its stamp is its own.
+    backdate(&library.join("ping.py"), 10);
+    backdate(&library, 10);
+    let third = run();
+    assert!(third.contains(r#""p.ping": "ping says x""#), "{third}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// Measured on ansible-core 2.19.12 with a module calling `module.warn("probe warning")`: over
+/// `loop: [1, 2]`, then once more in a later task, `[WARNING]: probe warning` is printed once for
+/// the whole run (`Display._deduplicate`), while `w.warnings | length` is `2` and the later task
+/// registers its own copy.
+///
+/// What would make this red: every copy printed, one line per item and per task; or the repeat
+/// taken off the registered values along with the line.
+#[test]
+fn a_warning_repeated_by_two_items_prints_once() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("warning-once");
+    let library = dir.join("library");
+    std::fs::create_dir_all(&library).expect("a library directory");
+    std::fs::write(
+        library.join("warn_probe.py"),
+        "from ansible.module_utils.basic import AnsibleModule\n\
+         m = AnsibleModule(argument_spec={})\n\
+         m.warn('probe warning')\n\
+         m.exit_json(changed=False)\n",
+    )
+    .expect("the module");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - warn_probe:\n      loop: [1, 2]\n      register: w\n    - debug: msg=\"{{ w.warnings | length }}\"\n    - warn_probe:\n      register: v\n    - debug: msg=\"{{ v.warnings | length }}\"\n",
+    )
+    .expect("the play");
+    let cache = dir.join("cache");
+    let out = volant_within_env(
+        &["playbook", dir.join("play.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert_eq!(
+        stderr.matches("[WARNING]: probe warning").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stdout.contains(r#""msg": 2}"#), "{stdout}");
+    assert!(stdout.contains(r#""msg": 1}"#), "{stdout}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A `ping` module answering `tag` in `dir/ping.py`.
+fn ping_module(dir: &Path, tag: &str) {
+    std::fs::create_dir_all(dir).expect("a library directory");
+    std::fs::write(
+        dir.join("ping.py"),
+        format!(
+            "from ansible.module_utils.basic import AnsibleModule\n\
+             m = AnsibleModule(argument_spec={{}})\n\
+             m.exit_json(changed=False, ping='{tag}')\n"
+        ),
+    )
+    .expect("the module");
+}
+
+/// A role `name` under `base/roles` whose task prints what `ping` answers, shipping its own
+/// `ping` answering `tag` when there is one.
+fn ping_role(base: &Path, name: &str, tag: Option<&str>) {
+    let role = base.join("roles").join(name);
+    std::fs::create_dir_all(role.join("tasks")).expect("the role's tasks");
+    std::fs::write(
+        role.join("tasks").join("main.yml"),
+        format!("- ping:\n  register: q\n- debug: msg=\"{{{{ q.ping }}}} in role {name}\"\n"),
+    )
+    .expect("the role's tasks");
+    if let Some(tag) = tag {
+        ping_module(&role.join("library"), tag);
+    }
+}
+
+/// A play printing what `ping` answers, as `label`, with `roles` in front of it.
+fn ping_play(label: &str, roles: &str) -> String {
+    format!(
+        "- hosts: localhost\n  gather_facts: false\n{roles}  tasks:\n    - ping:\n      register: q\n    - debug: msg=\"{{{{ q.ping }}}} in {label}\"\n"
+    )
+}
+
+/// Every `msg` a run printed, in order, and its exit code and error output.
+fn ping_run(python: &str, cache: &Path, playbooks: &[&Path]) -> (Option<i32>, Vec<String>, String) {
+    let mut args = vec!["playbook".to_string()];
+    args.extend(playbooks.iter().map(|p| p.display().to_string()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = volant_within_env(
+        &args,
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let msgs = stdout
+        .split(r#""msg": ""#)
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .map(str::to_string)
+        .collect();
+    (
+        out.status.code(),
+        msgs,
+        format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)),
+    )
+}
+
+/// Measured on ansible-core 2.19.12, a `library/ping.py` in each position, the `msg` lines in
+/// order:
+/// - one playbook, a plain play then a play whose role ships `ping`: the role's `ping` answers
+///   in the first play too (`r2lib in play1`, `r2lib in role r2`, `r2lib in play2`), every play's
+///   roles being read before the first one runs;
+/// - two named playbooks, the first's role shipping `ping`, the second's own directory shipping
+///   one: the second directory wins everywhere (`blib in role ra`, `blib in A`, `blib in B`), as
+///   every named playbook's directory is added first;
+/// - `import_playbook` of a file whose directory ships `ping`, after a play whose role ships one:
+///   the role wins everywhere (`ralib in role ra`, `ralib in main`, `ralib in sub`);
+/// - two named playbooks, only the second's role shipping `ping`: `pong in A`, then the role's.
+///   One union cannot hold both, and Volant refuses the run, naming the directory;
+/// - `ping`, then an `include_role` of a role shipping it, then `ping`: `pong before`, then the
+///   role's. Refused the same way.
+///
+/// What would make this red: the directories added in another order (every play's directory
+/// before every role, which gives `sublib` in the third case), or a module a later playbook's
+/// role ships run for an earlier playbook's task.
+#[test]
+fn library_directories_join_the_search_in_the_reference_s_order() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let root = probe_dir("library-order");
+    let cache = root.join("cache");
+
+    let one = root.join("one");
+    ping_role(&one, "r2", Some("r2lib"));
+    std::fs::write(
+        one.join("p.yml"),
+        ping_play("play1", "") + &ping_play("play2", "  roles: [r2]\n"),
+    )
+    .expect("the play");
+    let (code, msgs, text) = ping_run(&python, &cache, &[&one.join("p.yml")]);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        msgs,
+        ["r2lib in play1", "r2lib in role r2", "r2lib in play2"],
+        "{text}"
+    );
+
+    let (a, b) = (root.join("two").join("a"), root.join("two").join("b"));
+    ping_role(&a, "ra", Some("ralib"));
+    ping_module(&b.join("library"), "blib");
+    std::fs::write(a.join("a.yml"), ping_play("A", "  roles: [ra]\n")).expect("the play");
+    std::fs::write(b.join("b.yml"), ping_play("B", "")).expect("the play");
+    let (code, msgs, text) = ping_run(&python, &cache, &[&a.join("a.yml"), &b.join("b.yml")]);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        msgs,
+        ["blib in role ra", "blib in A", "blib in B"],
+        "{text}"
+    );
+
+    let imp = root.join("import");
+    ping_role(&imp, "ra", Some("ralib"));
+    ping_module(&imp.join("sub").join("library"), "sublib");
+    std::fs::write(
+        imp.join("main.yml"),
+        ping_play("main", "  roles: [ra]\n") + "- import_playbook: sub/b.yml\n",
+    )
+    .expect("the play");
+    std::fs::write(imp.join("sub").join("b.yml"), ping_play("sub", "")).expect("the play");
+    let (code, msgs, text) = ping_run(&python, &cache, &[&imp.join("main.yml")]);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        msgs,
+        ["ralib in role ra", "ralib in main", "ralib in sub"],
+        "{text}"
+    );
+
+    let (a, b) = (root.join("late").join("a"), root.join("late").join("b"));
+    std::fs::create_dir_all(&a).expect("a directory");
+    ping_role(&b, "rb", Some("rblib"));
+    std::fs::write(a.join("a.yml"), ping_play("A", "")).expect("the play");
+    std::fs::write(b.join("b.yml"), ping_play("B", "  roles: [rb]\n")).expect("the play");
+    let (code, _, text) = ping_run(&python, &cache, &[&a.join("a.yml"), &b.join("b.yml")]);
+    assert_eq!(code, Some(4), "{text}");
+    assert!(
+        text.contains("module 'ping' is found in ") && text.contains("rb/library only once"),
+        "{text}"
+    );
+
+    let inc = root.join("include");
+    ping_role(&inc, "ri", Some("rilib"));
+    std::fs::write(
+        inc.join("p.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - ping:\n    - include_role: name=ri\n",
+    )
+    .expect("the play");
+    let (code, _, text) = ping_run(&python, &cache, &[&inc.join("p.yml")]);
+    assert_eq!(code, Some(4), "{text}");
+    assert!(text.contains("ri/library only once"), "{text}");
+    std::fs::remove_dir_all(&root).expect("the probe directory is removed");
+}
+
+/// Measured on ansible-core 2.19.12 with a `library/ping.py` beside the playbook answering
+/// `lib`: `ping` and `ansible.legacy.ping` run it, `ansible.builtin.ping` runs ansible-core's and
+/// answers `pong` (`_find_fq_plugin` searches only the package for `ansible.builtin`, while
+/// `ansible.legacy` goes through the `library` search). The same run's gathering, which the
+/// reference runs as `ansible.legacy.setup`, gets a `library/setup.py`'s facts.
+///
+/// What would make this red: `ansible.builtin.ping` filed under the short name, which hands it
+/// the library's module; or the gathering named `ansible.builtin.setup`, which skips the
+/// playbook's `setup`.
+#[test]
+fn a_library_module_answers_its_short_name_and_never_ansible_builtin() {
+    let Some(python) = ansible_core_python() else {
+        return;
+    };
+    let dir = probe_dir("library-builtin");
+    let library = dir.join("library");
+    ping_module(&library, "lib");
+    std::fs::write(
+        library.join("setup.py"),
+        "from ansible.module_utils.basic import AnsibleModule\n\
+         m = AnsibleModule(argument_spec={}, supports_check_mode=True)\n\
+         m.exit_json(changed=False, ansible_facts={'probe_from': 'lib'})\n",
+    )
+    .expect("the module");
+    std::fs::write(
+        dir.join("p.yml"),
+        "- hosts: localhost\n  tasks:\n    - ping:\n      register: a\n    - ansible.builtin.ping:\n      register: b\n    - ansible.legacy.ping:\n      register: c\n    - debug: msg=\"{{ a.ping }} {{ b.ping }} {{ c.ping }} {{ probe_from | default('core') }}\"\n",
+    )
+    .expect("the play");
+    let (code, msgs, text) = ping_run(&python, &dir.join("cache"), &[&dir.join("p.yml")]);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(msgs, ["lib pong lib lib"], "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
 /// A controller interpreter with ansible-core, which a task an action plugin backs needs for its

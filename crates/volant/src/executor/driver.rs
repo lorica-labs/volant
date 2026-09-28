@@ -1130,7 +1130,14 @@ pub(super) async fn drive_host(
                     {
                         let mut vars = store.lock().expect("vars lock");
                         record_registered(&mut vars, task, &register_hosts, &results);
-                        record_local_facts(&mut vars, task, &items, &fact_hosts, &results);
+                        record_local_facts(
+                            &mut vars,
+                            task,
+                            &items,
+                            &fact_hosts,
+                            &results,
+                            &templar,
+                        );
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // A censored `debug` shows nothing at all at verbosity 0 and its censored

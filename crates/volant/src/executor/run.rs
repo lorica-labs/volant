@@ -135,6 +135,84 @@ pub(super) async fn run_local(
     Some(result)
 }
 
+/// The names a `set_fact` sets, each with its value and whether it is data from a managed host.
+///
+/// Its keys are rendered, as ansible-core's `set_fact` action renders them ("a rare case where
+/// key templating is allowed"), and each rendered name must be a variable name: a string that
+/// is an ASCII identifier and not one of Jinja's `true`/`false`/`none` (either case) or `not`.
+/// Measured on ansible-core 2.19.12: `{"k_{{ n }}": 1}` sets `k_dyn`; a name rendering to
+/// `bad-name`, `''` or a literal `bad-lit` fails with `Task failed: Invalid variable name
+/// 'bad-name'.`; one rendering to `1` with `Invalid variable name '1' of type 'int'.`; an
+/// undefined name with `Task failed: ` and the render's error; `if` is a valid name; and nothing
+/// but `cacheable` fails with `No key/value pairs provided, at least one is required for this
+/// action to succeed`, without the prefix. A name is data when its value was, or when its own
+/// render read a managed host.
+pub(super) fn set_fact_names<'a>(
+    item: &'a Item,
+    templar: &Templar,
+) -> Result<Vec<(String, &'a Value, bool)>, TaskResult> {
+    let mut names = Vec::new();
+    for (key, value) in item.args.iter().filter(|(k, _)| *k != "cacheable") {
+        let (name, tainted) = templar
+            .render_value_tainted(&Value::String(key.clone()), &item.vars)
+            .map_err(|e| TaskResult::failed_with(format!("Task failed: {}", e.0)))?;
+        if let Some(why) = invalid_variable_name(&name) {
+            return Err(TaskResult::failed_with(format!("Task failed: {why}")));
+        }
+        let Value::String(name) = name else {
+            unreachable!("a valid variable name is a string")
+        };
+        names.push((name, value, tainted || item.args_untrusted.contains(key)));
+    }
+    if names.is_empty() {
+        return Err(TaskResult::failed_with(
+            "No key/value pairs provided, at least one is required for this action to succeed",
+        ));
+    }
+    Ok(names)
+}
+
+/// The names a `set_fact` item sets that are data, as [`set_fact_names`] renders them; empty for
+/// any other module.
+fn set_fact_data(task: &PlayTask, item: &Item, templar: &Templar) -> BTreeSet<String> {
+    if short_name(&task.module) != "set_fact" {
+        return BTreeSet::new();
+    }
+    set_fact_names(item, templar)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, _, data)| *data)
+        .map(|(name, _, _)| name)
+        .collect()
+}
+
+/// ansible-core's `validate_variable_name`: why this value cannot name a variable, or `None`.
+fn invalid_variable_name(name: &Value) -> Option<String> {
+    let valid = |s: &str| {
+        s.chars()
+            .next()
+            .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+            && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            && !["true", "false", "none", "True", "False", "None", "not"].contains(&s)
+    };
+    let (shown, kind) = match name {
+        Value::String(s) if valid(s) => return None,
+        Value::String(s) => (format!(" '{s}'"), ""),
+        Value::Number(n) if n.is_f64() => (format!(" '{n}'"), "float"),
+        Value::Number(n) => (format!(" '{n}'"), "int"),
+        Value::Bool(b) => (format!(" '{}'", if *b { "True" } else { "False" }), "bool"),
+        Value::Null => (" 'None'".to_string(), "NoneType"),
+        Value::Array(_) => (String::new(), "list"),
+        Value::Object(_) => (String::new(), "dict"),
+    };
+    let of = if kind.is_empty() {
+        String::new()
+    } else {
+        format!(" of type '{kind}'")
+    };
+    Some(format!("Invalid variable name{shown}{of}."))
+}
+
 /// Every controller-side module but `pause`, none of which waits.
 fn local_result(
     task: &PlayTask,
@@ -168,11 +246,13 @@ fn local_result(
         "include_vars" => return run_include_vars(item, step, store),
         "set_fact" => {
             // Written by `record_local_facts` once the task is judged.
-            let facts: Map<String, Value> = item
-                .args
-                .iter()
-                .filter(|(k, _)| *k != "cacheable")
-                .map(|(k, v)| (k.clone(), v.clone()))
+            let names = match set_fact_names(item, templar) {
+                Ok(names) => names,
+                Err(failed) => return failed,
+            };
+            let facts: Map<String, Value> = names
+                .into_iter()
+                .map(|(name, value, _)| (name, value.clone()))
                 .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
             r.insert("changed".into(), json!(false));
@@ -670,7 +750,7 @@ fn apply_conditions(
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return result;
     }
-    let vars = condition_vars(task, item, &result);
+    let vars = condition_vars(task, item, &result, templar);
     if !task.changed_when.is_empty() {
         match all_hold(&task.changed_when, &vars, templar) {
             Ok(changed) => result.0.insert("changed".into(), json!(changed)),
@@ -729,7 +809,12 @@ fn unevaluable(mut result: TaskResult, condition: &str, err: &TemplateError) -> 
 /// the one module whose facts are never read. Measured on ansible-core 2.19.12: `set_fact:
 /// {seen: 1}` passes `failed_when: seen is not defined`, a module's fact wins over a `-e` of the
 /// same name, and a delegated `set_fact` under `delegate_facts: true` does not see its own fact.
-fn condition_vars(task: &PlayTask, item: &Item, result: &TaskResult) -> HostVars {
+fn condition_vars(
+    task: &PlayTask,
+    item: &Item,
+    result: &TaskResult,
+    templar: &Templar,
+) -> HostVars {
     let mut vars = item.vars.clone();
     if let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) {
         let delegated =
@@ -739,8 +824,9 @@ fn condition_vars(task: &PlayTask, item: &Item, result: &TaskResult) -> HostVars
             "set_fact" | "include_vars" if delegated => {}
             // The trust `record_local_facts` gives the same names once they are written.
             name @ ("set_fact" | "include_vars") => {
+                let data = set_fact_data(task, item, templar);
                 for (key, value) in facts {
-                    if name == "set_fact" && item.args_untrusted.contains(key) {
+                    if name == "set_fact" && data.contains(key) {
                         vars.insert_untrusted(key.clone(), value.clone());
                     } else {
                         vars.insert(key.clone(), value.clone());
@@ -1152,7 +1238,11 @@ pub(super) fn until_holds(
     if retry.until.is_empty() {
         return Ok(!result.failed());
     }
-    all_hold(&retry.until, &condition_vars(task, item, result), templar)
+    all_hold(
+        &retry.until,
+        &condition_vars(task, item, result, templar),
+        templar,
+    )
 }
 
 /// What one run of a retried task decides.
@@ -2627,6 +2717,7 @@ pub(super) fn record_local_facts(
     items: &[Item],
     hosts: &[String],
     results: &[(Option<Value>, TaskResult)],
+    templar: &Templar,
 ) {
     let set_fact = match short_name(&task.module) {
         "set_fact" => true,
@@ -2640,9 +2731,10 @@ pub(super) fn record_local_facts(
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
         };
+        let data = set_fact_data(task, item, templar);
         for (key, value) in facts {
             for host in hosts {
-                if set_fact && item.args_untrusted.contains(key) {
+                if set_fact && data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
                 } else {
                     vars.set_fact(host, key, value.clone());
@@ -3077,6 +3169,75 @@ mod tests {
             "{:?}",
             r.0
         );
+    }
+
+    /// A `set_fact` renders its keys and refuses a rendered name that cannot name a variable, in
+    /// the words ansible-core 2.19.12 uses for each case measured; a name built from a managed
+    /// host's value is data.
+    ///
+    /// What would make this red: the keys left unrendered (`k_{{ n }}` set as written), the name
+    /// check dropped or loosened (`bad-name`, `1` or `not` accepted), `if` refused, the
+    /// type named wrongly, the empty case accepted, or a name read from a host left trusted.
+    #[tokio::test]
+    async fn a_set_fact_renders_its_keys_and_checks_the_names() {
+        let host = || {
+            let mut v = hvars(json!({"n": "dyn"}));
+            v.insert_untrusted("h".into(), json!("from_host"));
+            v
+        };
+        let r = local_with("set_fact", json!({"k_{{ n }}": 1, "if": 2}), host()).await;
+        assert_eq!(
+            r.0["ansible_facts"],
+            json!({"k_dyn": 1, "if": 2}),
+            "{:?}",
+            r.0
+        );
+        for (key, msg) in [
+            (
+                "{{ 'bad-name' }}",
+                "Task failed: Invalid variable name 'bad-name'.",
+            ),
+            ("bad-lit", "Task failed: Invalid variable name 'bad-lit'."),
+            ("{{ '' }}", "Task failed: Invalid variable name ''."),
+            (
+                "{{ 1 }}",
+                "Task failed: Invalid variable name '1' of type 'int'.",
+            ),
+            (
+                "{{ 1.5 }}",
+                "Task failed: Invalid variable name '1.5' of type 'float'.",
+            ),
+            (
+                "{{ [1] }}",
+                "Task failed: Invalid variable name of type 'list'.",
+            ),
+            ("not", "Task failed: Invalid variable name 'not'."),
+            ("None", "Task failed: Invalid variable name 'None'."),
+        ] {
+            let r = local_with("set_fact", json!({ key: 1 }), host()).await;
+            assert!(r.failed(), "{key}: {:?}", r.0);
+            assert_eq!(r.0["msg"], json!(msg), "{key}");
+        }
+        let r = local_with("set_fact", json!({"cacheable": true}), host()).await;
+        assert_eq!(
+            r.0["msg"],
+            json!(
+                "No key/value pairs provided, at least one is required for this action to succeed"
+            )
+        );
+        let r = local_with("set_fact", json!({"{{ nosuch }}": 1}), host()).await;
+        assert!(msg(&r).starts_with("Task failed: "), "{:?}", r.0);
+
+        let templar = Templar::new(PathBuf::from("."));
+        let mut t = task("set_fact");
+        t.args = vars(json!({"k_{{ h }}": 1, "plain": 2}));
+        let item = Item {
+            args: t.args.clone(),
+            vars: host(),
+            ..local_item(json!({}))
+        };
+        let data = set_fact_data(&t, &item, &templar);
+        assert_eq!(data, BTreeSet::from(["k_from_host".to_string()]));
     }
 
     /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an

@@ -636,6 +636,14 @@ pub(super) fn finish(
     if timed_out(&result) {
         return result;
     }
+    let mut r = judged(task, item, result, templar);
+    settle_failure(&mut r);
+    r
+}
+
+/// `changed_when` and `failed_when` applied, a condition that cannot be evaluated failing the
+/// result in its own words.
+fn judged(task: &PlayTask, item: &Item, result: TaskResult, templar: &Templar) -> TaskResult {
     match apply_conditions(task, item, result, templar) {
         Ok(r) => r,
         Err(e) => TaskResult::failed_with(e.0),
@@ -680,6 +688,14 @@ fn apply_conditions(
         result.0.insert("failed_when_result".into(), json!(failed));
         // Over a non-zero rc too: the condition has spoken.
         result.0.insert("failed".into(), json!(failed));
+        // Measured on ansible-core 2.19.12: `command: "false"` under `failed_when: false`
+        // registers `failed_when_suppressed_exception: "(traceback unavailable)"` and no
+        // `exception`.
+        if !failed && let Some(exception) = result.0.remove("exception") {
+            result
+                .0
+                .insert("failed_when_suppressed_exception".into(), exception);
+        }
     }
     Ok(result)
 }
@@ -721,6 +737,25 @@ fn condition_vars(task: &PlayTask, item: &Item, result: &TaskResult) -> HostVars
     }
     vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
     vars
+}
+
+/// What ansible-core's `maybe_raise_on_result` leaves on a failed final result, once the
+/// conditions and `until` are done with it: `exception: "(traceback unavailable)"`, and a `msg`
+/// when the result carries none. Measured on ansible-core 2.19.12: a `set_fact`, a `ping` and a
+/// `ping` loop item under `failed_when: true`, and a `ping` whose `until: false` ran out, all
+/// register `msg: "Task failed: Action failed: Unknown error."`; a `debug` keeps its own `msg`
+/// and a `command` its empty one. `until` never sees that `msg`: `until: r.msg is defined` over
+/// `failed_when: true` retries.
+fn settle_failure(result: &mut TaskResult) {
+    if result.failed() {
+        result
+            .0
+            .entry("msg")
+            .or_insert_with(|| json!("Task failed: Action failed: Unknown error."));
+        result
+            .0
+            .insert("exception".into(), json!("(traceback unavailable)"));
+    }
 }
 
 fn all_hold(
@@ -1129,16 +1164,20 @@ pub(super) fn judge_attempt(
     // could not be evaluated hands back a result of its own.
     let mut raw = raw;
     raw.0.insert("attempts".into(), json!(attempt));
-    let mut r = finish(task, item, raw, templar);
+    let mut r = judged(task, item, raw, templar);
     r.0.insert("attempts".into(), json!(attempt));
     match until_holds(task, item, &r, retry, templar) {
         Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
-        Ok(true) => return Attempt::Done(r),
+        Ok(true) => {
+            settle_failure(&mut r);
+            return Attempt::Done(r);
+        }
         Ok(false) => {}
     }
     if attempt > retry.retries {
         r.0.insert("attempts".into(), json!(retry.retries));
         r.0.insert("failed".into(), json!(true));
+        settle_failure(&mut r);
         return Attempt::Done(r);
     }
     Attempt::Again(retry.retries + 1 - attempt)
@@ -3531,6 +3570,80 @@ mod tests {
         t.delegate_to = Some("h2".into());
         t.delegate_facts = Some(true);
         assert!(finish(&t, &item, seen(), &templar).failed());
+    }
+
+    /// A task `failed_when` fails, whose result carries no `msg`, gets the one ansible-core's
+    /// `maybe_raise_on_result` gives it, and `exception` with it; a `msg` it has, even empty,
+    /// stays. `failed_when: false` over a failure moves `exception` aside. `until` reads the
+    /// result before any of that, and a run that ran out gets the same `msg`.
+    ///
+    /// What would make this red: the `msg` left off (the registered result has none), written
+    /// over one the module sent, `exception` left off, the suppressed exception kept as
+    /// `exception`, or the `msg` settled before `until` reads the result.
+    #[test]
+    fn a_failed_when_failure_with_no_msg_is_an_unknown_error() {
+        let templar = Templar::new(std::env::temp_dir());
+        let item = bare_item();
+        let mut t = task("set_fact");
+        t.failed_when = vec!["true".into()];
+        let r = finish(
+            &t,
+            &item,
+            result(json!({"changed": false, "ansible_facts": {"a": 1}})),
+            &templar,
+        );
+        assert_eq!(
+            r.0,
+            json!({"ansible_facts": {"a": 1}, "changed": false, "exception": "(traceback unavailable)", "failed": true, "failed_when_result": true, "msg": "Task failed: Action failed: Unknown error."})
+                .as_object()
+                .unwrap()
+                .clone()
+        );
+        let r = finish(
+            &t,
+            &item,
+            result(json!({"changed": true, "msg": "", "rc": 0})),
+            &templar,
+        );
+        assert_eq!(r.0["msg"], json!(""), "{:?}", r.0);
+
+        let mut t = task("command");
+        t.failed_when = vec!["false".into()];
+        let r = finish(
+            &t,
+            &item,
+            result(
+                json!({"changed": true, "exception": "(traceback unavailable)", "failed": true, "msg": "non-zero return code", "rc": 1}),
+            ),
+            &templar,
+        );
+        assert!(!r.0.contains_key("exception"), "{:?}", r.0);
+        assert_eq!(
+            r.0["failed_when_suppressed_exception"],
+            json!("(traceback unavailable)")
+        );
+
+        let mut t = task("ping");
+        t.register = Some("a".into());
+        t.failed_when = vec!["true".into()];
+        t.until = vec!["a.msg is defined".into()];
+        t.retries = Some("1".into());
+        let retry = retry_plan(&t, Some(&item), &templar)
+            .unwrap()
+            .expect("a retry plan");
+        let pong = || result(json!({"changed": false, "ping": "pong"}));
+        assert!(matches!(
+            judge_attempt(&t, &item, pong(), 1, &retry, &templar),
+            Attempt::Again(_)
+        ));
+        let Attempt::Done(r) = judge_attempt(&t, &item, pong(), 2, &retry, &templar) else {
+            panic!("the last attempt ends the loop");
+        };
+        assert_eq!(
+            r.0["msg"],
+            json!("Task failed: Action failed: Unknown error.")
+        );
+        assert_eq!(r.0["exception"], json!("(traceback unavailable)"));
     }
 
     /// A `run_once` step's registered variable and facts are written for every live host of the

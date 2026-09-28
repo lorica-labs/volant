@@ -8519,3 +8519,46 @@ fn failed_when_sees_the_fact_its_own_set_fact_returned() {
     assert!(text.contains("ok=2 "), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A task `failed_when` fails, whose result has no `msg`, prints and registers the reference's
+/// `Task failed: Action failed: Unknown error.`. Measured on ansible-core 2.19.12 with the same
+/// play: the line below, and `r1.msg` the same sentence. The reference also prints an `[ERROR]:`
+/// line with an `Origin:` block, which this engine prints for no failure.
+///
+/// What would make this red: the `msg` left off, which prints the line without it and leaves
+/// `r1.msg` undefined.
+#[test]
+fn a_failed_when_failure_without_a_msg_reports_an_unknown_error() {
+    let dir = std::env::temp_dir().join(format!("volant-unknownerr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - set_fact: {a: 1}\n\
+         \x20     failed_when: true\n\
+         \x20     register: r1\n\
+         \x20     ignore_errors: true\n\
+         \x20   - debug: {var: r1.msg}\n",
+    )
+    .expect("a playbook");
+    let out = volant(&[
+        "playbook",
+        "-i",
+        dir.join("inv.ini").to_str().expect("a path"),
+        play.to_str().expect("a path"),
+    ]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(r#"fatal: [probe]: FAILED! => {"ansible_facts": {"a": 1}, "changed": false, "failed_when_result": true, "msg": "Task failed: Action failed: Unknown error."}"#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""r1.msg": "Task failed: Action failed: Unknown error.""#),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

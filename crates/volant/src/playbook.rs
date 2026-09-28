@@ -460,6 +460,28 @@ pub fn is_meta(task: &PlayTask) -> bool {
 pub(crate) const FREE_FORM_COLLECTION_MODULES: &[&str] =
     &["ansible.windows.win_command", "ansible.windows.win_shell"];
 
+/// What the loader kept of a collection module's string argument that is not `key=value`, when
+/// the module does not read that string as a command line.
+pub(crate) fn stray_raw_params(task: &PlayTask) -> Option<&str> {
+    if !crate::python::is_collection_name(&task.module)
+        || FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+    {
+        return None;
+    }
+    task.args
+        .get("_raw_params")
+        .and_then(Value::as_str)
+        .filter(|raw| !raw.is_empty())
+}
+
+/// ansible-core's `is_possibly_all_template`: a string that opens with a Jinja override header,
+/// or that opens and closes with Jinja delimiters, whichever pair.
+pub(crate) fn possibly_all_template(text: &str) -> bool {
+    text.starts_with("#jinja2:")
+        || (["{%", "{{", "{#"].iter().any(|m| text.starts_with(m))
+            && ["%}", "}}", "#}"].iter().any(|m| text.ends_with(m)))
+}
+
 /// Whether the module's string form is one command line rather than `key=value` pairs.
 ///
 /// The three registries answer for their own rows, so a module moving between them keeps the

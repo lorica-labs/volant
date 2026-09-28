@@ -7993,11 +7993,20 @@ fn shell_executable_selects_the_interpreter() {
 /// would break that write instead of answering it. Every start appends a line to `starts.log`,
 /// which is what counts them.
 fn fake_python(dir: &Path) -> std::path::PathBuf {
+    fake_python_answering(
+        dir,
+        &[br#"{"zip_b64":"UEsDBA==","modules":{"lineinfile":{"module_fqn":"ansible.modules.lineinfile","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#],
+    )
+}
+
+/// [`fake_python`], answering each request of the run in turn with the next of `answers`.
+fn fake_python_answering(dir: &Path, answers: &[&[u8]]) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
-    let answer = br#"{"zip_b64":"UEsDBA==","modules":{"lineinfile":{"module_fqn":"ansible.modules.lineinfile","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#;
-    let len = u32::try_from(answer.len()).unwrap().to_be_bytes();
-    let mut frame = len.to_vec();
-    frame.extend_from_slice(answer);
+    let mut frame = Vec::new();
+    for answer in answers {
+        frame.extend_from_slice(&u32::try_from(answer.len()).unwrap().to_be_bytes());
+        frame.extend_from_slice(answer);
+    }
     std::fs::write(dir.join("answer.bin"), &frame).unwrap();
     let script = dir.join("python");
     std::fs::write(
@@ -8560,5 +8569,72 @@ fn a_failed_when_failure_without_a_msg_reports_an_unknown_error() {
         text.contains(r#""r1.msg": "Task failed: Action failed: Unknown error.""#),
         "{text}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A word that is not `key=value` on a collection module fails that task while the play runs,
+/// as the reference does, rather than stopping the run before it starts. Measured on
+/// ansible-core 2.19.12 with a collection beside the playbook: the `fatal:` line below,
+/// `ignore_errors` and `rescue` both take the failure, a `when: false` still skips, and the play
+/// ends at exit 2. The helper here is a fake: the refusal comes before anything is sent.
+///
+/// What would make this red: the pre-flight refusing the word, which exits 4 before `PLAY [`.
+#[test]
+fn a_raw_argument_on_a_collection_module_fails_only_that_task() {
+    let dir = std::env::temp_dir().join(format!("volant-rawparams-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let python = fake_python_answering(
+        &dir,
+        &[
+            br#"{"resolved":{"ns.coll.m":{"module":"ns.coll.m","collection":["ns.coll","1.0.0"]}}}"#,
+            br#"{"zip_b64":"UEsDBA==","modules":{"ns.coll.m":{"module_fqn":"ansible_collections.ns.coll.plugins.modules.m","profile":"legacy","rlimit_nofile":1024,"extensions":{}}}}"#,
+        ],
+    );
+    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n\
+         \x20   - ns.coll.m: v=1 stray\n\
+         \x20     register: r1\n\
+         \x20     ignore_errors: true\n\
+         \x20   - debug: {var: r1.exception}\n\
+         \x20   - block:\n\
+         \x20       - ns.coll.m: v=1 stray\n\
+         \x20     rescue:\n\
+         \x20       - debug: {msg: \"rescued {{ ansible_failed_result.msg }}\"}\n\
+         \x20   - ns.coll.m: v=1 stray\n\
+         \x20     when: false\n\
+         \x20   - ns.coll.m: v=1 stray\n\
+         \x20   - debug: {msg: never}\n",
+    )
+    .expect("a playbook");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            play.to_str().expect("a path"),
+        ],
+        DEFAULT_DEADLINE,
+        &[("VOLANT_PYTHON", python.to_str().expect("a path"))],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{text}\n{err}");
+    let line = r#"fatal: [probe]: FAILED! => {"changed": false, "msg": "Task failed: Action 'ns.coll.m' does not support raw params."}"#;
+    assert_eq!(text.matches(line).count(), 3, "{text}");
+    assert!(text.contains("...ignoring"), "{text}");
+    assert!(
+        text.contains(r#""r1.exception": "(traceback unavailable)""#),
+        "{text}"
+    );
+    assert!(
+        text.contains("rescued Task failed: Action 'ns.coll.m' does not support raw params."),
+        "{text}"
+    );
+    assert!(text.contains("skipping: [probe]"), "{text}");
+    assert!(!text.contains("never"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }

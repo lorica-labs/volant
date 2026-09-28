@@ -331,17 +331,17 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // ansible-core knows which collections are installed, and it is asked once, after both
         // passes, before the union is built ([`check_resolved`]).
         if crate::python::is_collection_name(&task.module) {
-            // What the loader kept of a string argument that is not `key=value`, refused here
-            // rather than at load, as the reference's `ModuleArgsParser` refuses it after
-            // `parse_kv` kept it: a role file for another platform is parsed for the union and
-            // never checked, so its free-form Windows task cannot refuse a Linux run.
-            if task.args.contains_key("_raw_params")
-                && !crate::playbook::FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+            // What the loader kept of a string argument that is not `key=value` fails the task
+            // when it runs, as the reference's does (`raw_params_refusal`). A string that is
+            // one template is the reference's argument splat, which renders to the module's
+            // arguments and which this release does not do: refused here, where a task is
+            // checked rather than at load, so a role file for another platform - parsed for the
+            // union and never checked - cannot refuse a Linux run.
+            if crate::playbook::stray_raw_params(task)
+                .is_some_and(crate::playbook::possibly_all_template)
             {
-                // ansible-core 2.19.12's sentence (`task.py`), which `import_playbook` written as
-                // a task gets too.
                 bail!(
-                    "task '{}': Action '{}' does not support raw params.",
+                    "task '{}': module '{}' takes its arguments from one template, which this release does not render into arguments: write them as a mapping",
                     task.name,
                     task.module
                 );
@@ -724,14 +724,24 @@ mod tests {
                 ("Reload".to_string(), "community.general.ufw".to_string()),
             ]
         );
-        // A word that is not `key=value` is kept by the loader and refused here, where a task is
-        // checked, unless the module is free-form. Red if the loader refuses it instead (a role's
-        // Windows file would refuse a Linux run) or if nothing refuses it (the module runs with
-        // an argument it never declared).
+        // A word that is not `key=value` is kept by the loader and fails the task when it runs,
+        // as in the reference; a string that is one template, the reference's argument splat,
+        // is refused here, where a task is checked. Red if the loader refuses either (a role's
+        // Windows file would refuse a Linux run), if the stray word stops the run before it
+        // starts, or if nothing refuses the splat (the module runs with an argument it never
+        // declared).
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("a stray word fails the task at run time");
         let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Stray\n      ns.coll.mod: a=1 stray\n");
+            refusal("- hosts: all\n  tasks:\n    - name: Splat\n      ns.coll.mod: \"{{ d }}\"\n");
         assert!(
-            text.contains("task 'Stray': Action 'ns.coll.mod' does not support raw params."),
+            text.contains(
+                "task 'Splat': module 'ns.coll.mod' takes its arguments from one template"
+            ),
             "{text}"
         );
         let pb = parse(

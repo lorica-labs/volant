@@ -632,8 +632,9 @@ pub(super) fn finish(
 ) -> TaskResult {
     // A run that hit the `timeout` keyword is reported as it stands. In ansible-core 2.19.12 the
     // timeout is an exception raised out of the handler's run, past everything that would have
-    // judged the result, so `failed_when: false` cannot make a pass of it.
-    if timed_out(&result) {
+    // judged the result, so `failed_when: false` cannot make a pass of it. A refused raw
+    // argument is raised before the handler runs, and stands the same way.
+    if timed_out(&result) || raw_params_refusal(task).is_some() {
         return result;
     }
     let mut r = judged(task, item, result, templar);
@@ -1207,17 +1208,44 @@ pub(super) fn step_tasks(
     results: &mut [Option<TaskResult>],
 ) -> Vec<(usize, Task)> {
     let mut out = Vec::new();
+    let refused = raw_params_refusal(task);
     for (ii, item) in items.iter().enumerate() {
         // A skipped item already has its result and never had a task.
         if item.skipped.is_some() {
             continue;
         }
-        match python {
-            Ok(python) => out.push((ii, protocol_task(task, item, *python))),
-            Err(failure) => results[ii] = Some(failure.clone()),
+        match (&refused, python) {
+            (Some(failure), _) | (None, Err(failure)) => results[ii] = Some(failure.clone()),
+            (None, Ok(python)) => out.push((ii, protocol_task(task, item, *python))),
         }
     }
     out
+}
+
+/// What each item of a collection module's task reports when the module's string argument left
+/// words that are not `key=value`, the module not reading it as a command line.
+///
+/// Measured on ansible-core 2.19.12 with `ns.coll.m: v=1 stray`: the task fails when it runs,
+/// after its `when` and item by item in a loop, registering `{changed: false, exception:
+/// "(traceback unavailable)", failed: true, msg: "Task failed: Action 'ns.coll.m' does not
+/// support raw params."}`; `ignore_errors` and `rescue` take it, and a play it fails exits 2.
+/// It is the task's `post_validate` raising, before any attempt, so neither `failed_when:
+/// false` nor `retries` changes it. A string that is one template is left to the pre-flight.
+pub(super) fn raw_params_refusal(task: &PlayTask) -> Option<TaskResult> {
+    crate::playbook::stray_raw_params(task)
+        .filter(|raw| !crate::playbook::possibly_all_template(raw))?;
+    let mut r = Map::new();
+    r.insert("changed".into(), json!(false));
+    r.insert("exception".into(), json!("(traceback unavailable)"));
+    r.insert("failed".into(), json!(true));
+    r.insert(
+        "msg".into(),
+        json!(format!(
+            "Task failed: Action '{}' does not support raw params.",
+            task.module
+        )),
+    );
+    Some(TaskResult(r))
 }
 
 /// The variables of the host a task's module actually runs on: the delegate's when the task has
@@ -3644,6 +3672,43 @@ mod tests {
             json!("Task failed: Action failed: Unknown error.")
         );
         assert_eq!(r.0["exception"], json!("(traceback unavailable)"));
+    }
+
+    /// A collection module whose string argument left a word that is not `key=value` fails each
+    /// item it runs, in the reference's words, before anything is sent; `when` still skips it,
+    /// and `failed_when: false` cannot pass it. A free-form collection module and a string that
+    /// is one template are not refused here.
+    ///
+    /// What would make this red: the refusal left to the pre-flight (the run stops at exit 4
+    /// before it starts), the task sent anyway, a skipped item refused, or `finish` judging the
+    /// refusal.
+    #[test]
+    fn a_raw_argument_on_a_collection_module_fails_the_task_when_it_runs() {
+        let templar = Templar::new(std::env::temp_dir());
+        let mut t = task("ns.coll.m");
+        t.args.insert("v".into(), json!("1"));
+        t.args.insert("_raw_params".into(), json!("stray"));
+        t.failed_when = vec!["false".into()];
+        let mut items = [bare_item(), bare_item()];
+        items[1].skipped = Some(TaskResult::default());
+        let mut results = vec![None, None];
+        let sent = step_tasks(&t, &items, &Ok(None), &mut results);
+        assert!(sent.is_empty(), "{sent:?}");
+        let refused = results[0].clone().expect("the item that runs reports");
+        assert!(results[1].is_none(), "a skipped item keeps its skip");
+        let expected = json!({"changed": false, "exception": "(traceback unavailable)", "failed": true, "msg": "Task failed: Action 'ns.coll.m' does not support raw params."});
+        assert_eq!(Value::Object(refused.0.clone()), expected);
+        let judged = finish(&t, &items[0], refused, &templar);
+        assert_eq!(Value::Object(judged.0), expected);
+
+        for (module, raw) in [
+            ("ansible.windows.win_shell", "Get-Service foo"),
+            ("ns.coll.m", "{{ d }}"),
+        ] {
+            let mut t = task(module);
+            t.args.insert("_raw_params".into(), json!(raw));
+            assert!(raw_params_refusal(&t).is_none(), "{module}: {raw}");
+        }
     }
 
     /// A `run_once` step's registered variable and facts are written for every live host of the

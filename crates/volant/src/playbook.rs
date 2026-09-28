@@ -460,12 +460,30 @@ pub fn is_meta(task: &PlayTask) -> bool {
 pub(crate) const FREE_FORM_COLLECTION_MODULES: &[&str] =
     &["ansible.windows.win_command", "ansible.windows.win_shell"];
 
-/// What the loader kept of a collection module's string argument that is not `key=value`, when
-/// the module does not read that string as a command line.
+/// The builtin actions ansible-core 2.19.12 lets keep a string argument that is not `key=value`
+/// (`_BUILTIN_RAW_PARAM_MODULES_SIMPLE` in `parsing/mod_args.py`); its free-form modules are
+/// [`is_free_form`]'s. `set_fact: foo` sets a fact named `_raw_params` there, and here.
+const BUILTIN_RAW_PARAM_MODULES: [&str; 9] = [
+    "include_vars",
+    "include_tasks",
+    "include_role",
+    "import_tasks",
+    "import_role",
+    "add_host",
+    "group_by",
+    "set_fact",
+    "meta",
+];
+
+/// What the loader kept of a module's string argument that is not `key=value`, when the module
+/// does not read that string as a command line or as its own raw parameters.
 pub(crate) fn stray_raw_params(task: &PlayTask) -> Option<&str> {
-    if !crate::python::is_collection_name(&task.module)
-        || FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
-    {
+    let takes_it = if crate::python::is_collection_name(&task.module) {
+        FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+    } else {
+        is_free_form(&task.module) || BUILTIN_RAW_PARAM_MODULES.contains(&short_name(&task.module))
+    };
+    if takes_it {
         return None;
     }
     task.args
@@ -1337,13 +1355,16 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
                 args.insert("_raw_params".into(), Value::String(raw));
             }
         }
+        // A builtin's: a word that is not `key=value` is kept the same way and fails the task
+        // when it runs, unless the action takes raw parameters. Only a string `parse_kv` cannot
+        // split stops the load, as it stops the reference's (`failed at splitting arguments`).
         Yaml::Value(Scalar::String(s)) => {
             let (options, raw) = crate::splitter::parse_kv(s)?;
-            if let Some(word) = raw {
-                bail!("expected key=value, found '{word}'");
-            }
             for (k, v) in options {
                 args.insert(k, Value::String(v));
+            }
+            if let Some(raw) = raw {
+                args.insert("_raw_params".into(), Value::String(raw));
             }
         }
         Yaml::Value(Scalar::Null) => {}
@@ -1703,6 +1724,37 @@ mod tests {
             got.sort();
             assert_eq!(got, want, "{module}: {text}");
         }
+    }
+
+    /// A builtin's word that is not `key=value` is kept for the task to fail on when it runs, as
+    /// the reference's `ping: foo` fails at run time; a string `parse_kv` cannot split still stops
+    /// the load, as the reference's `failed at splitting arguments` does at exit 4.
+    ///
+    /// What would make this red: the word refused at load again (`expected key=value`), or an
+    /// unbalanced quote accepted.
+    #[test]
+    fn a_builtin_module_keeps_a_word_that_is_not_key_value() {
+        let pb = parse(
+            "- hosts: all
+  tasks:
+    - ping: data=x foo
+",
+            "x.yml",
+        )
+        .unwrap();
+        let task = first(&pb);
+        assert_eq!(task.args["_raw_params"], "foo");
+        assert_eq!(task.args["data"], "x");
+        assert!(
+            parse(
+                "- hosts: all
+  tasks:
+    - ping: \"a='open\"
+",
+                "x.yml"
+            )
+            .is_err()
+        );
     }
 
     /// Measured on ansible-core 2.19.12: `set_fact: a={{ base ~ '/x' }}` sets `a` to `/tmp/x`,

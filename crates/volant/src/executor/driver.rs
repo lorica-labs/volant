@@ -31,9 +31,9 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Attempt, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter, fact_targets,
-    failed_task_value, finish, judge_attempt, notify, python_for, record_facts, record_local_facts,
-    record_registered, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch,
-    run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
+    failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal, record_facts,
+    record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
+    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
     unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
@@ -1061,6 +1061,8 @@ pub(super) async fn drive_host(
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
                             s.clone()
+                        } else if let Some(refused) = raw_params_refusal(task) {
+                            refused
                         } else if let Err(failed) = plan {
                             failed.clone()
                         } else {
@@ -1473,6 +1475,10 @@ pub(super) async fn drive_host(
                 }
                 for (ii, item) in items.iter().enumerate() {
                     if item.skipped.is_some() {
+                        continue;
+                    }
+                    if let Some(refused) = raw_params_refusal(&step.task) {
+                        received[0][ii] = Some(refused);
                         continue;
                     }
                     let retry = match plans.as_ref().map(|p| &p[ii]) {

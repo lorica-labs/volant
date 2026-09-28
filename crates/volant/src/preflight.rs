@@ -285,6 +285,18 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // and `attempts: 2`.
         return refuse_retries(task);
     }
+    // What the loader kept of a string argument that is not `key=value` fails the task when it
+    // runs, as the reference's does (`raw_params_refusal`). A string that is one template is the
+    // reference's argument splat, which renders to the module's arguments and which this release
+    // does not do: refused here, where a task is checked rather than at load, so a role file for
+    // another platform - parsed for the union and never checked - cannot refuse a Linux run.
+    if crate::playbook::stray_raw_params(task).is_some_and(crate::playbook::possibly_all_template) {
+        bail!(
+            "task '{}': module '{}' takes its arguments from one template, which this release does not render into arguments: write them as a mapping",
+            task.name,
+            task.module
+        );
+    }
     // Before the two sentences below, because a module the reference runs through an action
     // plugin is not a module waiting on this release to write it: the behaviour a playbook asks
     // for lives in the plugin, on the controller, and shipping the module alone would run
@@ -331,21 +343,6 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // ansible-core knows which collections are installed, and it is asked once, after both
         // passes, before the union is built ([`check_resolved`]).
         if crate::python::is_collection_name(&task.module) {
-            // What the loader kept of a string argument that is not `key=value` fails the task
-            // when it runs, as the reference's does (`raw_params_refusal`). A string that is
-            // one template is the reference's argument splat, which renders to the module's
-            // arguments and which this release does not do: refused here, where a task is
-            // checked rather than at load, so a role file for another platform - parsed for the
-            // union and never checked - cannot refuse a Linux run.
-            if crate::playbook::stray_raw_params(task)
-                .is_some_and(crate::playbook::possibly_all_template)
-            {
-                bail!(
-                    "task '{}': module '{}' takes its arguments from one template, which this release does not render into arguments: write them as a mapping",
-                    task.name,
-                    task.module
-                );
-            }
             return Ok(());
         }
         bail!(unresolved(&task.name, &task.module));
@@ -744,6 +741,27 @@ mod tests {
             ),
             "{text}"
         );
+        // A builtin's splat too, and a builtin's stray word is left to the run.
+        let text = refusal(
+            "- hosts: all
+  tasks:
+    - name: Splat
+      ping: \"{{ d }}\"
+",
+        );
+        assert!(
+            text.contains("task 'Splat': module 'ping' takes its arguments from one template"),
+            "{text}"
+        );
+        let pb = parse(
+            "- hosts: all
+  tasks:
+    - ping: foo
+",
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).expect("a builtin's stray word fails the task at run time");
         let pb = parse(
             "- hosts: all\n  tasks:\n    - ansible.windows.win_shell: Get-Service foo\n",
             "x.yml",

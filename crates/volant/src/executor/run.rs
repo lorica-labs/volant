@@ -1244,8 +1244,8 @@ pub(super) fn step_tasks(
     out
 }
 
-/// What each item of a collection module's task reports when the module's string argument left
-/// words that are not `key=value`, the module not reading it as a command line.
+/// What each item of a task reports when its module's string argument left words that are not
+/// `key=value`, the module not reading it as a command line or as raw parameters.
 ///
 /// Measured on ansible-core 2.19.12 with `ns.coll.m: v=1 stray`: the task fails when it runs,
 /// after its `when` and item by item in a loop, registering `{changed: false, exception:
@@ -1253,9 +1253,18 @@ pub(super) fn step_tasks(
 /// support raw params."}`; `ignore_errors` and `rescue` take it, and a play it fails exits 2.
 /// It is the task's `post_validate` raising, before any attempt, so neither `failed_when:
 /// false` nor `retries` changes it. A string that is one template is left to the pre-flight.
+///
+/// A builtin is named by its resolved FQCN, as the reference names it: `ping: foo` and
+/// `ansible.legacy.ping: foo` both fail with `Action 'ansible.builtin.ping' does not support raw
+/// params.` (measured, like `debug`, `file`, `copy`, `assert`, `fail`, `stat` and `lineinfile`).
 pub(super) fn raw_params_refusal(task: &PlayTask) -> Option<TaskResult> {
     crate::playbook::stray_raw_params(task)
         .filter(|raw| !crate::playbook::possibly_all_template(raw))?;
+    let action = if crate::python::is_collection_name(&task.module) {
+        task.module.clone()
+    } else {
+        format!("ansible.builtin.{}", short_name(&task.module))
+    };
     let mut r = Map::new();
     r.insert("changed".into(), json!(false));
     r.insert("exception".into(), json!("(traceback unavailable)"));
@@ -1263,8 +1272,7 @@ pub(super) fn raw_params_refusal(task: &PlayTask) -> Option<TaskResult> {
     r.insert(
         "msg".into(),
         json!(format!(
-            "Task failed: Action '{}' does not support raw params.",
-            task.module
+            "Task failed: Action '{action}' does not support raw params."
         )),
     );
     Some(TaskResult(r))
@@ -3789,9 +3797,29 @@ mod tests {
         let judged = finish(&t, &items[0], refused, &templar);
         assert_eq!(Value::Object(judged.0), expected);
 
+        for (module, action) in [
+            ("ping", "ansible.builtin.ping"),
+            ("ansible.legacy.ping", "ansible.builtin.ping"),
+            ("debug", "ansible.builtin.debug"),
+            ("copy", "ansible.builtin.copy"),
+        ] {
+            let mut t = task(module);
+            t.args.insert("_raw_params".into(), json!("foo"));
+            let refused = raw_params_refusal(&t).expect(module);
+            assert_eq!(
+                refused.0["msg"],
+                json!(format!(
+                    "Task failed: Action '{action}' does not support raw params."
+                ))
+            );
+        }
         for (module, raw) in [
             ("ansible.windows.win_shell", "Get-Service foo"),
             ("ns.coll.m", "{{ d }}"),
+            ("ping", "{{ d }}"),
+            ("command", "echo hi"),
+            ("set_fact", "foo"),
+            ("include_vars", "v.yml"),
         ] {
             let mut t = task(module);
             t.args.insert("_raw_params".into(), json!(raw));

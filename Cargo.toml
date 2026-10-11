@@ -48,7 +48,7 @@ minijinja = { version = "~2.24", features = [
   "preserve_order",
   "unstable_machinery",
 ] }
-minijinja-contrib = { version = "2.24", default-features = false, features = [
+minijinja-contrib = { version = "3.0", default-features = false, features = [
   "pycompat",
 ] }
 regex = "1"

@@ -26,6 +26,7 @@ mod tests;
 mod yaml_dump;
 
 pub use file::FileRender;
+pub use lookups::supported as lookup_supported;
 
 /// Prefix of every error raised because a variable had no value, the one template failure
 /// Ansible treats as recoverable in places such as `vars_files`.

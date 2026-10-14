@@ -496,6 +496,48 @@ pub fn is_known(module: &str) -> bool {
     native(module).is_some() || local(module).is_some()
 }
 
+/// Where a builtin module runs, as the documentation page and the parity matrix say it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// `command`, `shell`, `raw`: the agent runs it, without Python.
+    Agent,
+    /// `assert`, `debug`, ...: the controller runs it.
+    Controller,
+    /// `import_*`, `include_*`, `meta`: the compiler answers it.
+    Statement,
+    /// One of [`ACTION_PLUGINS`].
+    ActionPlugin,
+    /// Python module with a native fast path in the agent ([`NATIVE_ENABLED`]).
+    NativeOrPython,
+    /// Python module on the warm path.
+    Python,
+    /// One of [`BUILTIN_ACTION_PLUGINS`]: refused until its plugin exists.
+    NeedsActionPlugin,
+}
+
+/// Where a builtin module runs, or `None` when `module` is not a builtin.
+pub fn builtin_route(module: &str) -> Option<Route> {
+    if !is_builtin(module) {
+        return None;
+    }
+    let m = short_name(module);
+    Some(if native(m).is_some() {
+        Route::Agent
+    } else if local(m).is_some() {
+        Route::Controller
+    } else if import_module(m).is_some() || include_module(m).is_some() || m == "meta" {
+        Route::Statement
+    } else if ACTION_PLUGINS.iter().any(|(p, _)| *p == m) {
+        Route::ActionPlugin
+    } else if BUILTIN_ACTION_PLUGINS.contains(&m) {
+        Route::NeedsActionPlugin
+    } else if NATIVE_ENABLED.contains(&m) {
+        Route::NativeOrPython
+    } else {
+        Route::Python
+    })
+}
+
 /// The builtin modules the reference runs through an action plugin this release does not have.
 ///
 /// Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
@@ -634,19 +676,17 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 |---|---|
 ",
     );
-    let statement =
-        |m: &str| import_module(m).is_some() || include_module(m).is_some() || m == "meta";
     for m in BUILTIN_MODULES {
-        if is_known(m) || statement(m) || ACTION_PLUGINS.iter().any(|(p, _)| p == m) {
-            continue;
-        }
-        let how = if BUILTIN_ACTION_PLUGINS.contains(m) {
-            format!("not supported yet: needs the `{m}` action plugin")
-        } else if NATIVE_ENABLED.contains(m) {
-            "natively in the agent when its arguments allow it, as a Python module otherwise"
-                .to_string()
-        } else {
-            "Python module".to_string()
+        let how = match builtin_route(m) {
+            Some(Route::NeedsActionPlugin) => {
+                format!("not supported yet: needs the `{m}` action plugin")
+            }
+            Some(Route::NativeOrPython) => {
+                "natively in the agent when its arguments allow it, as a Python module otherwise"
+                    .to_string()
+            }
+            Some(Route::Python) => "Python module".to_string(),
+            _ => continue,
         };
         let _ = writeln!(out, "| `{m}` | {how} |");
     }
@@ -995,6 +1035,34 @@ mod tests {
         for m in &implemented {
             assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");
         }
+    }
+
+    /// The page and the parity matrix read one function, so they cannot disagree about a module.
+    ///
+    /// What would make this red: a module routed one way here and printed another way on the page.
+    #[test]
+    fn every_builtin_module_has_one_route_and_the_page_prints_it() {
+        let page = documentation_table();
+        for m in BUILTIN_MODULES {
+            let route = builtin_route(m).unwrap_or_else(|| panic!("{m} has no route"));
+            let row = page.lines().find(|l| l.starts_with(&format!("| `{m}` |")));
+            match route {
+                Route::Statement => assert!(row.is_none(), "{m}"),
+                Route::NeedsActionPlugin => {
+                    assert!(row.unwrap().contains("not supported yet"), "{m}");
+                }
+                Route::NativeOrPython => assert!(row.unwrap().contains("natively"), "{m}"),
+                Route::Python => assert!(row.unwrap().ends_with("| Python module |"), "{m}"),
+                Route::Agent | Route::Controller | Route::ActionPlugin => {
+                    assert!(row.is_some(), "{m}");
+                }
+            }
+        }
+        assert_eq!(builtin_route("community.general.ufw"), None);
+        assert_eq!(
+            builtin_route("ansible.builtin.uri"),
+            Some(Route::NeedsActionPlugin)
+        );
     }
 
     /// Every builtin module is on the page exactly once, except the statements the compiler

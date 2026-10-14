@@ -37,6 +37,22 @@ fn invalid(msg: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidOperation, msg.into())
 }
 
+/// The lookups this release runs, short names; each is also accepted as `ansible.builtin.<name>`.
+const SUPPORTED: &[&str] = &[
+    "env",
+    "file",
+    "fileglob",
+    "first_found",
+    "pipe",
+    "template",
+    "vars",
+];
+
+/// Whether `lookup(name)` runs in this release. A pure name check: it never runs the lookup.
+pub fn supported(name: &str) -> bool {
+    SUPPORTED.contains(&name.strip_prefix("ansible.builtin.").unwrap_or(name))
+}
+
 /// `lookup('env'|'file'|'vars'|'pipe'|'template', term...)`: the plugin's own list, one result
 /// per term. `first_found` reads all its terms as one search.
 fn lookup(
@@ -46,6 +62,11 @@ fn lookup(
     kwargs: Kwargs,
     base_dir: &Path,
 ) -> Result<Vec<Value>, Error> {
+    if !supported(name) {
+        return Err(invalid(format!(
+            "lookup plugin ({name}) is not available yet"
+        )));
+    }
     if matches!(name, "first_found" | "ansible.builtin.first_found") {
         return first_found(state, terms, kwargs, base_dir);
     }
@@ -133,11 +154,7 @@ fn lookup(
                 taint();
                 render_template(state, &term_text, &path, &text, base_dir)?
             }
-            other => {
-                return Err(invalid(format!(
-                    "lookup plugin ({other}) is not available yet"
-                )));
-            }
+            _ => unreachable!("supported() admitted {name}"),
         };
         results.push(found);
     }
@@ -628,6 +645,40 @@ mod tests {
     /// order.
     struct Role {
         dir: PathBuf,
+    }
+
+    /// The dispatch and the parity matrix read one list. A name the list does not hold is
+    /// refused before any term is read.
+    ///
+    /// What would make this red: a lookup added to the dispatch and not to `SUPPORTED`, or the
+    /// refusal moved back inside the per-term loop (then `lookup('nosuch')` with no term passes).
+    #[test]
+    fn the_supported_list_is_the_dispatch() {
+        for name in [
+            "env",
+            "file",
+            "vars",
+            "pipe",
+            "template",
+            "first_found",
+            "fileglob",
+        ] {
+            assert!(super::supported(name), "{name}");
+            assert!(
+                super::supported(&format!("ansible.builtin.{name}")),
+                "{name}"
+            );
+        }
+        assert!(!super::supported("items"));
+        assert!(!super::supported("community.general.env"));
+        let t = Templar::new(std::env::temp_dir());
+        let err = t.render("{{ lookup('nosuch') }}", &Map::new()).unwrap_err();
+        assert!(
+            err.0
+                .contains("lookup plugin (nosuch) is not available yet"),
+            "{}",
+            err.0
+        );
     }
 
     impl Role {

@@ -8,8 +8,9 @@ extend-exclude = [
   "docs/package-lock.json",
   "crates/volant/tests/golden/python-modules/",
   "crates/volant/tests/golden/native/",
-  # The reference's plugin names, written by `just parity-reference`.
+  # The reference's plugin names: `just parity-reference` and `just docs-parity` write them.
   "crates/volant/tests/parity/reference.json",
+  "docs/src/content/docs/reference/parity.md",
 ]
 
 [default.extend-words]

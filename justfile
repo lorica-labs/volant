@@ -112,6 +112,10 @@ docs-modules:
 docs-keywords:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant the_keyword_page_matches_the_tables
 
+# Regenerate the parity page from the engine and tests/parity/reference.json
+docs-parity:
+    VOLANT_UPDATE_DOCS=1 cargo test -p volant --test parity the_parity_page_matches_the_engine
+
 # Serve the documentation site with live reload (needs Node.js)
 docs-dev:
     cd docs && npm ci && npx astro dev

@@ -28,6 +28,7 @@ minijinja.workspace = true
 minijinja-contrib.workspace = true
 regex.workspace = true
 saphyr.workspace = true
+saphyr-parser.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
 tokio.workspace = true

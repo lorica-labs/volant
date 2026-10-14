@@ -4,13 +4,21 @@
 //! integers) and the tags Ansible adds (`!vault`, `!unsafe`).
 
 use anyhow::{Context, anyhow, bail};
-use saphyr::{LoadableYamlNode, Mapping, MarkedYaml, Scalar, Yaml, YamlData};
+use saphyr::{Mapping, MarkedYaml, Scalar, Yaml, YamlData, YamlLoader};
 use serde_json::{Map, Value};
 
 /// Loads every document of `text`. Errors name `source`.
+///
+/// A key written twice in one mapping keeps its last value, as PyYAML does for ansible-core
+/// (which only warns). saphyr refuses it unless told otherwise.
 pub fn load<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
-    let docs =
-        MarkedYaml::load_from_str(text).with_context(|| format!("{source}: invalid YAML"))?;
+    let mut loader = YamlLoader::<MarkedYaml>::default();
+    loader.allow_duplicate_keys(true);
+    saphyr_parser::Parser::new_from_str(text)
+        .load(&mut loader, true)
+        .and_then(|()| loader.error().cloned().map_or(Ok(()), Err))
+        .with_context(|| format!("{source}: invalid YAML"))?;
+    let docs = loader.into_documents();
     if holds_nothing(text) {
         return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
     }
@@ -266,6 +274,20 @@ pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// What would make this red: the loader left at saphyr's default, which refuses the key.
+    #[test]
+    fn a_key_written_twice_keeps_its_last_value() {
+        let docs = load(
+            "a: 1
+b: 2
+a: 3
+",
+            "t.yml",
+        )
+        .unwrap();
+        assert_eq!(to_json(&docs[0]).unwrap(), json!({"a": 3, "b": 2}));
+    }
 
     #[test]
     fn scalars_sequences_and_mappings_convert_to_json() {

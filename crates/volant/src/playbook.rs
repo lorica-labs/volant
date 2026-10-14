@@ -1333,7 +1333,9 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
             for (key, value) in entries {
                 let key = match key {
                     Yaml::Value(Scalar::Integer(i)) => format!("{{{{ {i} }}}}"),
-                    Yaml::Value(Scalar::FloatingPoint(f)) => format!("{{{{ {f} }}}}"),
+                    Yaml::Value(Scalar::FloatingPoint(f)) => {
+                        format!("{{{{ {:?} }}}}", f.into_inner())
+                    }
                     Yaml::Value(Scalar::Boolean(true)) => "{{ True }}".to_string(),
                     Yaml::Value(Scalar::Boolean(false)) => "{{ False }}".to_string(),
                     Yaml::Value(Scalar::Null) => "{{ None }}".to_string(),
@@ -1760,14 +1762,21 @@ mod tests {
     #[test]
     fn a_set_fact_key_keeps_the_type_yaml_gave_it() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, true: c, ~: d, k: e}\n",
+            "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, 2.0: f, true: c, ~: d, k: e}\n",
             "x.yml",
         )
         .unwrap();
         let keys: Vec<&str> = first(&pb).args.keys().map(String::as_str).collect();
         assert_eq!(
             keys,
-            ["{{ 1 }}", "{{ 1.5 }}", "{{ True }}", "{{ None }}", "k"]
+            [
+                "{{ 1 }}",
+                "{{ 1.5 }}",
+                "{{ 2.0 }}",
+                "{{ True }}",
+                "{{ None }}",
+                "k"
+            ]
         );
     }
 

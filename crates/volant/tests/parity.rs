@@ -271,17 +271,28 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             .iter()
             .map(|f| f.as_str().unwrap())
             .collect();
-        let flag = *flags.last().unwrap();
-        let mut argv = vec!["volant", flag];
-        if opt["takes_value"].as_bool().unwrap() {
-            argv.push("x");
-        }
-        argv.push("site.yml");
-        let s = match volant::cli::PlaybookArgs::try_parse_from(&argv) {
-            Err(e) if e.kind() == clap::error::ErrorKind::UnknownArgument => Status::NotYet,
-            _ => Status::Runs,
+        // Each spelling on its own: Volant may know `-i` and `--inventory` but not the
+        // deprecated `--inventory-file`.
+        let parses = |flag: &str| {
+            let mut argv = vec!["volant", flag];
+            if opt["takes_value"].as_bool().unwrap() {
+                argv.push("x");
+            }
+            argv.push("site.yml");
+            !matches!(
+                volant::cli::PlaybookArgs::try_parse_from(&argv),
+                Err(e) if e.kind() == clap::error::ErrorKind::UnknownArgument
+            )
         };
-        rows.push(row("ansible-playbook option", &flags.join(", "), s, ""));
+        let known: Vec<&str> = flags.iter().copied().filter(|f| parses(f)).collect();
+        let (s, note) = if known.len() == flags.len() {
+            (Status::Runs, String::new())
+        } else if known.is_empty() {
+            (Status::NotYet, String::new())
+        } else {
+            (Status::Partial, format!("only {}", known.join(", ")))
+        };
+        rows.push(row("ansible-playbook option", &flags.join(", "), s, &note));
     }
     for tag in names(&r, &["yaml_tags"]) {
         let text = format!("a: {tag} x\n");
@@ -379,52 +390,42 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
     }
 
     for c in r["collections"].as_object().unwrap().values() {
-        let traits = names(c, &["traits"]);
-        let off = traits.first().map(|t| {
-            if t == "windows" {
-                "Windows"
-            } else {
-                "network connection"
-            }
-        });
+        // What a module or action plugin needs beyond ssh or local (Windows, a network
+        // device's persistent connection), as the generator read it from the collection.
+        let later = |name: &str| c["later"][name].as_str();
         let actions = names(c, &["action"]);
-        // Such a collection's modules and action plugins need its platform; its filters, tests
-        // and lookups run on the controller and stay in scope.
-        let mut push = |kind: &str, name: &str, s: Status| {
-            let (s, note) = match off {
-                Some(why) if matches!(kind, "module" | "action plugin") => (Status::Later, why),
-                _ => (s, ""),
-            };
+        let mut push = |kind: &str, name: &str, s: Status, note: &str| {
             rows.push(row(&format!("collection {kind}"), name, s, note));
         };
         for m in names(c, &["module"]) {
-            // A module whose collection ships an action plugin of the same name waits on it.
-            let s = if actions.contains(&m) {
-                Status::NotYet
-            } else {
-                Status::Runs
-            };
-            push("module", &m, s);
+            // A module that runs through an action plugin waits on it.
+            match (later(&m), c["module_action"][&m].as_str()) {
+                (Some(why), _) => push("module", &m, Status::Later, why),
+                (None, Some(action)) => {
+                    push("module", &m, Status::NotYet, &format!("needs `{action}`"));
+                }
+                (None, None) => push("module", &m, Status::Runs, ""),
+            }
         }
         for a in &actions {
-            push("action plugin", a, Status::NotYet);
+            match later(a) {
+                Some(why) => push("action plugin", a, Status::Later, why),
+                None => push("action plugin", a, Status::NotYet, ""),
+            }
         }
         for f in names(c, &["filter"]) {
-            push("filter", &f, filter_status(&t, &f, None));
+            push("filter", &f, filter_status(&t, &f, None), "");
         }
         for x in names(c, &["test"]) {
-            push("test", &x, test_status(&t, &x, None));
+            push("test", &x, test_status(&t, &x, None), "");
         }
         for l in names(c, &["lookup"]) {
-            push(
-                "lookup",
-                &l,
-                if volant::template::lookup_supported(&l) {
-                    Status::Runs
-                } else {
-                    Status::NotYet
-                },
-            );
+            let s = if volant::template::lookup_supported(&l) {
+                Status::Runs
+            } else {
+                Status::NotYet
+            };
+            push("lookup", &l, s, "");
         }
     }
     rows
@@ -596,4 +597,70 @@ fn a_windows_or_network_collection_waits_only_for_its_modules_and_actions() {
         network_filters.iter().all(|s| *s != Status::Later),
         "{network_filters:?}"
     );
+}
+
+/// An option runs when every spelling the reference accepts parses here, and is partial when
+/// only some do: `-i` and `--inventory` run even though `--inventory-file` does not.
+///
+/// What would make this red: one spelling probed for the whole option again.
+#[test]
+fn an_option_is_judged_on_every_spelling() {
+    let rows = matrix(&probe_dir("options"));
+    let status = |name: &str| {
+        rows.iter()
+            .find(|x| x.category == "ansible-playbook option" && x.name == name)
+            .map(|x| x.status)
+    };
+    assert_eq!(
+        status("-i, --inventory, --inventory-file"),
+        Some(Status::Partial)
+    );
+    assert_eq!(status("-C, --check"), Some(Status::NotYet));
+}
+
+/// A collection's module waits for a later release only when it needs another platform: a
+/// network device's persistent connection, or Windows. A collection that ships one network
+/// plugin among modules that run from the controller keeps those modules in scope.
+///
+/// What would make this red: the whole collection judged by one plugin again
+/// (`community.vmware` ships an `httpapi` plugin), or a network module counted as in scope.
+#[test]
+fn a_module_waits_only_when_it_needs_another_platform() {
+    let rows = matrix(&probe_dir("platform"));
+    let status = |name: &str| {
+        rows.iter()
+            .find(|x| x.category == "collection module" && x.name == name)
+            .map(|x| x.status)
+    };
+    assert_eq!(
+        status("community.vmware.vcenter_extension"),
+        Some(Status::Runs)
+    );
+    assert_eq!(status("cisco.ios.ios_acls"), Some(Status::Later));
+}
+
+/// Every builtin action plugin of the reference is implemented here or refused by name: a new
+/// one would otherwise run as its plain module and be counted as running.
+///
+/// What would make this red: an action plugin whose module is routed to the Python path, the
+/// way `uri` would be if it left `BUILTIN_ACTION_PLUGINS`.
+#[test]
+fn every_builtin_action_plugin_is_implemented_or_refused() {
+    for a in names(&reference(), &["builtin", "action"]) {
+        if a == "normal" {
+            continue; // the plain module run, which every module goes through
+        }
+        assert!(
+            matches!(
+                modules::builtin_route(&a),
+                Some(
+                    modules::Route::Agent
+                        | modules::Route::Controller
+                        | modules::Route::ActionPlugin
+                        | modules::Route::NeedsActionPlugin
+                )
+            ),
+            "action plugin '{a}' is neither implemented nor refused"
+        );
+    }
 }

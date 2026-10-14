@@ -7,6 +7,7 @@ Argument: the directory holding the `ansible` package's `ansible_collections`.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -25,6 +26,7 @@ if not os.path.isdir(os.path.join(CORPUS, f"ansible-{PACKAGE}.dist-info")):
     sys.exit(f"{CORPUS} does not hold the pinned ansible {PACKAGE}")
 
 import yaml  # noqa: E402
+from ansible import constants as C  # noqa: E402
 from ansible.cli.playbook import PlaybookCLI  # noqa: E402
 from ansible.playbook.block import Block  # noqa: E402
 from ansible.playbook.handler import Handler  # noqa: E402
@@ -78,17 +80,100 @@ def collections():
                 yield f"{ns}.{coll}", path
 
 
-def traits(path):
-    out = []
-    modules = os.path.join(path, "plugins", "modules")
-    if os.path.isdir(modules) and any(f.endswith(".ps1") for f in os.listdir(modules)):
-        out.append("windows")
-    if any(os.path.isdir(os.path.join(path, "plugins", d)) and
-           any(f.endswith(".py") and f != "__init__.py"
-               for f in os.listdir(os.path.join(path, "plugins", d)))
-           for d in ("cliconf", "terminal", "httpapi", "netconf")):
-        out.append("network")
+# A plugin that talks to a device over a persistent connection (network_cli, httpapi, netconf)
+# rather than running on the host it is sent to.
+PERSISTENT = re.compile(
+    r"\._socket_path|module_utils\.connection import|get_connection\((self\.)?_?module"
+    r"|ActionNetworkModule")
+
+
+def sources(directory):
+    """Plugin name -> source file, for every `.py` under `directory`, subdirectories included."""
+    out = {}
+    for root, _, files in os.walk(directory):
+        for f in files:
+            if f.endswith(".py") and f != "__init__.py":
+                out.setdefault(f[:-3], os.path.join(root, f))
     return out
+
+
+def persistent(path):
+    if path is None:
+        return False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return bool(PERSISTENT.search(f.read()))
+
+
+def routing(path, fqcn):
+    """meta/runtime.yml: module -> the action plugin it runs (`plugin_routing.action` redirects
+    and `plugin_routing.modules.<m>.action_plugin`), as the reference's task executor reads it."""
+    try:
+        with open(os.path.join(path, "meta", "runtime.yml"), encoding="utf-8") as f:
+            runtime = yaml.safe_load(f) or {}
+    except OSError:
+        return {}
+    routes = runtime.get("plugin_routing") or {}
+    out = {}
+    for kind, key in (("action", "redirect"), ("modules", "action_plugin")):
+        for name, entry in (routes.get(kind) or {}).items():
+            if isinstance(entry, dict) and entry.get(key):
+                out[f"{fqcn}.{name}"] = entry[key]
+    return out
+
+
+def imports_persistent(path, fqcn, module_utils, seen=None):
+    """Whether a module, or a module_utils file of its own collection it imports, directly or
+    through other module_utils files, opens a persistent connection."""
+    seen = set() if seen is None else seen
+    if path is None or path in seen:
+        return False
+    seen.add(path)
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    if PERSISTENT.search(text):
+        return True
+    prefix = f"ansible_collections.{fqcn}.plugins.module_utils."
+    names = set(re.findall(re.escape(prefix) + r"([\w.]+)", text))
+    names |= set(re.findall(r"from \.+([\w.]*) import", text))
+    return any(imports_persistent(module_utils.get(n.split(".")[-1]), fqcn, module_utils, seen)
+               for n in names if n)
+
+
+def platform(fqcn, path, modules, actions):
+    """What each module and action plugin of one collection needs, beyond ssh or local.
+
+    Returns (module -> action plugin it runs through, name -> reason it waits for later).
+    """
+    module_dir = os.path.join(path, "plugins", "modules")
+    windows = os.path.isdir(module_dir) and any(
+        f.endswith(".ps1") for _, _, fs in os.walk(module_dir) for f in fs)
+    module_src = sources(module_dir)
+    module_utils = sources(os.path.join(path, "plugins", "module_utils"))
+    action_src = {f"{fqcn}.{n}": p for n, p in
+                  sources(os.path.join(path, "plugins", "action")).items()}
+    routes = routing(path, fqcn)
+    module_action = {}
+    later = {}
+    for a in actions:
+        if windows:
+            later[a] = "Windows"
+        elif persistent(action_src.get(a)):
+            later[a] = "network connection"
+    for m in modules:
+        short_name = m.rsplit(".", 1)[1]
+        # The reference's order: the module's own routing, an action plugin of its name, then
+        # the network group action of its prefix (`ios_acls` -> `cisco.ios.ios`).
+        group = f"{fqcn}.{short_name.split('_')[0]}"
+        action = routes.get(m) or (m if m in actions else None) or (
+            group if short_name.split("_")[0] in C.NETWORK_GROUP_MODULES and group in actions
+            else None)
+        if action:
+            module_action[m] = action
+        if windows:
+            later[m] = "Windows"
+        elif persistent(action_src.get(action)) or                 imports_persistent(module_src.get(short_name), fqcn, module_utils):
+            later[m] = "network connection"
+    return module_action, later
 
 
 def short(names, prefix="ansible.builtin."):
@@ -123,11 +208,13 @@ def main():
     corpus = {}
     for fqcn, path in collections():
         manifest = json.load(open(os.path.join(path, "MANIFEST.json"), encoding="utf-8"))
-        entry = {"version": manifest["collection_info"]["version"], "traits": traits(path)}
+        entry = {"version": manifest["collection_info"]["version"]}
         for t in COLLECTION_TYPES:
             entry[t] = doc_list(t, fqcn)
         entry["action"] = sorted(f"{fqcn}.{n}" for n in
                                  action_files(os.path.join(path, "plugins", "action")))
+        entry["module_action"], entry["later"] = platform(
+            fqcn, path, entry["module"], entry["action"])
         corpus[fqcn] = entry
     if not corpus:
         sys.exit(f"no collection under {CORPUS}/ansible_collections")

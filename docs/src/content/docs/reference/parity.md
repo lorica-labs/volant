@@ -16,7 +16,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (task) | 27 | 1 | 38 | 0 |
 | keyword (loop_control) | 2 | 0 | 5 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
-| ansible-playbook option | 18 | 0 | 20 | 0 |
+| ansible-playbook option | 17 | 3 | 18 | 0 |
 | YAML tag | 0 | 0 | 2 | 0 |
 | module | 62 | 0 | 9 | 0 |
 | action plugin | 19 | 0 | 9 | 0 |
@@ -31,8 +31,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | cache | 1 | 0 | 1 | 0 |
 | callback | 1 | 0 | 0 | 4 |
 | connection | 2 | 0 | 0 | 4 |
-| collection module | 4058 | 0 | 1663 | 3722 |
-| collection action plugin | 0 | 0 | 1663 | 421 |
+| collection module | 4320 | 0 | 1666 | 3457 |
+| collection action plugin | 0 | 0 | 1665 | 419 |
 | collection lookup | 0 | 0 | 95 | 0 |
 | collection filter | 1 | 0 | 135 | 0 |
 | collection test | 0 | 0 | 29 | 0 |
@@ -237,13 +237,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--force-handlers` | <span class="kw kw-runs">runs</span> |  |
 | `-f, --forks` | <span class="kw kw-runs">runs</span> |  |
 | `-h, --help` | <span class="kw kw-runs">runs</span> |  |
-| `-i, --inventory, --inventory-file` | <span class="kw kw-notyet">not yet</span> |  |
+| `-i, --inventory, --inventory-file` | <span class="kw kw-partial">partial</span> | only -i, --inventory |
 | `-l, --limit` | <span class="kw kw-runs">runs</span> |  |
 | `--list-hosts` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tags` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tasks` | <span class="kw kw-runs">runs</span> |  |
 | `-M, --module-path` | <span class="kw kw-notyet">not yet</span> |  |
-| `--key-file, --private-key` | <span class="kw kw-runs">runs</span> |  |
+| `--key-file, --private-key` | <span class="kw kw-partial">partial</span> | only --private-key |
 | `--scp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
 | `--sftp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
 | `--skip-tags` | <span class="kw kw-runs">runs</span> |  |
@@ -257,7 +257,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `-u, --user` | <span class="kw kw-runs">runs</span> |  |
 | `--vault-id` | <span class="kw kw-notyet">not yet</span> |  |
 | `--vault-pass-file, --vault-password-file` | <span class="kw kw-notyet">not yet</span> |  |
-| `-v, --verbose` | <span class="kw kw-notyet">not yet</span> |  |
+| `-v, --verbose` | <span class="kw kw-partial">partial</span> | only -v |
 | `--version` | <span class="kw kw-notyet">not yet</span> |  |
 
 ## YAML tag
@@ -700,7 +700,7 @@ For each collection, how many of its rows run, out of the total.
 | Collection | Version | modules | filters | tests | lookups | action plugins |
 |---|---|---|---|---|---|---|
 | `amazon.aws` | 10.1.2 | 139/140 | 0/0 | 0/0 | 0/5 | 0/1 |
-| `ansible.netcommon` | 8.2.0 | later | 0/9 | 0/0 | 0/0 | later |
+| `ansible.netcommon` | 8.2.0 | 0/16 | 0/9 | 0/0 | 0/0 | 0/11 |
 | `ansible.posix` | 2.1.0 | 12/14 | 0/0 | 0/0 | 0/0 | 0/2 |
 | `ansible.utils` | 6.0.0 | 0/4 | 1/32 | 0/25 | 0/4 | 0/4 |
 | `ansible.windows` | 3.3.0 | later | 0/1 | 0/0 | 0/0 | later |
@@ -733,21 +733,21 @@ For each collection, how many of its rows run, out of the total.
 | `community.libvirt` | 2.0.0 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.mongodb` | 1.7.10 | 21/21 | 0/0 | 0/0 | 0/1 | 0/0 |
 | `community.mysql` | 3.16.1 | 7/7 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.okd` | 5.0.0 | 13/13 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `community.okd` | 5.0.0 | 11/13 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.postgresql` | 4.2.0 | 23/23 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.proxmox` | 1.4.0 | 37/37 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.proxysql` | 1.7.0 | 11/11 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.rabbitmq` | 1.6.0 | 14/14 | 0/0 | 0/0 | 0/1 | 0/0 |
-| `community.routeros` | 3.14.0 | later | 0/5 | 0/0 | 0/0 | 0/0 |
+| `community.routeros` | 3.14.0 | 5/7 | 0/5 | 0/0 | 0/0 | 0/0 |
 | `community.sap_libs` | 1.5.0 | 9/9 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.sops` | 2.2.7 | 1/2 | 0/2 | 0/0 | 0/1 | 0/1 |
-| `community.vmware` | 5.10.0 | later | 0/0 | 0/0 | 0/0 | 0/0 |
+| `community.vmware` | 5.10.0 | 176/176 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.windows` | 3.1.0 | later | 0/0 | 0/0 | 0/1 | later |
 | `community.zabbix` | 4.1.1 | later | 0/0 | 0/0 | 0/0 | 0/0 |
 | `containers.podman` | 1.18.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `cyberark.conjur` | 1.3.9 | 0/0 | 0/0 | 0/0 | 0/1 | 0/0 |
 | `cyberark.pas` | 1.0.36 | 4/4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `dellemc.enterprise_sonic` | 3.2.0 | later | 0/0 | 0/0 | 0/0 | later |
+| `dellemc.enterprise_sonic` | 3.2.0 | 83/87 | 0/0 | 0/0 | 0/0 | later |
 | `dellemc.openmanage` | 9.12.3 | 105/105 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.powerflex` | 2.6.1 | 16/16 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.unity` | 2.1.0 | 18/18 | 0/0 | 0/0 | 0/0 | 0/0 |

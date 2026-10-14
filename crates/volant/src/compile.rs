@@ -443,8 +443,10 @@ pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
 pub(crate) const META_ACTIONS: &[(&str, bool)] = &[
     ("clear_facts", false),
     ("clear_host_errors", false),
+    ("end_batch", false),
     ("end_host", false),
     ("end_play", false),
+    ("end_role", false),
     ("flush_handlers", true),
     ("noop", true),
     ("refresh_inventory", false),

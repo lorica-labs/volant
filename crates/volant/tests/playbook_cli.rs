@@ -4782,13 +4782,6 @@ fn an_import_statement_refuses_an_argument_it_does_not_take() {
 }
 
 /// A `rescue` around an `include_tasks` takes a failure raised by a task the include brought in.
-///
-/// Measured on ansible-core 2.19.12: a block whose body includes a file whose task fails runs the
-/// block's `rescue`, then its `always`, then the task behind the block, and the recap reads
-/// `ok=5 rescued=1` at exit 0. `ansible_failed_task.name` is the included task's own name.
-///
-/// What would make this red: the spliced steps landing outside the block, so the failure has no
-/// rescue to reach and the host leaves the play - `rescued=0 failed=1` and exit 2.
 #[test]
 fn a_rescue_takes_a_failure_raised_inside_an_include() {
     let out = volant_within(

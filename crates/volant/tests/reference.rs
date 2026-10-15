@@ -423,9 +423,13 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
         // macOS resolves its temporary directory under `/private`: mask both spellings.
         let canonical = copy.canonicalize().unwrap_or_else(|_| copy.clone());
         let _ = std::fs::remove_dir_all(&copy);
+        // The generator reads the reference's stdout in Python's text mode, where `\r\n` and a
+        // lone `\r` both read as `\n` (a `pause` prompt ends in `\r`): read this one the same way.
         let got = String::from_utf8_lossy(&out.stdout)
             .replace(&canonical.display().to_string(), "<golden-tmp>")
-            .replace(&copy.display().to_string(), "<golden-tmp>");
+            .replace(&copy.display().to_string(), "<golden-tmp>")
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
         let shown = format!(
             "{name}: {}\n--- stderr\n{}",
             args.join(" "),

@@ -1,0 +1,2 @@
+# A role whose argument check fails prints `Origin: <unknown>` and the check's task, shortened.
+args: [spec.yml]

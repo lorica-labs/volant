@@ -1,0 +1,2 @@
+# A pause with a duration says so on stdout before it waits.
+args: [-i, inv.ini, pause.yml]

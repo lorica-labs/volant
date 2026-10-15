@@ -83,9 +83,13 @@ pub(super) async fn report_task(
         }
         any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
-        let error = r
-            .failed()
-            .then(|| ErrorBlock::of(r, task.origin.as_ref(), censored));
+        let error = r.failed().then(|| {
+            let mut block = ErrorBlock::of(r, task.origin.as_ref(), censored);
+            if task.origin.is_none() && !censored {
+                block.unknown = generated_source(task);
+            }
+            block
+        });
         // A loop item's line shows the loop's own keys, as its registered result holds them:
         // measured on ansible-core 2.19.12 for a failed item and an `assert`'s, on the agent path
         // and the controller side alike. The `_ansible_` keys stay for the renderer to read.
@@ -181,8 +185,37 @@ pub(super) async fn report_task(
 pub(super) fn without_error(r: &TaskResult) -> TaskResult {
     let mut r = r.clone();
     r.0.remove(ERROR_KEY);
-    r.0.retain(|k, _| !k.starts_with("_ansible_"));
+    r.0.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
     r
+}
+
+/// What the reference quotes under `Origin: <unknown>` for the argument check it puts in front of
+/// a role: the task it built (`Role._create_validation_task`), as Python prints a dict, shortened
+/// to 120 characters. Measured on ansible-core 2.19.12. `None` for any other task.
+fn generated_source(task: &PlayTask) -> Option<String> {
+    if volant_protocol::modules::short_name(&task.module) != "validate_argument_spec" {
+        return None;
+    }
+    let context = task.args.get("validate_args_context")?;
+    let ds = serde_json::json!({
+        "action": "ansible.builtin.validate_argument_spec",
+        "args": {
+            "argument_spec": task.args.get("argument_spec")?,
+            "provided_arguments": task.args.get("provided_arguments")?,
+            "validate_args_context": {
+                "type": context.get("type")?,
+                "name": context.get("name")?,
+                "argument_spec_name": context.get("argument_spec_name")?,
+                "path": context.get("path")?,
+            },
+        },
+        "name": task.name,
+        "tags": ["always"],
+    });
+    Some(crate::render::shorten(
+        &crate::playbook::python_repr(&ds),
+        120,
+    ))
 }
 
 /// The keys the reference adds to a loop item's result: the item under the loop's variable name,

@@ -146,6 +146,19 @@ impl Drop for OriginScope {
     }
 }
 
+/// Where `value` was written, when it is a mapping entry's value in the file being parsed.
+fn value_origin(value: &Yaml<'_>) -> Option<Origin> {
+    ORIGINS.with(|o| {
+        o.borrow().as_ref().and_then(|(path, origins)| {
+            origins.of_value(value).map(|(line, col)| Origin {
+                path: path.clone(),
+                line,
+                col,
+            })
+        })
+    })
+}
+
 /// Where `map` was written, when it comes from the file being parsed.
 fn task_origin(map: &saphyr::Mapping<'_>) -> Option<Origin> {
     ORIGINS.with(|o| {
@@ -244,6 +257,9 @@ pub struct PlayTask {
     pub unsupported: Vec<&'static str>,
     /// Where the task was written, for the `Origin:` of a failure's error block.
     pub origin: Option<Origin>,
+    /// Where some of its values were written - `until`, `retries`, `delay` and a `debug`'s `var` -
+    /// for the cause the reference points at when one of them fails.
+    pub value_origins: std::collections::BTreeMap<&'static str, Origin>,
 }
 
 impl PlayTask {
@@ -294,6 +310,7 @@ impl PlayTask {
             delegate_to: None,
             unsupported: Vec::new(),
             origin: None,
+            value_origins: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1233,6 +1250,18 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
     let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
+    let mut value_origins = std::collections::BTreeMap::new();
+    let var = field(value, "var").or_else(|| field(yaml, "args").and_then(|a| field(a, "var")));
+    for (key, node) in [
+        ("until", field(yaml, "until")),
+        ("retries", field(yaml, "retries")),
+        ("delay", field(yaml, "delay")),
+        ("var", var),
+    ] {
+        if let Some(origin) = node.and_then(value_origin) {
+            value_origins.insert(key, origin);
+        }
+    }
     Ok(PlayTask {
         named: name.is_some(),
         name: name.unwrap_or_else(|| module.clone()),
@@ -1265,6 +1294,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         delegate_to,
         unsupported,
         origin: task_origin(map),
+        value_origins,
     })
 }
 

@@ -308,7 +308,15 @@ impl TaskResult {
             "msg".into(),
             Value::String(format!("Task failed: Timed out after {seconds} second(s).")),
         );
+        // `frame` is the reference's own, measured on a module and a controller-side action
+        // alike: there is no Python frame to point at here either.
         let mut timedout = Map::new();
+        timedout.insert(
+            "frame".into(),
+            Value::String(
+                "Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.".into(),
+            ),
+        );
         timedout.insert("period".into(), Value::from(seconds));
         map.insert("timedout".into(), Value::Object(timedout));
         Self(map)

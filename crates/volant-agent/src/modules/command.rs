@@ -753,7 +753,7 @@ mod tests {
         assert!(r.failed());
         assert!(!r.changed());
         assert_eq!(r.0["msg"], "Task failed: Timed out after 1 second(s).");
-        assert_eq!(r.0["timedout"], json!({"period": 1}));
+        assert_eq!(r.0["timedout"]["period"], json!(1));
         assert!(r.0.get("rc").is_none());
         assert!(r.0.get("stdout").is_none());
         assert!(r.0.get("cmd").is_none());

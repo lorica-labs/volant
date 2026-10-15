@@ -1,0 +1,3 @@
+# A debug var naming a value from a managed host is refused with the chained block, and the
+# expression never runs: the last play shows the marker is absent.
+args: [-i, inv.ini, -e, payload=bare.txt, debug-var.yml]

@@ -1,0 +1,19 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: literal delay
+      command: "false"
+      retries: 1
+      delay: x
+      ignore_errors: true
+
+    - name: literal retries
+      command: "false"
+      retries: "2.5"
+      delay: 0
+      ignore_errors: true
+
+    - name: module timeout
+      command: sleep 5
+      timeout: 1
+      ignore_errors: true

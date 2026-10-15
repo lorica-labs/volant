@@ -361,25 +361,6 @@ fn a_result_s_warnings_are_shown_and_not_registered() {
     );
 }
 
-/// `timeout` applies to a controller-side action as to a module: a `pause: {seconds: 5}` under
-/// `timeout: 1` fails after one second.
-#[test]
-fn a_task_timeout_ends_a_controller_side_action() {
-    let out = volant_within(
-        &["playbook", &fixture("controller/pause-timeout.yml")],
-        std::time::Duration::from_secs(30),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains("fatal: [localhost]: FAILED! => ")
-            && text.contains(
-                r#""msg": "Task failed: Timed out after 1 second(s).", "timedout": {"period": 1}}"#
-            ),
-        "{text}"
-    );
-}
-
 #[test]
 fn an_agent_that_dies_mid_batch_makes_its_host_unreachable() {
     let out = volant(&["playbook", &fixture("dying-agent.yml")]);
@@ -4257,40 +4238,6 @@ fn trust_dir(name: &str, hosts: &str) -> (std::path::PathBuf, std::path::PathBuf
     .expect("the bare payload");
     std::fs::write(dir.join("inv.ini"), hosts).expect("an inventory");
     (dir, marker)
-}
-
-/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so a
-/// value that arrived from a managed host must never reach it.
-#[test]
-fn a_variable_named_by_a_result_is_never_evaluated() {
-    let (dir, marker) = trust_dir("debug-var", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("bare.txt").display()),
-            &fixture("trust/debug-var.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the expression a result named ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        stdout
-            .matches("Encountered untrusted template or expression")
-            .count(),
-        4,
-        "both the plain form and the loop form should be refused, each in its error block and its line:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A fact whose value came from a managed host still cannot name the variable a `debug: var:`

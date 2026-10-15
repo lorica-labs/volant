@@ -31,10 +31,11 @@ use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Attempt, ItemRetry, PluginStart, Relinker, RetryLine, any_retried, chosen_interpreter,
-    fact_targets, failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal,
-    record_facts, record_local_facts, record_registered, requested_interpreter, retry_plans,
-    reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts, running_host_vars,
-    step_tasks, take_warnings, unresolved_notify, wait_or_stop,
+    fact_targets, failed_task_value, finish, judge_attempt, local_timed_out, notify, pause_lines,
+    python_for, raw_params_refusal, record_facts, record_local_facts, record_registered,
+    requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
+    run_plugin_attempts, running_host_vars, step_tasks, take_warnings, unresolved_notify,
+    wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1076,6 +1077,17 @@ pub(super) async fn drive_host(
                                 // on the agent, per attempt, and zero is no timeout: measured
                                 // on ansible-core 2.19.12. A `pause` is the one local module
                                 // that can run into it.
+                                if short_name(&task.module) == "pause" {
+                                    for line in pause_lines(&task.module, item) {
+                                        let _ = tx
+                                            .send(Event::Display {
+                                                host: name.clone(),
+                                                index: pos,
+                                                line,
+                                            })
+                                            .await;
+                                    }
+                                }
                                 let ran = run_local(
                                     task,
                                     item,
@@ -1088,7 +1100,7 @@ pub(super) async fn drive_host(
                                 let ran = match task.timeout.filter(|t| *t > 0) {
                                     Some(t) => tokio::time::timeout(Duration::from_secs(t), ran)
                                         .await
-                                        .unwrap_or_else(|_| Some(TaskResult::timed_out(t))),
+                                        .unwrap_or_else(|_| Some(local_timed_out(t))),
                                     None => ran.await,
                                 };
                                 // A pause the run's stop ended: no line and no count, like

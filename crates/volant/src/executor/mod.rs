@@ -238,14 +238,14 @@ pub async fn run_play(
         if *options.stop.borrow() {
             break;
         }
-        // One banner per batch, measured - and it prints even when the batch has nothing left to
-        // run, which is the shape a play gets when every host it resolved has already failed.
-        out.play(&play.name);
         let live: Vec<Host> = batch
             .into_iter()
             .filter(|h| !state.failed_hosts.contains(&h.name))
             .collect();
+        // One banner per batch, measured - and it prints even when the batch has nothing left to
+        // run, which is the shape a play gets when every host it resolved has already failed.
         if live.is_empty() {
+            out.play(&play.name);
             continue;
         }
         // Read here, once per batch about to run and not once for the whole play: see
@@ -269,6 +269,10 @@ pub async fn run_play(
             state,
             out,
         )?;
+        // After the `vars_files`: measured on ansible-core 2.19.12, an entry that renders to a
+        // number or does not render at all stops the run before the banner, with nothing on
+        // stdout.
+        out.play(&play.name);
         run_batch(
             play,
             compiled,

@@ -170,13 +170,7 @@ mod tests {
         fqdn(&fake.host(&root, &probe), node)
     }
 
-    /// Debian's layout (`127.0.1.1 <fqdn> <short>`), Ubuntu's (`127.0.1.1 <short>`), and the
-    /// cases the C library would decide: resolution not reading the file first, the name absent
-    /// from it, or given two addresses.
-    ///
-    /// What would make this red: the node name returned as is (Debian's layout gives the long
-    /// name), the canonical name kept when an alias has a dot, or an answer where the name
-    /// service would ask DNS.
+    /// The fqdn comes from `/etc/hosts` in Debian's and Ubuntu's layouts, or the task is handed back.
     #[test]
     fn the_fqdn_comes_from_etc_hosts_or_hands_back() {
         let fake = FakeRoot::new("fqdn");

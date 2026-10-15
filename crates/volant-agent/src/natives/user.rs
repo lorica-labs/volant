@@ -675,346 +675,295 @@ mod linux {
             answer(args, context, unbounded(), NSSWITCH)
         }
 
-        /// An account the host does not have is created with the module's `useradd` arguments
-        /// in the module's order, and answered with the module's keys.
-        ///
-        /// What would make this red: any two options swapped, or the name anywhere but last;
-        /// `-N` missing where a group of the account's name exists; `stdout`/`stderr` left out;
-        /// account keys answered for an account the host still does not hold.
+        /// `useradd`, `usermod` and `userdel` take the module's arguments in its order, only where needed.
         #[test]
-        fn useradd_takes_the_module_s_arguments_in_its_order() {
-            let fakes = Fakes::new("useradd", &["useradd"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let name = scratch_name("volantu");
-            let mut created = ask(
-                &args(json!({
-                    "name": name, "uid": 64998, "group": "root", "groups": "root",
-                    "comment": "c", "home": "/nonexistent-volant", "shell": "/bin/sh",
-                    "create_home": false, "system": true,
-                })),
-                &fakes.context,
-            )
-            .unwrap();
-            assert_eq!(
-                fakes.argv("useradd").unwrap(),
-                [
-                    "-u",
-                    "64998",
-                    "-g",
-                    "root",
-                    "-G",
-                    "root",
-                    "-c",
-                    "c",
-                    "-d",
-                    "/nonexistent-volant",
-                    "-s",
-                    "/bin/sh",
-                    "-M",
-                    "-r",
-                    name.as_str(),
-                ]
-            );
-            // A string `groups` is split, and shown as the list.
-            assert_eq!(
-                created["invocation"]["module_args"]["groups"],
-                json!(["root"])
-            );
-            created.remove("invocation");
-            assert_eq!(
-                Value::Object(created),
-                json!({"name": name, "state": "present", "changed": true, "system": true,
+        fn useradd_usermod_and_userdel_follow_the_module() {
+            {
+                let fakes = Fakes::new("useradd", &["useradd"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantu");
+                let mut created = ask(
+                    &args(json!({
+                        "name": name, "uid": 64998, "group": "root", "groups": "root",
+                        "comment": "c", "home": "/nonexistent-volant", "shell": "/bin/sh",
+                        "create_home": false, "system": true,
+                    })),
+                    &fakes.context,
+                )
+                .unwrap();
+                assert_eq!(
+                    fakes.argv("useradd").unwrap(),
+                    [
+                        "-u",
+                        "64998",
+                        "-g",
+                        "root",
+                        "-G",
+                        "root",
+                        "-c",
+                        "c",
+                        "-d",
+                        "/nonexistent-volant",
+                        "-s",
+                        "/bin/sh",
+                        "-M",
+                        "-r",
+                        name.as_str(),
+                    ]
+                );
+                // A string `groups` is split, and shown as the list.
+                assert_eq!(
+                    created["invocation"]["module_args"]["groups"],
+                    json!(["root"])
+                );
+                created.remove("invocation");
+                assert_eq!(
+                    Value::Object(created),
+                    json!({"name": name, "state": "present", "changed": true, "system": true,
                        "create_home": false, "stdout": "out\n", "stderr": "err\n"})
-            );
+                );
 
-            // `users` is a group on Debian and Ubuntu, and no account.
-            ask(&args(json!({"name": "users"})), &fakes.context).unwrap();
-            assert_eq!(fakes.argv("useradd").unwrap(), ["-N", "-m", "users"]);
-        }
-
-        /// An existing account gets `usermod` with only what differs, in the module's order:
-        /// the uid, the primary group by gid, the groups, the comment, the home, the shell.
-        ///
-        /// What would make this red: an option passed for a value already right, two options
-        /// swapped, the group passed by name, or `-a` missing under `append`.
-        #[test]
-        fn usermod_takes_only_what_differs_in_the_module_s_order() {
-            let fakes = Fakes::new("usermod", &["usermod"], 0);
-            if fakes.outside(ask) {
-                return;
+                // `users` is a group on Debian and Ubuntu, and no account.
+                ask(&args(json!({"name": "users"})), &fakes.context).unwrap();
+                assert_eq!(fakes.argv("useradd").unwrap(), ["-N", "-m", "users"]);
             }
-            // The account is in no group's member list.
-            fakes.script("getent", "[ \"$1\" = group ] && echo 'root:x:0:'");
-            let mut same = ask(
+            {
+                let fakes = Fakes::new("usermod", &["usermod"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                // The account is in no group's member list.
+                fakes.script("getent", "[ \"$1\" = group ] && echo 'root:x:0:'");
+                let mut same = ask(
                 &args(json!({"name": "root", "uid": 0, "group": "root", "home": "/root", "create_home": false})),
                 &fakes.context,
             )
             .unwrap();
-            assert_eq!(fakes.argv("usermod"), None);
-            same.remove("invocation");
-            let shell = same["shell"].clone();
-            assert_eq!(
-                Value::Object(same),
-                json!({"name": "root", "state": "present", "changed": false, "append": false,
+                assert_eq!(fakes.argv("usermod"), None);
+                same.remove("invocation");
+                let shell = same["shell"].clone();
+                assert_eq!(
+                    Value::Object(same),
+                    json!({"name": "root", "state": "present", "changed": false, "append": false,
                        "move_home": false, "uid": 0, "group": 0, "comment": "root",
                        "home": "/root", "shell": shell})
-            );
+                );
 
-            let changed = ask(
-                &args(json!({
-                    "name": "root", "uid": 1, "group": "daemon", "groups": ["root"],
-                    "comment": "c", "home": "/root", "shell": "/bin/volant-none",
-                    "create_home": false,
-                })),
-                &fakes.context,
-            )
-            .unwrap();
-            assert_eq!(
-                fakes.argv("usermod").unwrap(),
-                [
-                    "-u",
-                    "1",
-                    "-g",
-                    "1",
-                    "-G",
-                    "root",
-                    "-c",
-                    "c",
-                    "-s",
-                    "/bin/volant-none",
-                    "root"
-                ]
-            );
-            assert_eq!(changed["changed"], true);
-            assert_eq!(changed["groups"], "root");
+                let changed = ask(
+                    &args(json!({
+                        "name": "root", "uid": 1, "group": "daemon", "groups": ["root"],
+                        "comment": "c", "home": "/root", "shell": "/bin/volant-none",
+                        "create_home": false,
+                    })),
+                    &fakes.context,
+                )
+                .unwrap();
+                assert_eq!(
+                    fakes.argv("usermod").unwrap(),
+                    [
+                        "-u",
+                        "1",
+                        "-g",
+                        "1",
+                        "-G",
+                        "root",
+                        "-c",
+                        "c",
+                        "-s",
+                        "/bin/volant-none",
+                        "root"
+                    ]
+                );
+                assert_eq!(changed["changed"], true);
+                assert_eq!(changed["groups"], "root");
 
-            ask(
+                ask(
                 &args(json!({"name": "root", "groups": ["root"], "append": true, "create_home": false})),
                 &fakes.context,
             )
             .unwrap();
-            assert_eq!(fakes.argv("usermod").unwrap(), ["-a", "-G", "root", "root"]);
-        }
-
-        /// The membership cases where the account already belongs to groups: without `append`,
-        /// a group given fewer is `-G` with those left, and `[]` is `-G ""`; with `append`, a
-        /// difference that is only a removal runs nothing, nor does `[]`.
-        ///
-        /// What would make this red: a removal ignored without `append`, or acted on with it;
-        /// `[]` read as "no change" without `append`, or as a clearing with it.
-        #[test]
-        fn a_membership_only_removed_follows_append() {
-            let fakes = Fakes::new("usermod-members", &["usermod"], 0);
-            if fakes.outside(ask) {
-                return;
+                assert_eq!(fakes.argv("usermod").unwrap(), ["-a", "-G", "root", "root"]);
             }
-            fakes.script(
-                "getent",
-                "[ \"$1\" = group ] && printf 'root:x:0:root\\ndaemon:x:1:bin,root\\n'",
-            );
-            for (groups, append, argv) in [
-                (json!(["root"]), false, Some(vec!["-G", "root", "root"])),
-                (json!([]), false, Some(vec!["-G", "", "root"])),
-                (json!(["root"]), true, None),
-                (json!([]), true, None),
-            ] {
-                fakes.clear("usermod");
-                let given = json!({"name": "root", "groups": groups, "append": append, "create_home": false});
-                let answer = ask(&args(given), &fakes.context).unwrap();
-                assert_eq!(
-                    fakes.argv("usermod"),
-                    argv.clone()
-                        .map(|argv| argv.into_iter().map(String::from).collect()),
-                    "groups {groups}, append {append}"
+            {
+                let fakes = Fakes::new("usermod-members", &["usermod"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                fakes.script(
+                    "getent",
+                    "[ \"$1\" = group ] && printf 'root:x:0:root\\ndaemon:x:1:bin,root\\n'",
                 );
-                assert_eq!(answer["changed"], argv.is_some());
-            }
-        }
-
-        /// `absent` runs `userdel <name>` for an account that exists and nothing otherwise.
-        ///
-        /// What would make this red: `userdel` given more than the name, `force` and `remove`
-        /// missing from a removal, or present for an account that was never there.
-        #[test]
-        fn userdel_runs_only_for_an_existing_account() {
-            let fakes = Fakes::new("userdel", &["userdel"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let mut gone = ask(
-                &args(json!({"name": "root", "state": "absent"})),
-                &fakes.context,
-            )
-            .unwrap();
-            assert_eq!(fakes.argv("userdel").unwrap(), ["root"]);
-            gone.remove("invocation");
-            assert_eq!(
-                Value::Object(gone),
-                json!({"name": "root", "state": "absent", "changed": true, "force": false,
-                       "remove": false, "stdout": "out\n", "stderr": "err\n"})
-            );
-
-            let name = scratch_name("volantm");
-            let mut missing = ask(
-                &args(json!({"name": name, "state": "absent"})),
-                &fakes.context,
-            )
-            .unwrap();
-            missing.remove("invocation");
-            assert_eq!(
-                Value::Object(missing),
-                json!({"name": name, "state": "absent", "changed": false})
-            );
-        }
-
-        /// A command that fails is the module's failure: `name`, the error output as `msg`, `rc`,
-        /// and nothing else.
-        ///
-        /// What would make this red: a failure answered as a change, with the outputs, or
-        /// without `rc`.
-        #[test]
-        fn a_failing_useradd_is_the_module_s_failure() {
-            let fakes = Fakes::new("useradd-fails", &["useradd"], 9);
-            if fakes.outside(ask) {
-                return;
-            }
-            let name = scratch_name("volantf");
-            let mut answer = ask(
-                &args(json!({"name": name, "create_home": false})),
-                &fakes.context,
-            )
-            .unwrap();
-            assert!(answer.remove("invocation").is_some());
-            assert_eq!(
-                Value::Object(answer),
-                json!({"failed": true, "name": name, "msg": "err\n", "rc": 9})
-            );
-        }
-
-        /// Every argument outside the subset hands back before any command runs.
-        ///
-        /// What would make this red: one of them answered, `remove` or `password` above all,
-        /// or a command run before handing back.
-        #[test]
-        fn an_argument_outside_the_subset_hands_back_before_any_command() {
-            let fakes = Fakes::new("user-subset", &["useradd", "usermod", "userdel"], 0);
-            let name = scratch_name("volants");
-            for (key, value) in [
-                ("local", json!(true)),
-                ("non_unique", json!(true)),
-                ("password", json!("!")),
-                ("password_expire_max", json!(1)),
-                ("password_expire_min", json!(1)),
-                ("password_expire_warn", json!(1)),
-                ("password_expire_account_disable", json!(1)),
-                ("password_lock", json!(true)),
-                ("update_password", json!("on_create")),
-                ("expires", json!(1.0)),
-                ("generate_ssh_key", json!(true)),
-                ("ssh_key_bits", json!(2048)),
-                ("ssh_key_type", json!("ed25519")),
-                ("ssh_key_file", json!("/x")),
-                ("ssh_key_comment", json!("c")),
-                ("ssh_key_passphrase", json!("p")),
-                ("remove", json!(true)),
-                ("move_home", json!(true)),
-                ("seuser", json!("u")),
-                ("login_class", json!("c")),
-                ("umask", json!("022")),
-                ("force", json!(true)),
-                ("skeleton", json!("/etc/skel")),
-                ("hidden", json!(true)),
-                ("profile", json!("p")),
-                ("authorization", json!("a")),
-                ("role", json!("r")),
-                ("uid_min", json!(1000)),
-                ("uid_max", json!(2000)),
-            ] {
-                for state in ["present", "absent"] {
-                    for who in [name.as_str(), "root"] {
-                        let mut given =
-                            args(json!({"name": who, "state": state, "create_home": false}));
-                        given.insert(key.into(), value.clone());
-                        let answer = ask(&given, &fakes.context);
-                        assert!(
-                            matches!(answer, Err(Stop::HandBack(_))),
-                            "{key} was answered"
-                        );
-                    }
+                for (groups, append, argv) in [
+                    (json!(["root"]), false, Some(vec!["-G", "root", "root"])),
+                    (json!([]), false, Some(vec!["-G", "", "root"])),
+                    (json!(["root"]), true, None),
+                    (json!([]), true, None),
+                ] {
+                    fakes.clear("usermod");
+                    let given = json!({"name": "root", "groups": groups, "append": append, "create_home": false});
+                    let answer = ask(&args(given), &fakes.context).unwrap();
+                    assert_eq!(
+                        fakes.argv("usermod"),
+                        argv.clone()
+                            .map(|argv| argv.into_iter().map(String::from).collect()),
+                        "groups {groups}, append {append}"
+                    );
+                    assert_eq!(answer["changed"], argv.is_some());
                 }
             }
-            for command in ["useradd", "usermod", "userdel"] {
-                assert_eq!(fakes.argv(command), None, "{command} ran");
+            {
+                let fakes = Fakes::new("userdel", &["userdel"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let mut gone = ask(
+                    &args(json!({"name": "root", "state": "absent"})),
+                    &fakes.context,
+                )
+                .unwrap();
+                assert_eq!(fakes.argv("userdel").unwrap(), ["root"]);
+                gone.remove("invocation");
+                assert_eq!(
+                    Value::Object(gone),
+                    json!({"name": "root", "state": "absent", "changed": true, "force": false,
+                       "remove": false, "stdout": "out\n", "stderr": "err\n"})
+                );
+
+                let name = scratch_name("volantm");
+                let mut missing = ask(
+                    &args(json!({"name": name, "state": "absent"})),
+                    &fakes.context,
+                )
+                .unwrap();
+                missing.remove("invocation");
+                assert_eq!(
+                    Value::Object(missing),
+                    json!({"name": name, "state": "absent", "changed": false})
+                );
             }
         }
 
-        /// An account `/etc/passwd` does not hold and the name service knows is handed back,
-        /// before `useradd` or `userdel` runs.
-        ///
-        /// What would make this red: the name service not asked, which reads the account as
-        /// missing and runs `useradd` for an account the directory already has.
+        /// A failing `useradd` is the module's failure; what the native cannot do hands back before any command.
         #[test]
-        fn an_account_only_the_name_service_knows_hands_back() {
-            let fakes = Fakes::new("user-nss", &["useradd", "userdel"], 0);
-            if fakes.outside(ask) {
-                return;
+        fn a_failure_or_a_case_outside_the_subset_is_the_module_s() {
+            {
+                let fakes = Fakes::new("useradd-fails", &["useradd"], 9);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantf");
+                let mut answer = ask(
+                    &args(json!({"name": name, "create_home": false})),
+                    &fakes.context,
+                )
+                .unwrap();
+                assert!(answer.remove("invocation").is_some());
+                assert_eq!(
+                    Value::Object(answer),
+                    json!({"failed": true, "name": name, "msg": "err\n", "rc": 9})
+                );
             }
-            let name = scratch_name("volantn");
-            let _path = fake_getent(
-                &fakes.scratch,
-                &format!(
-                    "[ \"$1\" = passwd ] && [ \"$2\" = {name} ] && echo '{name}:x:5000:5000::/home/{name}:/bin/sh' && exit 0; exit 2"
-                ),
-            );
-            for state in ["present", "absent"] {
-                let answer = ask(
-                    &args(json!({"name": name, "state": state, "create_home": false})),
+            {
+                let fakes = Fakes::new("user-subset", &["useradd", "usermod", "userdel"], 0);
+                let name = scratch_name("volants");
+                for (key, value) in [
+                    ("local", json!(true)),
+                    ("non_unique", json!(true)),
+                    ("password", json!("!")),
+                    ("password_expire_max", json!(1)),
+                    ("password_expire_min", json!(1)),
+                    ("password_expire_warn", json!(1)),
+                    ("password_expire_account_disable", json!(1)),
+                    ("password_lock", json!(true)),
+                    ("update_password", json!("on_create")),
+                    ("expires", json!(1.0)),
+                    ("generate_ssh_key", json!(true)),
+                    ("ssh_key_bits", json!(2048)),
+                    ("ssh_key_type", json!("ed25519")),
+                    ("ssh_key_file", json!("/x")),
+                    ("ssh_key_comment", json!("c")),
+                    ("ssh_key_passphrase", json!("p")),
+                    ("remove", json!(true)),
+                    ("move_home", json!(true)),
+                    ("seuser", json!("u")),
+                    ("login_class", json!("c")),
+                    ("umask", json!("022")),
+                    ("force", json!(true)),
+                    ("skeleton", json!("/etc/skel")),
+                    ("hidden", json!(true)),
+                    ("profile", json!("p")),
+                    ("authorization", json!("a")),
+                    ("role", json!("r")),
+                    ("uid_min", json!(1000)),
+                    ("uid_max", json!(2000)),
+                ] {
+                    for state in ["present", "absent"] {
+                        for who in [name.as_str(), "root"] {
+                            let mut given =
+                                args(json!({"name": who, "state": state, "create_home": false}));
+                            given.insert(key.into(), value.clone());
+                            let answer = ask(&given, &fakes.context);
+                            assert!(
+                                matches!(answer, Err(Stop::HandBack(_))),
+                                "{key} was answered"
+                            );
+                        }
+                    }
+                }
+                for command in ["useradd", "usermod", "userdel"] {
+                    assert_eq!(fakes.argv(command), None, "{command} ran");
+                }
+            }
+            {
+                let fakes = Fakes::new("user-nss", &["useradd", "userdel"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantn");
+                let _path = fake_getent(
+                    &fakes.scratch,
+                    &format!(
+                        "[ \"$1\" = passwd ] && [ \"$2\" = {name} ] && echo '{name}:x:5000:5000::/home/{name}:/bin/sh' && exit 0; exit 2"
+                    ),
+                );
+                for state in ["present", "absent"] {
+                    let answer = ask(
+                        &args(json!({"name": name, "state": state, "create_home": false})),
+                        &fakes.context,
+                    );
+                    assert!(
+                        matches!(answer, Err(Stop::HandBack(_))),
+                        "{state} was answered"
+                    );
+                }
+                assert_eq!(fakes.argv("useradd"), None);
+                assert_eq!(fakes.argv("userdel"), None);
+            }
+            {
+                let fakes = Fakes::new("user-home", &["useradd", "usermod"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let missing = format!("/nonexistent-volant-{}", std::process::id());
+                let name = scratch_name("volanth");
+                let parent = ask(
+                    &args(json!({"name": name, "home": format!("{missing}/home")})),
                     &fakes.context,
                 );
-                assert!(
-                    matches!(answer, Err(Stop::HandBack(_))),
-                    "{state} was answered"
+                assert!(matches!(parent, Err(Stop::HandBack(_))));
+                let home = ask(
+                    &args(json!({"name": "root", "home": missing})),
+                    &fakes.context,
                 );
+                assert!(matches!(home, Err(Stop::HandBack(_))));
+                assert_eq!(fakes.argv("useradd"), None);
+                assert_eq!(fakes.argv("usermod"), None);
             }
-            assert_eq!(fakes.argv("useradd"), None);
-            assert_eq!(fakes.argv("userdel"), None);
         }
 
-        /// A home the module would create itself hands back before any command: a missing
-        /// parent before `useradd`, a missing home under `create_home` before `usermod`.
-        ///
-        /// What would make this red: `useradd -m` run where the module makes the parent first,
-        /// or `usermod` run where the module then creates the home and answers `changed`.
-        #[test]
-        fn a_home_the_module_creates_itself_hands_back() {
-            let fakes = Fakes::new("user-home", &["useradd", "usermod"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let missing = format!("/nonexistent-volant-{}", std::process::id());
-            let name = scratch_name("volanth");
-            let parent = ask(
-                &args(json!({"name": name, "home": format!("{missing}/home")})),
-                &fakes.context,
-            );
-            assert!(matches!(parent, Err(Stop::HandBack(_))));
-            let home = ask(
-                &args(json!({"name": "root", "home": missing})),
-                &fakes.context,
-            );
-            assert!(matches!(home, Err(Stop::HandBack(_))));
-            assert_eq!(fakes.argv("useradd"), None);
-            assert_eq!(fakes.argv("usermod"), None);
-        }
-
-        /// A home `useradd -m` left missing is made as `create_homedir` makes it: the skeleton
-        /// copied with its links, modes and times, the mode `login.defs` gives (`HOME_MODE` over
-        /// `UMASK`), and every entry given to the account.
-        ///
-        /// What would make this red: a link copied as its target, a file's mode or time lost, the
-        /// mode from `UMASK` where `HOME_MODE` is set, or a mode other than 0755 without either.
+        /// A home `useradd -m` left missing is made as `create_homedir` makes it, from the skeleton.
         #[test]
         fn a_missing_home_is_made_from_the_skeleton() {
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1085,9 +1034,6 @@ mod linux {
         }
 
         /// `invocation` holds every argument of the module with its default, as recorded.
-        ///
-        /// What would make this red: an argument missing, a default that differs, or the
-        /// `ssh_key_comment` default without this host's name.
         #[test]
         fn the_invocation_is_the_module_s() {
             let recorded: Value = serde_json::from_str(include_str!(

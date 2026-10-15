@@ -24,10 +24,6 @@ mod tests {
     use super::*;
 
     /// `date_time` is the interpreter's, and a locale the module cannot set hands back.
-    ///
-    /// What would make this red: the fact computed by the agent's C library again, which on the
-    /// musl agent answers `tz_dst: ""` for every zone without daylight time; or a locale the
-    /// module would replace answered at all.
     #[test]
     fn the_date_is_the_interpreter_s() {
         let fake = FakeRoot::new("date-time");

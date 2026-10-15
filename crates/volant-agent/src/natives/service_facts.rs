@@ -808,94 +808,205 @@ esac
             }
         }
 
-        /// The fixture host, answered as the reference's own scanners answer the same outputs.
+        /// A host is answered, a tool without init scripts lists nothing, sysv and the edges are read like the reference.
         #[test]
-        fn a_host_is_answered_as_the_reference_parses_it() {
-            let host = Host::new();
-            let result = host.answer().unwrap();
-            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
-            assert_eq!(result["ansible_facts"]["services"], reference);
-            assert_eq!(result["invocation"], json!({"module_args": {}}));
+        fn a_listing_is_read_as_the_reference_reads_it() {
+            {
+                let host = Host::new();
+                let result = host.answer().unwrap();
+                let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+                assert_eq!(result["ansible_facts"]["services"], reference);
+                assert_eq!(result["invocation"], json!({"module_args": {}}));
+            }
+            {
+                let host = Host::new();
+                host.command(
+                    "/usr/sbin/service",
+                    "#!/bin/sh\necho ' [ + ]  ghost'\nexit 4\n",
+                );
+                let result = host.answer().unwrap();
+                let services = result["ansible_facts"]["services"].as_object().unwrap();
+                assert!(
+                    services
+                        .values()
+                        .all(|service| service["source"] == "systemd")
+                );
+                assert!(services.contains_key("cron.service"));
+            }
+            {
+                let cases: [(&str, &[(&str, bool)]); 11] = [
+                    (
+                        " [ + ]  apparmor\n [ - ]  cron\n",
+                        &[("apparmor", true), ("cron", false)],
+                    ),
+                    (
+                        " [ + ]  a\n\n  [ - ]\tb c \n [ ? ]  d\n",
+                        &[("a", true), ("b c ", false)],
+                    ),
+                    (" [ + ]  \n", &[(" ", true)]),
+                    (" [ + ]  \n [ - ]  x\n", &[("[ - ]  x", true)]),
+                    ("[ + ] x", &[("x", true)]),
+                    (" [ + ]x\n", &[]),
+                    (" [ +]  y\n", &[]),
+                    ("junk [ + ]  z\n [ - ]  w", &[("w", false)]),
+                    (" [ + ]  \x1c v\n", &[("v", true)]),
+                    (" [ + ]  \n  \n", &[(" ", true)]),
+                    (" [ - ] \r\n", &[("\r", false)]),
+                ];
+                for (text, expected) in cases {
+                    let expected: Vec<(String, bool)> = expected
+                        .iter()
+                        .map(|(name, running)| ((*name).to_string(), *running))
+                        .collect();
+                    assert_eq!(status_all(text), expected, "{text:?}");
+                }
+            }
+            {
+                let host = Host::new();
+                std::fs::remove_file(host.0.join("usr/bin/locale")).unwrap();
+                host.answer().unwrap();
+                let host = Host::new();
+                host.command("/usr/bin/locale", "#!/bin/sh\nexit 1\n");
+                host.answer().unwrap();
+
+                let host = Host::new();
+                std::fs::remove_file(host.0.join("usr/sbin/service")).unwrap();
+                let services = host.answer().unwrap()["ansible_facts"]["services"].clone();
+                let services = services.as_object().unwrap();
+                assert!(
+                    services
+                        .values()
+                        .all(|service| service["source"] == "systemd")
+                );
+
+                let host = Host::new();
+                host.write(
+                    "/fixture/units.txt",
+                    &format!(
+                        "{UNITS}cron.service loaded inactive dead Regular background program\n"
+                    ),
+                );
+                let result = host.answer().unwrap();
+                let services = result["ansible_facts"]["services"].as_object().unwrap();
+                assert_eq!(services["cron.service"]["state"], "stopped");
+
+                let host = Host::new();
+                host.command(
+                    "/usr/bin/systemctl",
+                    &SYSTEMCTL.replacen(
+                        "#!/bin/sh\n",
+                        "#!/bin/sh\n[ \"$1\" = list-unit-files ] && exit 1\n",
+                        1,
+                    ),
+                );
+                assert!(host.hands_back().contains("list-unit-files exited 1"));
+
+                let host = Host::new();
+                for fixture in ["units.txt", "files.txt", "sysv.txt"] {
+                    host.write(&format!("/fixture/{fixture}"), "");
+                }
+                assert!(host.hands_back().contains("no service was found"));
+
+                let host = Host::new();
+                let env = BTreeMap::from([("PATH".to_string(), "bin:/usr/bin".to_string())]);
+                match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
+                    Err(Stop::HandBack(reason)) => {
+                        assert!(
+                            reason.contains("PATH holds a relative directory"),
+                            "{reason}"
+                        );
+                    }
+                    other => panic!("a relative PATH answered: {other:?}"),
+                }
+
+                let host = Host::new();
+                host.command("/opt/my tools/systemctl", SYSTEMCTL);
+                std::fs::remove_file(host.0.join("usr/bin/systemctl")).unwrap();
+                let env = BTreeMap::from([(
+                    "PATH".to_string(),
+                    "/opt/my tools:/usr/bin:/bin".to_string(),
+                )]);
+                match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
+                    Err(Stop::HandBack(reason)) => {
+                        assert!(reason.contains("is not a plain path"), "{reason}");
+                    }
+                    other => panic!("a path with a space answered: {other:?}"),
+                }
+            }
         }
 
-        /// `service` exiting 4 on a host without `/etc/init.d` (what RHEL 9 does) is no SysV
-        /// listing at all, and no warning: systemd's units are answered alone.
+        /// Two failure states on a line, a host outside the subset and the entry point's hand-back all hand back.
         #[test]
-        fn a_service_tool_without_init_scripts_lists_nothing() {
-            let host = Host::new();
-            host.command(
-                "/usr/sbin/service",
-                "#!/bin/sh\necho ' [ + ]  ghost'\nexit 4\n",
-            );
-            let result = host.answer().unwrap();
-            let services = result["ansible_facts"]["services"].as_object().unwrap();
-            assert!(
-                services
-                    .values()
-                    .all(|service| service["source"] == "systemd")
-            );
-            assert!(services.contains_key("cron.service"));
-        }
+        fn what_the_native_does_not_read_hands_back_whole() {
+            {
+                let host = Host::new();
+                host.write(
+                    "/fixture/units.txt",
+                    "gone.service not-found failed failed gone.service\n",
+                );
+                assert!(host.hands_back().contains("names two failure states"));
+            }
+            {
+                let host = Host::new();
+                host.write("/fixture/units.txt", "short.service loaded active\n");
+                assert!(host.hands_back().contains("fewer than four fields"));
 
-        /// A unit line naming two failure states: the reference picks one in its set's order,
-        /// which its hash seed changes from run to run. The native hands back rather than pick.
-        #[test]
-        fn two_failure_states_on_one_line_hand_back() {
-            let host = Host::new();
-            host.write(
-                "/fixture/units.txt",
-                "gone.service not-found failed failed gone.service\n",
-            );
-            assert!(host.hands_back().contains("names two failure states"));
-        }
+                let host = Host::new();
+                host.write("/fixture/files.txt", "lonely.service\n");
+                assert!(host.hands_back().contains("fewer than two words"));
 
-        /// Hosts where the reference warns, fails, or reads another tool hand back.
-        #[test]
-        fn a_host_outside_the_subset_hands_back() {
-            let host = Host::new();
-            host.write("/fixture/units.txt", "short.service loaded active\n");
-            assert!(host.hands_back().contains("fewer than four fields"));
+                let host = Host::new();
+                host.write("/fixture/units.rc", "1");
+                assert!(host.hands_back().contains("list-units exited 1"));
 
-            let host = Host::new();
-            host.write("/fixture/files.txt", "lonely.service\n");
-            assert!(host.hands_back().contains("fewer than two words"));
+                let host = Host::new();
+                host.command("/usr/sbin/chkconfig", "#!/bin/sh\n");
+                assert!(host.hands_back().contains("chkconfig is found"));
 
-            let host = Host::new();
-            host.write("/fixture/units.rc", "1");
-            assert!(host.hands_back().contains("list-units exited 1"));
+                let host = Host::new();
+                std::fs::remove_dir_all(host.0.join("run/systemd")).unwrap();
+                assert_eq!(host.hands_back(), "the host is not run by systemd");
 
-            let host = Host::new();
-            host.command("/usr/sbin/chkconfig", "#!/bin/sh\n");
-            assert!(host.hands_back().contains("chkconfig is found"));
+                let host = Host::new();
+                std::fs::write(
+                    host.0.join("fixture/units.txt"),
+                    b"bad\xff.service a b c d\n",
+                )
+                .unwrap();
+                assert!(host.hands_back().contains("is not UTF-8"));
 
-            let host = Host::new();
-            std::fs::remove_dir_all(host.0.join("run/systemd")).unwrap();
-            assert_eq!(host.hands_back(), "the host is not run by systemd");
+                let host = Host::new();
+                host.command("/usr/sbin/service", "#!/bin/sh\nexit 3\n");
+                assert!(host.hands_back().contains("--status-all exited 3"));
 
-            let host = Host::new();
-            std::fs::write(
-                host.0.join("fixture/units.txt"),
-                b"bad\xff.service a b c d\n",
-            )
-            .unwrap();
-            assert!(host.hands_back().contains("is not UTF-8"));
-
-            let host = Host::new();
-            host.command("/usr/sbin/service", "#!/bin/sh\nexit 3\n");
-            assert!(host.hands_back().contains("--status-all exited 3"));
-
-            let host = Host::new();
-            let args = json!({"x": 1});
-            let reason = match answer(
-                args.as_object().unwrap(),
-                &Root::at(&host.0),
-                &BTreeMap::new(),
-                unbounded(),
-            ) {
-                Err(Stop::HandBack(reason)) => reason,
-                other => panic!("an argument was accepted: {other:?}"),
-            };
-            assert!(reason.contains("the argument x"), "{reason}");
+                let host = Host::new();
+                let args = json!({"x": 1});
+                let reason = match answer(
+                    args.as_object().unwrap(),
+                    &Root::at(&host.0),
+                    &BTreeMap::new(),
+                    unbounded(),
+                ) {
+                    Err(Stop::HandBack(reason)) => reason,
+                    other => panic!("an argument was accepted: {other:?}"),
+                };
+                assert!(reason.contains("the argument x"), "{reason}");
+            }
+            {
+                let context = Context {
+                    timeout: None,
+                    environment: BTreeMap::new(),
+                    interpreter: None,
+                    remote_tmp: "/tmp".into(),
+                };
+                let args = json!({"x": 1});
+                match run(args.as_object().unwrap(), &context, &|| false) {
+                    NativeRun::Fallback(reason) => {
+                        assert_eq!(reason, "the argument x is outside the native service_facts");
+                    }
+                    _ => panic!("an argument was answered"),
+                }
+            }
         }
 
         /// A hung `locale`, `service`, `list-units` or `show` ends at the task's deadline with
@@ -941,108 +1052,8 @@ esac
             }
         }
 
-        /// The rest of what the reference does around its commands.
-        ///
-        /// What would make this red, one each: no `locale` or a failing one not read as `C`,
-        /// no `service` not read as an empty SysV list, a repeated unit line not taking the
-        /// later one's values in the first one's place (answered, not appended); a failing
-        /// `list-unit-files` answered (the reference warns); nothing found answered (the
-        /// reference answers `skipped`); a relative `PATH` entry resolved; a `systemctl` whose
-        /// path a shell would change run directly.
-        #[test]
-        fn the_edges_around_the_commands_are_read_as_the_reference_reads_them() {
-            let host = Host::new();
-            std::fs::remove_file(host.0.join("usr/bin/locale")).unwrap();
-            host.answer().unwrap();
-            let host = Host::new();
-            host.command("/usr/bin/locale", "#!/bin/sh\nexit 1\n");
-            host.answer().unwrap();
-
-            let host = Host::new();
-            std::fs::remove_file(host.0.join("usr/sbin/service")).unwrap();
-            let services = host.answer().unwrap()["ansible_facts"]["services"].clone();
-            let services = services.as_object().unwrap();
-            assert!(
-                services
-                    .values()
-                    .all(|service| service["source"] == "systemd")
-            );
-
-            let host = Host::new();
-            host.write(
-                "/fixture/units.txt",
-                &format!("{UNITS}cron.service loaded inactive dead Regular background program\n"),
-            );
-            let result = host.answer().unwrap();
-            let services = result["ansible_facts"]["services"].as_object().unwrap();
-            assert_eq!(services["cron.service"]["state"], "stopped");
-
-            let host = Host::new();
-            host.command(
-                "/usr/bin/systemctl",
-                &SYSTEMCTL.replacen(
-                    "#!/bin/sh\n",
-                    "#!/bin/sh\n[ \"$1\" = list-unit-files ] && exit 1\n",
-                    1,
-                ),
-            );
-            assert!(host.hands_back().contains("list-unit-files exited 1"));
-
-            let host = Host::new();
-            for fixture in ["units.txt", "files.txt", "sysv.txt"] {
-                host.write(&format!("/fixture/{fixture}"), "");
-            }
-            assert!(host.hands_back().contains("no service was found"));
-
-            let host = Host::new();
-            let env = BTreeMap::from([("PATH".to_string(), "bin:/usr/bin".to_string())]);
-            match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
-                Err(Stop::HandBack(reason)) => {
-                    assert!(
-                        reason.contains("PATH holds a relative directory"),
-                        "{reason}"
-                    );
-                }
-                other => panic!("a relative PATH answered: {other:?}"),
-            }
-
-            let host = Host::new();
-            host.command("/opt/my tools/systemctl", SYSTEMCTL);
-            std::fs::remove_file(host.0.join("usr/bin/systemctl")).unwrap();
-            let env = BTreeMap::from([(
-                "PATH".to_string(),
-                "/opt/my tools:/usr/bin:/bin".to_string(),
-            )]);
-            match answer(&Map::new(), &Root::at(&host.0), &env, unbounded()) {
-                Err(Stop::HandBack(reason)) => {
-                    assert!(reason.contains("is not a plain path"), "{reason}");
-                }
-                other => panic!("a path with a space answered: {other:?}"),
-            }
-        }
-
-        /// The entry point the agent calls: an argument hands back with its reason.
-        #[test]
-        fn the_entry_point_hands_back_what_the_answer_hands_back() {
-            let context = Context {
-                timeout: None,
-                environment: BTreeMap::new(),
-                interpreter: None,
-                remote_tmp: "/tmp".into(),
-            };
-            let args = json!({"x": 1});
-            match run(args.as_object().unwrap(), &context, &|| false) {
-                NativeRun::Fallback(reason) => {
-                    assert_eq!(reason, "the argument x is outside the native service_facts");
-                }
-                _ => panic!("an argument was answered"),
-            }
-        }
-
-        /// A SysV hand-back does not win over systemd's deadline or cancel: the task ends with
-        /// the stop, not with a hand-back that would run the module past its deadline.
-        ///
-        /// What would make this red: the SysV result read before systemd's stop.
+        /// A SysV hand-back does not win over systemd's deadline or cancel: the task ends with the
+        /// stop, not with a hand-back that would run the module past its deadline.
         #[test]
         fn a_stop_wins_over_a_hand_back_from_the_other_listing() {
             let script = SYSTEMCTL.replacen(
@@ -1083,38 +1094,6 @@ esac
             assert_eq!((rc, stdout.as_str()), (0, "ActiveState=ax2db.service\n"));
             let (_, stdout) = show(&systemctl, &env, unbounded(), "a-b.service").unwrap();
             assert_eq!(stdout, "ActiveState=a-b.service\n");
-        }
-
-        /// `service --status-all` read with the reference's expression, on outputs whose
-        /// answers were taken from Python's `re.finditer`.
-        #[test]
-        fn the_sysv_listing_is_read_as_python_reads_it() {
-            let cases: [(&str, &[(&str, bool)]); 11] = [
-                (
-                    " [ + ]  apparmor\n [ - ]  cron\n",
-                    &[("apparmor", true), ("cron", false)],
-                ),
-                (
-                    " [ + ]  a\n\n  [ - ]\tb c \n [ ? ]  d\n",
-                    &[("a", true), ("b c ", false)],
-                ),
-                (" [ + ]  \n", &[(" ", true)]),
-                (" [ + ]  \n [ - ]  x\n", &[("[ - ]  x", true)]),
-                ("[ + ] x", &[("x", true)]),
-                (" [ + ]x\n", &[]),
-                (" [ +]  y\n", &[]),
-                ("junk [ + ]  z\n [ - ]  w", &[("w", false)]),
-                (" [ + ]  \x1c v\n", &[("v", true)]),
-                (" [ + ]  \n  \n", &[(" ", true)]),
-                (" [ - ] \r\n", &[("\r", false)]),
-            ];
-            for (text, expected) in cases {
-                let expected: Vec<(String, bool)> = expected
-                    .iter()
-                    .map(|(name, running)| ((*name).to_string(), *running))
-                    .collect();
-                assert_eq!(status_all(text), expected, "{text:?}");
-            }
         }
     }
 }

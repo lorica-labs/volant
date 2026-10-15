@@ -31,9 +31,6 @@ mod tests {
     use super::super::tests::{FakeRoot, probe};
     use super::*;
 
-    /// What would make this red: a fact file answered as `{}`, which drops what the host
-    /// declared; or a hidden file taken for one, which hands back a host the reference reads as
-    /// empty.
     #[test]
     fn local_facts_are_empty_or_handed_back() {
         let fake = FakeRoot::new("local");

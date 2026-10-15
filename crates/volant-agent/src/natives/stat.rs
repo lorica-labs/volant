@@ -354,15 +354,7 @@ mod tests {
         run(args.as_object().unwrap(), context, &|| false)
     }
 
-    /// Every recorded `stat` case, on the fixture the golden play builds: a file, the directory,
-    /// a link followed and not, a missing path, the arguments the `copy` action sends, and a stat
-    /// with nothing extra asked.
-    ///
-    /// What would make this red: `follow` ignored (the link cases trade their `islnk`, `mode` and
-    /// `lnk_*` keys), a mode not zero-padded to four digits, the checksum taken of a directory or
-    /// of a link not followed, `file` given `-L` (the followed link's `mimetype` is
-    /// `inode/symlink` in the reference), a key missing or extra (`pw_name`, `version`,
-    /// `device_type`), or `invocation` without the defaults.
+    /// Every recorded `stat` case, on the fixture the golden play builds.
     #[test]
     fn stat_answers_every_recorded_case_like_the_reference() {
         let scratch = Scratch::new("stat");
@@ -424,82 +416,70 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// A checksum of a disk image stops at the task's `timeout` with the answer the Python path
-    /// gives, and at the controller's cancel: a 64 GiB sparse file, which SHA-1 takes minutes
-    /// over.
-    ///
-    /// What would make this red: the loop not looking at the clock (the test runs for minutes
-    /// and nextest ends it), or the timeout answered as anything else.
+    /// A long checksum stops at the timeout and the cancel; what stat cannot answer is handed back.
     #[test]
-    fn a_long_checksum_stops_at_the_timeout_and_the_cancel() {
-        let scratch = Scratch::new("stat-sparse");
-        let image = scratch.path("disk.img");
-        fs::File::create(&image).unwrap().set_len(64 << 30).unwrap();
-        let args = json!({"path": image, "get_mime": false, "get_attributes": false});
-        let context = Context {
-            timeout: Some(std::time::Duration::from_secs(1)),
-            ..Context::default()
-        };
-        let timed = args.clone();
-        let NativeRun::Done(result) = within(30, move || ask(&timed, &context)) else {
-            panic!("no answer")
-        };
-        assert_eq!(result, TaskResult::timed_out(1));
-        let cancelled = within(30, move || {
-            run(args.as_object().unwrap(), &Context::default(), &|| true)
-        });
-        assert!(matches!(cancelled, NativeRun::Cancelled));
-    }
-
-    /// Outside the subset the task goes to the Python module: another checksum, a task
-    /// `environment`, a boolean the reference would convert, an option given twice, a path the
-    /// reference would expand.
-    ///
-    /// What would make this red: any of those answered, each of which the reference answers
-    /// differently (another digest, `PATH` for `file` and `lsattr`, `invocation` showing the
-    /// converted value, a warning, another path).
-    #[test]
-    fn stat_hands_back_what_it_cannot_answer() {
-        let scratch = Scratch::new("stat-back");
-        let file = scratch.fixture();
-        let mut environment = Context::default();
-        environment
-            .environment
-            .insert("PATH".into(), "/nowhere".into());
-        for (args, context) in [
-            (
-                json!({"path": file, "checksum_algorithm": "md5"}),
-                Context::default(),
-            ),
-            (json!({"path": file}), environment),
-            (json!({"path": file, "follow": "yes"}), Context::default()),
-            (json!({"path": file, "dest": file}), Context::default()),
-            (json!({"path": "~/f.txt"}), Context::default()),
-            (json!({"path": "$HOME/f.txt"}), Context::default()),
-            (
-                json!({"path": file, "get_checksum": false, "checksum_algorithm": "sha3"}),
-                Context::default(),
-            ),
-            (
-                json!({"path": file, "get_checksum": false, "checksum": "SHA256"}),
-                Context::default(),
-            ),
-            (
-                json!({"path": file, "get_checksum": false, "checksum_algorithm": 1}),
-                Context::default(),
-            ),
-        ] {
-            assert!(
-                matches!(ask(&args, &context), NativeRun::Fallback(_)),
-                "{args}"
-            );
+    fn a_long_checksum_and_a_hand_back_follow_the_native_s_limits() {
+        {
+            let scratch = Scratch::new("stat-sparse");
+            let image = scratch.path("disk.img");
+            fs::File::create(&image).unwrap().set_len(64 << 30).unwrap();
+            let args = json!({"path": image, "get_mime": false, "get_attributes": false});
+            let context = Context {
+                timeout: Some(std::time::Duration::from_secs(1)),
+                ..Context::default()
+            };
+            let timed = args.clone();
+            let NativeRun::Done(result) = within(30, move || ask(&timed, &context)) else {
+                panic!("no answer")
+            };
+            assert_eq!(result, TaskResult::timed_out(1));
+            let cancelled = within(30, move || {
+                run(args.as_object().unwrap(), &Context::default(), &|| true)
+            });
+            assert!(matches!(cancelled, NativeRun::Cancelled));
         }
-        assert!(matches!(
-            ask(
-                &json!({"path": file, "checksum_algorithm": "md5", "get_checksum": false}),
-                &Context::default()
-            ),
-            NativeRun::Done(_)
-        ));
+        {
+            let scratch = Scratch::new("stat-back");
+            let file = scratch.fixture();
+            let mut environment = Context::default();
+            environment
+                .environment
+                .insert("PATH".into(), "/nowhere".into());
+            for (args, context) in [
+                (
+                    json!({"path": file, "checksum_algorithm": "md5"}),
+                    Context::default(),
+                ),
+                (json!({"path": file}), environment),
+                (json!({"path": file, "follow": "yes"}), Context::default()),
+                (json!({"path": file, "dest": file}), Context::default()),
+                (json!({"path": "~/f.txt"}), Context::default()),
+                (json!({"path": "$HOME/f.txt"}), Context::default()),
+                (
+                    json!({"path": file, "get_checksum": false, "checksum_algorithm": "sha3"}),
+                    Context::default(),
+                ),
+                (
+                    json!({"path": file, "get_checksum": false, "checksum": "SHA256"}),
+                    Context::default(),
+                ),
+                (
+                    json!({"path": file, "get_checksum": false, "checksum_algorithm": 1}),
+                    Context::default(),
+                ),
+            ] {
+                assert!(
+                    matches!(ask(&args, &context), NativeRun::Fallback(_)),
+                    "{args}"
+                );
+            }
+            assert!(matches!(
+                ask(
+                    &json!({"path": file, "checksum_algorithm": "md5", "get_checksum": false}),
+                    &Context::default()
+                ),
+                NativeRun::Done(_)
+            ));
+        }
     }
 }

@@ -76,10 +76,6 @@ mod tests {
 
     /// The name comes from `LOGNAME` before the uid, as `getpass.getuser()` has it, and its entry
     /// from `/etc/passwd`.
-    ///
-    /// What would make this red: the name taken from the uid while `LOGNAME` says otherwise
-    /// (under `sudo -u` without `-i` they differ), or the effective group read from `getegid`,
-    /// which the reference does not do.
     #[test]
     fn the_user_is_the_environment_s_then_the_uid_s() {
         let fake = FakeRoot::new("user");

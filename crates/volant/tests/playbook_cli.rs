@@ -2409,16 +2409,8 @@ fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
     );
 }
 
-/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that
-/// names it.
-///
-/// The connection dies between two steps of a block's body, which is the one way a host can go
-/// unreachable with work already behind it. Measured on ansible-core 2.19.12: an unreachable
-/// host inside a block is not rescued and its `always` does not run either, and the run exits 4.
-///
-/// What would make this red - and it is the worst outcome this file guards against - a lost
-/// host routed into the rescue, which would print `rescued`, run the cleanup on a host that is
-/// not there, and exit 0 on a playbook that did half of what it says.
+/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that names
+/// it.
 #[test]
 fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
     let out = volant_within(
@@ -2956,15 +2948,6 @@ fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
 }
 
 /// A task that never leaves the controller retries by the same loop as any other.
-///
-/// Measured on ansible-core 2.19.12 with this fixture: two retry lines, `fatal:` carrying the
-/// `debug`'s own cleaned body, `...ignoring`, `attempts: 2` in the registered value and a recap
-/// of `ok=2 ignored=1`. Two differences with the reference are deliberate and recorded: it
-/// appends `Result was: {...}` to each retry line for a `debug` and puts a `retries` key in the
-/// result, and this prints neither.
-///
-/// What would make this red: the retry loop skipped for `set_fact` and `debug`, which is how a
-/// task carrying `until` would quietly run once and pass.
 #[test]
 fn a_controller_side_task_retries_like_any_other() {
     let out = volant_within(
@@ -3002,15 +2985,6 @@ fn a_controller_side_task_retries_like_any_other() {
 }
 
 /// An `until` expression that cannot be evaluated ends the task there.
-///
-/// Measured on ansible-core 2.19.12: `fatal:` carrying
-/// `Task failed: Error while evaluating conditional: ...`, **no** retry line, no `attempts`, and
-/// the run carries on. The sentence after the colon is this engine's own - the reference names
-/// the Python type - and the prefix is the reference's, which is what a playbook testing
-/// `'Task failed' in result.msg` reads.
-///
-/// What would make this red: a condition that throws treated as false, which would retry and
-/// print the retry lines this asserts are absent.
 #[test]
 fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     let out = volant_within(
@@ -3041,16 +3015,8 @@ fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     );
 }
 
-/// `delay` is waited after each failed run but the last, proved from the results rather than
-/// from the clock: the task before records the epoch second it ran at, and the retried task's own
-/// `stdout` is the epoch second of its **last** run. `retries: 2` is three runs, the first and two
-/// retries, with a `delay: 2` after each of the first two (ansible-core 2.19.12
-/// `task_executor.py`: `retries = 1 + R`, and the sleep sits behind the retry line, which the last
-/// run never prints), so at least four seconds separate the two stamps. The run is under
-/// `volant_within`, so a `delay` that never ends hangs the test rather than passing it.
-///
-/// What would make this red: a sleep dropped, or a run fewer - either puts the last run at most
-/// two seconds after the task before it.
+/// `delay` is waited after each failed run but the last, proved from the epoch seconds the
+/// attempts record rather than from the clock.
 #[test]
 fn the_delay_is_waited_between_two_attempts() {
     let out = volant_within(
@@ -3199,19 +3165,8 @@ fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
     }
 }
 
-/// `environment`, measured on ansible-core 2.19.12 with this fixture: the play's layer and the
-/// task's are both in force with the task's winning, a templated value is rendered, `42` reaches
-/// the process as the string `42`, a block's layer reaches its tasks, and a value that is not a
-/// mapping warns on **stderr** and is skipped while the task still runs and the layers around it
-/// stay. The `debug` at the end shows that an `environment` on a controller-side task changes
-/// nothing for `lookup('env', ...)`.
-///
-/// The warning quotes the whole layer stack the way the reference quotes it, as a Python list
-/// of the **raw** layers: measured, `['{{ secret }}']` for a one-layer stack, so nothing that
-/// was rendered from a variable reaches the line.
-///
-/// What would make this red: the play's layer lost (`" templated"`), `42` sent as a number (the
-/// agent refuses the shape), or a layer that is not a mapping failing the task.
+/// `environment`: the play's layer and the task's are both in force, the task's winning, and a
+/// templated value is rendered (ansible-core 2.19.12).
 #[test]
 fn environment_layers_merge_with_the_task_winning() {
     let out = volant_within(
@@ -3949,10 +3904,6 @@ ok: [localhost] => (item=one) => {
 
 /// Every keyword the table says this release answers -- `Runs` or `Partial` -- has a proof, and
 /// every proof belongs to a row.
-///
-/// What would make this red: a row flipped away from `Preflight` ahead of the code that answers
-/// it, which is the way a keyword comes to be accepted, waved through and ignored; or a proof
-/// left behind for a keyword that is now refused before the first connection.
 #[test]
 fn every_answered_keyword_has_a_proof_and_every_proof_has_a_row() {
     let mut declared: Vec<(&str, &str)> = [
@@ -4079,14 +4030,8 @@ fn every_runs_keyword_changes_something_observable() {
     std::fs::remove_dir_all(&no_ansible).expect("the fake python directory is removed");
 }
 
-/// A loop variable named after one of the values the whole inventory shares renders the item,
-/// not the inventory. Measured on ansible-core 2.19.12: the loop variable is bound once the
-/// host's variables are built, so it is the last write there is and it wins over the play's own
-/// host list for as long as the loop runs.
-///
-/// What would make this red: reading `play_hosts` out of the shared inventory-wide values with
-/// no account of what was written into the host's map afterwards. Both items then render the
-/// play's host list instead of `1` and `2`.
+/// A loop variable named after one of the values the whole inventory shares renders the item, not
+/// the inventory.
 #[test]
 fn a_loop_variable_wins_over_the_inventory_wide_value_it_is_named_after() {
     let dir = probe_dir("loop-var-shadows-shared");
@@ -4110,18 +4055,6 @@ fn a_loop_variable_wins_over_the_inventory_wide_value_it_is_named_after() {
 }
 
 /// A play's roles, read from the directory beside the playbook and spliced into the step list.
-///
-/// The snapshot is the reference's own output for this fixture, measured on ansible-core
-/// 2.19.12: the sections run `pre_tasks`, roles, `tasks`, `post_tasks`; a `meta/main.yml`
-/// dependency runs in front of the role that depends on it; every task of a role carries the
-/// `role : name` prefix, and an unnamed one shows its module behind that prefix
-/// (`TASK [spec : debug]`); a role read with `tasks_from` shows only that file's tasks; and an
-/// `import_tasks` inside a role reads its file against the role's `tasks/` directory, while a
-/// nested one reads against the directory of the file that wrote it.
-///
-/// What would make this red: the `base : ` prefix dropped, the dependency running after `child`
-/// instead of before it, a section running out of order, or an imported file looked for beside
-/// the playbook rather than beside its importer.
 #[test]
 fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -4144,17 +4077,8 @@ fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
     settings().bind(|| insta::assert_snapshot!(String::from_utf8(out.stdout).unwrap()));
 }
 
-/// A role nobody can find stops the run before the first banner, naming every directory it
-/// looked in, and exits **1**.
-///
-/// Measured on ansible-core 2.19.12: `the role 'nosuchrole' was not found in <paths joined by
-/// colons>`, exit 1 - not the 4 a playbook it cannot make sense of gets. The order is
-/// `<playbook_dir>/roles`, the `roles_path` entries, then `<playbook_dir>`.
-///
-/// What would make this red: the exit code drifting to the compiler's blanket 4, which is what
-/// happens the moment the refusal stops carrying a code of its own; a path missing from the
-/// list, which sends an operator looking in the wrong place; or a `PLAY` banner printed before
-/// the refusal, which would mean the roles were read after the run had started.
+/// A role nobody can find stops the run before the first banner, naming every directory it looked
+/// in, and exits **1**.
 #[test]
 fn a_missing_role_names_every_directory_searched_and_exits_1() {
     let out = volant(&["playbook", &fixture("roles/missing.yml")]);
@@ -4177,15 +4101,6 @@ fn a_missing_role_names_every_directory_searched_and_exits_1() {
 }
 
 /// Two identical entries are one role; two that differ in what they hand it are two.
-///
-/// Measured: `- base` twice runs once, `- base` and `- { role: base, vars: { p: twice } }` run
-/// twice, and a role whose required argument nobody supplied fails the run at exit 2 with the
-/// reference's own `argument_errors`.
-///
-/// What would make this red: an identity that compares the role's name alone, which drops the
-/// second entry and reports success having run one role less than the playbook asked for; or an
-/// argument check that passes whatever it is given, which lets a role run without a variable it
-/// declared it could not work without.
 #[test]
 fn identical_role_entries_run_once_and_different_parameters_run_twice() {
     let out = volant(&[
@@ -4211,19 +4126,7 @@ fn identical_role_entries_run_once_and_different_parameters_run_twice() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
-/// A role's `defaults` and `vars` stay visible to the rest of the play, and its parameters do
-/// not.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: the play's own task after the roles reads
-/// `shared=role-var d=role-default p=fact`, and the `pre_tasks` task that runs **before** any
-/// role reads `pre d=role-default shared=role-var`. So the export belongs to the play rather
-/// than accumulating as the list is walked, `vars/main.yml` beats the play's `vars:`, and a role
-/// parameter is gone once its role is over - `p` is back to the fact the `pre_tasks` set, not
-/// the `role-param` two entries handed the role.
-///
-/// What would make this red: dropping the export, which leaves both tasks reading `unset`; or
-/// exporting the parameters too, which would leave the task after the roles reading
-/// `p=role-param` - a role parameter outliving the role that was given it.
+/// A role's `defaults` and `vars` stay visible to the rest of the play, and its parameters do not.
 #[test]
 fn role_variables_stay_visible_after_the_role() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -4254,17 +4157,6 @@ fn role_variables_stay_visible_after_the_role() {
 }
 
 /// `vars:` on a role entry is a task variable; a free key beside `role:` is a role parameter.
-/// The two sit on opposite sides of a fact, which is what tells them apart.
-///
-/// Measured on ansible-core 2.19.12 on this fixture, whose `pre_tasks` set `p` to `fact`: the
-/// entry written `vars: { p: role-param }` runs the role reading `p=fact`, and the entry written
-/// with `p: role-param` as a free key runs it reading `p=role-param`. Three of the four entries
-/// read the fact - the bare one, the `vars:` one, and `child`'s dependency, which also hands its
-/// parameter through `vars:` - and only the free-key one reads its own value.
-///
-/// What would make this red: folding a role entry's `vars:` into its parameters, which lifts it
-/// above the fact and leaves two entries reading `role-param`; or the reverse, reading a free
-/// key as a task variable, which leaves all four reading `fact`.
 #[test]
 fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -4296,15 +4188,6 @@ fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
 
 /// `import_role` and `include_role` both run a role the play's `roles:` list has already run with
 /// the same parameters.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `base` runs six times - four entries in
-/// `roles:` counting `child`'s dependency, then once for the bare `import_role: { name: base }` in
-/// `tasks:` whose entry is identical to the bare one the list already ran, then once for the
-/// `include_role` behind it.
-///
-/// What would make this red: letting either statement consult the play's own list of what it has
-/// run, which drops it and leaves five - a run reporting success having done less than the
-/// playbook asked for.
 #[test]
 fn an_import_role_runs_again_what_the_roles_list_already_ran() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -4329,16 +4212,6 @@ fn an_import_role_runs_again_what_the_roles_list_already_ran() {
 
 /// A ring of roles importing each other, and a file importing itself, are refused before the
 /// recursion runs out of stack.
-///
-/// Measured on ansible-core 2.19.12: two roles importing each other are refused with `A
-/// recursion loop was detected with the roles specified.`, exit 1, while a file importing itself
-/// with `import_tasks` is not caught at all - the interpreter dies and `ansible-playbook` exits
-/// 250 printing its own traceback. This engine refuses both, at exit 1, and the second in its
-/// own words: the divergence is recorded rather than reproducing a crash.
-///
-/// What would make this red: an unbounded recursion, which kills the process with no message and
-/// no exit code of its own; or a depth counter that only one of the two recursions increments,
-/// which leaves the other unbounded.
 #[test]
 fn a_ring_of_imports_is_refused_instead_of_exhausting_the_stack() {
     let deadline = std::time::Duration::from_secs(20);
@@ -4360,16 +4233,8 @@ fn a_ring_of_imports_is_refused_instead_of_exhausting_the_stack() {
     assert!(err.contains("self-loop.yml"), "{err}");
 }
 
-/// An argument an import statement does not take is refused by its own name, rather than read
-/// past and dropped.
-///
-/// Measured on ansible-core 2.19.12: `Invalid options for import_role: typo` and `Invalid
-/// options for import_tasks: apply`, exit 4 for both. The nine arguments `import_role` does take
-/// were measured the same way, `apply` being the one `import_tasks` refuses that its sibling
-/// `include_tasks` accepts.
-///
-/// What would make this red: reading the arguments the statement knows and ignoring the rest,
-/// which accepts a typo silently and runs the role without what the operator meant to hand it.
+/// An argument an import statement does not take is refused by its own name, rather than read past
+/// and dropped.
 #[test]
 fn an_import_statement_refuses_an_argument_it_does_not_take() {
     for (file, message) in [
@@ -4415,20 +4280,8 @@ fn a_rescue_takes_a_failure_raised_inside_an_include() {
     );
 }
 
-/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out
-/// of a failed block, plus a `loop` over an empty list.
-///
-/// Measured on ansible-core 2.19.12, line for line: the empty loop shows one `skipping:` per host
-/// and counts one `skipped`, and both includes bring their file in for both hosts. Recap
-/// `ok=5 skipped=1 rescued=1` for each host, exit 0.
-///
-/// What this proves is that an include is reached from inside a `rescue` and from inside an
-/// `always` that runs behind one. Both hosts are rescued here, so neither is draining anything:
-/// the shape where a splice moves an index a host is already carrying is `draining.yml` below,
-/// and the assertions here cannot speak for it. What would make this red: a splice landing
-/// outside the section the statement sat in, so one of the two `included:` lines never prints;
-/// or an include reached with the batch unreported, which is a deadlock and fails on the
-/// deadline rather than on an assertion.
+/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out of
+/// a failed block, plus a `loop` over an empty list.
 #[test]
 fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
     let out = volant_within(
@@ -4465,17 +4318,6 @@ fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
 
 /// A host draining the `always` of a block nobody rescues reaches an include written in that
 /// section, and the rest of the section still runs behind what the include brought in.
-///
-/// Measured on ansible-core 2.19.12: the body fails, the `always` runs its include and then the
-/// task behind it, the step after the block does not run, and the recap reads
-/// `ok=3 failed=1` at exit 2 for each host - the `include_tasks` statement itself counting one of
-/// those three.
-///
-/// This is the shape where a splice moves an index a host is already carrying, and it is the
-/// only test here that can see it: the end of the `always` section the host is draining sits
-/// past the insertion point, and the driver moves it by however much the list grew. What would
-/// make this red: that index left where it was, which ends the drain one step early -
-/// `second always task` never runs and the recap reads `ok=2`.
 #[test]
 fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
     let out = volant_within(
@@ -4540,14 +4382,6 @@ fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
 }
 
 /// A file that includes itself is bounded rather than followed.
-///
-/// Measured on ansible-core 2.19.12: it is not bounded there at all - the file is read again and
-/// again until Python's stack is gone, four thousand lines of output later, and
-/// `ansible-playbook` exits **250** reporting its own crash. This engine refuses at the depth its
-/// other recursions share, in its own words, as an ordinary task failure with a recap behind it.
-///
-/// What would make this red: the ceiling removed, which grows the step list until the process is
-/// killed and `volant_within` fails on the deadline rather than on an assertion.
 #[test]
 fn an_include_that_includes_itself_is_bounded() {
     let out = volant_within(
@@ -4573,15 +4407,6 @@ fn an_include_that_includes_itself_is_bounded() {
 
 /// An argument an include statement does not take, or takes and this release cannot honour, is
 /// refused by its own name before the first connection.
-///
-/// `include_role: public: true` is measured to export the role's `defaults` and `vars` to
-/// everything behind the statement, where the default keeps them to the role's own tasks - which
-/// would mean changing the play's variable layers while its hosts stand at different steps of it.
-/// `include_vars: dir:` is measured to read every file of a directory in name order. Both are
-/// refused rather than read and dropped.
-///
-/// What would make this red: either option accepted and forgotten, which runs the playbook
-/// without what the operator asked for and reports success.
 #[test]
 fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     for (file, message) in [
@@ -4605,25 +4430,8 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     }
 }
 
-/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in,
-/// stops the statement instead of being read and dropped.
-///
-/// The pre-flight runs once, over the compilation, and a dynamic include reads its file while the
-/// play runs, so nothing used to look at what arrived. The assertion is the marker's absence, not
-/// the sentence on the terminal: a run that printed a refusal while still having run `touch` would
-/// pass a snapshot and fail this.
-///
-/// Two keywords rather than one, because the hole is the whole `Support::Preflight` class and not
-/// `check_mode`. `check_mode: true` is the sharp one - the task the operator asked to have only
-/// described runs for real - and `throttle` stands for the rest of the table.
-///
-/// **A deliberate divergence from ansible-core 2.19.12**, which has a check mode and skips the
-/// task. Refusing is the honest answer while the mode does not exist; running for real is not.
-///
-/// What would make this red: the spliced steps reaching the run unchecked, which creates the
-/// marker and reports success; the refusal arriving without naming the keyword, which leaves the
-/// operator to guess which line to fix; or the statement failing before it resolves its file,
-/// which would refuse every include there is - the test above is the other half of that.
+/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in, stops
+/// the statement instead of being read and dropped.
 #[test]
 fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
     for (kind, keyword, sentence) in [
@@ -4686,11 +4494,7 @@ fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
 }
 
 /// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this
-/// release has no layer to put the keywords it carries on. Both an unknown key and `apply` are
-/// caught before the first connection, the same as every other include and import statement.
-///
-/// What would make this red: `include_options` accepting anything, which would run the include
-/// and report success having ignored what the operator wrote.
+/// release has no layer to put the keywords it carries on.
 #[test]
 fn include_tasks_refuses_apply_and_an_unknown_key() {
     let dir = probe_dir("include-tasks-options");
@@ -4723,12 +4527,6 @@ fn include_tasks_refuses_apply_and_an_unknown_key() {
 
 /// An `import_tasks` naming a file that is not there stops the run at exit 1, in the reference's
 /// own words, before anything has run.
-///
-/// Measured on ansible-core 2.19.12: `Unable to retrieve file contents.` followed by
-/// `Could not find or access '<absolute path>' on the Ansible Controller.`, exit 1.
-///
-/// What would make this red: an import whose file is missing being skipped, which is a run that
-/// reports success having done none of what the imported file said.
 #[test]
 fn an_import_tasks_naming_a_missing_file_stops_the_run() {
     let dir = probe_dir("import-missing");
@@ -4755,12 +4553,6 @@ fn an_import_tasks_naming_a_missing_file_stops_the_run() {
 
 /// `import_playbook` is a play-level statement; written as a task, the reference cannot run it
 /// either, and dies with its own traceback rather than a message naming what was wrong.
-///
-/// Measured on ansible-core 2.19.12: `Task failed: Action 'ansible.builtin.import_playbook' does
-/// not support raw params.`, exit 2. This engine refuses it the same way, before anything runs.
-///
-/// What would make this red: the task falling through to the ordinary module path instead, which
-/// would try to run a module named `import_playbook` and fail with a different message.
 #[test]
 fn import_playbook_written_as_a_task_is_refused_by_its_own_name() {
     let dir = probe_dir("import-playbook-as-task");
@@ -4793,12 +4585,6 @@ fn lines(out: &Output) -> Vec<String> {
 
 /// The same rule without `serial`: a play whose every host fails is a batch that lost every host,
 /// so the play behind it never appears.
-///
-/// Measured on ansible-core 2.19.12: `h1` and `h2` both fail in the first play, `PLAY [` shows
-/// once, the second play's `second` is nowhere, exit 2.
-///
-/// What would make this red: the second play running, which is this repository's most expensive
-/// bug family - a run reporting on hosts it never touched.
 #[test]
 fn every_host_failing_ends_the_run_before_the_next_play() {
     let out = volant_within(
@@ -4819,14 +4605,6 @@ fn every_host_failing_ends_the_run_before_the_next_play() {
 
 /// A play whose resolved hosts have all failed already is not a batch that lost them: its banner
 /// prints alone and the run carries on.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails in the first play, `PLAY [h1]` prints with
-/// nothing under it - **no** `skipping: no hosts matched`, which is what a pattern that matched
-/// nothing gets - and `PLAY [h2]` then runs its task. Exit 2, from the first play's failure.
-///
-/// What would make this red: `skipping: no hosts matched` under the banner, the banner missing,
-/// or the run stopping there the way it stops for a batch that lost its hosts. The last is the
-/// one to watch: that rule and this one are one line apart and read the same two host sets.
 #[test]
 fn a_play_whose_hosts_have_all_failed_shows_its_banner_alone() {
     let out = volant_within(
@@ -4868,14 +4646,6 @@ fn a_play_whose_hosts_have_all_failed_shows_its_banner_alone() {
 
 /// A batch whose hosts had all failed before it started runs nothing, says nothing beyond its
 /// banner, and does **not** end the run.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails, a second play over `all` with `serial: 1`
-/// cuts `[h1]`, `[h2]`, `[h3]` - the failed host still gets a batch and a banner - and `h2` and
-/// `h3` then run theirs, followed by a third play. Exit 2, from the first play's failure.
-///
-/// What would make this red: cutting the batches from the surviving hosts, which merges them and
-/// loses a banner; or reading "no live host in this batch" as "this batch lost every host" and
-/// ending the run, which would silently drop two hosts and a whole play.
 #[test]
 fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
     let out = volant_within(
@@ -4912,19 +4682,8 @@ fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
     );
 }
 
-/// `vars_files` is read once per batch, not once for the whole play: a path templated on
-/// `ansible_play_batch` must read a different file for each batch of a `serial` play, and must
-/// not see a host that already failed in the play before it.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails, a second play with `serial: 1` over `all`
-/// reads `vars_h1.yml` for `h1`'s own (never-run) batch, `vars_h2.yml` when `h2`'s batch runs and
-/// `vars_h3.yml` when `h3`'s batch runs - three separate renders and reads, one per batch, each
-/// seeing that batch's own `ansible_play_batch`.
-///
-/// What would make this red: `vars_files` rendered once before the batches are cut, from the
-/// play's unfiltered host list - `ansible_play_batch` would then read `h1,h2,h3` for every host,
-/// `vars_h1_h2_h3.yml` does not exist among the fixtures, so the entry is silently skipped and
-/// `marker` stays undefined for both `h2` and `h3`.
+/// `vars_files` is read once per batch of a `serial` play, so a path templated on
+/// `ansible_play_batch` reads a different file for each batch.
 #[test]
 fn vars_files_is_read_per_batch_not_per_play() {
     let out = volant_within(
@@ -4949,16 +4708,6 @@ fn vars_files_is_read_per_batch_not_per_play() {
 }
 
 /// A `run_once` task that fails takes every other host of the batch out of the play.
-///
-/// Measured on ansible-core 2.19.12: `fatal: [h1]: FAILED!`, no `after` line for either host,
-/// **no recap line for h2** - it ran nothing, so there is nothing to count - and exit 2. The
-/// same holds with a `rescue` around the task: the host that ran it is rescued and carries on
-/// (`rescued=1`, its own `after the block` line), the other host still leaves, and the run
-/// still exits 2.
-///
-/// What would make this red: the other host carrying on past a task nobody ran for it, which is
-/// this project's own worst failure - a run reporting success having done nothing; or the
-/// rescued shape exiting 0, which would report success for a play the reference failed.
 #[test]
 fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
     let out = volant_within(
@@ -5010,16 +4759,8 @@ fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
     assert!(!text.contains("h2                         :"), "{text}");
 }
 
-/// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the
-/// exit code stays the unreachable one.
-///
-/// Measured on ansible-core 2.19.12 with an unreachable h1: `fatal: [h1]: UNREACHABLE!` with no
-/// arrow, no line and no recap entry for h2, and exit **4** - not 6. So a host that leaves
-/// because its runner never answered adds nothing of its own to the exit code, while a host
-/// that leaves because its runner's task failed adds 2.
-///
-/// What would make this red: h2 waiting for a verdict that can never come, which hangs the run
-/// and reaches the deadline; or h2 counted as failed, which turns the reference's 4 into 6.
+/// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the exit
+/// code stays the unreachable one.
 #[test]
 fn an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it() {
     let out = volant_within(
@@ -5041,15 +4782,8 @@ fn an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it() {
     assert!(!text.contains("h2                         :"), "{text}");
 }
 
-/// A delegate nothing can reach takes the **delegating** host out of the run, and the line
-/// carries the arrow.
-///
-/// Measured on ansible-core 2.19.12 against an unreachable delegate:
-/// `fatal: [h2 -> h1]: UNREACHABLE!`, the delegating host counted `unreachable=1`, the delegate
-/// absent from the recap, and exit 4.
-///
-/// What would make this red: the arrow missing, which hides which host could not be reached; or
-/// the delegate counted in the recap, which invents a host line for work it never accepted.
+/// A delegate nothing can reach takes the **delegating** host out of the run, and the line carries
+/// the arrow.
 #[test]
 fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
     let out = volant_within(
@@ -5074,13 +4808,6 @@ fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
 }
 
 /// A host that has failed is still a valid delegate.
-///
-/// Measured on ansible-core 2.19.12: h3 fails its own task, h1 then delegates to h3 and the
-/// task runs (`changed: [h1 -> h3]`), because the delegating driver opens its own connection to
-/// the delegate rather than sharing the one the delegate's own driver had.
-///
-/// What would make this red: the delegate looked for in the live host list, which would fail
-/// h1's task for a host that answers perfectly well.
 #[test]
 fn a_failed_host_is_still_a_valid_delegate() {
     let out = volant_within(
@@ -5124,21 +4851,8 @@ fn trust_dir(name: &str, hosts: &str) -> (std::path::PathBuf, std::path::PathBuf
     (dir, marker)
 }
 
-/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so
-/// a value that arrived from a managed host must never reach it. Every other guard in this
-/// release stops a *second* render; this site takes what a render already produced and hands it
-/// back as source text, which is a different mechanism and needs a different stop.
-///
-/// Measured on ansible-core 2.19.12: both the plain form and the loop form fail the task with
-/// `Task failed: Error while resolving `var` expression: Encountered untrusted template or
-/// expression.`, so the refusal is the reference's answer and not this engine's invention.
-///
-/// The payload has no `{{ }}` around it, because an expression is what this site compiles. The
-/// marker's absence is the assertion; the sentence on the terminal is only the shape of the
-/// refusal.
-///
-/// What would make this red: rendering a task's arguments without keeping which of them read a
-/// managed host, which is what `render_value` alone gives.
+/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so a
+/// value that arrived from a managed host must never reach it.
 #[test]
 fn a_variable_named_by_a_result_is_never_evaluated() {
     let (dir, marker) = trust_dir("debug-var", "h1 ansible_connection=local\n");
@@ -5291,13 +5005,8 @@ fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The other half of the guard, and the one the exit-code test above cannot see: a user name
-/// still reaches the wire **bare**, because the remote shell is the only thing that can expand
-/// it. The recorded command line is the assertion.
-///
-/// What would make this red: `shell_word` single-quoting the tilde segment along with the rest.
-/// Every run would then cache the agent in a directory literally named `~root`, and a test that
-/// only read the exit code would stay green while every real host broke.
+/// The other half of the guard, and the one the exit-code test above cannot see: a user name still
+/// reaches the wire **bare**, because the remote shell is the only thing that can expand it.
 #[test]
 fn an_ordinary_tilde_user_reaches_the_ssh_command_line_bare() {
     let (dir, log) = fake_ssh_recording(
@@ -5420,20 +5129,7 @@ fn the_connection_a_run_asks_for_decides_whether_ssh_runs(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `no_log` covers every event a task produces, not only its result. A diagnostic that goes
-/// straight to stderr is still that task speaking, and the policy has to reach it.
-///
-/// Both streams are grepped, because the warning this triggers is written to stderr while the
-/// censored result is written to stdout: a test reading one of them would pass while the value
-/// is on the other. `CANARY-7f3a9c` is a fixture string, not a credential.
-///
-/// The warning itself is **not** blanked: measured on ansible-core 2.19.12, a task whose
-/// `environment` does not render to a mapping warns with the raw source of the whole stack of
-/// layers, `['{{ secret }}']`, brackets included, and that text holds nothing the playbook did
-/// not already say out loud.
-///
-/// What would make this red: `prepare` printing the rendered value, which is what it did -- the
-/// censorship policy could not reach a write it never saw.
+/// `no_log` covers every event a task produces, not only its result.
 #[test]
 fn no_log_covers_the_environment_warning() {
     let out = volant_within(
@@ -5458,23 +5154,7 @@ fn no_log_covers_the_environment_warning() {
     assert_eq!(out.status.code(), Some(0));
 }
 
-/// A timeout covers the task, not the first process of it. A descendant holding stdout open keeps
-/// the task running, so the deadline has to reach the readers too.
-///
-/// The elapsed time is the property under test, so it is asserted -- the one place in this suite
-/// where it is. `volant_within` stays around it as the net against a hang: without it a regression
-/// that never returns would sit until the harness's own slow-test timeout.
-///
-/// Three seconds around a one-second deadline, not two: the rest of the budget is starting a
-/// debug-built controller, reading the inventory and spawning the local agent, and on a loaded
-/// runner that alone has no trouble taking a second. The regression this catches waits for the
-/// descendant, which holds the run for the five seconds its `sleep` asks for, so the extra
-/// second is taken out of slack rather than out of what the assertion discriminates.
-///
-/// What would make this red: waiting for the reader threads outside the deadline, which is what
-/// the wait did -- the task ended when the descendant did, and the run reported success. And,
-/// for the survivor check, a timeout that returns without killing the process group: every other
-/// assertion still holds with the descendant alive.
+/// A timeout covers the task, not the first process of it.
 #[test]
 fn a_timeout_covers_a_descendant_holding_the_pipes() {
     // A `sleep` duration that doubles as the `pgrep -f` marker, as in `local_transport.rs`.
@@ -5520,24 +5200,7 @@ fn assert_no_survivor(marker: &str) {
     );
 }
 
-/// The same deadline over the other pipe. A descendant that keeps standard input open without
-/// reading it leaves the write blocked once the pipe buffer is full, and that write is on the
-/// success path: the process has been reaped and both readers have returned end-of-file, so
-/// nothing has killed the group and nothing will until the descendant lets go.
-///
-/// The child of the shell exits at once and the grandchild holds the pipe for three seconds, so a
-/// run that waits for the write comes back at about three seconds reporting success, and a run
-/// that holds the deadline over it comes back at about one reporting the timeout. The megabyte is
-/// what makes the write block at all: anything that fits in a pipe buffer is written and forgotten
-/// before the child is even reaped, which is the ordinary path and stays green.
-///
-/// Elapsed time is asserted here for the same reason as above, with `volant_within` as the net
-/// against a regression that never returns.
-///
-/// What would make this red: joining the writer thread instead of waiting on it under the
-/// deadline. Measured against ansible-core 2.19.12, which fails this task on its timeout and exits
-/// 2; this release reported success and exit 0 after the descendant's three seconds. The survivor
-/// check reddens on a timeout that returns without killing the group.
+/// The same deadline over the other pipe.
 #[test]
 fn a_timeout_covers_a_descendant_holding_stdin() {
     // An argument the descendant ignores, carried on its command line for `pgrep -f`.
@@ -5568,16 +5231,8 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
     assert_no_survivor(&marker);
 }
 
-/// A module argument the reference has and this release does not act on is refused by its own
-/// name, before anything connects. A table saying a module runs says nothing about the rest of
-/// that module's API, and an argument accepted and then dropped reports success having done
-/// something other than what the playbook asked for.
-///
-/// The assertion is that the refusal comes before the play header: a refusal after `PLAY [` means
-/// a host was already reached, and possibly changed.
-///
-/// What would make this red: the pre-flight not consulting the module's argument list, which lets
-/// the task through to an agent that drops the argument and reports the task green.
+/// A module argument the reference has and this release does not act on is refused by its own name,
+/// before anything connects.
 #[test]
 fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     let out = volant(&["playbook", &fixture("module-argument-refused.yml")]);
@@ -5596,18 +5251,7 @@ fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     );
 }
 
-/// The same refusal, for a value the pre-flight could not read. A template is rendered per host,
-/// long after the pre-flight is over, so `check_arguments` leaves it alone rather than refusing on
-/// a guess -- and the agent, which has the value, refuses it there instead of dropping it.
-///
-/// Without this the task prints `$HOME`, reports `changed` and exits 0, where the reference prints
-/// the home directory: the accepted-then-silently-ignored divergence the argument registry exists
-/// to close, surviving inside the registry's own subject matter. The run reaches the host first,
-/// so the refusal costs a connection and exits 2 rather than 4.
-///
-/// What would make this red: the agent reading the registry for names alone, which lets the
-/// rendered value through unread; or the refusal borrowing the unknown-argument sentence, which
-/// tells an operator waiting on this release that they have a typo.
+/// The same refusal, for a value the pre-flight could not read.
 #[test]
 fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
     let out = volant(&["playbook", &fixture("module-argument-refused-late.yml")]);
@@ -5626,23 +5270,6 @@ fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
 }
 
 /// The default of that same argument is where the two engines part, and no playbook writes it.
-/// Ansible expands `$VAR` in a `command`'s arguments unless it is told not to; this release
-/// expands nothing, so `command: mkdir -p $HOME/releases` makes a directory called `$HOME` and
-/// reports the same success. That divergence is published on the modules reference page rather than
-/// refused, because the pre-flight reads the text of a playbook and the text cannot say whether
-/// a `$` names something the host has set: `awk '{print $1}'` and a regular expression ending in
-/// `$` run identically under both engines, and refusing on the character would stop them before
-/// the first connection. This test is what pins the documented answer to the running one.
-///
-/// The probe variable rather than `$HOME`: it is set for this run alone, so the expanded form
-/// and the literal form are two strings this assertion can tell apart on any machine.
-///
-/// The `shell` half is the parity half, and it is here so that one test says where the boundary
-/// is. The line goes to a shell, the shell expands it, and both engines print the value.
-///
-/// What would make this red: the `command` path gaining expansion, which would make the page
-/// wrong; or the `shell` path losing it, which would diverge from the reference in the other
-/// direction and break every playbook that uses a shell variable.
 #[test]
 fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
     let out = volant_within_env(
@@ -5662,13 +5289,8 @@ fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
     );
 }
 
-/// An argument *neither* engine has is a different mistake, and gets the reference's own answer
-/// for it: the module fails at run time with the reference's sentence and the reference's code,
-/// rather than this engine's pre-flight refusal. Measured on ansible-core 2.19.12, through
-/// `args:` -- the ad-hoc path validates nothing, because `free_form` swallows the whole line.
-///
-/// What would make this red: the two paths collapsed into one, which gives the same code and the
-/// same words to a playbook waiting on this release and a playbook with a typo in it.
+/// An argument neither engine has fails the module at run time, with the reference's sentence and
+/// exit code.
 #[test]
 fn an_argument_neither_engine_has_fails_with_the_reference_s_words() {
     let out = volant(&["playbook", &fixture("module-argument-unknown.yml")]);
@@ -5755,19 +5377,8 @@ fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-/// A playbook naming a Python module reaches its hosts carrying the payload this run built for
-/// it, and the helper that built it starts **once for the whole run**.
-///
-/// Four tasks over two hosts, and the proof is what is left behind: one line in `starts.log`, and
-/// the helper's own four bytes cached under each host's `remote_tmp` by the agent that received
-/// them.
-///
-/// What would make this red, and each of these survived the whole library suite before it was
-/// written: `cli.rs` keeping the union out of the run state, which leaves every Python task
-/// failing with "this run built none for it" and nothing on disk; the driver passing `None` where
-/// the blob belongs, which fails the batch before a byte goes out; and a helper started per host,
-/// per batch or per task, which writes two, two and four lines instead of one -- the real one
-/// costs a cold ansible-core build, so the count is the measurement, not a tidiness.
+/// A playbook naming a Python module reaches its hosts carrying the payload this run built for it,
+/// and the helper that built it starts **once for the whole run**.
 #[test]
 fn a_run_builds_one_payload_and_sends_it_to_every_host() {
     let dir = std::env::temp_dir().join(format!("volant-pypayload-{}", std::process::id()));

@@ -806,6 +806,7 @@ fn literal(text: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use serde_json::json;
 
     const SAMPLE: &str = r#"
@@ -836,205 +837,118 @@ env=prod
         hosts.iter().map(|h| h.name.as_str()).collect()
     }
 
-    #[test]
-    fn groups_children_and_vars_are_read() {
+    const ALL_VARS: &str = "[all:vars]\nx=1\ny=1\n\n[web]\nweb1\n\n[web:vars]\nx=2\n";
+    // Both groups hold web1 at depth 1: "zeta" is applied after "alpha", so it wins.
+    const EQUAL_DEPTH: &str =
+        "[zeta]\nweb1\n[alpha]\nweb1\n[zeta:vars]\nk=zeta\n[alpha:vars]\nk=alpha\n";
+
+    /// A host's variable comes from the layer that wins: its own line, the deepest group, then
+    /// the shallower ones, `all` last, equal depths in alphabetical order.
+    #[rstest]
+    #[case::own_line(SAMPLE, "web1", "ansible_host", json!("10.0.0.1"))]
+    #[case::quoted_value(SAMPLE, "web1", "role", json!("front end"))]
+    #[case::group_var(SAMPLE, "web1", "http_port", json!(80))]
+    #[case::group_var_second_host(SAMPLE, "web2", "http_port", json!(80))]
+    #[case::child_wins_over_parent(SAMPLE, "web1", "tier", json!("web"))]
+    #[case::parent_reaches_child(SAMPLE, "web1", "env", json!("prod"))]
+    #[case::parent_alone(SAMPLE, "db1", "tier", json!("prod"))]
+    #[case::all_loses_to_a_group(ALL_VARS, "web1", "x", json!(2))]
+    #[case::all_reaches_every_host(ALL_VARS, "web1", "y", json!(1))]
+    #[case::equal_depth_alphabetical(EQUAL_DEPTH, "web1", "k", json!("zeta"))]
+    #[case::defined_localhost_wins("localhost ansible_connection=ssh\n", "localhost", "ansible_connection", json!("ssh"))]
+    fn a_host_variable_comes_from_the_layer_that_wins(
+        #[case] ini: &str,
+        #[case] host: &str,
+        #[case] key: &str,
+        #[case] want: Value,
+    ) {
+        let inv = Inventory::parse_ini(ini).unwrap();
+        let found = inv.resolve(host);
+        assert_eq!(found.hosts[0].vars[key], want, "{host}.{key}");
+    }
+
+    /// The pattern language: groups, unions, exclusions, intersections, wildcards over hosts and
+    /// groups, subscripts, in inventory order.
+    #[rstest]
+    #[case::all("all", &["lonely", "web1", "web2", "db1"])]
+    #[case::group("prod", &["web1", "web2", "db1"])]
+    #[case::comma_union("db,web1", &["db1", "web1"])]
+    #[case::colon_union("web:db", &["web1", "web2", "db1"])]
+    #[case::unknown_term_is_skipped("nope,web2", &["web2"])]
+    #[case::exclusion("all:!web", &["lonely", "db1"])]
+    #[case::intersection("prod:&web", &["web1", "web2"])]
+    #[case::intersection_then_exclusion("prod:&web:!web2", &["web1"])]
+    #[case::bare_exclusion_starts_from_all("!web", &["lonely", "db1"])]
+    #[case::empty("", &[])]
+    #[case::comma_only(",", &[])]
+    #[case::colon_only(":", &[])]
+    #[case::host_wildcard("w*b1", &["web1"])]
+    #[case::group_wildcard("pro*", &["web1", "web2", "db1"])]
+    #[case::index("web[0]", &["web1"])]
+    #[case::negative_index("web[-1]", &["web2"])]
+    #[case::slice("web[0:1]", &["web1", "web2"])]
+    #[case::out_of_range_selects_nothing("web[12]", &[])]
+    fn a_pattern_selects_in_inventory_order(#[case] pattern: &str, #[case] want: &[&str]) {
         let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        let web = inv.resolve("web");
-        assert_eq!(names(&web.hosts), ["web1", "web2"]);
-        assert_eq!(web.hosts[0].vars["ansible_host"], json!("10.0.0.1"));
-        assert_eq!(web.hosts[0].vars["role"], json!("front end"));
-        assert_eq!(web.hosts[0].vars["http_port"], json!(80));
-        assert_eq!(web.hosts[1].vars["http_port"], json!(80));
+        assert_eq!(names(&inv.resolve(pattern).hosts), want, "{pattern}");
     }
 
+    /// The controller is an implicit local host outside `all`; `::1` is cut by the pattern
+    /// separator, a known divergence (the reference runs it on the controller).
     #[test]
-    fn child_group_vars_win_over_parent_group_vars() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        let web1 = inv.resolve("web1").hosts.remove(0);
-        assert_eq!(web1.vars["tier"], json!("web"));
-        assert_eq!(web1.vars["env"], json!("prod"));
-        let db1 = inv.resolve("db1").hosts.remove(0);
-        assert_eq!(db1.vars["tier"], json!("prod"));
-    }
-
-    #[test]
-    fn all_and_patterns_resolve_in_inventory_order() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        assert_eq!(
-            names(&inv.resolve("all").hosts),
-            ["lonely", "web1", "web2", "db1"]
-        );
-        assert_eq!(names(&inv.resolve("prod").hosts), ["web1", "web2", "db1"]);
-        assert_eq!(names(&inv.resolve("db,web1").hosts), ["db1", "web1"]);
-        assert_eq!(names(&inv.resolve("web:db").hosts), ["web1", "web2", "db1"]);
-    }
-
-    #[test]
-    fn unknown_patterns_are_reported_not_fatal() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        let res = inv.resolve("nope,web2");
-        assert_eq!(names(&res.hosts), ["web2"]);
-        assert_eq!(res.unmatched, ["nope"]);
-    }
-
-    #[test]
-    fn localhost_is_implicit_and_local() {
-        let inv = Inventory::empty();
-        let res = inv.resolve("localhost");
-        assert_eq!(res.hosts[0].name, "localhost");
-        assert_eq!(res.hosts[0].vars["ansible_connection"], json!("local"));
-        assert!(
-            inv.resolve("all").hosts.is_empty(),
-            "implicit localhost is not part of all"
-        );
-    }
-
-    /// A pattern naming the controller gets an implicit host with a local connection, for the
-    /// two spellings a host pattern can carry. `::1` is the third spelling and cannot arrive
-    /// here; see the test below.
-    ///
-    /// What would make this red: `is_localhost` losing a spelling, or the resolver's call to it
-    /// going away. Either sends the pattern back to matching nothing, which is a run that warns,
-    /// runs no task and still exits 0 - indistinguishable from a run that did the work.
-    #[test]
-    fn every_spelling_of_the_controller_resolves_to_an_implicit_local_host() {
+    fn the_controller_is_an_implicit_local_host() {
         let inv = Inventory::empty();
         for name in ["localhost", "127.0.0.1"] {
             let res = inv.resolve(name);
             assert_eq!(res.hosts.len(), 1, "{name} matched nothing");
             assert_eq!(res.hosts[0].name, name);
-            assert_eq!(
-                res.hosts[0].vars["ansible_connection"],
-                json!("local"),
-                "{name} is the controller"
-            );
+            assert_eq!(res.hosts[0].vars["ansible_connection"], json!("local"));
             assert!(res.unmatched.is_empty(), "{name}: {:?}", res.unmatched);
         }
-    }
-
-    /// A known divergence, pinned so it cannot drift in silence. `:` is Ansible's own pattern
-    /// separator, so `split_terms` cuts `::1` into two empty terms and `1` before `is_localhost`
-    /// can ever see it - `hosts: "::1"` selects nothing here. Measured on ansible-core 2.19.12,
-    /// the reference runs the same play as `changed: [::1]` on the controller.
-    ///
-    /// `is_localhost` still names all three spellings, and the other two callers - the delegate
-    /// lookup and the implicit host's connection variable - do reach it with `::1`, which is why
-    /// the divergence is confined to a play's own host pattern.
-    ///
-    /// What would make this red: `split_terms` learning to keep an address-shaped term whole.
-    /// That is the fix, and whoever makes it should delete this test rather than update it.
-    #[test]
-    fn an_ipv6_controller_pattern_is_cut_by_the_pattern_separator() {
+        assert!(
+            inv.resolve("all").hosts.is_empty(),
+            "implicit localhost is not part of all"
+        );
         assert_eq!(split_terms("::1"), ["", "", "1"]);
-        let res = Inventory::empty().resolve("::1");
+        let res = inv.resolve("::1");
         assert!(res.hosts.is_empty(), "{:?}", names(&res.hosts));
         assert_eq!(res.unmatched, ["1"]);
     }
 
-    #[test]
-    fn a_defined_localhost_wins_over_the_implicit_one() {
-        let inv = Inventory::parse_ini("localhost ansible_connection=ssh\n").unwrap();
-        assert_eq!(
-            inv.resolve("localhost").hosts[0].vars["ansible_connection"],
-            json!("ssh")
-        );
+    #[rstest]
+    #[case::unterminated_quote("[web]\nweb1 role=\"unterminated\n", 2)]
+    #[case::no_equals_sign("[web:vars]\nno_equals_sign\n", 2)]
+    #[case::empty_host_name("[web]\n\"\"\n", 2)]
+    #[case::unbalanced_header("[web\nweb1\n", 1)]
+    fn a_syntax_error_carries_its_line_number(#[case] ini: &str, #[case] line: usize) {
+        assert_eq!(Inventory::parse_ini(ini).unwrap_err().line, line);
     }
 
-    #[test]
-    fn syntax_errors_carry_the_line_number() {
-        let err = Inventory::parse_ini("[web]\nweb1 role=\"unterminated\n").unwrap_err();
-        assert_eq!(err.line, 2);
-        let err = Inventory::parse_ini("[web:vars]\nno_equals_sign\n").unwrap_err();
-        assert_eq!(err.line, 2);
+    /// `ok` is the ceiling an int still parses to; the rest are Python literals when they parse
+    /// as such and text when they do not.
+    #[rstest]
+    #[case::i64_max("ok=9223372036854775807", "ok", json!(i64::MAX))]
+    #[case::past_i64("huge=9223372036854775808", "huge", json!("9223372036854775808"))]
+    #[case::int("port=8080", "port", json!(8080))]
+    #[case::float("ratio=0.5", "ratio", json!(0.5))]
+    #[case::boolean("flag=True", "flag", json!(true))]
+    #[case::none("nothing=None", "nothing", json!(null))]
+    #[case::quoted("name='quoted text'", "name", json!("quoted text"))]
+    #[case::yes_is_text("word=yes", "word", json!("yes"))]
+    #[case::list("list=[1,2]", "list", json!([1, 2]))]
+    #[case::first_equals_splits("raw=a=b", "raw", json!("a=b"))]
+    fn an_ini_value_is_a_python_literal_when_it_parses_as_one(
+        #[case] words: &str,
+        #[case] key: &str,
+        #[case] want: Value,
+    ) {
+        let inv = Inventory::parse_ini(&format!("h {words}\n")).unwrap();
+        assert_eq!(inv.resolve("h").hosts[0].vars[key], want, "{words}");
     }
 
+    /// Groups are listed; a circular group resolves, and a host inside the cycle reaches `all`.
     #[test]
-    fn a_circular_group_resolves_instead_of_hanging() {
-        let inv = Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n").unwrap();
-        let res = inv.resolve("a");
-        assert!(res.hosts.is_empty());
-        assert!(res.unmatched.is_empty());
-    }
-
-    /// The circular fixture above has no host anywhere in the cycle, so `hosts.is_empty()` holds
-    /// whether or not `all` actually walks into the cycle — it cannot catch a root missing from
-    /// `all_children`. This one puts a real host inside the cycle: every member of `[a]`/`[b]` has
-    /// a parent (each other), so neither is a root, and `all` must still find `trapped` by falling
-    /// back to every host `self.hosts` knows about, not just the ones the walk reached.
-    #[test]
-    fn a_host_trapped_in_a_group_cycle_still_appears_in_all() {
-        let inv =
-            Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n\n[a]\ntrapped\n").unwrap();
-        assert_eq!(names(&inv.resolve("all").hosts), ["trapped"]);
-    }
-
-    #[test]
-    fn empty_host_name_is_rejected() {
-        let err = Inventory::parse_ini("[web]\n\"\"\n").unwrap_err();
-        assert_eq!(err.line, 2);
-    }
-
-    #[test]
-    fn unbalanced_section_header_is_rejected() {
-        let err = Inventory::parse_ini("[web\nweb1\n").unwrap_err();
-        assert_eq!(err.line, 1);
-    }
-
-    #[test]
-    fn integers_past_i64_fall_back_to_a_string() {
-        let inv =
-            Inventory::parse_ini("h ok=9223372036854775807 huge=9223372036854775808\n").unwrap();
-        let v = &inv.resolve("h").hosts[0].vars;
-        assert_eq!(v["ok"], json!(i64::MAX), "the ceiling itself still parses");
-        assert_eq!(
-            v["huge"],
-            json!("9223372036854775808"),
-            "one past i64::MAX is a documented ceiling, not an int"
-        );
-    }
-
-    #[test]
-    fn ini_values_are_python_literals_when_they_parse_as_such() {
-        let inv = Inventory::parse_ini(
-            "h port=8080 ratio=0.5 flag=True nothing=None name='quoted text' word=yes list=[1,2] raw=a=b\n",
-        )
-        .unwrap();
-        let v = &inv.resolve("h").hosts[0].vars;
-        assert_eq!(v["port"], json!(8080));
-        assert_eq!(v["ratio"], json!(0.5));
-        assert_eq!(v["flag"], json!(true));
-        assert_eq!(v["nothing"], json!(null));
-        assert_eq!(v["name"], json!("quoted text"));
-        assert_eq!(v["word"], json!("yes"), "yes is not a Python literal");
-        assert_eq!(v["list"], json!([1, 2]));
-        assert_eq!(
-            v["raw"],
-            json!("a=b"),
-            "the first '=' splits, the rest is the value"
-        );
-    }
-
-    #[test]
-    fn all_vars_apply_to_every_host_and_lose_to_any_group() {
-        let inv = Inventory::parse_ini("[all:vars]\nx=1\ny=1\n\n[web]\nweb1\n\n[web:vars]\nx=2\n")
-            .unwrap();
-        let v = &inv.resolve("web1").hosts[0].vars;
-        assert_eq!(v["x"], json!(2));
-        assert_eq!(v["y"], json!(1));
-    }
-
-    #[test]
-    fn groups_of_equal_depth_apply_in_alphabetical_order() {
-        // Both groups hold web1 at depth 1: "zeta" is applied after "alpha", so it wins.
-        let inv = Inventory::parse_ini(
-            "[zeta]\nweb1\n[alpha]\nweb1\n[zeta:vars]\nk=zeta\n[alpha:vars]\nk=alpha\n",
-        )
-        .unwrap();
-        assert_eq!(inv.resolve("web1").hosts[0].vars["k"], json!("zeta"));
-    }
-
-    #[test]
-    fn group_names_and_groups_are_exposed() {
+    fn groups_are_listed_and_cycles_terminate() {
         let inv = Inventory::parse_ini(SAMPLE).unwrap();
         assert_eq!(inv.group_names_of("web1"), ["prod", "web"]);
         let groups = inv.groups();
@@ -1042,6 +956,26 @@ env=prod
         assert_eq!(groups["prod"], ["web1", "web2", "db1"]);
         assert_eq!(groups["all"], ["lonely", "web1", "web2", "db1"]);
         assert_eq!(groups["ungrouped"], ["lonely"]);
+
+        let inv = Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n").unwrap();
+        let res = inv.resolve("a");
+        assert!(res.hosts.is_empty() && res.unmatched.is_empty());
+        let inv =
+            Inventory::parse_ini("[a:children]\nb\n\n[b:children]\na\n\n[a]\ntrapped\n").unwrap();
+        assert_eq!(names(&inv.resolve("all").hosts), ["trapped"]);
+    }
+
+    /// Unknown terms are reported, not fatal; a host sharing a group's name means the host and
+    /// warns.
+    #[test]
+    fn unmatched_terms_and_homonyms_are_reported() {
+        let inv = Inventory::parse_ini(SAMPLE).unwrap();
+        let res = inv.resolve("nope,web2");
+        assert_eq!(res.unmatched, ["nope"]);
+        let inv = Inventory::parse_ini("[same]\nsame\nother\n").unwrap();
+        let res = inv.resolve("same");
+        assert_eq!(names(&res.hosts), ["same"]);
+        assert_eq!(res.warnings.len(), 1);
     }
 
     #[test]
@@ -1055,91 +989,24 @@ env=prod
         assert!(glob_match("web[!1]", "web2") && !glob_match("web[!1]", "web1"));
         assert!(glob_match("w[a-z]b1", "web1") && !glob_match("w[a-z]b1", "w3b1"));
         // Measured against CPython's fnmatch.fnmatchcase (ansible-core 2.19.12's bundled
-        // 3.13.15): an unclosed `[`, an empty `[]`, and a bare `[!]` are all literal text, not a
-        // character class that matches nothing.
+        // 3.13.15): an unclosed `[`, an empty `[]`, and a bare `[!]` are all literal text.
+        assert!(glob_match("web[", "web["));
+        assert!(glob_match("a[]", "a[]") && !glob_match("a[]", "a"));
         assert!(
-            glob_match("web[", "web["),
-            "an unclosed set is literal text"
+            glob_match("a[!]", "a[!]") && !glob_match("a[!]", "a!") && !glob_match("a[!]", "a]")
         );
-        assert!(
-            glob_match("a[]", "a[]") && !glob_match("a[]", "a"),
-            "an empty [] is literal"
-        );
-        assert!(
-            glob_match("a[!]", "a[!]") && !glob_match("a[!]", "a!") && !glob_match("a[!]", "a]"),
-            "a bare [!] is literal"
-        );
-    }
-
-    #[test]
-    fn many_stars_do_not_blow_up() {
-        // Ten stars with no trailing 'b' in the text: the old recursive implementation tried
-        // every split point of every '*' before failing, on the order of 40^10 recursions on a
-        // 40-character miss. The iterative two-pointer scan fails in O(pattern * text) instead.
-        let text = "a".repeat(40);
-        let pattern = "*a*a*a*a*a*a*a*a*a*a*b";
-        assert!(!glob_match(pattern, &text));
-    }
-
-    #[test]
-    fn negation_and_intersection_compose() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        assert_eq!(names(&inv.resolve("all:!web").hosts), ["lonely", "db1"]);
-        assert_eq!(names(&inv.resolve("prod:&web").hosts), ["web1", "web2"]);
-        assert_eq!(names(&inv.resolve("prod:&web:!web2").hosts), ["web1"]);
-        assert_eq!(
-            names(&inv.resolve("!web").hosts),
-            ["lonely", "db1"],
-            "a bare exclusion has nothing to start from, so Ansible starts it from all"
-        );
-    }
-
-    #[test]
-    fn empty_and_separator_only_patterns_select_nothing() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        assert!(inv.resolve("").hosts.is_empty());
-        assert!(inv.resolve(",").hosts.is_empty());
-        assert!(inv.resolve(":").hosts.is_empty());
+        // Ten stars and a miss: the scan is O(pattern * text), not a recursion per split point.
+        assert!(!glob_match("*a*a*a*a*a*a*a*a*a*a*b", &"a".repeat(40)));
     }
 
     #[test]
     fn split_terms_does_not_swallow_terms_on_an_unbalanced_bracket() {
-        // No closing `]` anywhere: the `[` fails to open a bracket on its own, so the `:` still
-        // separates `db` into its own term instead of it being swallowed into `web[1:db`.
+        // No closing `]` anywhere: the `:` still separates `db` into its own term.
         assert_eq!(split_terms("web[1:db"), ["web[1", "db"]);
-        // The first `[` has no `]` of its own before the second `[` reopens one: it must not
-        // borrow that later bracket's close and collapse both terms into one.
+        // The first `[` must not borrow the later bracket's close.
         assert_eq!(split_terms("a[,b[1]"), ["a[", "b[1]"]);
-        // Still the required behaviour for a real subscript: the `:` inside stays part of the
-        // term.
+        // A real subscript keeps the `:` inside the term.
         assert_eq!(split_terms("web[0:1]"), ["web[0:1]"]);
-    }
-
-    #[test]
-    fn a_homonym_means_the_host_and_warns() {
-        let inv = Inventory::parse_ini("[same]\nsame\nother\n").unwrap();
-        let res = inv.resolve("same");
-        assert_eq!(names(&res.hosts), ["same"]);
-        assert_eq!(res.warnings.len(), 1);
-    }
-
-    #[test]
-    fn wildcards_also_match_group_names() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        assert_eq!(names(&inv.resolve("w*b1").hosts), ["web1"]);
-        assert_eq!(names(&inv.resolve("pro*").hosts), ["web1", "web2", "db1"]);
-    }
-
-    #[test]
-    fn subscripts_index_and_slice_a_resolved_pattern() {
-        let inv = Inventory::parse_ini(SAMPLE).unwrap();
-        assert_eq!(names(&inv.resolve("web[0]").hosts), ["web1"]);
-        assert_eq!(names(&inv.resolve("web[-1]").hosts), ["web2"]);
-        assert_eq!(names(&inv.resolve("web[0:1]").hosts), ["web1", "web2"]);
-        assert!(
-            inv.resolve("web[12]").hosts.is_empty(),
-            "an out-of-range index selects nothing, as the reference does, not an error"
-        );
     }
 
     /// The reference's own answer for a value ambiguous in Rust, taken from the inventory golden

@@ -1398,6 +1398,7 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     /// The tasks of a play, for the tests that wrote none of their own blocks. A block here is
     /// the test's mistake, not the loader's, so it says so rather than being skipped.
@@ -1472,95 +1473,40 @@ mod tests {
     }
 
     #[test]
-    fn hosts_may_be_a_list_and_gather_facts_defaults_to_true() {
+    fn hosts_lists_defaults_and_escalation_keywords_are_read() {
         let pb = parse("- hosts: [web, db]\n  tasks: []\n", "x.yml").unwrap();
         assert_eq!(pb.plays[0].hosts, "web,db");
         assert_eq!(pb.plays[0].name, "web,db", "unnamed plays take the pattern");
         assert!(pb.plays[0].gather_facts);
-        // Every entry counts. Measured on ansible-core 2.19.12: a list holding a non-string
-        // refuses the load at exit 4 with `Hosts list contains an invalid host value: '3'`.
-        // What would make this red: an entry quietly dropped, which runs the play against a
-        // shorter host list than the one written and reports success for it.
-        let err = parse("- hosts: [web, 3]\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(
-            format!("{err:#}").contains("Hosts list contains an invalid host value: '3'"),
-            "{err:#}"
-        );
-        // Measured on ansible-core 2.19.12: a float prints bare with its decimal kept --
-        // `Hosts list contains an invalid host value: '3.5'` -- never the
-        // `Value(FloatingPoint(OrderedFloat(3.5)))` Rust Debug blob an operator used to see.
-        let err = parse("- hosts: [web, 3.5]\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(
-            format!("{err:#}").contains("Hosts list contains an invalid host value: '3.5'"),
-            "{err:#}"
-        );
-        // A sequence or a mapping prints the way ansible-core's own Python repr renders one,
-        // measured: `'[1, 2]'`, `'{'a': 1}'` -- not a Rust `Vec`/`LinkedHashMap` Debug dump.
-        let err = parse("- hosts: [web, [1, 2]]\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(
-            format!("{err:#}").contains("Hosts list contains an invalid host value: '[1, 2]'"),
-            "{err:#}"
-        );
-        let err = parse("- hosts: [web, {a: 1}]\n  tasks: []\n", "x.yml").unwrap_err();
-        assert!(
-            format!("{err:#}").contains("Hosts list contains an invalid host value: '{'a': 1}'"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn key_value_is_parsed_for_a_module_that_is_not_free_form() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - set_fact: owner=root state=here\n",
-            "x.yml",
-        )
-        .unwrap();
-        let t = first(&pb);
-        assert_eq!(t.args["owner"], "root");
-        assert_eq!(t.args["state"], "here");
-    }
-
-    /// An attribute the reference does not have is refused here, in the reference's own words.
-    /// One it has but this release cannot execute is a different event and belongs to the
-    /// pre-flight, which is why `until` and `strategy` load without complaint below.
-    ///
-    /// What would make this red: the loader accepting an invented play attribute, which would
-    /// leave a typo in a playbook silently doing nothing.
-    #[test]
-    fn an_attribute_the_reference_does_not_have_is_refused_at_load() {
-        let err = parse(
-            "- hosts: all\n  nosuchplaykeyword: 1\n  tasks: []\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        let text = format!("{err:#}");
-        assert!(
-            text.contains("'nosuchplaykeyword' is not a valid attribute for a Play"),
-            "{text}"
-        );
-        let pb = parse(
-            "- hosts: all\n  strategy: free\n  tasks:\n    - name: Later\n      command: echo hi\n      throttle: 1\n",
-            "x.yml",
-        )
-        .expect("the reference has both, so the loader takes both");
-        assert_eq!(pb.plays[0].strategy.as_deref(), Some("free"));
-        assert_eq!(first(&pb).unsupported, ["throttle"]);
-    }
-
-    #[test]
-    fn escalation_keywords_are_read_at_both_levels() {
-        let pb = parse(
-            "- hosts: all\n  become: yes\n  become_user: deploy\n  become_method: sudo\n  tasks:\n    - command: id\n      become: 'false'\n      become_user: postgres\n",
+            "- hosts: all
+  become: yes
+  become_user: deploy
+  become_method: sudo
+  strategy: free
+  tasks:
+    - command: id
+      become: 'false'
+      become_user: postgres
+",
             "x.yml",
         )
         .unwrap();
         let play = &pb.plays[0];
         assert_eq!(play.r#become, Some(true), "'yes' is a boolean to Ansible");
         assert_eq!(play.become_user.as_deref(), Some("deploy"));
+        assert_eq!(play.strategy.as_deref(), Some("free"));
         let t = tasks(play)[0];
         assert_eq!(t.r#become, Some(false), "a quoted spelling still reads");
         assert_eq!(t.become_user.as_deref(), Some("postgres"));
-        let bare = parse("- hosts: all\n  tasks:\n    - command: id\n", "x.yml").unwrap();
+        let bare = parse(
+            "- hosts: all
+  tasks:
+    - command: id
+",
+            "x.yml",
+        )
+        .unwrap();
         assert_eq!(
             (bare.plays[0].r#become, first(&bare).r#become.is_none()),
             (None, true),
@@ -1568,269 +1514,221 @@ mod tests {
         );
     }
 
-    /// Every escalation program other than `sudo` is refused by its own name, at both levels,
-    /// and so are the two keywords that would change how `sudo` is invoked. Escalating through
-    /// a different program under the same keyword would run the task under rules nobody wrote.
-    #[test]
-    fn unsupported_become_methods_and_flags_are_refused_by_name() {
-        for method in ["su", "doas", "pbrun", "runas"] {
-            let err = parse(
-                &format!("- hosts: all\n  become: true\n  become_method: {method}\n  tasks: []\n"),
-                "x.yml",
-            )
-            .unwrap_err();
-            let text = format!("{err:#}");
-            assert!(text.contains(method), "{text}");
-            assert!(text.contains("not supported yet"), "{text}");
-            let err = parse(
-                &format!(
-                    "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: {method}\n"
-                ),
-                "x.yml",
-            )
-            .unwrap_err();
-            let text = format!("{err:#}");
-            assert!(text.contains(method) && text.contains('T'), "{text}");
+    /// Load refusals: the reference's own words where it has them, the engine's where it does not.
+    #[rstest]
+    #[case::play_attribute(
+        "- hosts: all\n  nosuchplaykeyword: 1\n  tasks: []\n",
+        &["'nosuchplaykeyword' is not a valid attribute for a Play"]
+    )]
+    #[case::become_method_play_su(
+        "- hosts: all\n  become: true\n  become_method: su\n  tasks: []\n",
+        &["su", "not supported yet"]
+    )]
+    #[case::become_method_play_runas(
+        "- hosts: all\n  become: true\n  become_method: runas\n  tasks: []\n",
+        &["runas", "not supported yet"]
+    )]
+    #[case::become_method_task_su(
+        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: su\n",
+        &["su", "T"]
+    )]
+    #[case::become_method_task_runas(
+        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: runas\n",
+        &["runas", "T"]
+    )]
+    #[case::no_module("- hosts: all\n  tasks:\n    - name: Nothing\n", &["no module"])]
+    #[case::two_modules(
+        "- hosts: all\n  tasks:\n    - command: a\n      shell: b\n",
+        &["conflicting action statements: command, shell"]
+    )]
+    #[case::not_a_list("hosts: all\n", &[])]
+    #[case::empty("", &[])]
+    #[case::vault(
+        "- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n",
+        &["vault", "Secret"]
+    )]
+    #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
+    #[case::when_scalar(
+        "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
+        &["when"]
+    )]
+    #[case::loop_and_with_items(
+        "- hosts: all\n  tasks:\n    - debug:\n      loop: [1]\n      with_items: [2]\n",
+        &["loop"]
+    )]
+    #[case::two_with_loops(
+        "- hosts: all\n  tasks:\n    - debug:\n      with_fileglob: ['*']\n      with_first_found: [a]\n",
+        &["'with_fileglob' and 'with_first_found' cannot both be given"]
+    )]
+    #[case::hosts_int(
+        "- hosts: [web, 3]\n  tasks: []\n",
+        &["Hosts list contains an invalid host value: '3'"]
+    )]
+    #[case::hosts_float(
+        "- hosts: [web, 3.5]\n  tasks: []\n",
+        &["Hosts list contains an invalid host value: '3.5'"]
+    )]
+    #[case::hosts_sequence(
+        "- hosts: [web, [1, 2]]\n  tasks: []\n",
+        &["Hosts list contains an invalid host value: '[1, 2]'"]
+    )]
+    #[case::hosts_mapping(
+        "- hosts: [web, {a: 1}]\n  tasks: []\n",
+        &["Hosts list contains an invalid host value: '{'a': 1}'"]
+    )]
+    #[case::loop_control_unknown(
+        "- hosts: all\n  tasks:\n    - debug:\n        msg: x\n      loop: [a]\n      loop_control:\n        nosuch: 1\n",
+        &["'nosuch' is not a valid attribute for a LoopControl"]
+    )]
+    #[case::gather_facts_word(
+        "- hosts: all\n  gather_facts: maybe\n  tasks:\n    - command: echo hi\n",
+        &["Error processing keyword 'gather_facts': The value 'maybe' could not be converted to 'bool'."]
+    )]
+    #[case::gather_facts_two(
+        "- hosts: all\n  gather_facts: 2\n  tasks:\n    - command: echo hi\n",
+        &["The value 2 could not be converted to 'bool'."]
+    )]
+    #[case::ignore_errors_word(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      ignore_errors: maybe\n",
+        &["Error processing keyword 'ignore_errors': The value 'maybe' could not be converted to 'bool'."]
+    )]
+    #[case::become_word(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      become: maybe\n",
+        &["Error processing keyword 'become': The value 'maybe' could not be converted to 'bool'."]
+    )]
+    #[case::become_float(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      become: 1.5\n",
+        &["Error processing keyword 'become': The value 1.5 could not be converted to 'bool'."]
+    )]
+    #[case::become_sequence(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      become: [1, 2]\n",
+        &["Error processing keyword 'become': The value [1, 2] could not be converted to 'bool'."]
+    )]
+    #[case::become_mapping(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      become: {a: 1}\n",
+        &["Error processing keyword 'become': The value {'a': 1} could not be converted to 'bool'."]
+    )]
+    #[case::block_loop(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      loop: x\n",
+        &["'loop' is not a valid attribute for a Block"]
+    )]
+    #[case::block_register(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      register: x\n",
+        &["'register' is not a valid attribute for a Block"]
+    )]
+    #[case::block_until(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      until: x\n",
+        &["'until' is not a valid attribute for a Block"]
+    )]
+    #[case::block_module(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      debug: msg=x\n",
+        &["'debug' is not a valid attribute for a Block"]
+    )]
+    #[case::rescue_without_block(
+        "- hosts: all\n  tasks:\n    - rescue:\n        - command: echo hi\n",
+        &["'rescue' keyword cannot be used without 'block'"]
+    )]
+    #[case::always_without_block(
+        "- hosts: all\n  tasks:\n    - always:\n        - command: echo hi\n",
+        &["'always' keyword cannot be used without 'block'"]
+    )]
+    #[case::notify_element(
+        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      notify: [3]\n",
+        &["task 't': 'notify' must be a name or a list of names"]
+    )]
+    #[case::when_element(
+        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      when: [3]\n",
+        &["task 't': 'when' must be an expression or a list of expressions"]
+    )]
+    fn the_load_refuses(#[case] text: &str, #[case] needles: &[&str]) {
+        let err = parse(text, "x.yml").expect_err("the load must refuse");
+        let got = format!("{err:#}");
+        for needle in needles {
+            assert!(got.contains(needle), "{needle:?} not in {got}");
         }
-        // The two keywords that change how `sudo` itself is invoked are the reference's own,
-        // so they load; the pre-flight is what refuses them, and `preflight`'s own tests say
-        // so. Handing `sudo` extra flags or a different binary must never just happen.
-        for kw in ["become_flags", "become_exe"] {
-            let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - command: id\n      {kw}: x\n"),
-                "x.yml",
+    }
+
+    /// Keywords the reference has and this release cannot run are parked for the pre-flight.
+    #[rstest]
+    #[case::throttle("throttle")]
+    #[case::async_("async")]
+    #[case::poll("poll")]
+    #[case::diff("diff")]
+    #[case::become_flags("become_flags")]
+    #[case::become_exe("become_exe")]
+    fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
+        let pb = parse(
+            &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
+            "x.yml",
+        )
+        .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
+        assert_eq!(first(&pb).unsupported, [kw]);
+    }
+
+    /// A `loop_control` sub-key the reference has but this release cannot honour is parked; the two
+    /// it honours are read.
+    #[test]
+    fn loop_control_sub_keys_are_parked_or_read() {
+        let task = |sub: &str| {
+            format!(
+                "- hosts: all\n  tasks:\n    - debug:\n        msg: x\n      loop: [a]\n      loop_control:\n        {sub}\n"
             )
-            .unwrap();
+        };
+        for kw in [
+            "break_when",
+            "extended",
+            "extended_allitems",
+            "index_var",
+            "pause",
+        ] {
+            let pb = parse(&task(&format!("{kw}: probe")), "x.yml")
+                .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
             assert_eq!(first(&pb).unsupported, [kw], "{kw}");
         }
-    }
-
-    #[test]
-    fn a_task_needs_exactly_one_module() {
-        let err = parse("- hosts: all\n  tasks:\n    - name: Nothing\n", "x.yml").unwrap_err();
-        assert!(format!("{err:#}").contains("no module"));
-        // The reference's own words, measured: a second key it does not know is a second
-        // action, not an unknown keyword.
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - command: a\n      shell: b\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("conflicting action statements: command, shell"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn an_unquoted_boolean_command_is_taken_as_its_literal_text() {
-        let pb = parse("- hosts: all\n  tasks:\n    - command: false\n", "x.yml").unwrap();
-        assert_eq!(first(&pb).args["_raw_params"], "false");
-    }
-
-    #[test]
-    fn a_playbook_must_be_a_list_of_plays() {
-        assert!(parse("hosts: all\n", "x.yml").is_err());
-        assert!(parse("", "x.yml").is_err());
-    }
-
-    #[test]
-    fn free_form_follows_the_module_registry() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - ansible.legacy.shell: echo a=b\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert_eq!(first(&pb).args["_raw_params"], "echo a=b");
-    }
-
-    /// A module name is no longer resolved here: the loader takes whatever the reference takes
-    /// and `preflight` decides, one step later, whether this release can run it. What would
-    /// make this red: the loader refusing a name again, which would stop `--list-tasks` from
-    /// reading a playbook written for a release that has the module.
-    #[test]
-    fn a_module_name_is_kept_whatever_it_names() {
-        // `file`'s args are given as `key=value` rather than the free-form `echo a`
-        // `ansible.builtin.nosuch` carries: it is a python module now read by `module_args` like
-        // any other, and `echo a` is not a valid shorthand for it, matching what the reference
-        // would also refuse. `ansible.builtin.nosuch` is a name nothing can supply, so its
-        // arguments are left unparsed and `echo a` is never looked at. A collection's module, and
-        // a name a `library/` may hold, are read like `file`: the controller's ansible-core
-        // resolves them before the run, and one whose arguments were dropped here would run with
-        // none. A word that is not `key=value` is kept for the pre-flight to refuse.
-        //
-        // The parsed arguments are asserted below, not just the module name: a name kept while
-        // its arguments parsed into nothing would pass a test that only checked the name, which
-        // is exactly the shape the args-dropping bug this fixture was rewritten for took.
-        for (module, args_text, expect) in [
-            ("ansible.builtin.nosuch", "echo a", &[][..]),
-            (
-                "my_library_module",
-                "a=1 stray",
-                &[("a", "1"), ("_raw_params", "stray")][..],
-            ),
-            (
-                "file",
-                "path=/tmp/x state=touch",
-                &[("path", "/tmp/x"), ("state", "touch")][..],
-            ),
-            (
-                "community.general.ufw",
-                "rule=allow port=22",
-                &[("rule", "allow"), ("port", "22")][..],
-            ),
-        ] {
-            let pb = parse(
-                &format!(
-                    "- hosts: all\n  tasks:\n    - name: Later\n      {module}: {args_text}\n"
-                ),
-                "x.yml",
-            )
-            .unwrap_or_else(|e| panic!("{module}: {e:#}"));
-            let task = first(&pb);
-            assert_eq!(task.module, module);
-            if expect.is_empty() {
-                // A name this release resolves nothing for is refused by the pre-flight, never by
-                // the shape of arguments nobody promised to read, so nothing is parsed for it.
-                assert!(
-                    task.args.is_empty(),
-                    "{module}: expected no arguments parsed, got {:?}",
-                    task.args
-                );
-            }
-            for (key, value) in expect {
-                let got = task.args.get(*key).unwrap_or_else(|| {
-                    panic!("{module}: '{key}' was dropped, got {:?}", task.args)
-                });
-                assert_eq!(got, *value, "{module}: '{key}'");
-            }
-        }
-    }
-
-    /// A collection module's string argument is read as the reference's `parse_kv` reads it:
-    /// `key=value` words become options, the rest is kept in `_raw_params` for the pre-flight,
-    /// and a free-form module keeps the whole line.
-    ///
-    /// What would make this red: the loader refusing a word without `=`, which refuses a Linux
-    /// run over a cross-platform role's Windows file (`win_shell: Get-Service foo`) or over
-    /// `port={{ x }}`, both read only to build the union; or the stray word dropped, which runs
-    /// the module without it and says nothing.
-    #[test]
-    fn a_collection_module_keeps_what_is_not_key_value() {
-        for (module, text, expect) in [
-            (
-                "ansible.windows.win_shell",
-                "Get-Service foo",
-                &[("_raw_params", "Get-Service foo")][..],
-            ),
-            (
-                "ns.coll.mod",
-                "port={{ x }} {{ a b }}",
-                &[("port", "{{ x }}"), ("_raw_params", "{{ a b }}")][..],
-            ),
-            (
-                "ns.coll.mod",
-                "a=1 stray",
-                &[("a", "1"), ("_raw_params", "stray")][..],
-            ),
-            ("ns.coll.mod", "a='open", &[("_raw_params", "a='open")][..]),
-        ] {
-            let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - {module}: {text}\n"),
-                "x.yml",
-            )
-            .unwrap_or_else(|e| panic!("{module}: {text}: {e:#}"));
-            let task = first(&pb);
-            let got: Vec<(&str, &str)> = task
-                .args
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default()))
-                .collect();
-            let mut want = expect.to_vec();
-            want.sort();
-            let mut got = got;
-            got.sort();
-            assert_eq!(got, want, "{module}: {text}");
-        }
-    }
-
-    /// A `set_fact` key YAML types as a number, a boolean or null is kept as the template of that
-    /// value, so the name check sees the type the reference sees; a string key is kept as written.
-    ///
-    /// What would make this red: the key turned into its text, which the check then reads as the
-    /// name `1` rather than an `int`.
-    #[test]
-    fn a_set_fact_key_keeps_the_type_yaml_gave_it() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, 2.0: f, true: c, ~: d, k: e}\n",
-            "x.yml",
-        )
-        .unwrap();
-        let keys: Vec<&str> = first(&pb).args.keys().map(String::as_str).collect();
+        let pb = parse(&task("loop_var: thing\n        label: shown"), "x.yml").unwrap();
+        let t = first(&pb);
         assert_eq!(
-            keys,
-            [
-                "{{ 1 }}",
-                "{{ 1.5 }}",
-                "{{ 2.0 }}",
-                "{{ True }}",
-                "{{ None }}",
-                "k"
-            ]
+            (t.loop_var.as_str(), t.loop_label.as_deref()),
+            ("thing", Some("shown"))
         );
+        assert!(t.unsupported.is_empty());
     }
 
-    /// A builtin's word that is not `key=value` is kept for the task to fail on when it runs, as
-    /// the reference's `ping: foo` fails at run time; a string `parse_kv` cannot split still stops
-    /// the load, as the reference's `failed at splitting arguments` does at exit 4.
-    ///
-    /// What would make this red: the word refused at load again (`expected key=value`), or an
-    /// unbalanced quote accepted.
-    #[test]
-    fn a_builtin_module_keeps_a_word_that_is_not_key_value() {
-        let pb = parse(
-            "- hosts: all
-  tasks:
-    - ping: data=x foo
-",
-            "x.yml",
-        )
-        .unwrap();
+    /// A module's argument string is read as the reference's `parse_kv` reads it: `key=value` words
+    /// become options and the rest is kept in `_raw_params`.
+    #[rstest]
+    #[case::set_fact("set_fact: owner=root state=here", "set_fact", &[("owner", "root"), ("state", "here")])]
+    #[case::free_form_alias("ansible.legacy.shell: echo a=b", "ansible.legacy.shell", &[("_raw_params", "echo a=b")])]
+    #[case::unknown_builtin("ansible.builtin.nosuch: echo a", "ansible.builtin.nosuch", &[])]
+    #[case::library_stray("my_library_module: a=1 stray", "my_library_module", &[("_raw_params", "stray"), ("a", "1")])]
+    #[case::file("file: path=/tmp/x state=touch", "file", &[("path", "/tmp/x"), ("state", "touch")])]
+    #[case::collection("community.general.ufw: rule=allow port=22", "community.general.ufw", &[("port", "22"), ("rule", "allow")])]
+    #[case::windows_free_text("ansible.windows.win_shell: Get-Service foo", "ansible.windows.win_shell", &[("_raw_params", "Get-Service foo")])]
+    #[case::template_words("ns.coll.mod: port={{ x }} {{ a b }}", "ns.coll.mod", &[("_raw_params", "{{ a b }}"), ("port", "{{ x }}")])]
+    #[case::open_quote("ns.coll.mod: a='open", "ns.coll.mod", &[("_raw_params", "a='open")])]
+    #[case::builtin_stray_word("ping: data=x foo", "ping", &[("_raw_params", "foo"), ("data", "x")])]
+    #[case::unquoted_boolean("command: false", "command", &[("_raw_params", "false")])]
+    #[case::jinja_block_kept_whole(
+        "copy: dest={{ base ~ '/x' }} mode=0644 content=u\"v w\"",
+        "copy",
+        &[("content", "u\"v w\""), ("dest", "{{ base ~ '/x' }}"), ("mode", "0644")]
+    )]
+    fn raw_arguments_are_split_as_the_reference_splits_them(
+        #[case] line: &str,
+        #[case] module: &str,
+        #[case] expect: &[(&str, &str)],
+    ) {
+        let pb = parse(&format!("- hosts: all\n  tasks:\n    - {line}\n"), "x.yml")
+            .unwrap_or_else(|e| panic!("{line}: {e:#}"));
         let task = first(&pb);
-        assert_eq!(task.args["_raw_params"], "foo");
-        assert_eq!(task.args["data"], "x");
-        assert!(
-            parse(
-                "- hosts: all
-  tasks:
-    - ping: \"a='open\"
-",
-                "x.yml"
-            )
-            .is_err()
-        );
-    }
-
-    /// Measured on ansible-core 2.19.12: `set_fact: a={{ base ~ '/x' }}` sets `a` to `/tmp/x`,
-    /// the block kept whole although it holds spaces, and `i=u"v w"` keeps its inner quotes.
-    #[test]
-    fn a_builtin_module_keeps_a_jinja_block_with_spaces_whole() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - copy: dest={{ base ~ '/x' }} mode=0644 content=u\"v w\"\n",
-            "x.yml",
-        )
-        .unwrap();
-        let args = &first(&pb).args;
-        assert_eq!(args["dest"], "{{ base ~ '/x' }}");
-        assert_eq!(args["mode"], "0644");
-        assert_eq!(args["content"], "u\"v w\"");
-    }
-
-    #[test]
-    fn a_vault_value_in_a_task_is_refused_with_context() {
-        let err = parse("- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n", "x.yml").unwrap_err();
-        let text = format!("{err:#}");
-        assert!(text.contains("vault") && text.contains("Secret"), "{text}");
+        assert_eq!(task.module, module);
+        let mut got: Vec<(&str, &str)> = task
+            .args
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default()))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, expect, "{line}");
     }
 
     const KEYWORDS: &str = r#"
@@ -1879,18 +1777,13 @@ mod tests {
 "#;
 
     #[test]
-    fn play_vars_and_vars_files_are_kept_raw() {
+    fn play_and_task_keywords_are_read_raw() {
         let pb = parse(KEYWORDS, "k.yml").unwrap();
         let play = &pb.plays[0];
         assert_eq!(play.vars["port"], serde_json::json!(80));
         assert_eq!(play.vars["greeting"], serde_json::json!("hello {{ name }}"));
         assert_eq!(play.vars_files, ["vars/common.yml", "vars/{{ env }}.yml"]);
-    }
-
-    #[test]
-    fn task_keywords_are_read() {
-        let pb = parse(KEYWORDS, "k.yml").unwrap();
-        let t = tasks(&pb.plays[0]);
+        let t = tasks(play);
         assert_eq!(t[0].when, ["port > 1"]);
         assert_eq!(t[0].register.as_deref(), Some("out"));
         assert_eq!(t[0].vars["local"], serde_json::json!(1));
@@ -1920,186 +1813,16 @@ mod tests {
         assert_eq!(t[4].args["computed"], "{{ port + 1 }}");
     }
 
+    /// `when: false` and `1`/`0` are booleans to the reference; a template stays as written.
     #[test]
-    fn when_accepts_booleans_and_refuses_other_scalars() {
+    fn booleans_are_read_the_way_the_reference_reads_them() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - command: true\n      when: false\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert_eq!(first(&pb).when, ["False"]);
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("when"));
-    }
-
-    #[test]
-    fn loop_and_with_items_together_are_refused() {
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - debug:\n      loop: [1]\n      with_items: [2]\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("loop"));
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - debug:\n      with_fileglob: ['*']\n      with_first_found: [a]\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}")
-                .contains("'with_fileglob' and 'with_first_found' cannot both be given"),
-            "{err:#}"
-        );
-    }
-
-    /// A keyword this release cannot execute is parked on the task rather than refused, so the
-    /// pre-flight can refuse the run with the construct's name in hand. What would make this
-    /// red: a keyword dropped on the floor here, which is the one way it could reach an
-    /// executor that ignores it.
-    #[test]
-    fn known_but_unsupported_keywords_are_parked_for_the_preflight() {
-        for kw in ["async", "poll", "diff", "become_flags", "throttle"] {
-            let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
-                "x.yml",
-            )
-            .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
-        }
-    }
-
-    /// `loop_control` is a mapping, so the same rule applies one level down: a sub-key the
-    /// reference does not have refuses the load in its own words, and one it has that this
-    /// release cannot honour is parked for the pre-flight instead of being dropped.
-    ///
-    /// Measured on ansible-core 2.19.12: `loop_control: {nosuch: 1}` exits 4 with
-    /// `'nosuch' is not a valid attribute for a LoopControl`, and `LoopControl.fattributes`
-    /// holds `break_when`, `extended`, `extended_allitems`, `index_var`, `label`, `loop_var`
-    /// and `pause`.
-    ///
-    /// What would make this red: a sub-key read for `loop_var` and `label` alone, with the rest
-    /// accepted and silently ignored - a run reporting success having skipped the `index_var`
-    /// or the `pause` the operator wrote.
-    #[test]
-    fn a_loop_control_sub_key_is_honoured_parked_or_refused() {
-        let task = |sub: &str| {
-            format!(
-                "- hosts: all\n  tasks:\n    - debug:\n        msg: x\n      loop: [a]\n      loop_control:\n        {sub}\n"
-            )
-        };
-        let err = parse(&task("nosuch: 1"), "x.yml").unwrap_err();
-        assert!(
-            format!("{err:#}").contains("'nosuch' is not a valid attribute for a LoopControl"),
-            "{err:#}"
-        );
-        for kw in [
-            "break_when",
-            "extended",
-            "extended_allitems",
-            "index_var",
-            "pause",
-        ] {
-            let pb = parse(&task(&format!("{kw}: probe")), "x.yml")
-                .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
-        }
-        let pb = parse(&task("loop_var: thing\n        label: shown"), "x.yml").unwrap();
-        let t = first(&pb);
-        assert_eq!(
-            (t.loop_var.as_str(), t.loop_label.as_deref()),
-            ("thing", Some("shown"))
-        );
-        assert!(t.unsupported.is_empty());
-    }
-
-    /// A keyword whose value has to be a boolean refuses the load when it is not one, rather
-    /// than quietly becoming the default.
-    ///
-    /// Measured on ansible-core 2.19.12: `gather_facts: maybe` exits 4 with
-    /// `Error processing keyword 'gather_facts': The value 'maybe' could not be converted to
-    /// 'bool'.`; `ignore_errors: maybe` and `become: maybe` fail the task at run time with the
-    /// same sentence. `1` and `0` are booleans there and `2` is not.
-    ///
-    /// What would make this red: `unwrap_or(false)` back on `ignore_errors` or `unwrap_or(true)`
-    /// back on `gather_facts`, which runs the playbook under a value nobody wrote and nobody is
-    /// told about.
-    #[test]
-    fn an_unreadable_boolean_is_refused_in_the_reference_s_words() {
-        for (text, kw, value) in [
-            (
-                "- hosts: all\n  gather_facts: maybe\n  tasks:\n    - command: echo hi\n",
-                "gather_facts",
-                "'maybe'",
-            ),
-            (
-                "- hosts: all\n  tasks:\n    - command: echo hi\n      ignore_errors: maybe\n",
-                "ignore_errors",
-                "'maybe'",
-            ),
-            (
-                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: maybe\n",
-                "become",
-                "'maybe'",
-            ),
-            // Measured on ansible-core 2.19.12 (`become: 1.5` on a task): a float prints bare
-            // with its decimal kept, never the `OrderedFloat` wrapper this engine used to leak
-            // into the message.
-            (
-                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: 1.5\n",
-                "become",
-                "1.5",
-            ),
-            // Measured: a sequence and a mapping print the way ansible-core's own Python repr
-            // renders one -- `[1, 2]`, `{'a': 1}` -- not a Rust `Vec`/`LinkedHashMap` Debug dump.
-            (
-                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: [1, 2]\n",
-                "become",
-                "[1, 2]",
-            ),
-            (
-                "- hosts: all\n  tasks:\n    - command: echo hi\n      become: {a: 1}\n",
-                "become",
-                "{'a': 1}",
-            ),
-        ] {
-            let err = parse(text, "x.yml").unwrap_err();
-            assert!(
-                format!("{err:#}").contains(&format!(
-                    "Error processing keyword '{kw}': The value {value} could not be converted to 'bool'."
-                )),
-                "{err:#}"
-            );
-        }
-        let pb = parse(
-            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: echo hi\n      ignore_errors: 0\n",
+            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: true\n      when: false\n      ignore_errors: 0\n",
             "x.yml",
         )
         .unwrap();
         assert!(pb.plays[0].gather_facts && !first(&pb).ignores_errors());
-        let err = parse(
-            "- hosts: all\n  gather_facts: 2\n  tasks:\n    - command: echo hi\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("The value 2 could not be converted to 'bool'."),
-            "{err:#}"
-        );
-    }
-
-    /// `ignore_errors` written as a template loads as written, on a task and on a block, and is
-    /// left for the run to render. Measured on ansible-core 2.19.12:
-    /// `ignore_errors: "{{ ansible_check_mode }}"` is rendered when the task runs, while
-    /// `ignore_errors: maybe` still exits 4 (held by the test above).
-    ///
-    /// What would make this red: the template arm of `flag` removed, which refuses
-    /// `geerlingguy.ntp` at load.
-    #[test]
-    fn a_templated_ignore_errors_is_kept_as_written() {
+        assert_eq!(first(&pb).when, ["False"]);
         let pb = parse(
             "- hosts: all\n  tasks:\n    - command: \"false\"\n      ignore_errors: \"{{ ansible_check_mode }}\"\n    - block:\n        - command: echo hi\n      ignore_errors: \"{{ true }}\"\n",
             "x.yml",
@@ -2125,33 +1848,12 @@ mod tests {
         );
     }
 
-    /// A construct with no module of its own is loaded empty and refused whole by the
-    /// pre-flight, rather than blamed for a module it never named. `local_action` is the shape
-    /// that is left now that a block is compiled.
-    #[test]
-    fn a_construct_with_no_module_of_its_own_loads_empty_and_sorted() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      local_action: command echo hi\n",
-            "x.yml",
-        )
-        .unwrap();
-        let t = first(&pb);
-        assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["local_action"]);
-        // A construct with no module still reads the keywords this release honours: a `tags:`
-        // dropped here would hand the selection a task that carries none.
-        assert_eq!(t.tags, ["t"]);
-    }
-
-    /// A block takes its three sections and the keywords its tasks inherit, and nests.
-    ///
-    /// What would make this red: a section read as a module, which is how `rescue:` came to be
-    /// refused as an unknown keyword; or a nested block flattened into its parent, which loses
-    /// the grouping the operator wrote and with it the recovery attached to it.
+    /// A block takes its three sections and the keywords its tasks inherit, and nests; an empty
+    /// block loads.
     #[test]
     fn a_block_takes_its_sections_and_its_inherited_keywords() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      block:\n        - command: echo hi\n        - block:\n            - command: echo deeper\n      rescue:\n        - command: echo sorry\n      always:\n        - command: echo done\n      when: ready\n      become: true\n      ignore_errors: true\n      vars: {a: 1}\n",
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      block:\n        - command: echo hi\n        - block:\n            - command: echo deeper\n      rescue:\n        - command: echo sorry\n      always:\n        - command: echo done\n      when: ready\n      become: true\n      ignore_errors: true\n      vars: {a: 1}\n    - block: []\n",
             "x.yml",
         )
         .unwrap();
@@ -2171,67 +1873,46 @@ mod tests {
             b.keywords.module.is_empty(),
             "a block names no module of its own"
         );
-    }
-
-    /// A key the reference's Block attribute list does not have is refused in its own words,
-    /// and so is a section written without the block it belongs to.
-    ///
-    /// Measured on ansible-core 2.19.12, all three at exit 4: `'loop' is not a valid attribute
-    /// for a Block`, `'debug' is not a valid attribute for a Block` for a module key sitting
-    /// next to `block:`, and `'rescue' keyword cannot be used without 'block'`.
-    ///
-    /// What would make this red: a block accepting `register` or `loop`, which the reference
-    /// refuses - a loop written on a block would then silently run its tasks once.
-    #[test]
-    fn a_key_a_block_cannot_carry_is_refused_in_the_reference_s_words() {
-        for kw in ["loop", "register", "until", "changed_when", "args"] {
-            let err = parse(
-                &format!(
-                    "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      {kw}: x\n"
-                ),
-                "x.yml",
-            )
-            .unwrap_err();
-            assert!(
-                format!("{err:#}")
-                    .contains(&format!("'{kw}' is not a valid attribute for a Block")),
-                "{kw}: {err:#}"
-            );
-        }
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      debug: msg=x\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("'debug' is not a valid attribute for a Block"),
-            "{err:#}"
-        );
-        for section in ["rescue", "always"] {
-            let err = parse(
-                &format!("- hosts: all\n  tasks:\n    - {section}:\n        - command: echo hi\n"),
-                "x.yml",
-            )
-            .unwrap_err();
-            assert!(
-                format!("{err:#}").contains(&format!(
-                    "'{section}' keyword cannot be used without 'block'"
-                )),
-                "{err:#}"
-            );
-        }
-        // Measured: an empty block is accepted and the playbook runs.
-        let pb = parse("- hosts: all\n  tasks:\n    - block: []\n", "x.yml").unwrap();
-        let TaskOrBlock::Block(b) = &pb.plays[0].tasks[0] else {
+        let TaskOrBlock::Block(empty) = &pb.plays[0].tasks[1] else {
             panic!("a block");
         };
-        assert!(b.body.is_empty());
+        assert!(empty.body.is_empty());
     }
 
-    /// `meta` is read for the action it asks for, whatever that action is: what this release
-    /// does about it is the pre-flight's decision, one step later.
+    /// Shapes the loader keeps for the pre-flight: a construct with no module, a `set_fact` key
+    /// typed by YAML, and a `meta` action whatever it names.
     #[test]
-    fn a_meta_task_keeps_the_action_it_asked_for() {
+    fn what_the_loader_keeps_for_the_preflight() {
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      local_action: command echo hi\n",
+            "x.yml",
+        )
+        .unwrap();
+        let t = first(&pb);
+        assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
+        assert_eq!(t.unsupported, ["local_action"]);
+        assert_eq!(
+            t.tags,
+            ["t"],
+            "a construct with no module still keeps its tags"
+        );
+        let pb = parse(
+            "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, 2.0: f, true: c, ~: d, k: e}\n",
+            "x.yml",
+        )
+        .unwrap();
+        let keys: Vec<&str> = first(&pb).args.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "{{ 1 }}",
+                "{{ 1.5 }}",
+                "{{ 2.0 }}",
+                "{{ True }}",
+                "{{ None }}",
+                "k"
+            ]
+        );
         for action in ["noop", "end_play", "nosuchaction"] {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - meta: {action}\n"),
@@ -2242,35 +1923,5 @@ mod tests {
             assert_eq!(t.module, "meta");
             assert_eq!(t.args["_raw_params"], serde_json::json!(action));
         }
-    }
-
-    /// The two fields `one_or_many` reads share a shape and not a refusal: a `notify` says the
-    /// element must be a name, a `when` says it must be an expression, and both name the keyword
-    /// and the task. Nothing else asserted either sentence, so a reader that lost one and kept
-    /// the other would have passed the suite.
-    ///
-    /// What would make this red: either refusal carrying the other's words, or the keyword and
-    /// the task's own context dropped from it.
-    #[test]
-    fn the_two_one_or_many_fields_refuse_in_their_own_words() {
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      notify: [3]\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("task 't': 'notify' must be a name or a list of names"),
-            "{err:#}"
-        );
-        let err = parse(
-            "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      when: [3]\n",
-            "x.yml",
-        )
-        .unwrap_err();
-        assert!(
-            format!("{err:#}")
-                .contains("task 't': 'when' must be an expression or a list of expressions"),
-            "{err:#}"
-        );
     }
 }

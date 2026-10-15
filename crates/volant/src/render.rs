@@ -389,6 +389,7 @@ pub(crate) fn ansible_json(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -403,11 +404,15 @@ mod tests {
         }
     }
 
-    fn capture_with_color(color: bool, f: impl FnOnce(&mut Renderer)) -> String {
+    fn capture_at(color: bool, verbosity: u8, f: impl FnOnce(&mut Renderer)) -> String {
         let buf = Arc::new(Mutex::new(Vec::new()));
-        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), color, 79, 0);
+        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), color, 79, verbosity);
         f(&mut r);
         String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+    }
+
+    fn capture_with_color(color: bool, f: impl FnOnce(&mut Renderer)) -> String {
+        capture_at(color, 0, f)
     }
 
     fn capture(f: impl FnOnce(&mut Renderer)) -> String {
@@ -438,173 +443,41 @@ mod tests {
         out
     }
 
+    /// Banners pad with stars to the width, count characters and keep three past it; the recap,
+    /// the unreachable, no-hosts and retry lines are the reference's own.
     #[test]
-    fn banners_are_padded_with_stars_past_the_width() {
+    fn banners_recap_and_status_lines() {
         let out = capture(|r| r.play("Smoke test"));
         let line = out.lines().nth(1).unwrap();
         assert!(line.starts_with("PLAY [Smoke test] ***"));
         assert_eq!(line.len(), 80);
         assert_eq!(out, format!("\n{line}\n"));
-    }
-
-    #[test]
-    fn banners_count_characters_not_bytes() {
         let out = capture(|r| r.play("Déploiement été"));
         assert_eq!(out.lines().nth(1).unwrap().chars().count(), 80);
-    }
-
-    #[test]
-    fn a_banner_wider_than_the_terminal_keeps_three_stars() {
         let name = "x".repeat(120);
         let out = capture(|r| r.play(&name));
         assert_eq!(out.lines().nth(1).unwrap(), format!("PLAY [{name}] ***"));
-    }
-
-    #[test]
-    fn task_results_use_ansible_prefixes() {
-        let out = capture(|r| {
-            r.task("Say hello");
-            r.result(
-                "web1",
-                Outcome::Changed,
-                &result(json!({"changed": true, "stdout": "hi"})),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "web2",
-                Outcome::Ok,
-                &result(json!({"changed": false})),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "web3",
-                Outcome::Skipped,
-                &result(json!({"skipped": true})),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "web4",
-                Outcome::Failed,
-                &result(json!({"failed": true, "rc": 1, "msg": "non-zero return code"})),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "web5",
-                Outcome::Ignored,
-                &result(json!({"failed": true, "rc": 1})),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-        });
-        let lines: Vec<&str> = out.lines().collect();
-        assert!(lines[1].starts_with("TASK [Say hello] ***"));
-        assert_eq!(lines[2], "changed: [web1]");
-        assert_eq!(lines[3], "ok: [web2]");
-        assert_eq!(lines[4], "skipping: [web3]");
-        assert_eq!(
-            lines[5],
-            r#"fatal: [web4]: FAILED! => {"msg": "non-zero return code", "rc": 1}"#
+        let out = capture(|r| r.task("Say hello"));
+        assert!(
+            out.lines()
+                .nth(1)
+                .unwrap()
+                .starts_with("TASK [Say hello] ***")
         );
-        assert_eq!(lines[6], r#"fatal: [web5]: FAILED! => {"rc": 1}"#);
-        assert_eq!(lines[7], "...ignoring");
-    }
 
-    /// A result's `exception` is registered and never shown on its line.
-    ///
-    /// Measured on ansible-core 2.19.12, at verbosity 0 and at `-v`: a `copy` whose `validate`
-    /// names a missing program registers `exception: "(traceback unavailable)"`, and its line is
-    /// `fatal: [h1]: FAILED! => {"changed": false, "checksum": ..., "msg": "Error executing
-    /// command.", "rc": 2, ...}` with no `exception` in it - the default callback's
-    /// `_handle_exception` pops the key before the line is written.
-    ///
-    /// What would make this red: the key left on the line, which is what showed the module's
-    /// serialized `{"__ansible_type": "ErrorSummary", ...}` there.
-    #[test]
-    fn a_result_s_exception_stays_off_its_line() {
-        let out = capture(|r| {
-            r.result(
-                "h1",
-                Outcome::Failed,
-                &result(json!({
-                    "changed": false,
-                    "exception": "(traceback unavailable)",
-                    "failed": true,
-                    "msg": "Error executing command.",
-                    "rc": 2
-                })),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-        });
-        assert_eq!(
-            out.trim_end(),
-            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "Error executing command.", "rc": 2}"#
-        );
-    }
-
-    /// A `fatal:` line carries neither `failed`, nor `invocation`, nor `diff`, whichever module
-    /// failed. Measured on ansible-core 2.19.12: a timed-out `pause` shows
-    /// `fatal: [h1]: FAILED! => {"changed": false, "msg": "Task failed: Timed out after 1
-    /// second(s).", "timedout": {...}}`, and a failed `copy` validate and a failed `lineinfile`
-    /// show no `failed`, no `invocation` and no `diff: []`, all three of which they register.
-    ///
-    /// What would make this red: any of the three left on the line.
-    #[test]
-    fn a_fatal_line_shows_what_the_reference_shows() {
-        let out = capture(|r| {
-            r.result(
-                "h1",
-                Outcome::Failed,
-                &result(json!({
-                    "changed": false,
-                    "diff": [],
-                    "failed": true,
-                    "invocation": {"module_args": {"path": "/tmp/x"}},
-                    "msg": "boom"
-                })),
-                None,
-                Dump::No,
-                false,
-                None,
-            );
-        });
-        assert_eq!(
-            out.trim_end(),
-            r#"fatal: [h1]: FAILED! => {"changed": false, "msg": "boom"}"#
-        );
-    }
-
-    #[test]
-    fn unreachable_and_no_hosts_have_their_lines() {
         let out = capture(|r| {
             r.unreachable("db1", "agent binary not found", false, None);
             r.no_hosts();
+            r.unreachable("h1", "starting ssh: secret-host", true, None);
+            r.retrying("h1", "retry until file", 3);
         });
         assert_eq!(
-            out.lines().next().unwrap(),
-            r#"fatal: [db1]: UNREACHABLE! => {"changed": false, "msg": "agent binary not found", "unreachable": true}"#
+            out,
+            format!(
+                "fatal: [db1]: UNREACHABLE! => {{\"changed\": false, \"msg\": \"agent binary not found\", \"unreachable\": true}}\nskipping: no hosts matched\nfatal: [h1]: UNREACHABLE! => {{\"censored\": \"{CENSORED}\", \"changed\": false}}\nFAILED - RETRYING: [h1]: retry until file (3 retries left).\n"
+            )
         );
-        assert_eq!(out.lines().nth(1).unwrap(), "skipping: no hosts matched");
-    }
 
-    #[test]
-    fn the_recap_matches_ansible_columns() {
         let mut stats = Stats::default();
         stats.record("localhost", Outcome::Changed, true);
         stats.record("localhost", Outcome::Ok, false);
@@ -618,53 +491,84 @@ mod tests {
         );
     }
 
-    #[test]
-    fn verbose_mode_prints_results_for_ok_tasks_too() {
-        let buf = Arc::new(Mutex::new(Vec::new()));
-        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
-        r.result(
-            "h",
-            Outcome::Ok,
-            &result(json!({"changed": false, "stdout": "x"})),
-            None,
-            Dump::No,
-            false,
-            None,
-        );
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        assert_eq!(
-            out.trim_end(),
-            r#"ok: [h] => {"changed": false, "stdout": "x"}"#
-        );
+    /// The line a result prints, in the reference's words; `<CENSORED>` stands for the
+    /// censored sentence.
+    #[rstest]
+    #[case::changed(0, Outcome::Changed, json!({"changed": true, "stdout": "hi"}), None, Dump::No, false, "changed: [h]\n")]
+    #[case::ok(0, Outcome::Ok, json!({"changed": false}), None, Dump::No, false, "ok: [h]\n")]
+    #[case::skipped(0, Outcome::Skipped, json!({"skipped": true}), None, Dump::No, false, "skipping: [h]\n")]
+    #[case::failed(
+        0, Outcome::Failed, json!({"failed": true, "rc": 1, "msg": "non-zero return code"}), None, Dump::No, false,
+        "fatal: [h]: FAILED! => {\"msg\": \"non-zero return code\", \"rc\": 1}\n"
+    )]
+    #[case::ignored(
+        0, Outcome::Ignored, json!({"failed": true, "rc": 1}), None, Dump::No, false,
+        "fatal: [h]: FAILED! => {\"rc\": 1}\n...ignoring\n"
+    )]
+    #[case::exception_stays_off_the_line(
+        0, Outcome::Failed,
+        json!({"changed": false, "exception": "(traceback unavailable)", "failed": true, "msg": "Error executing command.", "rc": 2}),
+        None, Dump::No, false,
+        "fatal: [h]: FAILED! => {\"changed\": false, \"msg\": \"Error executing command.\", \"rc\": 2}\n"
+    )]
+    #[case::failed_diff_and_invocation_stay_off(
+        0, Outcome::Failed,
+        json!({"changed": false, "diff": [], "failed": true, "invocation": {"module_args": {"path": "/tmp/x"}}, "msg": "boom"}),
+        None, Dump::No, false,
+        "fatal: [h]: FAILED! => {\"changed\": false, \"msg\": \"boom\"}\n"
+    )]
+    #[case::verbose_ok(
+        1, Outcome::Ok, json!({"changed": false, "stdout": "x"}), None, Dump::No, false,
+        "ok: [h] => {\"changed\": false, \"stdout\": \"x\"}\n"
+    )]
+    #[case::verbose_ok_does_not_say_it_did_not_fail(
+        1, Outcome::Ok, json!({"changed": false, "failed": false, "ping": "pong"}), None, Dump::No, false,
+        "ok: [h] => {\"changed\": false, \"ping\": \"pong\"}\n"
+    )]
+    #[case::changed_item(0, Outcome::Changed, json!({"changed": true}), Some("one"), Dump::No, false, "changed: [h] => (item=one)\n")]
+    #[case::skipped_item(0, Outcome::Skipped, json!({"skipped": true}), Some("two"), Dump::No, false, "skipping: [h] => (item=two) \n")]
+    #[case::failed_item(
+        0, Outcome::Failed, json!({"failed": true, "rc": 1}), Some("three"), Dump::No, false,
+        "failed: [h] (item=three) => {\"rc\": 1}\n"
+    )]
+    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\"msg\": \"shown\"}\n")]
+    #[case::censored_changed(0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true, "changed: [h]\n")]
+    #[case::censored_ignored(
+        0, Outcome::Ignored, json!({"changed": true, "failed": true, "stdout": "secret"}), None, Dump::No, true,
+        "fatal: [h]: FAILED! => {\"censored\": \"<CENSORED>\", \"changed\": true}\n...ignoring\n"
+    )]
+    #[case::censored_item(
+        0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), Some("a"), Dump::No, true,
+        "changed: [h] => (item=(censored due to no_log))\n"
+    )]
+    #[case::censored_debug(0, Outcome::Ok, json!({"changed": false, "msg": "hush"}), None, Dump::Debug, true, "ok: [h]\n")]
+    #[case::censored_changed_verbose(
+        1, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true,
+        "changed: [h] => {\"censored\": \"<CENSORED>\", \"changed\": true}\n"
+    )]
+    #[case::censored_debug_verbose(
+        1, Outcome::Ok, json!({"changed": false, "msg": "hush"}), None, Dump::Debug, true,
+        "ok: [h] => {\"censored\": \"<CENSORED>\"}\n"
+    )]
+    fn a_result_prints_the_reference_line(
+        #[case] verbosity: u8,
+        #[case] outcome: Outcome,
+        #[case] body: serde_json::Value,
+        #[case] item: Option<&str>,
+        #[case] dump: Dump,
+        #[case] censored: bool,
+        #[case] expected: &str,
+    ) {
+        let out = capture_at(false, verbosity, |r| {
+            r.result("h", outcome, &result(body), item, dump, censored, None);
+        });
+        assert_eq!(out, expected.replace("<CENSORED>", CENSORED));
     }
 
-    /// The `failed: false` every result that ran now carries is for `register`, not for the
-    /// screen: measured on ansible-core 2.19.12, `-v` shows `ok: [localhost] => {"changed":
-    /// false, "ping": "pong"}` for a registered value that reads `failed=False`.
-    ///
-    /// What would make this red: the filled-in key printed, a line the reference never shows.
+    /// Colour wraps the visible text and never rewrites it: the recap still lines up, and every
+    /// result line is contained verbatim in the coloured output.
     #[test]
-    fn a_result_that_did_not_fail_does_not_say_so() {
-        let buf = Arc::new(Mutex::new(Vec::new()));
-        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
-        r.result(
-            "h",
-            Outcome::Ok,
-            &result(json!({"changed": false, "failed": false, "ping": "pong"})),
-            None,
-            Dump::No,
-            false,
-            None,
-        );
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        assert_eq!(
-            out.trim_end(),
-            r#"ok: [h] => {"changed": false, "ping": "pong"}"#
-        );
-    }
-
-    #[test]
-    fn the_recap_still_lines_up_with_colour_on() {
+    fn colour_only_wraps_what_is_printed() {
         let mut stats = Stats::default();
         stats.record("localhost", Outcome::Changed, true);
         stats.record("localhost", Outcome::Ok, false);
@@ -672,15 +576,8 @@ mod tests {
         let plain = capture(|r| r.recap(&stats));
         let coloured = capture_with_color(true, |r| r.recap(&stats));
         assert_ne!(coloured, plain, "colour should change the output at all");
-        assert_eq!(
-            strip_ansi(&coloured),
-            plain,
-            "visible columns must match the uncoloured recap once escapes are stripped"
-        );
-    }
+        assert_eq!(strip_ansi(&coloured), plain, "the recap columns");
 
-    #[test]
-    fn result_lines_only_get_wrapped_in_colour_not_rewritten() {
         let cases = [
             (Outcome::Ok, result(json!({"changed": false}))),
             (Outcome::Changed, result(json!({"changed": true}))),
@@ -696,159 +593,12 @@ mod tests {
             });
             assert_ne!(
                 coloured, plain,
-                "{outcome:?}: colour should change the output at all"
+                "{outcome:?}: colour should change the output"
             );
-            assert_eq!(
-                strip_ansi(&coloured),
-                plain,
-                "{outcome:?}: visible text must be unchanged by colour"
-            );
+            assert_eq!(strip_ansi(&coloured), plain, "{outcome:?}: visible text");
             for line in plain.lines() {
-                assert!(
-                    coloured.contains(line),
-                    "{outcome:?}: styling should wrap {line:?} verbatim, not rewrite it"
-                );
+                assert!(coloured.contains(line), "{outcome:?}: {line:?} rewritten");
             }
         }
-    }
-
-    /// Every line a `no_log` result can put on the terminal, at verbosity 0 and at `-v`, in the
-    /// reference's own words - measured on ansible-core 2.19.12 with `nolog.yml`.
-    ///
-    /// What would make this red: a secret reaching any of these lines, which is the whole point
-    /// of the keyword; or the censored `debug` printing its body at verbosity 0, where the
-    /// reference prints `ok: [h1]` alone.
-    #[test]
-    fn a_censored_result_shows_the_same_body_on_every_line_it_can_print() {
-        let secret = result(json!({"changed": true, "stdout": "secret"}));
-        let failed = result(json!({"changed": true, "failed": true, "stdout": "secret"}));
-        let out = capture(|r| {
-            r.result("h1", Outcome::Changed, &secret, None, Dump::No, true, None);
-            r.result("h1", Outcome::Ignored, &failed, None, Dump::No, true, None);
-            r.result(
-                "h1",
-                Outcome::Changed,
-                &secret,
-                Some("a"),
-                Dump::No,
-                true,
-                None,
-            );
-            r.result(
-                "h1",
-                Outcome::Ok,
-                &result(json!({"changed": false, "msg": "hush"})),
-                None,
-                Dump::Debug,
-                true,
-                None,
-            );
-        });
-        let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines[0], "changed: [h1]");
-        assert_eq!(
-            lines[1],
-            format!(r#"fatal: [h1]: FAILED! => {{"censored": "{CENSORED}", "changed": true}}"#)
-        );
-        assert_eq!(lines[2], "...ignoring");
-        assert_eq!(lines[3], "changed: [h1] => (item=(censored due to no_log))");
-        assert_eq!(lines[4], "ok: [h1]");
-        assert!(!out.contains("secret"), "{out}");
-
-        let buf = Arc::new(Mutex::new(Vec::new()));
-        let mut r = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 1);
-        r.result("h1", Outcome::Changed, &secret, None, Dump::No, true, None);
-        r.result(
-            "h1",
-            Outcome::Ok,
-            &result(json!({"changed": false, "msg": "hush"})),
-            None,
-            Dump::Debug,
-            true,
-            None,
-        );
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(
-            lines[0],
-            format!(r#"changed: [h1] => {{"censored": "{CENSORED}", "changed": true}}"#)
-        );
-        assert_eq!(
-            lines[1],
-            format!(r#"ok: [h1] => {{"censored": "{CENSORED}"}}"#)
-        );
-        assert!(!out.contains("secret") && !out.contains("hush"), "{out}");
-    }
-
-    /// The retry line, in the reference's own words and on stdout.
-    ///
-    /// What would make this red: the count, the punctuation or the stream changed - the line is
-    /// what an operator greps for while a playbook waits on a host that is not ready yet.
-    #[test]
-    fn the_retry_line_is_the_reference_s_own() {
-        let out = capture(|r| r.retrying("h1", "retry until file", 3));
-        assert_eq!(
-            out,
-            "FAILED - RETRYING: [h1]: retry until file (3 retries left).\n"
-        );
-    }
-
-    /// An unreachable host under `no_log` says no more than any other censored line, measured.
-    #[test]
-    fn a_censored_unreachable_hides_its_reason_too() {
-        let out = capture(|r| r.unreachable("h1", "starting ssh: secret-host", true, None));
-        assert_eq!(
-            out.trim_end(),
-            format!(
-                r#"fatal: [h1]: UNREACHABLE! => {{"censored": "{CENSORED}", "changed": false}}"#
-            )
-        );
-    }
-
-    #[test]
-    fn loop_items_and_forced_dumps_follow_ansible_shapes() {
-        let out = capture(|r| {
-            r.result(
-                "h",
-                Outcome::Changed,
-                &result(json!({"changed": true})),
-                Some("one"),
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "h",
-                Outcome::Skipped,
-                &result(json!({"skipped": true})),
-                Some("two"),
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "h",
-                Outcome::Failed,
-                &result(json!({"failed": true, "rc": 1})),
-                Some("three"),
-                Dump::No,
-                false,
-                None,
-            );
-            r.result(
-                "h",
-                Outcome::Ok,
-                &result(json!({"msg": "shown"})),
-                None,
-                Dump::Debug,
-                false,
-                None,
-            );
-        });
-        let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines[0], "changed: [h] => (item=one)");
-        assert_eq!(lines[1], "skipping: [h] => (item=two) ");
-        assert_eq!(lines[2], r#"failed: [h] (item=three) => {"rc": 1}"#);
-        assert_eq!(lines[3], r#"ok: [h] => {"msg": "shown"}"#);
     }
 }

@@ -650,6 +650,8 @@ fn a_native_answer_is_held_to_the_path_its_index_names() {
         profile.natives,
         String::from_utf8_lossy(&out.stderr)
     );
+    // `volant_echo` has no reference module: its recording cannot carry the discovered-interpreter
+    // fact and warning the first module task on a host gets, and this test is about the path.
     let entry = |expect: &str| serde_json::json!({"module": "volant_echo", "expect": expect, "volatile": [], "patterns": {}, "unordered": []});
     let recorded = serde_json::json!({
         "echo-native": {"changed": false, "echo": {"x": 1}},
@@ -663,16 +665,21 @@ fn a_native_answer_is_held_to_the_path_its_index_names() {
         let mut failures = Vec::new();
         for (case, spec) in index.as_object().expect("an index is a mapping") {
             match native_result(case, spec, &results) {
-                Ok(ours) => compare_native(
-                    case,
-                    spec,
-                    "",
-                    recorded[case]
-                        .as_object()
-                        .expect("a recording is a mapping"),
-                    ours.as_object().expect("a result is a mapping"),
-                    &mut failures,
-                ),
+                Ok(ours) => {
+                    let mut ours = ours.as_object().expect("a result is a mapping").clone();
+                    ours.remove("ansible_facts");
+                    ours.remove("warnings");
+                    compare_native(
+                        case,
+                        spec,
+                        "",
+                        recorded[case]
+                            .as_object()
+                            .expect("a recording is a mapping"),
+                        &ours,
+                        &mut failures,
+                    );
+                }
                 Err(why) => failures.push(format!("case {case}: {why}")),
             }
             check_native_path(case, spec, &profile, &mut failures);

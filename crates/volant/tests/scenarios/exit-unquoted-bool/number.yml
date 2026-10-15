@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Break
+      shell: 5

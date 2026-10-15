@@ -107,6 +107,7 @@ impl Reboots {
 pub struct Abort {
     stop: watch::Sender<bool>,
     reason: Mutex<Option<String>>,
+    code: std::sync::atomic::AtomicI32,
 }
 
 impl Abort {
@@ -114,7 +115,22 @@ impl Abort {
         Self {
             stop,
             reason: Mutex::new(None),
+            code: std::sync::atomic::AtomicI32::new(1),
         }
+    }
+
+    /// The exit code of the reason kept: 1 unless [`Abort::raise_with`] gave another.
+    pub fn code(&self) -> i32 {
+        self.code.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// [`Abort::raise`] ending the run with `code`, when it is the first reason kept.
+    pub fn raise_with(&self, code: i32, reason: String) {
+        let first = self.reason.lock().expect("abort lock").is_none();
+        if first {
+            self.code.store(code, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.raise(reason);
     }
 
     /// Stops the run without a reason: the operator's interruption.
@@ -238,14 +254,14 @@ pub async fn run_play(
         if *options.stop.borrow() {
             break;
         }
-        // One banner per batch, measured - and it prints even when the batch has nothing left to
-        // run, which is the shape a play gets when every host it resolved has already failed.
-        out.play(&play.name);
         let live: Vec<Host> = batch
             .into_iter()
             .filter(|h| !state.failed_hosts.contains(&h.name))
             .collect();
+        // One banner per batch, measured - and it prints even when the batch has nothing left to
+        // run, which is the shape a play gets when every host it resolved has already failed.
         if live.is_empty() {
+            out.play(&play.name);
             continue;
         }
         // Read here, once per batch about to run and not once for the whole play: see
@@ -269,6 +285,10 @@ pub async fn run_play(
             state,
             out,
         )?;
+        // After the `vars_files`: measured on ansible-core 2.19.12, an entry that renders to a
+        // number or does not render at all stops the run before the banner, with nothing on
+        // stdout.
+        out.play(&play.name);
         run_batch(
             play,
             compiled,
@@ -283,7 +303,7 @@ pub async fn run_play(
         )
         .await?;
         if let Some(reason) = options.abort.reason() {
-            return Err(crate::stats::Refusal::at(1, reason));
+            return Err(crate::stats::Refusal::at(options.abort.code(), reason));
         }
         // The run ends where the reference ends it: a batch that had hosts to run and lost every
         // one of them. A batch that had none to begin with is not that - measured, `serial: 1`

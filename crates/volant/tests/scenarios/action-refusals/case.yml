@@ -1,0 +1,2 @@
+# An argument an action does not take fails with `changed: false`, the action named as written.
+args: [refusals.yml]

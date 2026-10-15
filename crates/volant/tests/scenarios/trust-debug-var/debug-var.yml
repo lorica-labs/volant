@@ -13,3 +13,14 @@
         var: "{{ item }}"
       loop: "{{ r.stdout_lines }}"
       ignore_errors: true
+
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Look for the marker the expression would leave
+      command: test -e marker
+      register: marker
+      failed_when: false
+    - name: Whether the marker exists
+      debug:
+        msg: "{{ 'present' if marker.rc == 0 else 'absent' }}"

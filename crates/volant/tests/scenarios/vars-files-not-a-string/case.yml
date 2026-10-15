@@ -1,0 +1,2 @@
+# A vars_files entry that renders to a number stops the run before the PLAY banner.
+args: [-i, inventory.ini, not-a-string.yml]

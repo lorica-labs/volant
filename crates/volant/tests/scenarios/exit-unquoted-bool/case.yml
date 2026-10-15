@@ -1,0 +1,12 @@
+# A boolean, number or list as a module's argument stops the run with exit 4; in a dynamic include it does so after the statement's banner.
+runs:
+  - args: [bool.yml]
+  - args: [--syntax-check, bool.yml]
+  - args: [--list-tasks, bool.yml]
+  - args: [number.yml]
+  - args: [list.yml]
+  - args: [float.yml]
+  - args: [role.yml]
+  - args: [handler.yml]
+  - args: [import.yml]
+  - args: [include.yml]

@@ -2,4 +2,4 @@
   gather_facts: false
   tasks:
     - name: Wherever the host file sends it
-      command: true
+      command: "true"

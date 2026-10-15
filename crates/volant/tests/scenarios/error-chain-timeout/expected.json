@@ -1,0 +1,4 @@
+{
+  "code": 2,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [pause] *******************************************************************\nPausing for 5 seconds\n[ERROR]: Task failed: Timed out after 1 second(s).\n\nTask failed.\nOrigin: <golden-tmp>/pause-timeout.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - pause: {seconds: 5}\n        ^ column 7\n\n<<< caused by >>>\n\nTimed out after 1 second(s).\n\nfatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+}

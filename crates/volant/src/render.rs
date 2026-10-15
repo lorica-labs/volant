@@ -48,10 +48,79 @@ fn verbose_always(result: &TaskResult, censored: bool) -> bool {
 /// What the reference's callback prints in front of a failure's line: `[ERROR]: ` and the
 /// failure's message, then, when the task's file is known, `Origin: <file>:<line>:<col>` and the
 /// task's lines with a column marker (`_error_utils.SourceContext`, ansible-core 2.19.12).
+///
+/// A failure with causes prints them as the reference chains them: the message, a blank line,
+/// `Task failed.` with the task's origin, then each cause behind `<<< caused by >>>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorBlock {
     pub message: String,
     pub origin: Option<crate::playbook::Origin>,
+    /// What the reference shows under `Origin: <unknown>` for a task no file holds: its data,
+    /// shortened (`textwrap.shorten(str(value), 120)`).
+    pub unknown: Option<String>,
+    pub causes: Vec<Cause>,
+}
+
+/// One link of a failure's chain: its own message, where the value it is about was written, and
+/// the help the reference adds to some.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cause {
+    pub msg: String,
+    pub origin: Option<crate::playbook::Origin>,
+    pub help: Option<String>,
+}
+
+/// The key the executor leaves a failure's causes under, as `[{"msg", "path", "line", "col",
+/// "help"}]`. Taken off with [`ERROR_KEY`].
+pub const CHAIN_KEY: &str = "_volant_chain";
+
+/// One cause as [`CHAIN_KEY`] holds it.
+pub fn cause(
+    msg: &str,
+    origin: Option<&crate::playbook::Origin>,
+    help: Option<&str>,
+) -> serde_json::Value {
+    let mut c = serde_json::Map::new();
+    c.insert("msg".into(), msg.into());
+    if let Some(o) = origin {
+        c.insert("path".into(), o.path.to_string().into());
+        c.insert("line".into(), o.line.into());
+        c.insert("col".into(), o.col.into());
+    }
+    if let Some(help) = help {
+        c.insert("help".into(), help.into());
+    }
+    serde_json::Value::Object(c)
+}
+
+fn causes_of(result: &TaskResult) -> Vec<Cause> {
+    let Some(serde_json::Value::Array(list)) = result.0.get(CHAIN_KEY) else {
+        return Vec::new();
+    };
+    let text = |c: &serde_json::Value, key: &str| {
+        c.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let number = |c: &serde_json::Value, key: &str| {
+        c.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+    };
+    list.iter()
+        .map(|c| Cause {
+            msg: text(c, "msg").unwrap_or_default(),
+            origin: match (text(c, "path"), number(c, "line"), number(c, "col")) {
+                (Some(path), Some(line), Some(col)) => Some(crate::playbook::Origin {
+                    path: path.into(),
+                    line,
+                    col,
+                }),
+                _ => None,
+            },
+            help: text(c, "help"),
+        })
+        .collect()
 }
 
 impl ErrorBlock {
@@ -70,6 +139,13 @@ impl ErrorBlock {
         Self {
             message: if censored { censor(&message) } else { message },
             origin: origin.cloned(),
+            unknown: None,
+            // A `no_log` task's causes would repeat what its censored message no longer says.
+            causes: if censored {
+                Vec::new()
+            } else {
+                causes_of(result)
+            },
         }
     }
 
@@ -84,6 +160,8 @@ impl ErrorBlock {
         Self {
             message: if censored { censor(&message) } else { message },
             origin: origin.cloned(),
+            unknown: None,
+            causes: Vec::new(),
         }
     }
 }
@@ -138,6 +216,37 @@ pub fn concat_message(left: &str, right: &str) -> String {
     format!("{}: {right}", left.trim_end_matches(['.', ' ']))
 }
 
+/// Python's `textwrap.shorten(text, width)`: whitespace collapsed, then as many words as fit with
+/// ` [...]` behind them when the whole does not.
+// ponytail: words split on whitespace only, where `TextWrapper` also breaks after a hyphen;
+// split those too if a quoted value with hyphens ever needs it.
+pub fn shorten(text: &str, width: usize) -> String {
+    const PLACEHOLDER: &str = " [...]";
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let whole = words.join(" ");
+    if whole.chars().count() <= width {
+        return whole;
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    let mut len = 0;
+    for word in &words {
+        let add = word.chars().count() + usize::from(!kept.is_empty());
+        if len + add > width {
+            break;
+        }
+        kept.push(word);
+        len += add;
+    }
+    while let Some(last) = kept.last() {
+        if len + PLACEHOLDER.len() <= width {
+            return format!("{}{PLACEHOLDER}", kept.join(" "));
+        }
+        len -= last.chars().count() + usize::from(kept.len() > 1);
+        kept.pop();
+    }
+    PLACEHOLDER.trim_start().to_string()
+}
+
 /// `Origin: ...`, a blank line, then the task's line and the two before it, numbered, with a
 /// marker under the column: `SourceContext.from_origin` and its `__str__`.
 fn source_context(origin: &crate::playbook::Origin) -> String {
@@ -159,9 +268,22 @@ fn annotated_lines(origin: &crate::playbook::Origin) -> Vec<String> {
         return Vec::new();
     }
     let start = (target - 1).saturating_sub(CONTEXT);
-    let Ok(text) = std::fs::read_to_string(&*origin.path) else {
-        return vec!["(source not shown: FileNotFoundError)".to_string()];
+    // The name of what Python's `open()` and read raise, which the reference prints.
+    let text = match std::fs::read_to_string(&*origin.path) {
+        Ok(text) => text,
+        Err(e) => {
+            let name = match e.kind() {
+                std::io::ErrorKind::NotFound => "FileNotFoundError",
+                std::io::ErrorKind::PermissionDenied => "PermissionError",
+                std::io::ErrorKind::InvalidData => "UnicodeDecodeError",
+                std::io::ErrorKind::IsADirectory => "IsADirectoryError",
+                _ => "OSError",
+            };
+            return vec![format!("(source not shown: {name})")];
+        }
     };
+    // Read in text mode there: `\r\n` and a lone `\r` both end a line.
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = text
         .split_inclusive('\n')
         .skip(start)
@@ -337,6 +459,11 @@ impl Renderer {
         let _ = writeln!(anstream::stderr(), "{}", self.paint(WARNING, &line));
     }
 
+    /// A line an action writes on stdout as it runs, as it wrote it.
+    pub fn display(&mut self, line: &str) {
+        let _ = writeln!(self.out, "{line}");
+    }
+
     /// The line a failed attempt prints before the task is reported, measured on ansible-core
     /// 2.19.12: it goes to stdout from verbosity 0, it names the task rather than the module,
     /// and it is printed after **every** failed attempt, the last one included.
@@ -360,7 +487,7 @@ impl Renderer {
                 censored_body(result)
             } else {
                 let mut body = result.0.clone();
-                body.retain(|k, _| !k.starts_with("_ansible_"));
+                body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
                 for key in [
                     "failed",
                     "skipped",
@@ -416,7 +543,7 @@ impl Renderer {
         } else {
             result.0.clone()
         };
-        body.retain(|k, _| !k.starts_with("_ansible_"));
+        body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
         // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
         // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
         // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
@@ -533,9 +660,36 @@ impl Renderer {
     /// two items, failing one task with one message print one block and two `fatal:` lines.
     pub fn error(&mut self, block: &ErrorBlock) {
         let mut text = format!("[ERROR]: {}", block.message);
-        if let Some(origin) = &block.origin {
-            text.push('\n');
-            text.push_str(&source_context(origin));
+        if block.causes.is_empty() {
+            if let Some(origin) = &block.origin {
+                text.push('\n');
+                text.push_str(&source_context(origin));
+            } else if let Some(data) = &block.unknown {
+                text.push_str("\nOrigin: <unknown>\n\n");
+                text.push_str(data);
+            }
+        } else {
+            // `format_event_verbose_message`: the brief message, then one segment per link.
+            let mut first = "Task failed.".to_string();
+            if let Some(origin) = &block.origin {
+                first.push('\n');
+                first.push_str(&source_context(origin));
+            }
+            let mut segments = vec![first];
+            for cause in &block.causes {
+                let mut segment = cause.msg.clone();
+                if let Some(origin) = &cause.origin {
+                    segment.push('\n');
+                    segment.push_str(&source_context(origin));
+                }
+                if let Some(help) = &cause.help {
+                    segment.push_str("\n\n");
+                    segment.push_str(help);
+                }
+                segments.push(segment);
+            }
+            text.push_str("\n\n");
+            text.push_str(&segments.join("\n\n<<< caused by >>>\n\n"));
         }
         if !self.errored.insert(text.clone()) {
             return;
@@ -710,6 +864,41 @@ mod tests {
 
     fn capture(f: impl FnOnce(&mut Renderer)) -> String {
         capture_with_color(false, f)
+    }
+
+    /// The source lines under `Origin:`, read the way Python's text mode reads them, and what
+    /// shows when the file cannot be read.
+    #[rstest]
+    #[case::crlf(b"a: 1\r\nb: 2\r\n".as_slice(), vec!["1 a: 1", "2 b: 2", "  ^ column 1"])]
+    #[case::lone_cr(b"a: 1\rb: 2\r".as_slice(), vec!["1 a: 1", "2 b: 2", "  ^ column 1"])]
+    #[case::not_utf8(b"a: \xff\nb: 2\n".as_slice(), vec!["(source not shown: UnicodeDecodeError)"])]
+    fn source_lines_read_as_python_does(#[case] bytes: &[u8], #[case] expected: Vec<&str>) {
+        let dir = std::env::temp_dir().join(format!("volant-lines-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let path = dir.join(format!("{}.yml", expected.len() + bytes.len()));
+        std::fs::write(&path, bytes).expect("the source");
+        let origin = crate::playbook::Origin {
+            path: path.display().to_string().into(),
+            line: 2,
+            col: 1,
+        };
+        assert_eq!(annotated_lines(&origin), expected);
+        let missing = crate::playbook::Origin {
+            path: dir.join("missing.yml").display().to_string().into(),
+            ..origin
+        };
+        assert_eq!(
+            annotated_lines(&missing),
+            ["(source not shown: FileNotFoundError)"]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn shorten_keeps_whole_words_as_textwrap_does() {
+        assert_eq!(shorten("a  b\n c", 120), "a b c");
+        assert_eq!(shorten("aaaa bbbb cccc dddd", 15), "aaaa bbbb [...]");
+        assert_eq!(shorten("aaaaaaaaaaaaaaaaaaaa", 10), "[...]");
     }
 
     fn result(v: serde_json::Value) -> TaskResult {

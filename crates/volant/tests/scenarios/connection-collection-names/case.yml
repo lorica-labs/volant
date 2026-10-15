@@ -1,0 +1,2 @@
+# A connection the reference routes to an absent collection fails that host's task; the others run on.
+args: [-i, inv.ini, play.yml]

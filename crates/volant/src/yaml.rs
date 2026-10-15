@@ -33,13 +33,24 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
 /// Where each mapping of a loaded document starts, as `(line, column)`, both counted from 1:
 /// the position ansible-core's `Origin` gives a task. Keyed by the mapping's address in the
 /// documents [`load_with_origins`] returned, which stay where they are while nothing changes them.
+///
+/// The values of every mapping entry are kept the same way, keyed by the value node's address:
+/// the reference points a keyword's error at the value (`until: x` at the `x`).
 #[derive(Debug, Default)]
-pub struct Origins(std::collections::HashMap<usize, (usize, usize)>);
+pub struct Origins {
+    maps: std::collections::HashMap<usize, (usize, usize)>,
+    values: std::collections::HashMap<usize, (usize, usize)>,
+}
 
 impl Origins {
     /// Where `map` starts, when it is a mapping of the documents these origins came with.
     pub fn of(&self, map: &Mapping<'_>) -> Option<(usize, usize)> {
-        self.0.get(&std::ptr::from_ref(map).addr()).copied()
+        self.maps.get(&std::ptr::from_ref(map).addr()).copied()
+    }
+
+    /// Where `value` starts, when it is the value of a mapping entry of those documents.
+    pub fn of_value(&self, value: &Yaml<'_>) -> Option<(usize, usize)> {
+        self.values.get(&std::ptr::from_ref(value).addr()).copied()
     }
 }
 
@@ -57,25 +68,39 @@ pub fn load_with_origins<'a>(
     }
     // The mappings in the order a walk meets them, on both trees: the marked one gives the
     // positions, the lowered one the addresses.
-    let mut starts = Vec::new();
+    let mut starts = (Vec::new(), Vec::new());
     for doc in &marked {
         mapping_starts(doc, &mut starts);
     }
     let docs: Vec<Yaml<'a>> = marked.into_iter().map(|doc| lower(doc, text)).collect();
-    let mut addresses = Vec::new();
+    let mut addresses = (Vec::new(), Vec::new());
     for doc in &docs {
         mapping_addresses(doc, &mut addresses);
     }
-    debug_assert_eq!(starts.len(), addresses.len());
-    Ok((docs, Origins(addresses.into_iter().zip(starts).collect())))
+    // The two walks meet the same nodes in the same order. Should they ever disagree, no
+    // position is better than a wrong one: an error block then shows no `Origin:` line.
+    if starts.0.len() != addresses.0.len() || starts.1.len() != addresses.1.len() {
+        return Ok((docs, Origins::default()));
+    }
+    Ok((
+        docs,
+        Origins {
+            maps: addresses.0.into_iter().zip(starts.0).collect(),
+            values: addresses.1.into_iter().zip(starts.1).collect(),
+        },
+    ))
 }
 
-fn mapping_starts(node: &MarkedYaml<'_>, out: &mut Vec<(usize, usize)>) {
+type Starts = (Vec<(usize, usize)>, Vec<(usize, usize)>);
+
+fn mapping_starts(node: &MarkedYaml<'_>, out: &mut Starts) {
+    let at = |n: &MarkedYaml<'_>| (n.span.start.line(), n.span.start.col() + 1);
     match &node.data {
         YamlData::Sequence(items) => items.iter().for_each(|n| mapping_starts(n, out)),
         YamlData::Mapping(map) => {
-            out.push((node.span.start.line(), node.span.start.col() + 1));
+            out.0.push(at(node));
             for (k, v) in map {
+                out.1.push(at(v));
                 mapping_starts(k, out);
                 mapping_starts(v, out);
             }
@@ -85,12 +110,13 @@ fn mapping_starts(node: &MarkedYaml<'_>, out: &mut Vec<(usize, usize)>) {
     }
 }
 
-fn mapping_addresses(node: &Yaml<'_>, out: &mut Vec<usize>) {
+fn mapping_addresses(node: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usize>)) {
     match node {
         Yaml::Sequence(items) => items.iter().for_each(|n| mapping_addresses(n, out)),
         Yaml::Mapping(map) => {
-            out.push(std::ptr::from_ref(map).addr());
+            out.0.push(std::ptr::from_ref(map).addr());
             for (k, v) in map {
+                out.1.push(std::ptr::from_ref(v).addr());
                 mapping_addresses(k, out);
                 mapping_addresses(v, out);
             }

@@ -1,0 +1,17 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - assert: {that: true, nosucharg: 1}
+      ignore_errors: true
+    - ansible.builtin.assert: {that: true, nosucharg: 1}
+      ignore_errors: true
+    - ansible.legacy.assert: {that: true, nosucharg: 1}
+      ignore_errors: true
+    - fail: {nosuch: 1}
+      ignore_errors: true
+    - ansible.builtin.fail: {nosuch: 1}
+      ignore_errors: true
+    - pause: {nosuch: 1}
+      ignore_errors: true
+    - ansible.builtin.pause: {nosuch: 1}
+      ignore_errors: true

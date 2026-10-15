@@ -2,15 +2,15 @@
   gather_facts: false
   become: true
   tasks:
-    - command: true
+    - command: "true"
       register: one
-    - command: true
+    - command: "true"
       register: two
-    - command: true
+    - command: "true"
       register: three
-    - command: true
+    - command: "true"
       register: four
-    - command: true
+    - command: "true"
       register: five
-    - command: true
+    - command: "true"
       register: six

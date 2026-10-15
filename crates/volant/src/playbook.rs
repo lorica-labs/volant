@@ -146,6 +146,19 @@ impl Drop for OriginScope {
     }
 }
 
+/// Where `value` was written, when it is a mapping entry's value in the file being parsed.
+fn value_origin(value: &Yaml<'_>) -> Option<Origin> {
+    ORIGINS.with(|o| {
+        o.borrow().as_ref().and_then(|(path, origins)| {
+            origins.of_value(value).map(|(line, col)| Origin {
+                path: path.clone(),
+                line,
+                col,
+            })
+        })
+    })
+}
+
 /// Where `map` was written, when it comes from the file being parsed.
 fn task_origin(map: &saphyr::Mapping<'_>) -> Option<Origin> {
     ORIGINS.with(|o| {
@@ -244,6 +257,9 @@ pub struct PlayTask {
     pub unsupported: Vec<&'static str>,
     /// Where the task was written, for the `Origin:` of a failure's error block.
     pub origin: Option<Origin>,
+    /// Where some of its values were written - `until`, `retries`, `delay` and a `debug`'s `var` -
+    /// for the cause the reference points at when one of them fails.
+    pub value_origins: std::collections::BTreeMap<&'static str, Origin>,
 }
 
 impl PlayTask {
@@ -294,6 +310,7 @@ impl PlayTask {
             delegate_to: None,
             unsupported: Vec::new(),
             origin: None,
+            value_origins: std::collections::BTreeMap::new(),
         }
     }
 
@@ -948,6 +965,46 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
 /// there at all is a different refusal with a different code, raised by the caller that knows
 /// which path it asked for.
 pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
+    parse_tasks_text(path).map_err(|err| {
+        if err.downcast_ref::<NotATaskList>().is_some() {
+            err
+        } else {
+            anyhow::Error::new(TaskFileRefused(format!("{err:#}")))
+        }
+    })
+}
+
+/// A task file the reference refuses while it loads it: a YAML error, a task it cannot parse.
+/// Raised from a dynamic include it ends the run at exit 4 with the statement's banner and no
+/// recap; measured on ansible-core 2.19.12, unlike [`NotATaskList`], which fails the host.
+#[derive(Debug)]
+pub(crate) struct TaskFileRefused(pub String);
+
+impl std::fmt::Display for TaskFileRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TaskFileRefused {}
+
+/// A task file whose document is not a list.
+#[derive(Debug)]
+pub(crate) struct NotATaskList(String);
+
+impl std::fmt::Display for NotATaskList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: included task files must contain a list of tasks",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for NotATaskList {}
+
+fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
@@ -958,7 +1015,7 @@ pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> 
         Some(node @ Yaml::Sequence(_)) => {
             task_list(Some(node), "tasks").with_context(|| source.clone())
         }
-        Some(_) => bail!("{source}: included task files must contain a list of tasks"),
+        Some(_) => Err(NotATaskList(source).into()),
     }
 }
 
@@ -1233,6 +1290,18 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
     let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
+    let mut value_origins = std::collections::BTreeMap::new();
+    let var = field(value, "var").or_else(|| field(yaml, "args").and_then(|a| field(a, "var")));
+    for (key, node) in [
+        ("until", field(yaml, "until")),
+        ("retries", field(yaml, "retries")),
+        ("delay", field(yaml, "delay")),
+        ("var", var),
+    ] {
+        if let Some(origin) = node.and_then(value_origin) {
+            value_origins.insert(key, origin);
+        }
+    }
     Ok(PlayTask {
         named: name.is_some(),
         name: name.unwrap_or_else(|| module.clone()),
@@ -1265,6 +1334,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         delegate_to,
         unsupported,
         origin: task_origin(map),
+        value_origins,
     })
 }
 
@@ -1442,13 +1512,6 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::Value(Scalar::String(s)) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(s.to_string()));
         }
-        // A deliberate divergence: YAML's core schema resolves an unquoted `true`/`false` as a
-        // boolean, and ansible-playbook refuses it with "unexpected parameter type in action".
-        // Volant takes the value back to the text it was written as and runs it, so
-        // `command: false` runs `/bin/false` where Ansible would stop on an error.
-        Yaml::Value(Scalar::Boolean(b)) if is_free_form(module) => {
-            args.insert("_raw_params".into(), Value::String(b.to_string()));
-        }
         // A collection's module, or a name a `library/` may hold, read as the reference's
         // `parse_kv` reads it: a word without `=` is kept in `_raw_params`, and a string that
         // does not split is kept whole, for the pre-flight to refuse once the name resolved.
@@ -1477,6 +1540,19 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
             }
         }
         Yaml::Value(Scalar::Null) => {}
+        // The class names are the reference's own words for what a task's argument was.
+        Yaml::Value(Scalar::Boolean(_)) => {
+            bail!("unexpected parameter type in action: <class 'bool'>")
+        }
+        Yaml::Value(Scalar::Integer(_)) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>"
+        ),
+        Yaml::Value(Scalar::FloatingPoint(_)) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedFloat'>"
+        ),
+        Yaml::Sequence(_) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>"
+        ),
         other => bail!("module arguments must be a mapping or a string, found {other:?}"),
     }
     Ok(args)
@@ -1657,7 +1733,7 @@ mod tests {
     )]
     #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
     #[case::when_scalar(
-        "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
+        "- hosts: all\n  tasks:\n    - command: \"true\"\n      when: 3\n",
         &["when"]
     )]
     #[case::loop_and_with_items(
@@ -1741,11 +1817,11 @@ mod tests {
         &["'always' keyword cannot be used without 'block'"]
     )]
     #[case::notify_element(
-        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      notify: [3]\n",
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      notify: [3]\n",
         &["task 't': 'notify' must be a name or a list of names"]
     )]
     #[case::when_element(
-        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      when: [3]\n",
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      when: [3]\n",
         &["task 't': 'when' must be an expression or a list of expressions"]
     )]
     fn the_load_refuses(#[case] text: &str, #[case] needles: &[&str]) {
@@ -1815,7 +1891,6 @@ mod tests {
     #[case::template_words("ns.coll.mod: port={{ x }} {{ a b }}", "ns.coll.mod", &[("_raw_params", "{{ a b }}"), ("port", "{{ x }}")])]
     #[case::open_quote("ns.coll.mod: a='open", "ns.coll.mod", &[("_raw_params", "a='open")])]
     #[case::builtin_stray_word("ping: data=x foo", "ping", &[("_raw_params", "foo"), ("data", "x")])]
-    #[case::unquoted_boolean("command: false", "command", &[("_raw_params", "false")])]
     #[case::jinja_block_kept_whole(
         "copy: dest={{ base ~ '/x' }} mode=0644 content=u\"v w\"",
         "copy",
@@ -1858,7 +1933,7 @@ mod tests {
         local: 1
       timeout: 5
     - name: Several conditions
-      command: true
+      command: "true"
       when:
         - out is defined
         - out.rc == 0
@@ -1925,7 +2000,7 @@ mod tests {
     #[test]
     fn booleans_are_read_the_way_the_reference_reads_them() {
         let pb = parse(
-            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: true\n      when: false\n      ignore_errors: 0\n",
+            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: \"true\"\n      when: false\n      ignore_errors: 0\n",
             "x.yml",
         )
         .unwrap();

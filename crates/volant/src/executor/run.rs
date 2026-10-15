@@ -30,6 +30,9 @@ use super::{CANCEL_GRACE, LinkKey, Reboots, RunOptions, as_bool_value, python_ty
 /// once per item.
 const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.";
 
+/// The help the reference's error block gives under that refusal's last cause.
+const UNTRUSTED_HELP: &str = "Templates and expressions must be defined by trusted sources such as playbooks or roles, not untrusted sources such as module results.";
+
 /// `include_vars`, run where every other controller-side module runs.
 ///
 /// Measured on ansible-core 2.19.12: a file that is there sets each of its keys as a fact and
@@ -125,7 +128,7 @@ pub(super) async fn run_local(
     stop: &mut watch::Receiver<bool>,
 ) -> Option<TaskResult> {
     let mut result = if short_name(&task.module) == "pause" {
-        pause(item, std::io::stdin().is_terminal(), stop).await?
+        pause(&task.module, item, std::io::stdin().is_terminal(), stop).await?
     } else {
         local_result(task, item, step, templar, store, verbosity)
     };
@@ -245,7 +248,8 @@ fn local_result(
             let unknown = unknown_args(&FAIL, &item.args);
             if !unknown.is_empty() {
                 return unchanged_failure(format!(
-                    "Invalid options for ansible.builtin.fail: {}",
+                    "Invalid options for {}: {}",
+                    action_name(&task.module, "ansible.builtin.fail"),
                     unknown.join(", ")
                 ));
             }
@@ -296,7 +300,24 @@ fn local_result(
                 // controller. Refused with the reference's own sentence, measured on
                 // ansible-core 2.19.12 for both the plain form and the loop form.
                 if item.args_untrusted.contains("var") {
-                    return TaskResult::failed_with(UNTRUSTED_VAR);
+                    let at = task.value_origins.get("var");
+                    let mut refused = TaskResult::failed_with(UNTRUSTED_VAR);
+                    refused.0.insert(
+                        crate::render::CHAIN_KEY.into(),
+                        json!([
+                            crate::render::cause(
+                                "Error while resolving `var` expression.",
+                                at,
+                                None
+                            ),
+                            crate::render::cause(
+                                "Encountered untrusted template or expression.",
+                                at,
+                                Some(UNTRUSTED_HELP),
+                            ),
+                        ]),
+                    );
+                    return refused;
                 }
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
@@ -329,12 +350,27 @@ fn local_result(
     TaskResult(r)
 }
 
-/// An action's refusal of its arguments, which the reference reports with `changed: false`:
-/// measured on ansible-core 2.19.12 for `assert`, `fail` and `pause`.
+/// An action's refusal of its arguments, measured on ansible-core 2.19.12 for `assert`, `fail`
+/// and `pause`: `changed: false`, and an error block that says `Task failed: ` and the message,
+/// with no `Action failed: ` between, since the action raised it before it ran.
 fn unchanged_failure(msg: impl Into<String>) -> TaskResult {
-    let mut failed = TaskResult::failed_with(msg);
-    failed.0.insert("changed".into(), json!(false));
+    let msg = msg.into();
+    let mut failed = raised(&msg, Vec::new());
+    failed.0.insert(
+        crate::render::ERROR_KEY.into(),
+        Value::from(crate::render::task_failed(&msg)),
+    );
     failed
+}
+
+/// The name an action's refusal gives it, measured on ansible-core 2.19.12: the plugin's full
+/// import path under `ansible.builtin.`, the bare name written bare or under `ansible.legacy.`.
+fn action_name(module: &str, long: &str) -> String {
+    if module.starts_with("ansible.builtin.") {
+        long.to_string()
+    } else {
+        short_name(module).to_string()
+    }
 }
 
 /// The names a task wrote that the module does not have, sorted.
@@ -350,7 +386,12 @@ fn unknown_args<'a>(spec: &ModuleSpec, args: &'a Map<String, Value>) -> Vec<&'a 
 
 /// The reference's refusal of an argument its `assert` or `pause` action plugin does not have,
 /// measured on ansible-core 2.19.12. It lists aliases apart, in brackets after the names.
-fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -> Option<String> {
+fn unsupported(
+    module: &str,
+    spec: &ModuleSpec,
+    aliases: &[&str],
+    args: &Map<String, Value>,
+) -> Option<String> {
     let unknown = unknown_args(spec, args);
     if unknown.is_empty() {
         return None;
@@ -367,8 +408,14 @@ fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -
         format!(" ({})", aliases.join(", "))
     };
     Some(format!(
-        "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.{}) module: {}. Supported parameters include: {}{aliases}.",
-        spec.name,
+        "Unsupported parameters for ({}) module: {}. Supported parameters include: {}{aliases}.",
+        action_name(
+            module,
+            &format!(
+                "ansible_collections.ansible.builtin.plugins.action.{}",
+                spec.name
+            )
+        ),
         unknown.join(", "),
         names.join(", ")
     ))
@@ -384,7 +431,7 @@ fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -
 /// The one render is the reference's own: a `that` that is one template naming a list is that
 /// list. A list a managed host wrote is data, so its strings are refused rather than compiled.
 fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult {
-    if let Some(refusal) = unsupported(&ASSERT, &["msg"], &item.args) {
+    if let Some(refusal) = unsupported(&task.module, &ASSERT, &["msg"], &item.args) {
         return unchanged_failure(refusal);
     }
     let Some(that) = task.args.get("that").filter(|v| !v.is_null()) else {
@@ -451,21 +498,11 @@ fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult 
     TaskResult(r)
 }
 
-/// `pause`, measured on ansible-core 2.19.12: a duration under one second waits one, `delta` is
-/// the whole seconds waited, and `stdout` gives the time waited to two decimals, in minutes
-/// unless `seconds` was the argument. A pause that asks for an answer, through `prompt` or by
-/// having no duration at all, warns and goes on at once when standard input is not a terminal.
-///
-/// On a terminal it is refused: nothing here reads the answer, and showing the prompt and going
-/// on would accept the task and not do it. `interactive` is passed in so that both sides of that
-/// can be tested. `None` is the run's interruption, which ends the wait early.
-async fn pause(
-    item: &Item,
-    interactive: bool,
-    stop: &mut watch::Receiver<bool>,
-) -> Option<TaskResult> {
-    if let Some(refusal) = unsupported(&PAUSE, &[], &item.args) {
-        return Some(unchanged_failure(refusal));
+/// How long a `pause` waits and in which unit it was asked, `None` for a prompt with no
+/// duration, or the failure its arguments get.
+fn pause_duration(module: &str, item: &Item) -> Result<Option<(i64, &'static str)>, TaskResult> {
+    if let Some(refusal) = unsupported(module, &PAUSE, &[], &item.args) {
+        return Err(unchanged_failure(refusal));
     }
     let whole = |v: &Value| match v {
         Value::Number(n) => n.as_f64().map(|f| f.trunc() as i64),
@@ -474,7 +511,7 @@ async fn pause(
     };
     let asked = match (item.args.get("minutes"), item.args.get("seconds")) {
         (Some(_), Some(_)) => {
-            return Some(TaskResult::failed_with(
+            return Err(TaskResult::failed_with(
                 "parameters are mutually exclusive: minutes|seconds",
             ));
         }
@@ -486,7 +523,7 @@ async fn pause(
         Ok(asked) => Some(asked),
         Err(Value::Null) => None,
         Err(v) => {
-            return Some(TaskResult::failed_with(format!(
+            return Err(TaskResult::failed_with(format!(
                 "non-integer value given for prompt duration: {v}"
             )));
         }
@@ -494,8 +531,49 @@ async fn pause(
     // Python's clock counts nanoseconds in a signed 64-bit integer, and the reference fails a
     // pause it cannot hold rather than wait it out. Measured on ansible-core 2.19.12.
     if asked.is_some_and(|(seconds, _)| seconds > i64::MAX / 1_000_000_000) {
-        return Some(TaskResult::failed_with(PYTIME_OUT_OF_RANGE));
+        return Err(TaskResult::failed_with(PYTIME_OUT_OF_RANGE));
     }
+    Ok(asked)
+}
+
+/// What a `pause` with a duration prints on stdout before it waits, measured on ansible-core
+/// 2.19.12: `Pausing for N seconds`, at least one, `(output is hidden)` behind it under `echo:
+/// false`, and the interrupt keys, ending in `\r`, when it also has a `prompt`.
+pub(super) fn pause_lines(module: &str, item: &Item) -> Vec<String> {
+    let Ok(Some((seconds, _))) = pause_duration(module, item) else {
+        return Vec::new();
+    };
+    let echo = item
+        .args
+        .get("echo")
+        .and_then(volant_protocol::modules::arg_bool)
+        .unwrap_or(true);
+    let hidden = if echo { "" } else { " (output is hidden)" };
+    let mut lines = vec![format!("Pausing for {} seconds{hidden}", seconds.max(1))];
+    if item.args.get("prompt").is_some_and(|p| !python_falsy(p)) {
+        lines.push("(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)\r".to_string());
+    }
+    lines
+}
+
+/// `pause`, measured on ansible-core 2.19.12: a duration under one second waits one, `delta` is
+/// the whole seconds waited, and `stdout` gives the time waited to two decimals, in minutes
+/// unless `seconds` was the argument. A pause that asks for an answer, through `prompt` or by
+/// having no duration at all, warns and goes on at once when standard input is not a terminal.
+///
+/// On a terminal it is refused: nothing here reads the answer, and showing the prompt and going
+/// on would accept the task and not do it. `interactive` is passed in so that both sides of that
+/// can be tested. `None` is the run's interruption, which ends the wait early.
+async fn pause(
+    module: &str,
+    item: &Item,
+    interactive: bool,
+    stop: &mut watch::Receiver<bool>,
+) -> Option<TaskResult> {
+    let asked = match pause_duration(module, item) {
+        Ok(asked) => asked,
+        Err(refused) => return Some(refused),
+    };
     let prompting = asked.is_none() || item.args.contains_key("prompt");
     if prompting && interactive {
         return Some(TaskResult::failed_with(PROMPT_REFUSED));
@@ -918,9 +996,11 @@ fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         } else {
             crate::render::task_failed(&crate::render::concat_message(&by_failed, &detail))
         };
+        // A failure raised before the action ran already carries its block's message.
         result
             .0
-            .insert(crate::render::ERROR_KEY.into(), Value::from(message));
+            .entry(crate::render::ERROR_KEY)
+            .or_insert_with(|| Value::from(message));
         result
             .0
             .insert("exception".into(), json!("(traceback unavailable)"));
@@ -1216,14 +1296,16 @@ pub(super) fn retry_plan(
     task: &PlayTask,
     item: Option<&Item>,
     templar: &Templar,
-) -> Result<Option<Retry>, TemplateError> {
+) -> Result<Option<Retry>, TaskResult> {
     let empty = HostVars::default();
     let vars = item.map_or(&empty, |i| &i.vars);
     // `retries` is the reference's `isa='int'`, which refuses a value it would truncate (its
     // `Decimal` check: `'2.5'` and `2.5` fail, `'2.0'` and `true` pass), and `delay` its
     // `isa='float'`. Measured on ansible-core 2.19.12, both messages included.
-    let number = |raw: &Value, keyword: &str, isa: &str| -> Result<f64, TemplateError> {
-        let rendered = templar.render_value(raw, vars)?;
+    let number = |raw: &Value, keyword: &'static str, isa: &str| -> Result<f64, TaskResult> {
+        let rendered = templar
+            .render_value(raw, vars)
+            .map_err(|e| raised(&format!("Task failed: {}", e.0), Vec::new()))?;
         let n = match &rendered {
             Value::Bool(b) => Some(f64::from(u8::from(*b))),
             Value::Number(n) => n.as_f64(),
@@ -1232,10 +1314,37 @@ pub(super) fn retry_plan(
         };
         n.filter(|n| isa == "float" || (n.is_finite() && n.fract() == 0.0))
             .ok_or_else(|| {
-                TemplateError(format!(
-                    "Error processing keyword '{keyword}': The value {} could not be converted to '{isa}'.",
+                let keyword_error = format!("Error processing keyword '{keyword}'.");
+                let value_error = format!(
+                    "The value {} could not be converted to '{isa}'.",
                     crate::playbook::python_repr(&rendered)
-                ))
+                );
+                let at = task.value_origins.get(keyword);
+                // Measured on ansible-core 2.19.12: the keyword's cause points at the keyword's
+                // value, and the conversion's at where the value was written - the same place
+                // for a literal (`delay: x`). A value a template produced was written somewhere
+                // this engine does not track, so its sentence joins the keyword's, as the
+                // reference joins a cause that has no origin of its own.
+                let literal = !matches!(raw, Value::String(s) if Templar::is_template(s));
+                let causes = if literal {
+                    vec![
+                        crate::render::cause(&keyword_error, at, None),
+                        crate::render::cause(&value_error, at, None),
+                    ]
+                } else {
+                    vec![crate::render::cause(
+                        &crate::render::concat_message(&keyword_error, &value_error),
+                        at,
+                        None,
+                    )]
+                };
+                raised(
+                    &format!(
+                        "Task failed: {}",
+                        crate::render::concat_message(&keyword_error, &value_error)
+                    ),
+                    causes,
+                )
             })
     };
     let retries = match &task.retries {
@@ -1289,26 +1398,53 @@ const MAX_TIMEOUT: u64 = 100_000_000;
 /// invalid, it must be between 0 and 100000000.` and runs nothing. Every deadline behind this
 /// point is then a sum that fits.
 pub(super) fn retry_plans(task: &PlayTask, items: &[Item], templar: &Templar) -> Vec<ItemRetry> {
-    let failed = |msg: String| {
-        let mut failed = TaskResult::failed_with(format!("Task failed: {msg}"));
-        failed.0.insert("changed".into(), json!(false));
-        failed
-    };
     items
         .iter()
         .map(|item| {
             if item.skipped.is_some() {
                 return Ok(None);
             }
-            let plan = retry_plan(task, Some(item), templar).map_err(|e| failed(e.0))?;
+            let plan = retry_plan(task, Some(item), templar)?;
             match task.timeout {
-                Some(t) if t > MAX_TIMEOUT => Err(failed(format!(
-                    "Timeout {t} is invalid, it must be between 0 and {MAX_TIMEOUT}."
-                ))),
+                Some(t) if t > MAX_TIMEOUT => Err(raised(
+                    &format!(
+                        "Task failed: Timeout {t} is invalid, it must be between 0 and {MAX_TIMEOUT}."
+                    ),
+                    Vec::new(),
+                )),
                 _ => Ok(plan),
             }
         })
         .collect()
+}
+
+/// A controller-side task its `timeout` ended. Measured on ansible-core 2.19.12: its error block
+/// chains `Timed out after N second(s).` behind `Task failed.`, where a module's timeout prints
+/// one line.
+pub(super) fn local_timed_out(seconds: u64) -> TaskResult {
+    let mut r = TaskResult::timed_out(seconds);
+    r.0.insert(
+        crate::render::CHAIN_KEY.into(),
+        json!([crate::render::cause(
+            &format!("Timed out after {seconds} second(s)."),
+            None,
+            None
+        )]),
+    );
+    r
+}
+
+/// A failure the executor raised rather than a module returned: `changed: false` and the message,
+/// measured on ansible-core 2.19.12, and the causes its error block chains, if any.
+pub(super) fn raised(msg: &str, causes: Vec<Value>) -> TaskResult {
+    let mut failed = TaskResult::failed_with(msg);
+    failed.0.insert("changed".into(), json!(false));
+    if !causes.is_empty() {
+        failed
+            .0
+            .insert(crate::render::CHAIN_KEY.into(), Value::Array(causes));
+    }
+    failed
 }
 
 /// Whether any item of [`retry_plans`] retries or failed to render, which sends the task down
@@ -1381,7 +1517,19 @@ pub(super) fn judge_attempt(
     let mut r = apply_conditions(task, item, raw, templar);
     r.0.insert("attempts".into(), json!(attempt));
     match until_holds(task, item, &r, retry, templar) {
-        Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
+        // Measured on ansible-core 2.19.12: `changed: false`, and a cause pointing at the
+        // `until` value.
+        Err(e) => {
+            let cause = format!("Error while evaluating conditional: {}", e.0);
+            return Attempt::Done(raised(
+                &conditional_error(&e),
+                vec![crate::render::cause(
+                    &cause,
+                    task.value_origins.get("until"),
+                    None,
+                )],
+            ));
+        }
         Ok(true) => {
             settle_failure(&mut r, task);
             return Attempt::Done(r);
@@ -2590,6 +2738,7 @@ async fn send_batch<C: AgentChannel>(
                     ledger.ran.push((index, module, ran));
                 }
                 if let Some(slot) = received.get_mut(index) {
+                    drop_internal_keys(&mut result);
                     add_output_lines(&mut result);
                     summarise_exception(&mut result);
                     *slot = Some(result);
@@ -2624,6 +2773,17 @@ async fn send_batch<C: AgentChannel>(
 /// module result that lacks them, so a Python module's result has them there; here the agent
 /// writes them for `command` and `raw` alone, and every result an agent sends passes through
 /// [`run_agent_batch`], plugin sub-tasks included.
+/// A result a host sent, without the keys only the controller may set: every `_volant_` key,
+/// which the renderer reads (an error chain names files on the controller), and every
+/// `_ansible_` key but `_ansible_parsed`, as the reference's `remove_internal_keys` drops them
+/// from a module's return. Measured on ansible-core 2.19.12: a module returning
+/// `_ansible_verbose_always` gets a warning and its result printed on one line.
+fn drop_internal_keys(result: &mut TaskResult) {
+    result.0.retain(|key, _| {
+        !key.starts_with("_volant_") && (!key.starts_with("_ansible_") || key == "_ansible_parsed")
+    });
+}
+
 fn add_output_lines(result: &mut TaskResult) {
     for (key, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
         if result.0.contains_key(lines) {
@@ -3245,7 +3405,7 @@ mod tests {
         assert_eq!(
             r.0["msg"],
             json!(
-                "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: nosucharg. Supported parameters include: fail_msg, quiet, success_msg, that (msg)."
+                "Unsupported parameters for (assert) module: nosucharg. Supported parameters include: fail_msg, quiet, success_msg, that (msg)."
             )
         );
         assert_eq!(
@@ -3493,10 +3653,7 @@ mod tests {
         assert_eq!(r.0["msg"], json!(["one", "two"]));
         assert!(r.failed());
         let r = local("fail", json!({"nosucharg": 1})).await;
-        assert_eq!(
-            r.0["msg"],
-            json!("Invalid options for ansible.builtin.fail: nosucharg")
-        );
+        assert_eq!(r.0["msg"], json!("Invalid options for fail: nosucharg"));
     }
 
     /// Measured on ansible-core 2.19.12: `seconds: 0` still waits one second and says so.
@@ -3552,7 +3709,7 @@ mod tests {
         assert_eq!(
             r.0["msg"],
             json!(
-                "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.pause) module: nosucharg. Supported parameters include: echo, minutes, prompt, seconds."
+                "Unsupported parameters for (pause) module: nosucharg. Supported parameters include: echo, minutes, prompt, seconds."
             )
         );
     }
@@ -3562,7 +3719,7 @@ mod tests {
     #[tokio::test]
     async fn a_prompt_without_a_terminal_warns_and_goes_on() {
         let item = local_item(json!({"prompt": "Continue?"}));
-        let r = pause(&item, false, &mut watch::channel(false).1)
+        let r = pause("pause", &item, false, &mut watch::channel(false).1)
             .await
             .expect("nothing stops this run");
         assert!(!r.failed(), "{:?}", r.0);
@@ -3585,6 +3742,7 @@ mod tests {
             json!({"prompt": "Go?", "seconds": 1}),
         ] {
             let r = pause(
+                "pause",
                 &local_item(args.clone()),
                 true,
                 &mut watch::channel(false).1,
@@ -3605,7 +3763,10 @@ mod tests {
         let (stop_tx, mut stop) = watch::channel(false);
         let item = local_item(json!({"minutes": 10}));
         let (r, ()) = tokio::join!(
-            tokio::time::timeout(Duration::from_secs(5), pause(&item, false, &mut stop)),
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                pause("pause", &item, false, &mut stop)
+            ),
             async {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 stop_tx.send(true).expect("the receiver is alive");
@@ -4564,6 +4725,56 @@ mod tests {
             "{:?}",
             agent.sent
         );
+    }
+
+    /// A host cannot set the keys the controller reads: a forged error chain naming a controller
+    /// file is dropped before anything renders it, and so is a forged `_ansible_` flag.
+    #[tokio::test]
+    async fn a_host_cannot_forge_the_controller_s_internal_keys() {
+        let dir = std::env::temp_dir().join(format!("volant-forge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "line one\nsecret-line-two\n").expect("the secret");
+        let mut agent = FakeAgent::answering(
+            one_result(
+                5,
+                json!({
+                    "failed": true,
+                    "msg": "forged",
+                    (crate::render::CHAIN_KEY): [{"msg": "x", "path": secret.display().to_string(), "line": 2, "col": 1}],
+                    (crate::render::ERROR_KEY): "Task failed: forged block",
+                    "_ansible_verbose_always": true,
+                    "_ansible_parsed": true,
+                }),
+            )
+            .to_vec(),
+        );
+        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            5,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        let mut result = received[0].clone().expect("a result");
+        settle_failure(&mut result, &task("command"));
+        let keys: Vec<&String> = result.0.keys().collect();
+        assert!(
+            !keys.iter().any(|k| *k == crate::render::CHAIN_KEY)
+                && !result.0.contains_key("_ansible_verbose_always")
+                && result.0.contains_key("_ansible_parsed"),
+            "{keys:?}"
+        );
+        let block = crate::render::ErrorBlock::of(&result, None, false);
+        assert!(block.causes.is_empty(), "{block:?}");
+        assert!(!block.message.contains("forged block"), "{block:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
@@ -6553,7 +6764,7 @@ mod tests {
             let result = ran.expect("the item ran").expect("nothing stopped it");
             assert!(result.failed(), "{result:?}");
             assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
-            assert_eq!(result.0["timedout"], json!({"period": 1}));
+            assert_eq!(result.0["timedout"]["period"], json!(1));
             assert!(!result.0.contains_key("attempts"), "{result:?}");
             assert_eq!(lefts, Vec::<u32>::new());
             assert_eq!(modules_sent(&agent), ["stat"]);

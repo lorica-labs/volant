@@ -61,6 +61,7 @@ pub(super) fn resolve_include(
     store: &Mutex<VarStore>,
     defaults: &ConnectionDefaults,
     warnings: &mut Vec<String>,
+    abort: &super::Abort,
 ) -> (Vec<IncludeGroup>, Vec<Shown>) {
     let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
         Ok(
@@ -121,6 +122,16 @@ pub(super) fn resolve_include(
                     });
                     continue;
                 }
+                // A file the reference cannot parse ends the run at exit 4, after the
+                // statement's banner and without a recap: measured on ansible-core 2.19.12.
+                Err(err)
+                    if err
+                        .downcast_ref::<crate::playbook::TaskFileRefused>()
+                        .is_some() =>
+                {
+                    abort.raise_with(4, format!("{err:#}"));
+                    return (Vec::new(), Vec::new());
+                }
                 Err(err) => {
                     let mut body = Map::new();
                     body.insert("changed".into(), json!(false));
@@ -136,7 +147,10 @@ pub(super) fn resolve_include(
             label: item.label,
             result,
             failed: true,
-            ignored: item.ignore_errors,
+            // The strategy fails the host when the file cannot be loaded, and `ignore_errors`
+            // belongs to the executor: measured on ansible-core 2.19.12, a missing file or a
+            // mapping instead of a list ends the host at exit 2 whatever the keyword says.
+            ignored: Some(false),
         });
     }
     (groups, shown)

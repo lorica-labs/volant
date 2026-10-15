@@ -1,0 +1,9 @@
+- hosts: g
+  gather_facts: false
+  tasks:
+    - pause: {seconds: 1}
+    - pause: {seconds: 0}
+    - pause: {minutes: 0}
+    - pause: {seconds: 1, prompt: hello}
+    - pause: {seconds: 1, echo: false}
+    - pause: {prompt: hi}

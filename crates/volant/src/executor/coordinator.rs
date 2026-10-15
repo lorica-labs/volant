@@ -126,6 +126,13 @@ pub(super) enum Event {
         message: String,
         censored: bool,
     },
+    /// A line an action prints on stdout before its result, as the reference's `pause` prints
+    /// `Pausing for N seconds`. Queued like a warning.
+    Display {
+        host: String,
+        index: usize,
+        line: String,
+    },
     /// What `host` asked for at the include step `index`, already read and compiled. Empty when
     /// every item was skipped or failed to resolve, which still has to be said: the coordinator
     /// splices at every include point whether or not anybody asked for anything, and a driver
@@ -403,12 +410,14 @@ pub(super) async fn run_batch(
                     Some(
                         event @ (Event::Banner { .. }
                         | Event::Retrying { .. }
-                        | Event::Warning { .. }),
+                        | Event::Warning { .. }
+                        | Event::Display { .. }),
                     ) => {
                         let (host, index) = match &event {
                             Event::Banner { host, index }
                             | Event::Retrying { host, index, .. }
-                            | Event::Warning { host, index, .. } => (host.clone(), *index),
+                            | Event::Warning { host, index, .. }
+                            | Event::Display { host, index, .. } => (host.clone(), *index),
                             _ => unreachable!(),
                         };
                         pending.entry((host, index)).or_default().push(event);
@@ -657,7 +666,10 @@ pub(super) async fn run_batch(
             // has already ended, because every host of the batch has left it. There is nothing
             // left to splice the steps in for, and nothing left to run them.
             Event::Include { .. } => {}
-            event @ (Event::Result { .. } | Event::Retrying { .. } | Event::Warning { .. }) => {
+            event @ (Event::Result { .. }
+            | Event::Retrying { .. }
+            | Event::Warning { .. }
+            | Event::Display { .. }) => {
                 report_result(event, stats, out);
             }
         }
@@ -697,7 +709,7 @@ fn shows_a_line(event: &Event) -> bool {
         Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
         // A retry line is the first thing a retried task prints, and the reference shows the
         // task's banner above it: a task whose every attempt is still to come has no result yet.
-        Event::Banner { .. } | Event::Retrying { .. } => true,
+        Event::Banner { .. } | Event::Retrying { .. } | Event::Display { .. } => true,
         // `Event::Warning` falls here with the rest: a warning goes to stderr, beside the
         // display rather than in it, so it never conjures the banner of a step that shows
         // nothing on stdout.
@@ -763,6 +775,10 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     } = &event
     {
         out.warning(message, *censored);
+        return;
+    }
+    if let Event::Display { line, .. } = &event {
+        out.display(line);
         return;
     }
     let Event::Result {

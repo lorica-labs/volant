@@ -1,0 +1,2 @@
+# A controller-side task its timeout ends prints the reference's chained error block.
+args: [pause-timeout.yml]

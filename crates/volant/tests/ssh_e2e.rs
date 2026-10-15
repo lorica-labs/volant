@@ -1284,8 +1284,11 @@ fn ssh_fetch_writes_under_dest_and_nowhere_else() {
             ["esc.txt"],
             "{pass} pass, something was written beside the marker:\n{text}"
         );
+        // Each failure shows the refusal twice: in its result and in its `[ERROR]` line.
         assert_eq!(
-            text.matches(&refusal).count(),
+            text.lines()
+                .filter(|l| l.starts_with("[ERROR]: ") && l.contains(&refusal))
+                .count(),
             2,
             "{pass} pass, both climbing fetches are refused by name:\n{text}"
         );

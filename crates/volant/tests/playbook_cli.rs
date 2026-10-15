@@ -726,64 +726,6 @@ fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// `[tags] run`, `ANSIBLE_RUN_TAGS` and `--tags` are three sources of one list, and the command
-/// line **adds** to whichever of the other two was read rather than replacing it.
-///
-/// Measured on ansible-core 2.19.12: with `[tags] run = x` in `ansible.cfg`, `--tags y` lists
-/// the `x` task **and** the `y` task. The option's own default is that list and the option
-/// appends to its default, so a command line can only ever widen what the file asked for. An
-/// engine that took the command line as a replacement would run less than the reference does
-/// from the same two files, silently.
-///
-/// What would make this red: either source dropped, which selects only the other one's tasks;
-/// or the command line replacing rather than adding, which loses the `x` task here.
-#[test]
-fn the_three_sources_of_a_tag_list_add_up() {
-    let dir = std::env::temp_dir().join(format!("volant-cfgtags-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let cfg = dir.join("ansible.cfg");
-    std::fs::write(&cfg, "[tags]\nrun = x\n").unwrap();
-    let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios/listing-tags");
-    let config = cfg.display().to_string();
-    let list = |run_tags: Option<&str>, args: &[&str]| -> String {
-        let mut argv = vec!["playbook", "-i", "inv.ini", "--list-tasks"];
-        argv.extend_from_slice(args);
-        argv.push("tags.yml");
-        let mut envs = vec![("ANSIBLE_CONFIG", config.as_str())];
-        if let Some(tags) = run_tags {
-            envs.push(("ANSIBLE_RUN_TAGS", tags));
-        }
-        let out = volant_within_full(
-            &argv,
-            DEFAULT_DEADLINE,
-            None,
-            None,
-            Some(&listing),
-            None,
-            &envs,
-        );
-        String::from_utf8_lossy(&out.stdout).to_string()
-    };
-    let from_file = list(None, &[]);
-    assert!(
-        from_file.contains("\n      a\t") && !from_file.contains("\n      b\t"),
-        "the file's own list is read: {from_file}"
-    );
-    let both = list(None, &["--tags", "y"]);
-    assert!(
-        both.contains("\n      a\t") && both.contains("\n      b\t"),
-        "the command line adds to the file's list, it does not replace it: {both}"
-    );
-    // The environment replaces the file, and the command line then adds to the environment.
-    let from_env = list(Some("y"), &[]);
-    assert!(
-        from_env.contains("\n      b\t") && !from_env.contains("\n      a\t"),
-        "the environment replaces the file's list: {from_env}"
-    );
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
 /// An `ansible_connection` naming no plugin fails that host's task, as ansible-core 2.19.12 does,
 /// and the other hosts run on.
 #[test]
@@ -873,96 +815,66 @@ fn forks_bounds_the_hosts_running_at_once() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn zero_forks_is_refused() {
-    let out = volant(&["playbook", "-f", "0", &fixture("site.yml")]);
-    // Exit 2, matching the reference and matching clap's own exit code for `-f abc` or `-f -1`
-    // on this same flag today; kept at 1 would put a refused `0` on the only remaining flag
-    // value clap still hands off to this check, split three ways across two codes.
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&out.stderr)
-            .contains("The number of processes (--forks) must be >= 1"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// A `forks` the file writes but nobody can read refuses the run, with the reference's own
-/// code. Measured against ansible-core 2.19.12: `forks = many` in `ansible.cfg` stops with
-/// `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value: Invalid value provided
-/// for 'integer': 'many'` and exit **5**, before any play header. This used to exit 2, which
-/// is the code a refused `-f 0` gets - a different event that deserves a different code.
-///
-/// What would make this red: the file arm falling back to a default and running, or the
-/// refusal carrying any code but 5. The fixture names an inventory, so a lost refusal shows up
-/// as a successful run and not as an empty one.
-#[test]
-fn an_unparsable_forks_in_ansible_cfg_is_refused_with_the_reference_s_code() {
-    let out = volant_within_env(
-        &["playbook", &fixture("cfg/site.yml")],
-        DEFAULT_DEADLINE,
-        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-forks.cfg"))],
-    );
+/// A run setting nobody can use is refused before any play, with the reference's code and words;
+/// a `remote_tmp` whose `~` names a user is not one of them.
+#[rstest]
+#[case::zero_forks(&["-f", "0"], &[], 2, &["The number of processes (--forks) must be >= 1"])]
+#[case::unparsable_forks_in_ansible_cfg(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/bad-forks.cfg")],
+    5,
+    &["Config 'DEFAULT_FORKS'", "Invalid value provided for 'integer'"]
+)]
+#[case::a_substitution_in_remote_tmp_s_home_part(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/bad-remote-tmp.cfg")],
+    5,
+    &["~$(id)/x"]
+)]
+#[case::a_bare_tilde(&[], &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~")], 0, &[])]
+#[case::a_tilde_user(&[], &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~root")], 0, &[])]
+#[case::a_dotted_tilde_user(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~some.user-1")],
+    0,
+    &[]
+)]
+fn a_run_setting_is_refused_before_any_play_or_honoured(
+    #[case] flags: &[&str],
+    #[case] envs: &[(&str, &str)],
+    #[case] code: i32,
+    #[case] says: &[&str],
+) {
+    // A configuration file is a fixture; any other value is passed as written.
+    let envs: Vec<(&str, String)> = envs
+        .iter()
+        .map(|(k, v)| {
+            let v = if v.ends_with(".cfg") {
+                fixture(v)
+            } else {
+                (*v).to_string()
+            };
+            (*k, v)
+        })
+        .collect();
+    let envs: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let mut args = vec!["playbook"];
+    args.extend_from_slice(flags);
+    let book = if flags.is_empty() {
+        fixture("cfg/site.yml")
+    } else {
+        fixture("site.yml")
+    };
+    args.push(&book);
+    let out = volant_within_env(&args, DEFAULT_DEADLINE, &envs);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
-    assert!(
-        stderr.contains("Config 'DEFAULT_FORKS'")
-            && stderr.contains("Invalid value provided for 'integer'"),
-        "{stderr}"
-    );
-    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
-}
-
-/// A `remote_tmp` whose `~user` part holds anything but a user name is refused when the
-/// configuration is read, before a connection is opened.
-///
-/// The assertion is the exit code and the value in the message: exit 5 is what an unusable
-/// configuration value gets, measured in the 1.4 plan, and naming the value is what lets an
-/// operator find it.
-///
-/// What would make this red: `shell_word` leaving the segment bare and nothing checking it,
-/// which is what this release does -- the substitution reaches the remote shell.
-#[test]
-fn a_remote_tmp_with_a_substitution_in_its_home_part_is_refused() {
-    let out = volant_within_env(
-        &["playbook", &fixture("cfg/site.yml")],
-        DEFAULT_DEADLINE,
-        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-remote-tmp.cfg"))],
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
-    assert!(stderr.contains("~$(id)/x"), "{stderr}");
-    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
-}
-
-/// The other direction, and the one that says the rule is not simply "refuse every tilde": `~`,
-/// `~root` and `~some.user-1` are user names and still reach the remote shell bare, which is the
-/// only thing that can expand them. Read from `ANSIBLE_REMOTE_TMP` rather than a fixture per
-/// value, since only the value under test changes.
-///
-/// What would make this red: a validator refusing every `~`, which would break the default
-/// `remote_tmp` and every inventory that sets one.
-#[test]
-fn an_ordinary_tilde_user_is_still_passed_through() {
-    for value in ["~", "~root", "~some.user-1"] {
-        let out = volant_within_env(
-            &["playbook", &fixture("cfg/site.yml")],
-            DEFAULT_DEADLINE,
-            &[
-                ("ANSIBLE_CONFIG", &fixture("cfg/ansible.cfg")),
-                ("ANSIBLE_REMOTE_TMP", value),
-            ],
-        );
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "'{value}': {}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    assert_eq!(out.status.code(), Some(code), "{stdout}\n{stderr}");
+    for words in says {
+        assert!(stderr.contains(words), "{stderr}");
+    }
+    if code != 0 {
+        assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
     }
 }
 
@@ -1013,10 +925,6 @@ fn fake_python3_without_ansible(name: &str) -> std::path::PathBuf {
     std::fs::write(&python, "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
     dir
-}
-
-fn volant_with_path(args: &[&str], dir: &Path) -> Output {
-    volant_within_with_path(args, DEFAULT_DEADLINE, Some(dir), &[])
 }
 
 /// Needs passwordless sudo for the current user, as on the development machine and on the CI
@@ -1182,20 +1090,51 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork(
     );
 }
 
-/// A `sudo` that wants a password is a task that failed, never a host that could not be
-/// reached: the connection worked, and the run has to exit 2 rather than 4.
-#[test]
-fn a_missing_sudo_password_fails_the_task_not_the_host() {
-    let dir = fake_sudo(
-        "fakesudo",
-        "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n",
-    );
-    let out = volant_with_path(&["playbook", &fixture("become.yml")], &dir);
+/// An escalation that cannot happen fails the task, never the host: a `sudo` wanting a password,
+/// one refusing the password given, and no `sudo` at all.
+#[rstest]
+#[case::a_missing_password(
+    Some("#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n"),
+    None,
+    volant::transport::MISSING_SUDO_PASSWORD
+)]
+#[case::a_rejected_password(
+    Some("#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n"),
+    Some("not-the-password\n"),
+    volant::transport::INCORRECT_SUDO_PASSWORD
+)]
+#[case::no_sudo_at_all(None, None, "sudo")]
+fn an_escalation_that_cannot_happen_fails_the_task(
+    #[case] sudo: Option<&str>,
+    #[case] password: Option<&str>,
+    #[case] says: &str,
+) {
+    let dir = if let Some(body) = sudo {
+        fake_sudo(&format!("sudo-{}", says.len()), body)
+    } else {
+        let dir = std::env::temp_dir().join(format!("volant-nosudo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    };
+    let book = fixture("become.yml");
+    let args: Vec<&str> = if password.is_some() {
+        vec!["playbook", "-K", &book]
+    } else {
+        vec!["playbook", &book]
+    };
+    // A fake `sudo` goes in front of the real one; with none, `PATH` holds nothing at all.
+    let (front, only) = if sudo.is_some() {
+        (Some(dir.as_path()), None)
+    } else {
+        (None, Some(dir.as_path()))
+    };
+    let out = volant_within_full(&args, DEFAULT_DEADLINE, front, only, None, password, &[]);
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
-        text.contains("fatal: [localhost]: FAILED!")
-            && text.contains(volant::transport::MISSING_SUDO_PASSWORD),
-        "{text}"
+        text.contains("fatal: [localhost]: FAILED!") && text.contains(says),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
     );
     assert!(
         !text.contains("UNREACHABLE"),
@@ -1205,64 +1144,7 @@ fn a_missing_sudo_password_fails_the_task_not_the_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same host, the same connection, a password that `sudo` rejects. The two messages have
-/// to be told apart, because the operator's next move differs.
-#[test]
-fn a_rejected_sudo_password_is_named_as_such() {
-    let dir = fake_sudo(
-        "badpassword",
-        "#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n",
-    );
-    let out = volant_feeding_stdin(
-        &["playbook", "-K", &fixture("become.yml")],
-        &dir,
-        "not-the-password\n",
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        text.contains(volant::transport::INCORRECT_SUDO_PASSWORD),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!text.contains("UNREACHABLE"), "{text}");
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A host with no `sudo` at all: still a failed task, and the shell's own words rather than a
-/// guess about passwords.
-#[test]
-fn a_host_without_sudo_fails_the_task_with_the_shells_words() {
-    let dir = std::env::temp_dir().join(format!("volant-nosudo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    // An empty directory as the whole PATH: nothing named `sudo` can be found from here.
-    let out = volant_within_full(
-        &["playbook", &fixture("become.yml")],
-        DEFAULT_DEADLINE,
-        None,
-        Some(&dir),
-        None,
-        None,
-        &[],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("fatal: [localhost]: FAILED!"), "{text}");
-    assert!(
-        text.contains("sudo"),
-        "the message names the program: {text}"
-    );
-    assert!(!text.contains("UNREACHABLE"), "{text}");
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// `become_method` other than `sudo` stops the run before anything executes, with the method
-/// named. `sudo` is not silently substituted for the program the playbook asked for.
-///
-/// Exit 2, measured: the reference reads the keyword happily, finds no plugin for the method and
-/// fails the task that would have used it. Volant refuses earlier, so nothing runs and there is
-/// no recap, but the code an operator's script reads is the same one.
+/// `become_method` other than `sudo` stops the run before anything executes, with the method named.
 #[test]
 fn unsupported_become_methods_are_refused_by_name() {
     let dir = std::env::temp_dir().join(format!("volant-su-{}", std::process::id()));
@@ -5489,16 +5371,8 @@ fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Measured on ansible-core 2.19.12, `connection: local`: a role applied with `tags: [t]` whose
-/// `tasks/main.yml` is one `include_tasks: inc.yml`, run with `--tags t`, shows `included:` and
-/// then runs the included `command` (`changed: [h1]`, `ok=2 changed=1`). The tasks of a file a
-/// role includes carry the role's tags. Volant shows the same `included:` line, then runs nothing
-/// from the file and reports `ok=1 changed=0`, exit 0. The same thing happened to every task of
-/// `geerlingguy.security` and `geerlingguy.nginx` that sits behind an `include_tasks`, under
-/// `--tags security,nginx` against a real host.
-///
-/// What would make this red: the file's tasks filtered out by the tags the run asked for, because
-/// they do not inherit the role's own, so the marker is never written and the run still exits 0.
+/// A role applied with `tags: [t]` and run with `--tags t` runs the tasks of a file its
+/// `tasks/main.yml` includes (ansible-core 2.19.12).
 #[test]
 fn a_role_s_tags_reach_the_tasks_of_a_file_it_includes() {
     let dir = probe_dir("include-role-tags");

@@ -484,7 +484,7 @@ pub(crate) fn python_repr(value: &Value) -> String {
         Value::Null => "None".to_string(),
         Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
         Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{s}'"),
+        Value::String(s) => python_str_repr(s),
         Value::Array(items) => format!(
             "[{}]",
             items.iter().map(python_repr).collect::<Vec<_>>().join(", ")
@@ -492,11 +492,44 @@ pub(crate) fn python_repr(value: &Value) -> String {
         Value::Object(map) => format!(
             "{{{}}}",
             map.iter()
-                .map(|(k, v)| format!("'{k}': {}", python_repr(v)))
+                .map(|(k, v)| format!("{}: {}", python_str_repr(k), python_repr(v)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
     }
+}
+
+/// Python's `repr` of a string: single quotes unless the text holds one and no double quote,
+/// the chosen quote and the backslash escaped, control characters as `\n`, `\t`, `\r` or `\xNN`.
+// ponytail: other characters Python finds unprintable (` `, format characters) go through
+// as they are; escape them by Unicode category if a label ever needs it.
+fn python_str_repr(s: &str) -> String {
+    use std::fmt::Write as _;
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(quote);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c.is_control() && u32::from(c) < 0x100 => {
+                let _ = write!(out, "\\x{:02x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
 }
 
 /// Whether this task asks the engine for something instead of naming a module to run.

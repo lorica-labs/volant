@@ -1,0 +1,2 @@
+# A failed set_fact or include_vars keeps none of its facts, and a loop is judged whole.
+args: [failed-facts.yml]

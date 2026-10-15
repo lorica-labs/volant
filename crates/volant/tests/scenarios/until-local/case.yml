@@ -1,0 +1,2 @@
+# A controller-side task retries like any other, `Result was:` on each retry line.
+args: [-i, inv.ini, local.yml]

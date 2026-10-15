@@ -1,0 +1,40 @@
+- hosts: g
+  gather_facts: false
+  tasks:
+    - name: retried debug
+      debug:
+        msg: probe
+      until: false
+      retries: 1
+      delay: 0
+      ignore_errors: true
+
+    - name: retried assert in a loop
+      assert:
+        that: false
+      until: false
+      retries: 1
+      delay: 0
+      loop: [1]
+      ignore_errors: true
+
+    - name: retried quiet assert
+      assert:
+        that: false
+        quiet: true
+      until: false
+      retries: 1
+      delay: 0
+      ignore_errors: true
+
+    - name: a delay that does not convert
+      assert:
+        that: false
+      until: false
+      retries: 1
+      delay: nan
+      ignore_errors: true
+
+    - name: same failure on both hosts
+      fail:
+        msg: same

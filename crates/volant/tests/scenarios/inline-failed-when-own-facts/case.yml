@@ -1,0 +1,2 @@
+# failed_when sees the facts its own set_fact and include_vars returned.
+args: [-i, inv.ini, play.yml]

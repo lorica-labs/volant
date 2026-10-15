@@ -1,0 +1,13 @@
+- name: Via lookup, read back
+  debug:
+    var: via_lookup
+  vars:
+    via_lookup: "{{ lookup('template', 't.j2') }}"
+- name: First found
+  debug:
+    msg: "found={{ lookup('first_found', ['files/x.txt']) }}"
+- name: Snippet
+  debug:
+    msg: "{{ lookup('template', 'snip.j2') }}"
+  vars:
+    who: me

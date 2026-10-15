@@ -1,0 +1,2 @@
+# A creates pattern is resolved against chdir.
+args: [-i, inv.ini, -e, "workdir={{ playbook_dir }}/work", creates-chdir.yml]

@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [set_fact] ****************************************************************\n[ERROR]: Task failed: Action failed: Unknown error.\nOrigin: <golden-tmp>/play.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - set_fact: {a: 1}\n        ^ column 7\n\nfatal: [probe]: FAILED! => {\"ansible_facts\": {\"a\": 1}, \"changed\": false, \"failed_when_result\": true, \"msg\": \"Task failed: Action failed: Unknown error.\"}\n...ignoring\n\nTASK [debug] *******************************************************************\nok: [probe] => {\n    \"r1.msg\": \"Task failed: Action failed: Unknown error.\"\n}\n\nPLAY RECAP *********************************************************************\nprobe                      : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   \n\n"
+}

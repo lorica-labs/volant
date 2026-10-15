@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - set_fact: {seen: 1}
+      failed_when: seen is not defined
+    - include_vars: {file: iv.yml}
+      failed_when: ivar is not defined

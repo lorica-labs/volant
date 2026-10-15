@@ -22,9 +22,6 @@ use volant_protocol::{
 
 /// A changed `copy` moves the staged file over `dest`: the content arrives, the staged file is
 /// gone, and the task went the native path.
-///
-/// What would make this red: `copy` not enabled in this agent, or the native handing back on the
-/// action plugin's own arguments.
 #[test]
 fn a_staged_file_is_moved_into_place() {
     let scratch = Scratch::new("moved");
@@ -44,8 +41,6 @@ fn a_staged_file_is_moved_into_place() {
 }
 
 /// A case outside the subset goes to the payload, and the destination is as it was.
-///
-/// What would make this red: `directory_mode` answered by the native.
 #[test]
 fn a_case_outside_the_subset_reaches_the_payload() {
     let scratch = Scratch::new("outside");
@@ -70,9 +65,6 @@ fn a_case_outside_the_subset_reaches_the_payload() {
 }
 
 /// A `validate` that hangs ends at the task's `timeout` with the Python path's answer for it.
-///
-/// What would make this red: `validate` run without the task's deadline, which waits out the
-/// sleep past the test's own limit.
 #[test]
 fn a_hung_validate_ends_at_the_task_timeout() {
     let scratch = Scratch::new("timeout");
@@ -95,8 +87,6 @@ fn a_hung_validate_ends_at_the_task_timeout() {
 }
 
 /// The controller's cancel stops a `validate` that hangs.
-///
-/// What would make this red: the cancel not asked while `validate` runs.
 #[test]
 fn a_cancel_stops_a_hung_validate() {
     let scratch = Scratch::new("cancel");
@@ -130,11 +120,7 @@ fn a_cancel_stops_a_hung_validate() {
 }
 
 /// Root replacing a file another account owns leaves it that account's: `atomic_move` gives the
-/// staged file the replaced file's owner and group before the rename. The agent runs under
-/// `sudo -n`, as under `become`, over a file of the account running the test.
-///
-/// What would make this red: the `chown` to the replaced file's owner dropped, which leaves the
-/// file root's, on disk and in the answer's `uid`.
+/// staged file the replaced file's owner and group before the rename.
 #[test]
 #[ignore = "needs passwordless `sudo -n`; runs under `just ssh-test`"]
 fn ssh_root_replacing_a_file_keeps_its_owner() {

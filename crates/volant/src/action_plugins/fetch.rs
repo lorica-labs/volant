@@ -575,13 +575,8 @@ mod tests {
         subs.iter().map(|s| s.module).collect()
     }
 
-    /// A `dest` whose render read a managed host is refused before the host is asked anything,
-    /// and nothing is created under it.
-    ///
-    /// The counterpart of `copy`'s refusal of a host-named `src`: a host never chooses where the
-    /// controller writes. What would make this red: the provenance looked at after the path is
-    /// built, which runs `stat` and `slurp` and creates `dest/probe-hostname/` for a path a host
-    /// chose.
+    /// A `dest` whose render read a managed host is refused before the host is asked anything, and
+    /// nothing is created under it.
     #[test]
     fn a_dest_a_host_named_is_never_written() {
         let dir_guard = scratch();
@@ -610,12 +605,6 @@ mod tests {
 
     /// The relative `src` that climbs out of `dest` is refused, and nothing is written where it
     /// points.
-    ///
-    /// Measured on ansible-core 2.19.12: `src: ../../../../../../../../tmp/x/esc.txt` without
-    /// `flat` reported `changed` with `dest: /tmp/x/esc.txt`, and the file was there on the
-    /// controller. The marker is that file's counterpart here, under the scratch directory. What
-    /// would make this red: the containment checked on `dest` before the path is built, as the
-    /// reference does, which writes the marker.
     #[test]
     fn a_src_that_climbs_out_of_dest_is_refused_and_nothing_is_written() {
         let dir_guard = scratch();
@@ -651,9 +640,6 @@ mod tests {
 
     /// A path the host names back that climbs out of its own directory is refused the same way,
     /// even when the playbook's `src` did not climb.
-    ///
-    /// What would make this red: the containment checked only on the playbook's `src`, which
-    /// writes wherever a host's `stat` or `slurp` says the file is.
     #[test]
     fn a_path_the_host_names_back_cannot_climb_out_either() {
         let dir_guard = scratch();
@@ -683,9 +669,6 @@ mod tests {
 
     /// An `inventory_hostname` that is not one path component is refused before anything, and
     /// `flat`, which does not use it, is not.
-    ///
-    /// What would make this red: the name joined as it is, which files `a/b`'s fetches under
-    /// host `a`'s directory and `..`'s beside `dest`.
     #[test]
     fn a_host_name_that_is_not_one_path_component_is_refused() {
         let dir_guard = scratch();
@@ -720,12 +703,8 @@ mod tests {
         assert_eq!(std::fs::read(&flat).unwrap(), b"x");
     }
 
-    /// A symbolic link planted below `dest` never redirects the write: the host's directory, a
-    /// directory under it, or a `flat` file that is a link, each refused, and what the link points
-    /// at left as it was.
-    ///
-    /// What would make this red: the directories made with `create_dir_all` and the file opened
-    /// through the link, which writes `outside/etc/one.txt` and overwrites `outside/target.txt`.
+    /// A symbolic link planted below `dest` never redirects the write: each case is refused and the
+    /// link's target is left as it was.
     #[cfg(unix)]
     #[test]
     fn a_symlink_inside_dest_never_redirects_the_write() {
@@ -786,15 +765,8 @@ mod tests {
         assert_eq!(std::fs::read(outside.join("target.txt")).unwrap(), b"kept");
     }
 
-    /// The `stat` the reference runs, the `slurp` after it, and the file written under
-    /// `dest/<inventory_hostname>/<src>` with the measured result; then, the file being there,
-    /// `stat` alone and `changed: false`.
-    ///
-    /// Measured on ansible-core 2.19.12: the first run `changed` with `dest:
-    /// <dest>/<host>/tmp/x/d/one.txt` and `checksum` equal to `remote_checksum`; the second
-    /// `ok`, `changed: false`, `file: <src>`, `remote_checksum: null`. The content is a template
-    /// that is written as it is. What would make this red: the local sum not compared, which
-    /// slurps and rewrites the file on every run, or the bytes rendered, which writes `2`.
+    /// A fetched file is written under `dest/<inventory_hostname>/<src>`; with the file already
+    /// there, `stat` alone runs and `changed` is false.
     #[test]
     fn a_file_is_written_under_its_host_and_left_alone_once_there() {
         let dir_guard = scratch();
@@ -836,9 +808,6 @@ mod tests {
     }
 
     /// Under `become`, `slurp` alone, and the sum taken off its bytes.
-    ///
-    /// Measured on ansible-core 2.19.12: `slurp` and no `stat`, `changed`. What would make this
-    /// red: a `stat` first, which the reference does not send.
     #[test]
     fn under_become_the_file_is_slurped_without_a_stat() {
         let dir_guard = scratch();
@@ -857,10 +826,6 @@ mod tests {
 
     /// `flat` writes `dest` itself, or the source's name inside a `dest` that ends with `/`; a
     /// `dest` that is an existing directory without the `/` is refused in the reference's words.
-    ///
-    /// Measured on ansible-core 2.19.12: `flat: true` with a `dest` ending in `/` reported `dest:
-    /// <dest>/one.txt`. What would make this red: the host's directory added under `flat`, or a
-    /// directory `dest` replaced by the file.
     #[test]
     fn flat_writes_dest_or_the_name_inside_it() {
         let dir_guard = scratch();
@@ -903,10 +868,6 @@ mod tests {
     }
 
     /// A source that is not there follows `fail_on_missing`, and a directory is refused.
-    ///
-    /// Measured on ansible-core 2.19.12: `stat`, then `slurp`, and with `fail_on_missing: false`
-    /// `ok` with `msg: the remote file does not exist, not transferring, ignored`. What would make
-    /// this red: a missing file written as an empty one, or a directory slurped.
     #[test]
     fn a_missing_source_follows_fail_on_missing_and_a_directory_fails() {
         let dir_guard = scratch();
@@ -992,11 +953,8 @@ mod tests {
         assert!(!dir.join("fetched").exists());
     }
 
-    /// A file whose bytes do not match the sum `stat` reported is not written, and the result
-    /// names both sums; with `validate_checksum: false` it is written.
-    ///
-    /// What would make this red: the check dropped, which reports `changed` for bytes that are not
-    /// the host's file, or the mismatched file renamed into place.
+    /// A file whose bytes do not match the sum `stat` reported is not written, and the result names
+    /// both sums; with `validate_checksum: false` it is written.
     #[test]
     fn a_checksum_mismatch_writes_nothing() {
         let dir_guard = scratch();
@@ -1030,9 +988,6 @@ mod tests {
     }
 
     /// A write that fails leaves no temporary file behind.
-    ///
-    /// What would make this red: the temporary file left when the rename fails, here because the
-    /// place is a directory, the same path a full disk takes.
     #[test]
     fn a_failed_write_leaves_no_temporary_file() {
         let dir_guard = scratch();
@@ -1056,10 +1011,6 @@ mod tests {
 
     /// Two hosts fetching `flat` to the same path at once each write through a temporary file of
     /// their own: every result is its own bytes' and consistent, and no temporary file is left.
-    ///
-    /// Each host's driver runs on its own task, so the two writes can interleave. What would make
-    /// this red: one temporary name for both, where one host removes or renames the other's file,
-    /// and a write fails, mismatches, or reports `changed` for a file holding the other's bytes.
     #[test]
     fn two_hosts_fetching_to_one_path_do_not_mix_their_bytes() {
         let dir_guard = scratch();
@@ -1110,9 +1061,6 @@ mod tests {
     }
 
     /// A file fetched again keeps its mode, as the reference's write in place does.
-    ///
-    /// What would make this red: the replacement created with the default mode, which turns a
-    /// `0600` kubeconfig into a `0644` one at the second fetch.
     #[cfg(unix)]
     #[test]
     fn a_file_fetched_again_keeps_its_mode() {
@@ -1132,11 +1080,8 @@ mod tests {
         assert_eq!(mode & 0o7777, 0o600);
     }
 
-    /// An `inventory_hostname` a managed host set - a loop variable of that name over a
-    /// registered list - is refused without `flat`, as a host-named `dest` is.
-    ///
-    /// What would make this red: the value used as the directory, which lets a host file its
-    /// fetches in another host's directory under `dest`.
+    /// An `inventory_hostname` a managed host set - a loop variable of that name over a registered
+    /// list - is refused without `flat`, as a host-named `dest` is.
     #[test]
     fn a_host_directory_a_host_named_is_refused() {
         let dir_guard = scratch();
@@ -1162,8 +1107,6 @@ mod tests {
     }
 
     /// What is refused before any sub-task, in the reference's words.
-    ///
-    /// What would make this red: a check dropped, which sends `stat` for a task with no `dest`.
     #[test]
     fn missing_or_mistyped_arguments_are_refused() {
         for (args, msg) in [

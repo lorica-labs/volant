@@ -20,11 +20,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// The task's `environment` reaches the program the module starts, and a task that set
-    /// nothing leaves the name unset.
-    ///
-    /// What would make this red: `command.envs(&ctx.environment)` dropped from `execute`, which
-    /// is how an `environment:` the controller resolved and sent would be accepted and ignored.
+    /// The task's `environment` reaches the program the module starts, and a task that set nothing
+    /// leaves the name unset.
     #[test]
     fn the_environment_reaches_the_program() {
         let args: Map<String, Value> = json!({"_raw_params": "echo $VOLANT_X"})

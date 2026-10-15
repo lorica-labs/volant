@@ -310,12 +310,8 @@ mod tests {
         profile
     }
 
-    /// The table: one line per phase with its total and each host's share, one line per module
-    /// and path with the count, the median and the sum, Python's three parts, the hand-back
-    /// reasons counted, and the tasks counted by path.
-    ///
-    /// What would make this red: a host's two connections not added up, a path folded into
-    /// another, a reason dropped, or the median taken as the mean.
+    /// The profile table has a line per phase and per module and path, plus Python's parts and the
+    /// hand-back reasons.
     #[test]
     fn the_table_has_a_line_per_phase_and_per_module_and_path() {
         let table = filled().render();
@@ -334,11 +330,8 @@ tasks by path: fallback=3 native=3 python=1 unreported=1
         assert_eq!(table, expected, "\n{table}");
     }
 
-    /// Times a host reported are added without overflowing: the host is not trusted to send
-    /// figures that fit.
-    ///
-    /// What would make this red: a plain sum, which panics in a debug build and wraps in a
-    /// release one.
+    /// Times a host reported are added without overflowing: the host is not trusted to send figures
+    /// that fit.
     #[test]
     fn a_host_s_figures_cannot_overflow_the_sum() {
         let profile = Profile::default();
@@ -350,9 +343,6 @@ tasks by path: fallback=3 native=3 python=1 unreported=1
 
     /// The first line names each host's natives, which is how the golden comparison knows which
     /// natives were on; then the phases; then one line per task, `ran` spread into it.
-    ///
-    /// What would make this red: the natives anywhere but first, or `ran` nested instead of
-    /// flattened, which moves `path` out of the place a reader looks for it.
     #[test]
     fn the_json_starts_with_the_natives_and_has_a_line_per_task() {
         let dir_guard = scratch();

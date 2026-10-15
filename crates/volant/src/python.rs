@@ -1181,15 +1181,6 @@ mod tests {
 
     /// Two modules with one short name stay two modules: a collection's module is built under its
     /// full name and looked up by it, and a builtin keeps its short key.
-    ///
-    /// Measured on ansible-core 2.19.12 through this helper: asked for `ansible.posix.sysctl`, it
-    /// answers under that name with `module_fqn`
-    /// `ansible_collections.ansible.posix.plugins.modules.sysctl`.
-    ///
-    /// What would make this red: a key cut down to the last segment, which files
-    /// `ansible.posix.sysctl` and `community.general.sysctl` under one `sysctl` and runs whichever
-    /// was built last for both tasks; or a collection's module dropped from what the run builds,
-    /// which is how it was before collections were resolved at all.
     #[test]
     fn two_modules_of_one_short_name_stay_two_in_the_union() {
         let answer = br#"{"zip_b64": "UEsD", "modules": {
@@ -1234,11 +1225,6 @@ mod tests {
     }
 
     /// The helper's resolution, read one name at a time.
-    ///
-    /// What would make this red: a name left unanswered read as missing, which drops it from the
-    /// union and fails its task on every host instead of the run on the controller; a shape
-    /// this does not know read as anything at all; or a collection that is not a name and a
-    /// version read as a builtin.
     #[test]
     fn the_helper_resolution_is_read_name_by_name() {
         let answer = br#"{"resolved": {
@@ -1307,13 +1293,8 @@ mod tests {
         }
     }
 
-    /// A controller without ansible-core refuses a run whose plays name a collection's module,
-    /// and runs one whose only such names sit in a role file for another platform, as it did
-    /// before those names were read at all.
-    ///
-    /// What would make this red: the helper demanded for a name nothing will run on this host,
-    /// which refuses a native playbook over a role's other-platform file; or the refusal dropped
-    /// for a name a task does run, which reaches the host with no payload.
+    /// A controller without ansible-core refuses a collection module in a play, but not one named
+    /// only in a role file for another platform.
     #[test]
     fn a_role_file_alone_never_demands_ansible_core() {
         let none = || Err(anyhow::anyhow!("{}", refusal_for("python3")));
@@ -1388,9 +1369,6 @@ mod tests {
 
     /// Dropping the builder lets ansible-core's exit cleanup run, so the `ansible-local-*`
     /// directory it creates at import is gone once the helper is.
-    ///
-    /// What would make this red: the helper killed before it sees end of input, which skips
-    /// the interpreter's exit handlers and leaves one directory per run behind.
     #[test]
     fn dropping_the_builder_leaves_no_ansible_local_directory() {
         let python = match find_python(
@@ -1414,12 +1392,7 @@ mod tests {
         assert_eq!(after, 0, "the directory outlived the helper");
     }
 
-    /// Only ansible-core's own module is reported as core. A `stat.py` in a `library` directory
-    /// and a collection's module are built as modules like any other, the first one for a task
-    /// that writes plain `stat`, and neither may be answered by an agent's native `stat`.
-    ///
-    /// What would make this red: `core` read off the name the task wrote, which the `library`
-    /// module shares with the builtin.
+    /// Only ansible-core's own module is reported as core.
     #[test]
     fn only_ansible_core_s_own_module_is_core() {
         let python = match find_python(
@@ -1476,13 +1449,6 @@ mod tests {
 
     /// Every shape a collection's name can take on the controller, each answered on its own, and
     /// only the buildable ones reaching the union.
-    ///
-    /// What would make this red: `runtime.yml`'s `action_plugin` ignored, which sends `routed`
-    /// without the controller half its collection routes it to; the loader left to pick `.ps1`
-    /// or the documentation `.py`, which answers `Module` for something `union` then fails to
-    /// build, taking the whole run down over a Windows file of a cross-platform role; a
-    /// tombstone raising out of the request, which fails the run for a name no task may run; or
-    /// a redirect into a missing collection answered without that collection's name.
     #[test]
     fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
         let python = match find_python(
@@ -1627,17 +1593,6 @@ mod tests {
 
     /// The controller's own ansible-core answers what its collections hold, and a collection's
     /// module lands in the union under its full name.
-    ///
-    /// Measured on ansible-core 2.19.12 with `ansible.posix` 2.2.2 installed under
-    /// `~/.ansible/collections`: `sysctl` is a module with no action plugin, `synchronize` has one
-    /// (`ansible_collections.ansible.posix.plugins.action.synchronize`), and a name in a
-    /// collection nobody installed resolves to nothing.
-    ///
-    /// What would make this red: the collection's version read from anything but its manifest;
-    /// `synchronize` answered as a module, which would send it without its controller half; a
-    /// missing collection answered without its name, which leaves the operator with the typo
-    /// sentence; a scan-only name that cannot be built kept in the union, which refuses the build;
-    /// or a task naming `synchronize` let through.
     #[test]
     fn the_controller_resolves_what_its_collections_hold() {
         let Some(mut helper) = helper_or_skip() else {
@@ -1758,12 +1713,8 @@ mod tests {
         );
     }
 
-    /// The controller's interpreter is chosen in one order and that order is visible: an
-    /// explicit `VOLANT_PYTHON`, then the active virtualenv, then `python3` on `PATH`.
-    ///
-    /// What would make this red: `PATH` consulted first, which would pick the system Python on
-    /// a machine whose ansible-core lives in a virtualenv - measured, the dev host is exactly
-    /// that machine, and its `/usr/bin/python3` has no ansible-core.
+    /// The controller's interpreter is chosen in one order and that order is visible: an explicit
+    /// `VOLANT_PYTHON`, then the active virtualenv, then `python3` on `PATH`.
     #[test]
     fn the_controller_interpreter_follows_one_visible_order() {
         assert_eq!(candidates(Some("/opt/py"), Some("/venv"))[0], "/opt/py");
@@ -1892,11 +1843,6 @@ mod tests {
 
     /// The facts are keyed by the short module name for a bare or `ansible.legacy.` spelling, so
     /// one module asked for under both is one entry; `ansible.builtin.` keeps its own entry.
-    ///
-    /// What would make this red: keying by the request string, which hands a map keyed
-    /// `ansible.legacy.ping` to a caller that looks its task's module up by its short name and
-    /// finds nothing; or `ansible.builtin.ping` folded into `ping`, which a `library/ping.py`
-    /// then answers.
     #[test]
     fn the_facts_are_keyed_by_the_short_module_name() {
         let answer = br#"{"zip_b64": "UEsD", "modules": {"ansible.legacy.ping": {"module_fqn":
@@ -1911,13 +1857,8 @@ mod tests {
         );
     }
 
-    /// Which modules go through the payload path: what ansible-core ships, minus what this
-    /// release runs itself, minus what the reference runs through an action plugin.
-    ///
-    /// What would make this red: the action-plugin names let in, which would send `package` or
-    /// `template` as a module and run something the playbook did not ask for - the plugin is
-    /// where their behaviour lives. Or a name this release already runs let in, which would ship
-    /// a payload for `command` and stop running it natively.
+    /// Which modules go through the payload path: what ansible-core ships, minus what this release
+    /// runs itself, minus what the reference runs through an action plugin.
     #[test]
     fn the_payload_path_takes_what_nothing_else_runs() {
         for through in ["lineinfile", "stat", "ping", "apt", "ansible.builtin.file"] {
@@ -1951,11 +1892,6 @@ mod tests {
 
     /// A run naming a plugin builds every module the plugin may pick, and never the plugin's own
     /// name.
-    ///
-    /// What would make this red: `package` in the set, which is `package` built and sent as
-    /// itself - the reference never runs that module, its plugin is where the choice lives - or a
-    /// backend missing, which leaves a host whose manager is `dnf` failing on a module the union
-    /// was never asked for.
     #[test]
     fn a_plugin_brings_its_backends_into_the_union_and_not_itself() {
         let built = modules_to_build(["ansible.builtin.package", "service", "ping", "command"]);
@@ -1991,19 +1927,8 @@ mod tests {
             .collect())
     }
 
-    /// A module written only in a file a dynamic include reads goes into the union, and so does
-    /// one in a role file nothing includes by a name the compiler can read.
-    ///
-    /// Measured on ansible-core 2.19.12, `connection: local`: a play whose only task is
-    /// `include_tasks: inc.yml`, the file holding one `stat`, runs the `stat` (`ok: [h1]`).
-    /// `geerlingguy.security` and `geerlingguy.nginx` put their `package` and `apt` tasks behind
-    /// `include_tasks: setup-{{ ansible_os_family }}.yml`, a name no compiler can resolve before
-    /// the facts are in, and the union built from the compiled steps alone left them out: the
-    /// run stopped at `module 'apt' needs a python payload, and this run built none for it`.
-    ///
-    /// What would make this red: the union built from the compiled steps alone, which leaves
-    /// out `apt`, `stat` and `ping`; or a collection's module in the other platform's file left
-    /// out, which is then never resolved and fails by name on a host that does reach it.
+    /// A module written only in a file a dynamic include reads goes into the union, and so does one
+    /// in a role file nothing includes by a name the compiler can read.
     #[test]
     fn the_union_holds_what_a_dynamic_include_may_read() {
         let dir_guard = scratch();
@@ -2070,11 +1995,8 @@ mod tests {
         assert!(format!("{err:#}").contains("broken.yml"), "{err:#}");
     }
 
-    /// A run that names no Python module builds nothing, so a controller without ansible-core
-    /// runs native playbooks exactly as before.
-    ///
-    /// What would make this red: the helper started for every run, which would refuse every
-    /// playbook on a machine that has no ansible-core - including the ones that never needed it.
+    /// A run that names no Python module builds nothing, so a controller without ansible-core runs
+    /// native playbooks exactly as before.
     #[test]
     fn a_run_with_no_python_module_builds_nothing() {
         let none = union_for(&std::collections::BTreeSet::new(), &[], &[], &mut |_| {})
@@ -2082,14 +2004,8 @@ mod tests {
         assert!(none.is_none());
     }
 
-    /// The blob is named by the hash of the zip's own bytes, which is the name the agent
-    /// computes for the same blob when it decides whether it already holds it.
-    ///
-    /// What would make this red: hashing the base64 text instead of what it encodes. Both are
-    /// 64 hex characters and both look like a working cache key, and the two sides would then
-    /// never agree on what a blob is called: every run would upload a payload the agent already
-    /// has, and no `has_blob` would ever answer yes. The vector is the agent's own,
-    /// `UEsDBA==` for `PK\x03\x04`.
+    /// The blob is named by the hash of the zip's own bytes, which is the name the agent computes
+    /// for the same blob when it decides whether it already holds it.
     #[test]
     fn the_blob_is_named_by_the_hash_of_the_zip_not_of_its_base64() {
         let answer = br#"{"zip_b64": "UEsDBA==", "modules": {"ping": {"module_fqn":
@@ -2112,12 +2028,8 @@ mod tests {
         );
     }
 
-    /// The helper's own checks, run under whatever `python3` the machine has: no ansible-core
-    /// is needed for the merge and the wrapper reading, which is where the union blob is made
-    /// or silently spoiled.
-    ///
-    /// What would make this red: a merge that lets the last module written win over a
-    /// conflicting `module_utils` entry, or a wrapper whose fields moved without this noticing.
+    /// The helper's own self-check runs under any `python3`: the union merge refuses a byte
+    /// conflict and the wrapper reads its fields.
     #[test]
     fn the_helper_refuses_a_byte_conflict_in_the_union() {
         let out = Command::new("python3")
@@ -2132,11 +2044,6 @@ mod tests {
     }
 
     /// A `print()` anywhere in the helper lands on stderr, and stdout carries the frame alone.
-    /// The helper's `union` is swapped for one that prints first, which is what
-    /// `init_plugin_loader()` or a collection imported under it would do.
-    ///
-    /// What would make this red: `sys.stdout` left pointing at the frame pipe, so the controller
-    /// reads `nois` as a four-byte length and the rest as a frame that is not one.
     #[test]
     fn a_print_in_the_helper_never_reaches_the_frames() {
         use std::io::Write as _;
@@ -2169,13 +2076,8 @@ mod tests {
         );
     }
 
-    /// A request and its answer over the helper's own pipes, which is the only place the two
-    /// sides of the frame header meet.
-    ///
-    /// What would make this red: either end writing the length in the other's byte order, or
-    /// the helper printing anything at all on stdout beside its frame - both would be invisible
-    /// to the tests that feed a hand-built frame in. The machine deciding which branch runs is
-    /// whether its `python3` has ansible-core; measured, the dev host's has not.
+    /// A request and its answer over the helper's own pipes, which is the only place the two sides
+    /// of the frame header meet.
     #[test]
     fn the_helper_answers_one_frame_over_its_own_pipes() {
         let mut builder = PythonBuilder::under("python3").expect("python3 is on PATH");
@@ -2365,10 +2267,6 @@ mod tests {
     }
 
     /// A kept answer refuses a task of this run as a fresh one would.
-    ///
-    /// What would make this red: the cache hit returned without the pre-flight, which lets a task
-    /// naming a module its collection serves through an action plugin reach its host, because an
-    /// earlier run found that name only in a role file.
     #[test]
     fn a_cache_hit_still_refuses_what_a_task_cannot_run() {
         let root_guard = scratch();
@@ -2437,15 +2335,6 @@ mod tests {
 
     /// The helper names the files a union came from: each module and `module_utils` it copied,
     /// ansible-core's own version, and the manifests of each collection it read.
-    ///
-    /// Measured on ansible-core 2.19.12 with `ansible.posix` 2.2.2: every entry of the `ping`
-    /// and `ansible.posix.sysctl` zips is a byte copy of a file under the directory `ansible` was
-    /// imported from or under the collection's, except the package `__init__.py` files
-    /// `module_common.py` writes itself.
-    ///
-    /// What would make this red: a collection's `FILES.json` left out, which serves the old
-    /// collection's zip after `ansible-galaxy collection install --upgrade` (Review Focus 2); or a
-    /// zip entry the helper cannot name, which answers `null` and never caches anything.
     #[test]
     fn the_helper_names_the_files_a_union_came_from() {
         let Some(mut helper) = helper_or_skip() else {

@@ -882,9 +882,8 @@ mod tests {
     use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
     use std::path::{Path, PathBuf};
 
-    /// Each shape below was run through `ansible-core 2.19.12` as a `debug: msg=` argument
-    /// first, and the expectations are what it printed: a key nested three levels down goes,
-    /// a bare list element goes too, and every emptied container stays.
+    /// Each shape was run through ansible-core 2.19.12 as a `debug: msg=` argument: an `omit` value
+    /// goes and every emptied container stays.
     #[test]
     fn omit_leaves_containers_behind_but_never_its_own_value() {
         let omit = json!(omit_token());
@@ -911,13 +910,8 @@ mod tests {
         );
     }
 
-    /// A task naming a module the run built a payload for is prepared with that payload's
-    /// module half; a native task is prepared with none.
-    ///
-    /// What would make this red: the payload attached by anything other than the module's own
-    /// short name - a task would then travel with another module's facts, and the agent would
-    /// import one module out of the blob while running another's arguments. Or attached to every
-    /// task, which sends a payload with `command`.
+    /// A task naming a module the run built a payload for is prepared with that payload's module
+    /// half; a native task is prepared with none.
     #[test]
     fn a_task_is_prepared_with_the_payload_built_for_its_module() {
         let mut facts = BTreeMap::new();
@@ -1021,14 +1015,8 @@ mod tests {
         );
     }
 
-    /// The task goes out with `force_python` wherever an agent's native module must not answer
-    /// for it: natives switched off for the run, a module that is not ansible-core's own
-    /// (measured, a `library/stat.py` is built as `ansible.legacy.stat`; `core` is the second
-    /// barrier), and ansible-core's `setup`, whatever name the task wrote, unless `--facts
-    /// native` asked for the native collector.
-    ///
-    /// What would make this red: the flag never set, or set on the payload and dropped on the way
-    /// to the wire.
+    /// A task goes out with `force_python` wherever a native must not answer: natives off, a
+    /// non-core module, or ansible-core's `setup`.
     #[test]
     fn a_task_is_sent_to_python_where_a_native_must_not_answer() {
         use crate::python::{Facts, ModuleFacts, Natives};
@@ -1166,12 +1154,8 @@ mod tests {
         step_of(t, Origin::default())
     }
 
-    /// `assert`'s `that` is left to the conditional, which reads it as the task wrote it: a
-    /// render error in it is the conditional's to report, as the reference's `finalize_task_arg`
-    /// for `assert` lets it be. The other arguments still render.
-    ///
-    /// What would make this red: `that` rendered with the other arguments, which fails the task
-    /// with the render's message before the assert reads the text.
+    /// `assert`'s `that` is left to the conditional, so a render error in it is the conditional's
+    /// to report; other arguments still render.
     #[test]
     fn prepare_leaves_an_assert_s_that_to_the_conditional() {
         let store = store_at(Path::new("."));
@@ -1274,15 +1258,8 @@ mod tests {
         }
     }
 
-    /// An undefined variable in `loop:` or `with_*` waits for the task's `when`, the way
-    /// ansible-core 2.19.12's `TaskExecutor` keeps it (`_loop_eval_error`) and raises it only
-    /// once the conditional, evaluated without an `item`, says the task runs. A false `when`
-    /// skips the task with the ordinary skip result; a true one, none at all, or one that
-    /// cannot be evaluated fails it with the loop's own error. Any other loop error is not kept.
-    ///
-    /// What would make this red: the loop rendered with `?` before any `when` is read, which
-    /// fails the skipped cases; the kept error dropped once the `when` holds, which runs the task
-    /// with no items; or the conditional's own error raised in place of the loop's.
+    /// An undefined variable in a loop waits for the task's `when`: a false one skips, and a true
+    /// or absent one fails with the loop's own error.
     #[test]
     fn an_undefined_loop_waits_for_the_when() {
         let store = store_at(Path::new("."));
@@ -1423,17 +1400,7 @@ mod tests {
         }
     }
 
-    /// A task's own `vars:` built from a lookup that needs the role's search path to find its
-    /// file. Measured against ansible-core 2.19.12 (via `template/lookups.rs`): once
-    /// `ansible_search_path` names the role's `templates/`, `vars: {via_lookup: "{{
-    /// lookup('template', 't.j2') }}"}` resolves to the lookup's result, and the name stays
-    /// data - a later, one-pass read of it (what `debug: var:` compiles to, `Templar::evaluate`)
-    /// must show that result, never the raw call.
-    ///
-    /// What would make this red: the search path inserted after this task's own `vars:` are
-    /// resolved, which leaves the role's `templates/t.j2` unreachable on that pass (the lookup
-    /// falls back to the playbook directory alone, where the file is not) and the raw,
-    /// unevaluated call stored where a later, one-pass read can no longer template it.
+    /// A task's own `vars:` built from a lookup that needs the role's search path to find its file.
     #[test]
     fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
         let play_guard = scratch();
@@ -1686,17 +1653,8 @@ mod tests {
         );
     }
 
-    /// A delegate is the inventory's own host when it has one, the local host for the three
-    /// implicit spellings, and an ssh target of that name otherwise -- and its variables come
-    /// back merged the way any host's do, so its connection obeys the same precedence.
-    ///
-    /// Measured on ansible-core 2.19.12: `delegate_to: localhost` with no `localhost` in the
-    /// inventory runs locally, and `delegate_to: nosuch` is connected to rather than refused -
-    /// it reports ssh's own resolution failure as `UNREACHABLE`.
-    ///
-    /// What would make this red: an unknown name refused, which refuses a playbook the
-    /// reference runs; or `localhost` turned into an ssh target, which tries to connect to the
-    /// machine the controller is already on.
+    /// A delegate is the inventory's host, the local host for the implicit spellings, or an ssh
+    /// target of that name, with its variables merged as any host's.
     #[test]
     fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
         let inventory = crate::inventory::Inventory::parse_ini(
@@ -1768,15 +1726,8 @@ mod tests {
             .collect())
     }
 
-    /// The `airgap` role's `Distribute K3s binary` task, as `site.yml` lists it statically:
-    /// `copy` over `with_first_found` with one mapping term naming two absolute candidates and
-    /// `skip: true`. The first candidate that exists is the one item; with neither there, `skip`
-    /// makes it a loop over nothing, which reports the task skipped; without `skip` it fails in
-    /// the plugin's words, `No file was found when using first_found.`
-    ///
-    /// What would make this red: the terms handed to the lookup as one string rather than as its
-    /// terms, the lookup's bare-string answer walked as it stands (no item, or a failure on a
-    /// loop that is not a list), `skip` read as a failure, or the order of the candidates lost.
+    /// The `airgap` role's `with_first_found` copy: the first candidate that exists is the item,
+    /// `skip` makes none a skipped task, and otherwise it fails.
     #[test]
     fn with_first_found_walks_the_file_it_found_and_nothing_under_skip() {
         let dir = scratch();
@@ -1807,13 +1758,8 @@ mod tests {
         );
     }
 
-    /// The `airgap` role's two static `with_fileglob` tasks: a pattern under `airgap_dir` walks
-    /// every file it matches, sorted, and one match is still a loop of one, not the path's bare
-    /// string. A term that renders undefined fails here, where `first_found` would drop it.
-    ///
-    /// What would make this red: the lookup's single-match answer, a bare string, walked as it
-    /// stands; no match read as one empty item; or the undefined term dropped for every lookup
-    /// rather than for `first_found` alone.
+    /// The `airgap` role's `with_fileglob` walks every match, sorted, and one match is still a loop
+    /// of one.
     #[test]
     fn with_fileglob_walks_every_match_and_one_match_is_a_list_of_one() {
         let dir = scratch();
@@ -1852,18 +1798,7 @@ mod tests {
     }
 
     /// The `raspberrypi` role's `include_tasks` over `with_first_found`, which `site.yml` lists
-    /// statically and runs on every host. On a host that is not a Pi, `detected_distribution` was
-    /// never set, so the terms that name it render undefined and are dropped - the plugin's own
-    /// rule when it is invoked as `with_` - and the search goes on to the ones that render. The
-    /// file is found beside the task, in the role's `tasks/`, and the task's `when` then skips
-    /// each item.
-    ///
-    /// A term built from a fact is the host's choice of file, so the items are bound as data
-    /// then, and as the playbook's own when only author terms were read.
-    ///
-    /// What would make this red: an undefined term failing the task on every host that is not a
-    /// Pi, the `when` evaluated before the loop, or an item named by a fact bound as author
-    /// content.
+    /// statically and runs on every host.
     #[test]
     fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_choice_as_data()
     {
@@ -1904,13 +1839,8 @@ mod tests {
         assert_eq!(bound(&step, &store).unwrap(), [(json!(ubuntu), true)]);
     }
 
-    /// `with_first_found` searches the subdirectory the task's action names in each entry before
-    /// the entry itself, as ansible-core 2.19.12's `first_found.py` does when it runs for a
-    /// `with_` loop: `templates/` for a `template`, `vars/` for an `include_vars`, `files/`
-    /// otherwise. A plain `lookup('first_found')` does not, which `template/lookups.rs` measured.
-    ///
-    /// What would make this red: the subdirectory left out, which finds neither file; the wrong
-    /// one chosen for the action; or `skip: true` failing when `vars/` holds nothing.
+    /// A `with_first_found` loop searches the subdirectory its action names (`templates/`, `vars/`,
+    /// `files/`) before the entry itself.
     #[test]
     fn with_first_found_searches_the_directory_its_action_names() {
         let dir = scratch();
@@ -1943,13 +1873,7 @@ mod tests {
     }
 
     /// A file whose name is a template, matched by a glob under the playbook's own directory, is
-    /// refused by name before anything renders it. Its path would otherwise be bound as author
-    /// content and rendered again by `src: "{{ item }}"`, running the command in its name on the
-    /// controller. The reference never templates a lookup's result and copies the file as it is.
-    /// Both ways of looping over the lookup go through the same refusal.
-    ///
-    /// What would make this red: the refusal gone, which creates the marker file the name's
-    /// `pipe` touches; or it placed in the `with_` path alone, which leaves `loop:` open.
+    /// refused by name before anything renders it.
     #[test]
     fn a_found_path_that_looks_like_a_template_is_refused_and_never_rendered() {
         let root = scratch();

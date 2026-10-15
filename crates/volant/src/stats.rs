@@ -176,11 +176,6 @@ mod tests {
     }
 
     /// A rescued failure counts once, in its own column, and moves nothing else.
-    ///
-    /// Measured on ansible-core 2.19.12: a task failing in a block with a rescue recaps
-    /// `ok=1 changed=0 failed=0 rescued=1` - the `ok` being the rescue's own task - and the
-    /// run exits 0. What would make this red: counting it as `failed`, which exits 2 on a
-    /// playbook the reference exits 0 on; or as `ok`, which hides the failure entirely.
     #[test]
     fn a_rescued_failure_counts_only_as_rescued() {
         let mut s = Stats::default();

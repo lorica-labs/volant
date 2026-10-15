@@ -31,8 +31,7 @@ mod tests {
     use super::super::tests::{FakeRoot, probe};
     use super::*;
 
-    /// What would make this red: the library's absence read as SELinux disabled, which the
-    /// reference never says without the library.
+    /// SELinux follows the library: its absence is never read as disabled, and enabled hands back.
     #[test]
     fn selinux_follows_the_library_and_hands_back_when_enabled() {
         let fake = FakeRoot::new("selinux");

@@ -23,19 +23,8 @@ use volant_protocol::{
     TaskResult, ToAgent,
 };
 
-/// Through the real agent binary: a task naming a module with an enabled native runs it and
-/// says so; a native that hands the task back lets the payload run; `force_python` skips the
-/// native; a disabled native, or a module of the same name from anywhere but ansible-core's own
-/// modules, never reaches one.
-///
-/// A native's answer gets the `changed: false` the Python path fills in for a module that did
-/// not say: `volant_echo` never writes `changed` itself.
-///
-/// What would make this red: `force_python` ignored (`Native` where `Python` is asked for); a
-/// hand-back taken as the answer (a result with no Python failure in it); a stub native listed
-/// in `Ready.natives` or consulted at all; the native looked up by the name the playbook
-/// wrote, which answers for another collection's module; or a native's result sent without
-/// `changed`, which `r is changed` then reads as undefined.
+/// Through the real agent binary a native runs, hands back or is skipped as the task asks, and a
+/// disabled native or a non-core module never reaches one.
 #[test]
 fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     let scratch = Scratch::new("dispatch");
@@ -104,11 +93,8 @@ fn a_native_runs_hands_back_or_is_skipped_as_the_task_asks() {
     assert_python_ran(&result);
 }
 
-/// The native sees the task's staged file where the Python module would, under the argument it
-/// was staged for, and the file is gone once the task is over.
-///
-/// What would make this red: the native run before the files are staged or after they are
-/// removed, which leaves `src` unset or pointing at nothing.
+/// The native sees the task's staged file where the Python module would, under the argument it was
+/// staged for, and the file is gone once the task is over.
 #[test]
 fn a_native_reads_the_files_staged_for_its_task() {
     let scratch = Scratch::new("staged");
@@ -145,13 +131,8 @@ fn a_native_reads_the_files_staged_for_its_task() {
     assert!(!src.exists(), "the staged file outlived its task");
 }
 
-/// After a native hands the task back, the payload runs once, on the arguments the native saw:
-/// the staged file under `src`, still there, and the task's own arguments. The module here is
-/// a real one, run by the host's Python from a union the agent holds.
-///
-/// What would make this red: the payload given the task's arguments rather than the staged
-/// ones (no `src`), run after the staged file is removed (no content), or run twice (a count
-/// of 2 in the module's own tally).
+/// After a native hands the task back, the payload runs once, on the arguments the native saw: the
+/// staged file under `src`, still there, and the task's own arguments.
 #[test]
 fn after_a_hand_back_the_payload_runs_once_on_the_staged_arguments() {
     let scratch = Scratch::new("hand-back");
@@ -195,12 +176,8 @@ fn after_a_hand_back_the_payload_runs_once_on_the_staged_arguments() {
     );
 }
 
-/// A native that panics fails its task instead of taking the agent down, and the agent answers
-/// the next task. The task fails rather than going to the payload: the panic may come after the
-/// native changed the host, and a hand-back is only ever made before any change.
-///
-/// What would make this red: the call to the native no longer guarded, which ends the agent
-/// and leaves this test reading a closed pipe, or a panic handed to the payload.
+/// A native that panics fails its task instead of taking the agent down, and the agent answers the
+/// next task.
 #[test]
 fn a_native_that_panics_fails_the_task_and_the_agent_lives() {
     let scratch = Scratch::new("panic");
@@ -214,12 +191,8 @@ fn a_native_that_panics_fails_the_task_and_the_agent_lives() {
     assert_eq!(ran.path, ExecPath::Native);
 }
 
-/// The shipped agent unwinds, so the guard above holds outside test builds too: under
-/// `panic = "abort"` the process ends before the guard sees the panic. A profile cannot set
-/// `panic` per package, so the whole workspace's `release` (and `dist`, which inherits it)
-/// unwinds.
-///
-/// What would make this red: `panic = "abort"` back in a release profile.
+/// The shipped agent unwinds, so the guard above holds outside test builds too: under `panic =
+/// "abort"` the process ends before the guard sees the panic.
 #[test]
 fn a_release_build_unwinds_so_a_native_panic_is_caught() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
@@ -232,18 +205,8 @@ fn a_release_build_unwinds_so_a_native_panic_is_caught() {
     );
 }
 
-/// The native `setup` through the dispatcher: `min` and the default subset answered under the
-/// payload's interpreter, with the `changed: false` a module result gets, and a subset naming a
-/// collector the native does not run handed to the payload with the reason.
-///
-/// Runs on the machine's own facts. On a host outside the native's subset (a runner with
-/// `/usr/bin/rpm`) the first two tasks hand back, and the test asserts the reason is one of
-/// those hosts' and checks the answer no further; the third task's hand-back is decided by the
-/// arguments alone and is checked everywhere.
-///
-/// What would make this red: the native given no interpreter (the dispatcher's context left
-/// empty, which hands back for a reason no host gives), or a subset naming a collector the
-/// native does not run answered.
+/// The native `setup` answers `min` and the default subset, and hands a subset it does not run to
+/// the payload with the reason.
 #[test]
 #[cfg(target_os = "linux")]
 fn setup_answers_the_default_subset_and_hands_a_foreign_one_back() {

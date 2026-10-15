@@ -16,8 +16,7 @@ fn version_shows_name_and_semver() {
 }
 
 /// `--version --build-id` adds the blake3 hash of the agent's own file, which is what the
-/// controller compares with the binary it would upload before it reuses a cached agent. An agent
-/// older than the flag ignores it and prints the bare version, which never matches.
+/// controller compares with the binary it would upload before it reuses a cached agent.
 #[test]
 fn build_id_is_the_hash_of_the_agents_own_file() {
     let exe = env!("CARGO_BIN_EXE_volant-agent");

@@ -35,15 +35,8 @@ for name in cache.keys():
 print(json.dumps(out))
 "#;
 
-/// On this machine, the agent answers `package_facts` natively, and its packages are
-/// python-apt's; or it hands back, and the task goes to the Python path.
-///
-/// What would make this red: a package, version, section or origin that python-apt reads
-/// differently from the native, or a native answer on a machine where python-apt, which the
-/// reference needs, is missing.
-///
-/// python-apt is read before and after the native: another run installing or removing a
-/// package in between (the native golden does) makes the attempt void, and it is tried again.
+/// On this machine, the agent answers `package_facts` natively, and its packages are python-apt's;
+/// or it hands back, and the task goes to the Python path.
 #[test]
 fn package_facts_answers_as_python_apt_reads_this_machine() {
     let mut agent = common::spawn_agent();

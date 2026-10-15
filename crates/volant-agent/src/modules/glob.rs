@@ -150,8 +150,7 @@ mod tests {
     use super::*;
     use crate::testing::scratch;
 
-    /// What would make this red: a `*` implemented with a plain wildcard scan across the whole
-    /// path string instead of one path component at a time.
+    /// `*` matches within one path component and never crosses a slash.
     #[test]
     fn star_does_not_cross_a_slash() {
         let dir_guard = scratch();
@@ -164,8 +163,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// What would make this red: `?` implemented as "zero or one character", or as a second
-    /// spelling of `*`, either of which would let `a??` match the two-character `ab`.
+    /// `?` matches exactly one character, so `a??` does not match the two-character `ab`.
     #[test]
     fn question_mark_is_exactly_one_character() {
         let dir_guard = scratch();
@@ -176,9 +174,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// What would make this red: a class parser that compares the body character by character
-    /// without reading `-` as a range, so `[a-c]` would be the three-member set `{a, -, c}`
-    /// and would not match `b`.
+    /// A bracket class reads `-` as a range and `!` or `^` as a negation, so `[a-c]` matches `b`.
     #[test]
     fn a_bracket_class_matches_a_range_and_its_negation() {
         let dir_guard = scratch();
@@ -191,12 +187,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// `fnmatch.translate` escapes a leading `^`, so only `!` negates a class and `[^a]` is
-    /// the two-member set `{^, a}`.
-    ///
-    /// What would make this red: reading `^` as a negation the way a shell does, which would
-    /// invert both answers below and let `creates: "[^0-9]*"` run a command the reference
-    /// skips.
+    /// `fnmatch.translate` escapes a leading `^`, so only `!` negates a class and `[^a]` is the
+    /// two-member set `{^, a}`.
     #[test]
     fn a_caret_in_a_class_is_a_member_not_a_negation() {
         let dir_guard = scratch();
@@ -209,13 +201,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Three shapes `fnmatch` reads through its own bracket scan: a class that is well formed
-    /// but does not match is a miss, not a literal `[`; a `]` straight after the `[` is a
-    /// member; and a `[!]` has no closing bracket left, so it is literal.
-    ///
-    /// What would make this red: a `class` that answers `None` for both "not a class" and
-    /// "class did not match", which makes the caller re-read a well-formed class as a literal
-    /// `[` and makes `[!]` an empty negated body that matches any single character.
+    /// A well-formed class that does not match is a miss, a leading `]` is a member, and `[!]` is
+    /// literal.
     #[test]
     fn a_class_that_did_not_match_is_not_re_read_as_a_literal() {
         let dir_guard = scratch();
@@ -229,12 +216,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// `glob.glob` never lets a metacharacter reach a name that starts with a dot; only a
-    /// pattern spelling the dot out does.
-    ///
-    /// What would make this red: matching directory entries without filtering hidden names,
-    /// which makes `creates: "*"` read a directory holding only `.keep` as populated and skip
-    /// a command the reference runs.
+    /// `glob.glob` never lets a metacharacter reach a name that starts with a dot; only a pattern
+    /// spelling the dot out does.
     #[test]
     fn a_metacharacter_does_not_match_a_hidden_name() {
         let dir_guard = scratch();
@@ -248,10 +231,6 @@ mod tests {
     }
 
     /// `glob.glob("data/")` returns nothing when `data` is a regular file.
-    ///
-    /// What would make this red: dropping the trailing separator — which `Path::components`
-    /// does — and ending the walk on plain existence, so `creates: "output/"` would be
-    /// satisfied by a stray regular file named `output`.
     #[test]
     fn a_trailing_separator_requires_a_directory() {
         let dir_guard = scratch();
@@ -267,10 +246,6 @@ mod tests {
 
     /// `glob.glob` reports a dangling symlink: it asks `os.path.lexists` on a pattern with no
     /// metacharacter and reads directory entries otherwise, neither of which follows the link.
-    ///
-    /// What would make this red: ending the walk on `Path::exists`, which follows the link and
-    /// answers `false`, so `creates: .initialized` pointing at a removed target would re-run
-    /// an initialiser the reference skips.
     #[test]
     #[cfg(unix)]
     fn a_dangling_symlink_matches() {
@@ -283,10 +258,6 @@ mod tests {
     }
 
     /// `..` reaches the parent directory, the way `glob.glob("../x-1")` does.
-    ///
-    /// What would make this red: building the component list from `Path::components`, which
-    /// normalises `.` and `..` away, so a guard written `creates: "../shared/.migrated"` under
-    /// a `chdir` would read the `chdir` itself and let a migration run on every deploy.
     #[test]
     fn a_parent_component_is_not_normalised_away() {
         let dir_guard = scratch();
@@ -303,9 +274,6 @@ mod tests {
 
     /// `glob.glob("")` returns nothing, and the guards themselves apply no guard at all for an
     /// empty value — a template that rendered to nothing must not decide anything.
-    ///
-    /// What would make this red: an empty component list ending the walk on the base's own
-    /// existence, which is `true` for every `chdir` that exists.
     #[test]
     fn an_empty_pattern_matches_nothing() {
         let dir_guard = scratch();
@@ -316,14 +284,7 @@ mod tests {
     }
 
     /// Cell (n): with no base at all, a pattern resolves against the process's own directory —
-    /// not against the empty path. `cargo nextest` gives every test its own process, so moving
-    /// that directory here cannot reach another test.
-    ///
-    /// What would make this red: seeding the walk with `PathBuf::default()`. A literal
-    /// component survives it, because `Path::new("").join("x-1")` is `x-1`, but the first
-    /// component holding a metacharacter goes to `read_dir("")`, which is `ENOENT` on POSIX —
-    /// so `creates: ".initialized-*"` with no `chdir` never matches and the command runs
-    /// forever.
+    /// not against the empty path.
     #[test]
     fn a_pattern_with_no_base_reads_the_process_directory() {
         let dir_guard = scratch();
@@ -339,8 +300,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// What would make this red: treating an unterminated `[` as the start of a class instead
-    /// of a literal character, which is what `fnmatch` does with it.
+    /// An unterminated `[` is a literal character, as `fnmatch` reads it.
     #[test]
     fn an_unterminated_bracket_is_literal() {
         let dir_guard = scratch();
@@ -350,8 +310,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// What would make this red: propagating the `read_dir` error instead of treating it as an
-    /// empty listing, which is what `glob.glob` does for a directory it cannot read.
+    /// A directory that cannot be read is an empty listing, as `glob.glob` treats it.
     #[test]
     #[cfg(unix)]
     fn an_unreadable_directory_matches_nothing() {
@@ -369,10 +328,6 @@ mod tests {
     }
 
     /// A pattern with no metacharacter reduces to an existence check.
-    ///
-    /// What would make this red: listing the base directory for every component instead of
-    /// joining a component that holds no metacharacter, which turns a guard on a path whose
-    /// parent cannot be listed into a miss.
     #[test]
     fn no_metacharacter_reduces_to_exists() {
         let dir_guard = scratch();
@@ -384,9 +339,6 @@ mod tests {
     }
 
     /// Cell (m): an absolute pattern is expanded from `/`, whatever `chdir` a sibling task set.
-    ///
-    /// What would make this red: joining the pattern onto the base unconditionally, which sends
-    /// an absolute `creates` under the `chdir` and makes it miss.
     #[test]
     fn an_absolute_pattern_ignores_base() {
         let dir_guard = scratch();

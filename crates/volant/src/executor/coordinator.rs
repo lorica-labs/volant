@@ -1090,21 +1090,8 @@ mod tests {
         assert_eq!(rx.borrow().completed_through, None);
     }
 
-    /// Who runs a `run_once` step is decided once, and a host that leaves afterwards does not
-    /// move it. The mask is part of that decision, not a filter applied after it.
-    ///
-    /// This is the double election. Two drivers used to read `live_hosts` for themselves and take
-    /// the first live host of it, and nothing made them read the same value: at index 0 there is
-    /// no barrier at all, and further along the barrier only says everyone finished the step
-    /// before - not that the live set will hold still across the two reads. A host woken by the
-    /// publish that carries the runner's own failure or unreachability read a list the runner had
-    /// already left, elected itself, and ran the step a **second** time. It was seen as a flake on
-    /// `an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it`, where the run still
-    /// exits 4 and only the line the second runner prints gives it away.
-    ///
-    /// What would make this red: the election moved back into the drivers, which is the second
-    /// read naming `h2`; an overwrite in place of the write-once shape, same thing; or the mask
-    /// dropped from it, which elects a host that runs nothing so nobody runs the step.
+    /// Who runs a `run_once` step is decided once, and a host that leaves afterwards does not move
+    /// it. The mask is part of that decision, not a filter applied after it.
     #[test]
     fn run_once_is_decided_once_and_survives_the_runner_leaving() {
         let hosts: Vec<String> = vec!["h1".into(), "h2".into()];
@@ -1167,13 +1154,7 @@ mod tests {
         );
     }
 
-    /// A host is never counted past what it has actually finished, whatever order its reports
-    /// arrive in: a driver publishes the steps it steps over before the batch in front of them
-    /// has run, so the barrier reads the step every one before it has been reported through.
-    ///
-    /// What would make this red: taking the highest index a host has mentioned. The barrier
-    /// would then open on work that host has not started, which is a `hostvars` read answered
-    /// from a fact the other host has not gathered yet.
+    /// A host is never counted past what it has finished, whatever order its reports arrive in.
     #[test]
     fn a_gap_in_a_hosts_reports_holds_the_barrier_where_it_is() {
         let hosts: Vec<String> = vec!["alpha".into()];

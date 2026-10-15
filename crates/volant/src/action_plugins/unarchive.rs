@@ -328,14 +328,6 @@ mod tests {
 
     /// A `src` whose render read a managed host is never read, even once the destination is
     /// confirmed to be a real directory.
-    ///
-    /// Measured on ansible-core 2.19.12: an `unarchive` whose `src` is a registered `stdout`
-    /// sends the controller file it names to the host. This refuses it, on purpose, the same way
-    /// `copy` and `template` do.
-    ///
-    /// What would make this red: the refusal skipped or checked before the destination is known
-    /// to be a directory, which would mask it behind "dest must be an existing dir" for the
-    /// second path, which names nothing on the controller.
     #[test]
     fn a_source_a_host_named_is_never_read() {
         let dir_guard = layout();
@@ -364,11 +356,8 @@ mod tests {
         }
     }
 
-    /// `copy:` folds into `remote_src`, and the two together are refused before any host is
-    /// asked anything.
-    ///
-    /// What would make this red: `copy` left in the module's own arguments, which the module
-    /// does not accept, or the exclusivity check dropped, silently preferring one of the two.
+    /// `copy:` folds into `remote_src`, and the two together are refused before any host is asked
+    /// anything.
     #[test]
     fn copy_becomes_remote_src_and_the_two_together_are_refused() {
         let dir_guard = layout();
@@ -392,9 +381,6 @@ mod tests {
     }
 
     /// What is refused before any sub-task, each in the reference's words.
-    ///
-    /// What would make this red: a check dropped, which runs `stat` for a task that cannot
-    /// succeed, or a leading `~` read as an ordinary character and searched for as one.
     #[test]
     fn what_cannot_be_unpacked_is_refused_before_the_host_is_asked() {
         let dir_guard = layout();
@@ -434,13 +420,6 @@ mod tests {
 
     /// `creates` already there on the host skips the task before `dest` is even looked at, and
     /// nothing is sent.
-    ///
-    /// Measured on ansible-core 2.19.12: `{"changed": false, "msg": "skipped, since <path>
-    /// exists", "skipped": true}`.
-    ///
-    /// What would make this red: the sum or the size asked for in the `creates` `stat`, which a
-    /// shell existence test never computes, or the skip decided on a failed `stat` instead of
-    /// read as "not there".
     #[test]
     fn creates_already_there_skips_before_dest_is_asked() {
         let dir_guard = layout();
@@ -481,10 +460,6 @@ mod tests {
 
     /// The destination must exist and be a directory, `stat`'s own words when it fails, and the
     /// reference's sentence otherwise.
-    ///
-    /// What would make this red: a file dest accepted, which hands the module a path it cannot
-    /// extract into, or a failed `stat` read as a missing destination without the reference's
-    /// wording.
     #[test]
     fn a_destination_that_is_not_a_directory_is_refused() {
         let dir_guard = layout();
@@ -522,9 +497,6 @@ mod tests {
 
     /// A local source is searched, refused if a host named it, staged, and the module runs with
     /// `decrypt` and `src` gone from its own arguments, the staged bytes in `files`.
-    ///
-    /// What would make this red: `decrypt` reaching the module, which it does not accept, or the
-    /// controller's path left in `src`, which the host would read as its own.
     #[test]
     fn a_local_source_is_staged_and_sent() {
         let dir_guard = layout();
@@ -560,11 +532,8 @@ mod tests {
         );
     }
 
-    /// `remote_src` runs the module alone, with the task's own `src`, and nothing is searched,
-    /// read or staged.
-    ///
-    /// Measured on ansible-core 2.19.12: no transfer, `unarchive` alone with the arguments as
-    /// given less `decrypt`.
+    /// `remote_src` runs the module alone, with the task's own `src`, and nothing is searched, read
+    /// or staged.
     #[test]
     fn remote_src_sends_the_module_alone() {
         let dir_guard = layout();
@@ -587,9 +556,6 @@ mod tests {
     }
 
     /// A source too big for one frame is refused by its size, before it is read.
-    ///
-    /// What would make this red: the size checked only on the bytes once read, which loads the
-    /// whole archive and stages it for a transfer that can never happen.
     #[test]
     fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
         let dir_guard = layout();
@@ -615,9 +581,6 @@ mod tests {
 
     /// A `src` that is a directory on the controller is refused by name once `dest` is confirmed,
     /// and nothing is staged.
-    ///
-    /// What would make this red: the directory handed to the read, which fails with the
-    /// platform's `Is a directory` wording and no hint of what was wrong with the task.
     #[test]
     fn a_directory_source_is_refused_by_name() {
         let dir_guard = layout();

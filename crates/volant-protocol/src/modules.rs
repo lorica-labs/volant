@@ -753,19 +753,6 @@ mod tests {
     }
 
     /// The three dynamic statements, each in the table that answers for it.
-    ///
-    /// `include_vars` is a controller-side module - it produces variables, and a result line with
-    /// them - while `include_tasks` and `include_role` produce steps and never run as modules at
-    /// all. Told apart here because the pre-flight reads exactly this, and what it says next
-    /// depends on which of them it is looking at: a name an action plugin backs is refused by
-    /// that name first of all, a builtin in neither table is answered with the sentence about
-    /// this release, and a name no collection has gets the reference's own words about a
-    /// misspelling. All three statements were refused outright before the coordinator could
-    /// splice, and none of them reaches any of those sentences now.
-    ///
-    /// What would make this red: `include_vars` left out of the controller-side table, which
-    /// refuses a playbook this release now runs; or either statement added to it, which would
-    /// send a step naming work to `run_local` and fail it as "not a controller-side module".
     #[test]
     fn the_three_dynamic_statements_are_each_in_one_table() {
         assert!(is_known("include_vars"));
@@ -779,12 +766,7 @@ mod tests {
         assert_eq!(include_module("ansible.builtin.include_role"), Some(false));
     }
 
-    /// The three states a module name can be in have to stay three. Collapsing them - which an
-    /// `&&`/`||` precedence slip does in one character - would tell an operator with a typo to
-    /// wait for a release, or an operator waiting for `lineinfile` that they misspelled it.
-    ///
-    /// What would make this red: `is_builtin` answering true for a name no collection has, or
-    /// false for one `ansible.builtin` ships.
+    /// The three states a module name can be in have to stay three.
     #[test]
     fn a_builtin_is_told_apart_from_a_name_that_resolves_to_nothing() {
         for yes in [
@@ -809,9 +791,8 @@ mod tests {
         );
     }
 
-    /// What would make this red: a native or controller-side module added under a name
-    /// `ansible.builtin` does not have, which would make it unreachable for anyone writing the
-    /// reference's spelling.
+    /// The builtin table is sorted and holds every native and controller-side module under its
+    /// `ansible.builtin` name.
     #[test]
     fn the_builtin_table_is_sorted_and_covers_both_registries() {
         let mut sorted = BUILTIN_MODULES.to_vec();
@@ -841,15 +822,8 @@ mod tests {
         }
     }
 
-    /// Every argument list is sorted, free of duplicates, and total: a module the reference
-    /// validates carries every name the reference's own refusal lists, because that refusal is
-    /// built from this list and a name missing here would be quoted as unsupported while the
-    /// reference supports it.
-    ///
-    /// What would make this red: a name appended rather than inserted in order, which puts the
-    /// reference's sentence out of order too; a name listed twice, which prints it twice; or a
-    /// module gaining a `validated_as` with nothing to validate against, which would refuse every
-    /// argument a playbook writes.
+    /// Every argument list is sorted, free of duplicates and holds each name the reference
+    /// validates, so no supported name is quoted as unsupported.
     #[test]
     fn every_argument_list_is_sorted_and_covers_what_the_reference_validates() {
         for m in NATIVE_MODULES.iter().chain(LOCAL_MODULES) {
@@ -880,12 +854,8 @@ mod tests {
         );
     }
 
-    /// `executable` names the shell a command line is handed to, so it means something only where
-    /// a shell runs. The reference accepts it on `command` and starts no shell there, and so does
-    /// this release - which is parity, not a gap, and so belongs in neither column of the page.
-    ///
-    /// What would make this red: `command` claiming to read it, which the generated page then
-    /// tells an operator, who writes it and gets no shell, no refusal and no hint why.
+    /// `executable` names the shell a command line is handed to, so it means something only where a
+    /// shell runs.
     #[test]
     fn executable_is_read_only_where_a_shell_runs() {
         let status = |m: &ModuleSpec| {
@@ -910,17 +880,6 @@ mod tests {
 
     /// `expand_argument_vars` is a `command` argument, and the two modules answer for it
     /// differently because the reference does.
-    ///
-    /// Measured on ansible-core 2.19.12: on `command` the default expands and `false` does not,
-    /// so `true` is the only value that asks for something this release cannot do. On `shell`
-    /// the reference has no such argument at all and fails the task with `Unsupported parameters
-    /// for (shell) module: expand_argument_vars` whatever the value says, while a `shell` line
-    /// with the argument left out expands its variables under both engines, the shell doing it
-    /// rather than the module.
-    ///
-    /// What would make this red: `shell` carrying `command`'s value-tied refusal, which lets
-    /// `expand_argument_vars: false` through on a task the reference refuses; or `command`
-    /// refusing the name, which stops a playbook that ran the same under both engines.
     #[test]
     fn expand_argument_vars_is_refused_by_the_value_on_one_module_and_by_name_on_the_other() {
         let status = |m: &ModuleSpec| {
@@ -944,12 +903,6 @@ mod tests {
     }
 
     /// The divergence no refusal can name is the default, so the page has to name it instead.
-    /// This is the argument slice of the same class of gap the refusals close: an argument read
-    /// otherwise than the reference reads it, with the playbook saying nothing about it.
-    ///
-    /// What would make this red: the sentence dropped from the generated page, which leaves an
-    /// operator writing `creates: ~/.provisioned` or `command: mkdir -p $HOME/releases` with
-    /// nothing published to read it against.
     #[test]
     fn the_page_says_arguments_are_read_as_written() {
         let page = documentation_table();
@@ -962,18 +915,8 @@ mod tests {
         }
     }
 
-    /// The spellings the reference takes for an argument declared `type='bool'`, read from its
-    /// own refusal of a value outside the set and measured task by task: `"false"`, `"no"`, `0`
-    /// and `"Off"` all turn the argument off there.
-    ///
-    /// The reference normalises with `.lower().strip()`, so surrounding whitespace is part of no
-    /// spelling: `"false "` is `false` there, and a value coming out of a template or a
-    /// `lookup('file')` carries that whitespace more often than a hand-written one does.
-    ///
-    /// What would make this red: reading the value with `Value::as_bool`, which answers `None`
-    /// for every spelling but a YAML boolean and leaves the caller on its default - so a task
-    /// asking for the opposite of the default gets the default and reports success; or matching
-    /// the string untrimmed, which does the same to every value with a newline on the end.
+    /// A `type=bool` argument reads every spelling the reference takes: `"false"`, `"no"`, `0` and
+    /// `"Off"` all turn it off.
     #[test]
     fn a_boolean_argument_reads_every_spelling_the_reference_takes() {
         for yes in [
@@ -1013,12 +956,8 @@ mod tests {
         }
     }
 
-    /// The two plugin lists are builtins, sorted, apart from each other and from what this
-    /// release runs natively or on the controller.
-    ///
-    /// What would make this red: a plugin name left in the refused list once it is implemented,
-    /// which refuses it before its dispatch is reached; or `setup` slipping in, which would refuse
-    /// every run that gathers facts.
+    /// The two plugin lists are builtins, sorted, apart from each other and from what this release
+    /// runs natively or on the controller.
     #[test]
     fn the_plugin_lists_are_disjoint_builtins() {
         let implemented: Vec<&str> = ACTION_PLUGINS.iter().map(|(m, _)| *m).collect();
@@ -1038,8 +977,6 @@ mod tests {
     }
 
     /// The page and the parity matrix read one function, so they cannot disagree about a module.
-    ///
-    /// What would make this red: a module routed one way here and printed another way on the page.
     #[test]
     fn every_builtin_module_has_one_route_and_the_page_prints_it() {
         let page = documentation_table();
@@ -1067,9 +1004,6 @@ mod tests {
 
     /// Every builtin module is on the page exactly once, except the statements the compiler
     /// answers: a reader asking whether `git` runs finds a row that says so.
-    ///
-    /// What would make this red: the Python path described by a rule again, or a module on two
-    /// rows that say different things.
     #[test]
     fn every_builtin_module_has_one_row() {
         let page = documentation_table();

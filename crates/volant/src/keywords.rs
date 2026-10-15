@@ -475,9 +475,8 @@ pub fn documentation() -> String {
 mod tests {
     use super::*;
 
-    /// Sorted and free of duplicates, so a missing keyword is easy to spot and the lookups
-    /// above cannot be shadowed by a second row. Sorting is by bytes, which is what
-    /// `sort_unstable` on `&str` does and what the tables are written in.
+    /// Sorted and free of duplicates, so a missing keyword is easy to spot and the lookups above
+    /// cannot be shadowed by a second row.
     #[test]
     fn the_tables_are_sorted_and_free_of_duplicates() {
         for table in [
@@ -499,16 +498,8 @@ mod tests {
         assert_eq!(BLOCK_SECTIONS, sections.as_slice());
     }
 
-    /// `Task.fattributes` and `Play.fattributes` as ansible-core 2.19.12 reports them on the
-    /// development machine, minus the two internal spellings a playbook cannot write
-    /// (`async_val`, which is what `async` is stored as, and `loop_with`, which is what a
-    /// `with_*` key becomes), plus the keys the reference resolves before it builds those
-    /// dictionaries: `action`, `local_action` and one name per `ansible.builtin` lookup
-    /// plugin.
-    ///
-    /// What would make this red: a keyword added to a table that the reference does not have,
-    /// or one of the reference's dropped. Both are ways of diverging from the grammar the
-    /// loader is supposed to accept exactly.
+    /// The keyword tables are ansible-core 2.19.12's own `fattributes` lists, less two internal
+    /// spellings and plus the keys it resolves first.
     #[test]
     fn the_tables_are_the_reference_s_own_attribute_lists() {
         let task_fattributes = [
@@ -700,7 +691,6 @@ mod tests {
 
     /// A block section is never also a task keyword: the loader tells a block from a task by
     /// looking for one of these keys, so a name in both would make one of the two unreachable.
-    /// Every section is a block keyword, which is what makes the block table total.
     #[test]
     fn the_block_sections_are_block_keywords_and_not_task_keywords() {
         for section in BLOCK_SECTIONS {
@@ -710,14 +700,6 @@ mod tests {
     }
 
     /// `run_once` is the only keyword any table declares a barrier.
-    ///
-    /// A task record carries its keywords as typed fields, not as a list of names to walk, so
-    /// `PlayTask::barrier` asks the table for the one name it knows how to read. A second row
-    /// marked `barrier` would look declared and be silently ignored - the keyword accepted and
-    /// then not honoured, which is the failure family this crate hunts. So the tables hold one.
-    ///
-    /// What would make this red: `barrier_kw` used for a second keyword. Whoever adds it has to
-    /// teach `PlayTask::barrier` to ask for it in the same commit.
     #[test]
     fn run_once_is_the_only_barrier_keyword() {
         let declared: Vec<&str> = [
@@ -741,12 +723,6 @@ mod tests {
 
     /// `is_barrier` has exactly one caller, `PlayTask::barrier`, and it only ever asks about the
     /// literal `"run_once"` - a name that is both present in every table and marked `barrier`.
-    /// That single call site can never tell a lookup that ignores its argument, or one that
-    /// widens the match from "named and marked" to "named or marked", from the real thing: every
-    /// input it is ever given makes both the honest answer and the two broken ones agree.
-    ///
-    /// What would make this red: `is_barrier` returning the same answer for every name, or
-    /// treating a name match alone (without the `barrier` flag) as enough.
     #[test]
     fn is_barrier_reads_both_the_name_and_the_flag() {
         assert!(is_barrier("run_once"));
@@ -757,13 +733,8 @@ mod tests {
         assert!(!is_barrier("not_a_real_keyword"));
     }
 
-    /// The `not yet` legend says what the introduction says: a keyword in a file only a dynamic
-    /// include names stops the statement when a host reaches it, not the run before anything
-    /// connects.
-    ///
-    /// What would make this red: the legend promising a stop before the first connection for
-    /// every `not yet` cell, which an operator reads and then watches ten tasks run before an
-    /// included file's `throttle` fails the statement.
+    /// The `not yet` legend says a keyword in a dynamically included file stops the statement, not
+    /// the run.
     #[test]
     fn the_not_yet_legend_names_the_include_path() {
         let page = documentation();
@@ -777,10 +748,7 @@ mod tests {
         );
     }
 
-    /// What would make this red: a keyword added, removed or flipped between `Runs`, `Partial`
-    /// and `Preflight` without regenerating the page, or a `missing` sentence edited without
-    /// regenerating it, which would leave the site telling operators that something works when
-    /// the pre-flight refuses it, or the other way round.
+    /// The keyword page is regenerated from the keyword tables and matches them.
     #[test]
     fn the_keyword_page_matches_the_tables() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -350,7 +350,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// What would make this red: the loader left at saphyr's default, which refuses the key.
+    /// A key written twice keeps its last value instead of being refused.
     #[test]
     fn a_key_written_twice_keeps_its_last_value() {
         let docs = load(
@@ -374,13 +374,8 @@ a: 3
         );
     }
 
-    /// A document holding nothing but markers and comments is null, the way PyYAML reads it,
-    /// while an empty block scalar and an empty `!!str` stay empty strings, which is what PyYAML
-    /// loads them as.
-    ///
-    /// What would make this red: `holds_nothing` removed - saphyr then hands the comment-only
-    /// document back as `""` - or an emptiness rule read off the node instead, which cannot tell
-    /// `a: |` from a document of nothing and turns `copy: {content: |}` into a null content.
+    /// A document of only markers and comments is null, while an empty block scalar and an empty
+    /// `!!str` stay empty strings, as in PyYAML.
     #[test]
     fn an_empty_document_is_null_and_an_empty_block_scalar_is_not() {
         for text in ["---\n# only a comment\n", "---\n", "--- # c\n...\n"] {
@@ -426,9 +421,8 @@ a: 3
         );
     }
 
-    /// Every spelling in the two constants, through all three readers, so the resolver,
-    /// `as_bool` and `bool_from_str` cannot drift apart: they share one list by construction,
-    /// and this fails if a future edit gives any of them a list of its own.
+    /// Every boolean spelling is read the same by the resolver, `as_bool` and `bool_from_str`,
+    /// which share one list.
     #[test]
     fn one_list_of_boolean_spellings_serves_every_reader() {
         for (spellings, want) in [(PYYAML_TRUE, true), (PYYAML_FALSE, false)] {
@@ -445,9 +439,7 @@ a: 3
     }
 
     /// Each spelling and its type as `ansible-core 2.19.12`'s own PyYAML reads it, measured
-    /// directly. `0o10` and `1e3` are the two saphyr resolves as numbers under YAML 1.2 and
-    /// PyYAML leaves alone; the exponent forms show that PyYAML wants both a `.` in the
-    /// mantissa and a sign on the exponent.
+    /// directly.
     #[test]
     fn integer_and_float_spellings_are_measured_against_the_reference() {
         let cases: &[(&str, Value)] = &[

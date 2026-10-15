@@ -649,11 +649,8 @@ mod tests {
         dir: PathBuf,
     }
 
-    /// The dispatch and the parity matrix read one list. A name the list does not hold is
-    /// refused before any term is read.
-    ///
-    /// What would make this red: a lookup added to the dispatch and not to `SUPPORTED`, or the
-    /// refusal moved back inside the per-term loop (then `lookup('nosuch')` with no term passes).
+    /// The dispatch and the parity matrix read one list. A name the list does not hold is refused
+    /// before any term is read.
     #[test]
     fn the_supported_list_is_the_dispatch() {
         for name in [
@@ -717,14 +714,8 @@ mod tests {
         Templar::new(base.to_path_buf())
     }
 
-    /// Measured on ansible-core 2.19.12: with `templates/t.j2` holding `{{ '{{ 1 + 1 }}' }}`,
-    /// `via_lookup: "{{ lookup('template', 't.j2') }}"` shows `{{ 1 + 1 }}` under both
-    /// `debug: var: via_lookup` and `debug: msg: "{{ via_lookup }}"`. What `lookup('template')`
-    /// hands back is never rendered again, the same as `lookup('file')`.
-    ///
-    /// What would make this red: the `template` arm not marking its result as data. The
-    /// variable's own resolution and the argument's extra passes would then render the braces,
-    /// and both reads would show `2`.
+    /// What `lookup('template')` hands back is never rendered again, as ansible-core 2.19.12 does
+    /// for `lookup('file')`.
     #[test]
     fn what_a_template_lookup_rendered_is_never_rendered_again() {
         let role = Role::new();
@@ -759,9 +750,8 @@ mod tests {
         );
     }
 
-    /// The measured `lookup('template', 'snip.j2')` in a role: `templates/snip.j2` is found
-    /// under the role's own entry of `ansible_search_path`, rendered with the template module's
-    /// default options (the final newline kept), against the task's variables.
+    /// `lookup('template', 'snip.j2')` finds the role's `templates/snip.j2` through
+    /// `ansible_search_path` and renders it with the task's variables.
     #[test]
     fn a_template_lookup_renders_the_role_s_template() {
         let role = Role::new();
@@ -859,12 +849,8 @@ mod tests {
         }
     }
 
-    /// Measured with the reference's Python 3.13 (`glob.glob`, `include_hidden=False` by
-    /// default, which `fileglob.py` never changes): a name starting with `.` matches only a
-    /// pattern that starts with `.` itself. `*`, `?h*` and `[.]h*` skip `.h.txt`; `.*` and the
-    /// literal `.h.txt` find it.
-    ///
-    /// What would make this red: a wildcard matching a dot-file, or a dot pattern missing one.
+    /// A dot file matches only a pattern that starts with a dot: `*`, `?h*` and `[.]h*` skip
+    /// `.h.txt`, while `.*` and the literal name find it.
     #[test]
     fn fileglob_skips_dot_files_unless_the_pattern_starts_with_a_dot() {
         let dir = Dir::new();
@@ -891,11 +877,7 @@ mod tests {
         }
     }
 
-    /// `fileglob.py` in ansible-core 2.19.12 extends its list with `glob.glob`'s answer as it
-    /// comes: no sort and no dedupe, so the matches arrive in directory-listing order (measured:
-    /// `b.txt` before `a.txt`). Where a filesystem happens to list sorted, the test still holds.
-    ///
-    /// What would make this red: the matches sorted.
+    /// `fileglob` returns matches in directory-listing order, with no sort and no dedupe.
     #[test]
     fn fileglob_keeps_the_directory_listing_order() {
         let dir = Dir::new();
@@ -920,16 +902,8 @@ mod tests {
         );
     }
 
-    /// The two static `with_fileglob` patterns of the `airgap` role, against a fixture
-    /// directory: `k3s-selinux*.rpm` and `*.tar.gz`, both rendered to an absolute pattern the
-    /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
-    /// matched and not just the extension, a directory whose own name matches the pattern
-    /// (`k3s-selinux-dir.rpm`, `images-dir.tar.gz`) proves a directory never matches, and the
-    /// result keeps the listing's order. Two matches each: a list with `wantlist=True`, a comma
-    /// join without.
-    ///
-    /// What would make this red: the absolute pattern read as a search-path entry instead of
-    /// globbed directly, or a directory counted as a match.
+    /// The two static `with_fileglob` patterns of the `airgap` role match files only, in listing
+    /// order: a list with `wantlist=True`, a comma join without.
     #[test]
     fn fileglob_matches_the_two_static_airgap_patterns() {
         let dir = Dir::new();
@@ -966,13 +940,8 @@ mod tests {
         );
     }
 
-    /// A pattern with no directory of its own: `files/` of the search path wins over the entry
-    /// itself when both would match, and the entry itself only when `files/` has nothing at
-    /// all - measured behaviour of `plugins/lookup/fileglob.py`, read on the dev machine. Each
-    /// case has exactly one match, so `lookup()` answers a bare string, not a list.
-    ///
-    /// What would make this red: reading the entry itself before `files/`, or merging matches
-    /// from both instead of stopping at the first that has any.
+    /// A pattern with no directory prefers `files/` of the search path over the entry itself, which
+    /// counts only when `files/` has nothing.
     #[test]
     fn fileglob_prefers_files_over_the_entry_itself() {
         let role = Role::new();
@@ -1004,9 +973,7 @@ mod tests {
         );
     }
 
-    /// No match anywhere is an empty list, never an error: measured on ansible-core 2.19.12,
-    /// `lookup('fileglob', 'nope*')` answers `type_debug` -> `list`, printed `[]`, since
-    /// `lookup()` only unwraps or joins a result that has something in it.
+    /// A `fileglob` with no match anywhere answers an empty list, never an error.
     #[test]
     fn fileglob_with_no_match_is_an_empty_list_not_an_error() {
         let role = Role::new();
@@ -1018,9 +985,8 @@ mod tests {
         );
     }
 
-    /// Measured on ansible-core 2.19.12: `lookup()` joins several results with `,` when all are
-    /// strings (`lookup('env', 'HOME', 'USER')` -> `/home/user,user`), keeps the list when one is
-    /// not (`lookup('vars', 'l1', 'l2')` with `l2: [1]`), and `wantlist=True` keeps it always.
+    /// `lookup()` joins several string results with a comma, keeps the list when one is not a
+    /// string, and `wantlist=True` always keeps it.
     #[test]
     fn lookup_joins_several_string_results_with_a_comma() {
         let t = crate::testing::templar();
@@ -1036,9 +1002,7 @@ mod tests {
         assert_eq!(r("{{ lookup('vars', 'x', wantlist=True) }}"), json!(["a"]));
     }
 
-    /// `ansible.builtin.fileglob` answers exactly as the bare name does (A9: minijinja accepts
-    /// a qualified lookup name the same as a qualified filter or test name), a bare string here
-    /// too since there is exactly one match.
+    /// `ansible.builtin.fileglob` answers exactly as the bare name does.
     #[test]
     fn fileglob_answers_under_its_ansible_builtin_alias_too() {
         let role = Role::new();
@@ -1055,11 +1019,7 @@ mod tests {
     }
 
     /// The five `first_found` lines measured on ansible-core 2.19.12 in a role holding
-    /// `files/second.txt` and `templates/snip.j2`. Each name is tried against each entry of
-    /// `ansible_search_path` as written: nothing adds `files/` or `templates/`.
-    ///
-    /// What would make this red: `first_found` looking under `files/` of its own accord, which
-    /// finds the bare `second.txt` the reference does not.
+    /// `files/second.txt` and `templates/snip.j2`.
     #[test]
     fn first_found_tries_each_name_against_the_search_path_only() {
         let role = Role::new();
@@ -1106,12 +1066,8 @@ mod tests {
         );
     }
 
-    /// `_process_terms` joins a string term to the plugin's `paths` option, so the keyword
-    /// applies to plain names as the mapping's `paths` does. And a mapping term replaces the
-    /// options whole, so one without `skip` turns a `skip=true` keyword back off.
-    ///
-    /// What would make this red: `paths=` read only for a mapping (the name is then tried bare,
-    /// and `second.txt` is not found), or a mapping that keeps the keyword's `skip`.
+    /// `_process_terms` joins a string term to the plugin's `paths` option, so the keyword applies
+    /// to plain names as the mapping's `paths` does.
     #[test]
     fn first_found_joins_the_paths_keyword_and_a_mapping_resets_the_options() {
         let role = Role::new();
@@ -1139,14 +1095,8 @@ mod tests {
         );
     }
 
-    /// The reference templates a variable when it is read, so a template read through the
-    /// lookup sees `a: "{{ b }}"` as `1` even while the task's variables are still being
-    /// resolved. Here the lookup can run inside that resolution, against a map that still holds
-    /// `{{ b }}`: the names the template reads are resolved first. The result is data all the
-    /// same, and a name from a managed host is not rendered on the way.
-    ///
-    /// What would make this red: the template rendered against the map as it stands, which
-    /// writes `{{ b }}` into a result nothing renders again; or the host's name rendered too.
+    /// The reference templates a variable when it is read, so a template read through the lookup
+    /// sees `a: "{{ b }}"` as `1` even while the task's variables are still being resolved.
     #[test]
     fn a_template_lookup_reads_a_chained_variable_resolved() {
         let role = Role::new();
@@ -1176,13 +1126,8 @@ mod tests {
         );
     }
 
-    /// Resolving the names a template reads must not fail a lookup the reference renders: its
-    /// variables are templated when read, so a name in a branch that never runs, or behind
-    /// `default`, never fails. One that cannot be resolved reads as undefined here, and only a
-    /// read that happens fails, as an undefined read.
-    ///
-    /// What would make this red: the resolution's error propagated, which fails the first two
-    /// lookups with `undefined value` where the reference prints `ok` and `none`.
+    /// A name that cannot be resolved reads as undefined and fails only when it is actually read,
+    /// never in a branch that does not run.
     #[test]
     fn a_name_that_cannot_be_resolved_fails_only_when_it_is_read() {
         let role = Role::new();
@@ -1205,12 +1150,8 @@ mod tests {
         assert!(err.is_undefined(), "{err}");
     }
 
-    /// `plugins/lookup/template.py` gives the template `template_path`, `template_fullpath` and,
-    /// unless the variable exists, `ansible_managed`, as the `template` action does: the roles
-    /// measured write `{{ ansible_managed | comment }}` at the top of their templates.
-    ///
-    /// What would make this red: the lookup rendering against the caller's variables alone
-    /// (`ansible_managed` undefined), or overwriting an `ansible_managed` the playbook set.
+    /// A `template` lookup gives the template `template_path`, `template_fullpath` and, unless it
+    /// exists, `ansible_managed`.
     #[test]
     fn a_template_lookup_sets_the_template_variables() {
         let role = Role::new();

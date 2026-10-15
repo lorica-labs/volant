@@ -201,9 +201,8 @@ mod tests {
             .collect()
     }
 
-    /// Measured on ansible-core 2.19.12 with `set_fact:` written as one string: a block with
-    /// spaces inside stays one value, quotes around a whole value go, quotes inside one stay,
-    /// `\t` becomes a tab and `\=` stays as written in a value.
+    /// In a `set_fact:` string a Jinja block with spaces stays one value, and quotes and escapes
+    /// are handled as ansible-core 2.19.12 does.
     #[test]
     fn a_jinja_block_with_spaces_stays_one_value() {
         assert_eq!(

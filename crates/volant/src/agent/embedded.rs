@@ -205,10 +205,6 @@ mod tests {
     const AGENT: &[u8] = b"#!/bin/sh\necho embedded\n";
 
     /// A second extraction of an agent already in place leaves the file alone.
-    ///
-    /// What would make this red: the comparison with what is on disk skipped, so every lookup
-    /// writes a new copy and renames it over the old one. Proved on the inode, which a rewrite
-    /// through a temporary name always changes, whatever the bytes are.
     #[test]
     fn extracting_an_agent_already_in_place_writes_nothing() {
         let root = scratch();
@@ -227,10 +223,6 @@ mod tests {
     }
 
     /// A copy that was cut short, or altered without changing its length, is replaced.
-    ///
-    /// What would make this red: the comparison reduced to the length (the altered copy is
-    /// kept) or to the file merely existing (both are kept). Either way the controller would run
-    /// or upload whatever is sitting in its cache.
     #[test]
     fn a_short_or_altered_copy_is_written_again() {
         let root = scratch();
@@ -248,12 +240,8 @@ mod tests {
         }
     }
 
-    /// The extracted agent is mode 0755 whatever the umask, and a copy that lost its execute bit
-    /// is replaced even though its bytes are right.
-    ///
-    /// What would make this red: the mode left to `File::create` and the umask (the file lands
-    /// 0644 and `runnable` refuses it), or the execute bit dropped from the comparison (the
-    /// non-executable copy is kept).
+    /// The extracted agent is mode 0755 whatever the umask, and a copy that lost its execute bit is
+    /// replaced even though its bytes are right.
     #[test]
     fn the_extracted_agent_is_executable() {
         let root = scratch();
@@ -268,9 +256,6 @@ mod tests {
 
     /// A cache directory another account could write is refused, nothing is written into it, and
     /// the error gives its mode.
-    ///
-    /// What would make this red: the ownership and mode check skipped for a directory that
-    /// already exists, which is exactly the one somebody else could have prepared.
     #[test]
     fn a_cache_directory_others_can_write_is_refused() {
         let root = scratch();
@@ -285,10 +270,6 @@ mod tests {
     }
 
     /// A new cache directory is created private to this user.
-    ///
-    /// What would make this red: the directory made with `create_dir_all` and the umask, which
-    /// under a umask of 002 leaves it group-writable and has the check above refuse the
-    /// controller's own cache on its first run.
     #[test]
     fn a_new_cache_directory_is_private() {
         let root = scratch();
@@ -304,10 +285,6 @@ mod tests {
 
     /// The cache is named after this controller's version, under `XDG_CACHE_HOME` when that is
     /// absolute and under `HOME` otherwise.
-    ///
-    /// What would make this red: the version left out of the path, or a relative
-    /// `XDG_CACHE_HOME` used as it is, which would extract into whatever directory the run
-    /// started in.
     #[test]
     fn the_cache_directory_follows_xdg_then_home() {
         let version = env!("CARGO_PKG_VERSION");

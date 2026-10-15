@@ -343,12 +343,8 @@ mod tests {
         tmp
     }
 
-    /// The measured reading rules for a role's directories: a `defaults/main/` directory is
-    /// merged in name order, and `meta/main.yml` is read for both of the things it can say.
-    ///
-    /// What would make this red: reading a directory in whatever order the filesystem hands the
-    /// entries back, which makes the value of a variable depend on the machine; or dropping the
-    /// first file of the directory, which loses every name the later ones do not set.
+    /// The measured reading rules for a role's directories: a `defaults/main/` directory is merged
+    /// in name order, and `meta/main.yml` is read for both of the things it can say.
     #[test]
     fn a_defaults_directory_merges_its_files_in_name_order() {
         let tmp = tree();
@@ -364,9 +360,8 @@ mod tests {
         assert_eq!(role.dependencies[0].params["p"], serde_json::json!("v"));
     }
 
-    /// Measured on ansible-core 2.19.12: `defaults/main.yml` beside a `defaults/main/` directory
-    /// wins outright, and the directory is not read - a run whose role read both would carry a
-    /// variable the reference never gives it.
+    /// `defaults/main.yml` beside a `defaults/main/` directory wins outright and the directory is
+    /// not read, as in ansible-core 2.19.12.
     #[test]
     fn a_file_beats_a_directory_of_the_same_name() {
         let tmp = tree();
@@ -402,12 +397,8 @@ mod tests {
         assert_eq!(role.defaults["q"], serde_json::json!(1));
     }
 
-    /// The searched list, and the sentence a missing role is refused with, are the reference's
-    /// own - and the exit code is 1, not the 4 the rest of an unusable playbook gets.
-    ///
-    /// What would make this red: a path dropped from the list, which sends an operator looking
-    /// in the wrong directories; or the refusal losing its own code to the compiler's blanket,
-    /// which changes the number every script around the run reads.
+    /// The searched list, and the sentence a missing role is refused with, are the reference's own
+    /// - and the exit code is 1, not the 4 the rest of an unusable playbook gets.
     #[test]
     fn a_missing_role_names_every_path_and_exits_1() {
         let tmp = tree();

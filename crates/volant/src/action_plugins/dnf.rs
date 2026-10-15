@@ -147,12 +147,8 @@ impl Plugin for Dnf<'_> {
 mod tests {
     use super::*;
 
-    /// A delegated task's result carries no `pkg_mgr`: the reference files it under the delegate
-    /// only with `delegate_facts`, and this engine files a result's facts under the host the task
-    /// was written for, so the delegate's answer would land on the wrong host.
-    ///
-    /// What would make this red: the answer carried whoever gave it, which tells the host the
-    /// task was written for that it runs the delegate's package manager.
+    /// A delegated task's result carries no `pkg_mgr`, because its facts would be filed under the
+    /// wrong host.
     #[test]
     fn a_delegated_task_carries_no_pkg_mgr() {
         let args = Map::new();

@@ -123,12 +123,6 @@ fn absent_here() -> BTreeSet<&'static str> {
 
 /// On this machine the native answers `gather_subset: all` with exactly the keys of
 /// `NATIVE_FACT_KEYS` whose source exists here, each under the name the reference gives it.
-///
-/// What would make this red: a key the collector writes and the list does not name, which the
-/// controller would never know it can rely on; a key the list names and the collector never
-/// writes, which a play reading it would find missing; or the native handing back for anything
-/// but a host outside its subset. On such a host (a runner with `/usr/bin/rpm`) it asserts the
-/// hand-back's reason and compares nothing.
 #[test]
 #[cfg(target_os = "linux")]
 fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
@@ -174,9 +168,6 @@ fn the_native_setup_produces_exactly_the_listed_keys_on_this_machine() {
 
 /// The live comparison leaves `date_time` out because its values move, so its zone fields are
 /// compared here against Python's `time` module on the same machine, where the native answers.
-///
-/// What would make this red: `tz_dst` read from the current offset rather than the zone's
-/// daylight name, or `tz_offset` printed without the sign and four digits of `%z`.
 #[test]
 #[cfg(target_os = "linux")]
 fn the_time_zone_names_match_python_on_this_machine() {

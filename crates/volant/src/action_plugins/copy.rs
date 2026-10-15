@@ -475,15 +475,6 @@ mod tests {
     }
 
     /// A `src` whose render read a managed host is refused before anything is read.
-    ///
-    /// Measured on ansible-core 2.19.12: a `copy` whose `src` is a registered `stdout` sends the
-    /// controller file it names to the host, `~/.ssh` included, and the host reads it back with
-    /// `cat`. This refuses it, on purpose.
-    ///
-    /// What would make this red: the source resolved before the provenance is looked at. The
-    /// second path names nothing on the controller, so a lookup made first answers "Could not
-    /// find or access" instead; the first is a real file whose bytes would then be hashed into a
-    /// blob, one `put_blob` away from the host.
     #[test]
     fn a_source_a_host_named_is_never_read() {
         let dir_guard = scratch();
@@ -570,15 +561,7 @@ mod tests {
     ];
 
     /// The first sub-task is the reference's `stat`, measured: the SHA-1 and nothing else, and
-    /// every argument sent is one the module's own `argument_spec` declares. The MIME type and
-    /// the attributes are not asked for: no plugin reads them, and each costs the host a program
-    /// (`file`, `lsattr`) per call.
-    ///
-    /// What would make this red: another algorithm asked for, which never equals the local sum
-    /// and sends every file on every run, or an argument outside the module's `argument_spec` -
-    /// `get_size`, which only `ansible.windows.win_stat` declares, refused a real `stat` on a
-    /// real host with "Unsupported parameters" until it was dropped; or `get_mime` and
-    /// `get_attributes` left at their defaults, which run `file` and `lsattr` for nothing.
+    /// every argument sent is one the module's own `argument_spec` declares.
     #[test]
     fn the_stat_is_the_reference_s() {
         let (_dir, mut plugin) = copy_task(json!({}));
@@ -599,14 +582,6 @@ mod tests {
     }
 
     /// A destination that already holds the bytes gets `file`, and nothing is sent.
-    ///
-    /// Measured on ansible-core 2.19.12: `stat` then `file`, and the result registered is
-    /// `file`'s with the local sum and `dest` added (`changed checksum dest diff failed gid group
-    /// mode owner path size state uid`).
-    ///
-    /// What would make this red: the sum taken with anything but SHA-1 over the bytes, which
-    /// never matches what `stat` reports and sends the file every time, or `file` handed the
-    /// source it does not take.
     #[test]
     fn an_identical_file_is_not_sent() {
         let (_dir, mut plugin) = copy_task(json!({"mode": "0644"}));
@@ -657,9 +632,6 @@ mod tests {
     }
 
     /// A destination that differs gets the bytes, once, and `copy`.
-    ///
-    /// What would make this red: the file not staged, which runs `copy` on a `src` nobody put
-    /// there, or the controller's path left in `src`, which the host would read as its own.
     #[test]
     fn a_different_file_is_sent_once() {
         let (_dir, mut plugin) = copy_task(json!({"backup": true}));
@@ -684,9 +656,6 @@ mod tests {
     }
 
     /// A destination that is not there gets the bytes and `copy`, as a different one does.
-    ///
-    /// What would make this red: a missing file compared with an empty sum, which an empty
-    /// source matches and so is never created.
     #[test]
     fn an_absent_file_is_sent() {
         let (_dir, mut plugin) = copy_task(json!({}));
@@ -696,12 +665,6 @@ mod tests {
     }
 
     /// `force: false` asks for no sum, and leaves a destination that exists alone.
-    ///
-    /// Measured on ansible-core 2.19.12: `stat` alone, and `{"changed": false, "dest": ...,
-    /// "src": ...}` registered.
-    ///
-    /// What would make this red: the file sent anyway, which overwrites what the author asked to
-    /// keep, or a sum asked for that the reference does not compute.
     #[test]
     fn force_false_leaves_an_existing_file_alone() {
         let (tmp, args) = hello(json!({"force": false}));
@@ -720,13 +683,8 @@ mod tests {
         );
     }
 
-    /// A destination that is a directory is looked at again with the source's name inside it,
-    /// and the module is still handed the directory.
-    ///
-    /// Measured on ansible-core 2.19.12: `stat`, then `file` on `dest/<basename>`.
-    ///
-    /// What would make this red: the directory's own sum compared with the file's, which sends
-    /// the file on every run, or `content` let into a directory.
+    /// A destination that is a directory is looked at again with the source's name inside it, and
+    /// the module is still handed the directory.
     #[test]
     fn a_directory_dest_takes_the_basename() {
         let (_dir, mut plugin) = copy_task(json!({"dest": "/tmp/v"}));
@@ -775,11 +733,6 @@ mod tests {
 
     /// `remote_src` runs `copy` with the task's arguments and nothing before it, and its `src`
     /// names a host file, which is the host's own to name.
-    ///
-    /// Measured on ansible-core 2.19.12: `copy` alone, no `stat` and no transfer.
-    ///
-    /// What would make this red: a `stat` or a transfer first, or the trust refusal applied to a
-    /// path that is read on the host it came from.
     #[test]
     fn remote_src_runs_the_module_alone() {
         let Value::Object(args) =
@@ -801,9 +754,6 @@ mod tests {
 
     /// A `content` is sent as its text, a mapping as `json.dumps` writes it, and the name it
     /// travels under is a dotted one the host never writes.
-    ///
-    /// What would make this red: a mapping written as this engine's own JSON, which differs from
-    /// what the reference writes and so changes the file on every run under the other engine.
     #[test]
     fn a_content_is_sent_as_the_reference_writes_it() {
         let mut args = Map::new();
@@ -823,9 +773,6 @@ mod tests {
     }
 
     /// What is refused before any sub-task, each in the reference's words where it has some.
-    ///
-    /// What would make this red: a check dropped, which runs `stat` for a task that cannot
-    /// succeed, or a directory `src` copied as if it were a file.
     #[test]
     fn what_cannot_be_copied_is_refused_before_the_host_is_asked() {
         let (tmp, _) = hello(json!({}));
@@ -877,11 +824,8 @@ mod tests {
         }
     }
 
-    /// A source too big for one frame is refused by its size, before it is read and before the
-    /// host is asked anything.
-    ///
-    /// What would make this red: the size checked only on the bytes once read, which loads the
-    /// whole file and runs `stat` for a transfer that can never happen.
+    /// A source too big for one frame is refused by its size, before it is read and before the host
+    /// is asked anything.
     #[test]
     fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
         let (tmp, mut args) = hello(json!({}));
@@ -903,14 +847,8 @@ mod tests {
         );
     }
 
-    /// A `stat` that fails ends the task in the reference's words, and a `copy` that fails is
-    /// the task's result as the module gave it.
-    ///
-    /// Measured on ansible-core 2.19.12, a failing `validate` registers `{"changed": false,
-    /// "checksum": "da39...", "exit_status": 1, "msg": "failed to validate", ...}`.
-    ///
-    /// What would make this red: a failed `stat` read as a missing file, which sends the file
-    /// into a directory the host cannot read, or the module's failure rewritten.
+    /// A `stat` that fails ends the task in the reference's words, and a `copy` that fails is the
+    /// task's result as the module gave it.
     #[test]
     fn a_failed_sub_task_ends_the_task() {
         let (_dir, mut plugin) = copy_task(json!({}));

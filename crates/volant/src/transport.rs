@@ -1534,10 +1534,8 @@ mod tests {
         }
     }
 
-    /// The strings come from the two `sudo` implementations measured for this: `sudo` 1.9.15p5
-    /// on the target machine and `sudo-rs` 0.2.13 on the development machine. Which message a
-    /// match produces is decided by whether a password was offered, because the two
-    /// implementations split their wording between the two cases differently.
+    /// The strings come from the two `sudo` implementations measured for this: `sudo` 1.9.15p5 on
+    /// the target machine and `sudo-rs` 0.2.13 on the development machine.
     #[test]
     fn sudos_refusals_are_told_apart_by_whether_a_password_was_offered() {
         let outcome = |stderr: &str, offered| match escalation_outcome(false, stderr, offered) {
@@ -1614,12 +1612,7 @@ mod tests {
     }
 
     /// The `sudo` form is settled by asking `sudo`, not by whether a password happens to be
-    /// available. A `sudo` that answers `-n` needs no authentication - a `NOPASSWD` rule, or an
-    /// authentication still cached - and never reads stdin, so nothing may be written to a link
-    /// opened that way even when the operator did supply a password: the line would sit on the
-    /// pipe for the agent to read as its first frame header. Only a refusal for want of
-    /// authentication opens the password path, and with no password to offer that refusal is
-    /// itself the answer.
+    /// available.
     #[tokio::test]
     async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
         use std::cell::RefCell;
@@ -1702,8 +1695,6 @@ mod tests {
     }
 
     /// A `sudo` that exits zero having run something else is not an escalation that worked.
-    /// Checking the agent's own version line is what keeps a wrapper, an alias or a stale
-    /// cached binary from being read as a success and then running the task as the wrong user.
     #[test]
     fn local_escalation_succeeds_only_on_the_agents_own_version_line() {
         let printed = |code, stdout: &str| {
@@ -1730,10 +1721,8 @@ mod tests {
         assert!(!printed(Some(1), &version), "a refusal is a refusal");
     }
 
-    /// The remote probe cannot ask for a version, because it is the upload of that very agent
-    /// it settles the `sudo` form for. It reads the probe script's own exit codes instead: no
-    /// `sudo` refusal and no shell complaint about a command it could not start produces one,
-    /// so any of them proves the script ran as the asked-for user.
+    /// The remote probe cannot ask for a version, because it is the upload of that very agent it
+    /// settles the `sudo` form for.
     #[test]
     fn the_remote_escalation_probe_is_proved_by_the_bootstraps_own_exit_codes() {
         let exited = |code| {
@@ -1760,9 +1749,8 @@ mod tests {
         assert!(!exited(None), "a command killed by a signal proves nothing");
     }
 
-    /// A bootstrap command that escalates goes to an inner `sh -c`, because `remote_tmp` starts
-    /// with `~`: expanded by the outer remote shell it would name the connecting user's home,
-    /// the one directory an unprivileged `become_user` may not be allowed to enter.
+    /// An escalated bootstrap command goes to an inner `sh -c`, so the `~` in `remote_tmp` names
+    /// the escalated user's home.
     #[test]
     fn an_escalated_bootstrap_command_is_expanded_by_a_shell_running_as_that_user() {
         let secret = escalation(None);
@@ -1916,11 +1904,8 @@ mod tests {
         );
     }
 
-    /// Run against a real `sh`, because the failure this guards against is a shell parsing
-    /// one: an unquoted `remote_tmp` holding a space makes `mkdir -p ""` fail and the run then
-    /// reports a failed upload for a path it never tried. The uploaded payload exits 255 when
-    /// it is run, which is `ssh`'s own code for a connection failure, so the probe that finds
-    /// it has to come back as 45 rather than letting that status through.
+    /// A `remote_tmp` holding a space survives a real `sh`, and a cached agent exiting 255 is
+    /// reported as 45, not as an ssh failure.
     #[cfg(unix)]
     #[test]
     fn a_remote_tmp_with_a_space_survives_the_shell() {
@@ -1974,13 +1959,6 @@ mod tests {
     }
 
     /// A cached agent is reused only when it is the very binary this controller would upload.
-    /// Its version string proves nothing: a build carrying extra instrumentation reports the
-    /// same one, and a host whose cache held such a build had it run as the agent, silently.
-    /// Each payload goes through the real upload and the real probe under `sh`, and the
-    /// probe's answer through the same check `bootstrap` makes.
-    ///
-    /// What would make this red: the reuse check comparing the version alone, which reads the
-    /// planted build, and the script printing this version, as this controller's agent.
     #[cfg(unix)]
     #[test]
     fn a_cached_agent_of_this_version_but_other_bytes_is_not_reused() {
@@ -2208,14 +2186,7 @@ mod tests {
         assert!(text.contains(key) || key == "ansible_connection", "{text}");
         assert!(text.contains(quoted), "{text}");
     }
-    /// Two ssh identities of one name are two links. The name and the escalated user are equal
-    /// here and only the port differs, so the key can only tell them apart through the whole
-    /// `SshTarget` -- which is what tells a task that asked for port 2223 from one that asked
-    /// for 2222.
-    ///
-    /// What would make this red: a hand-written `Hash` or `PartialEq` on `SshTarget` skipping a
-    /// field. Nothing else in the repository holds the derive in place, and a skipped `port`,
-    /// `user` or `private_key` would send the second task down the first one's link.
+    /// Two ssh identities of one name are two links.
     #[test]
     fn two_ports_of_one_host_are_two_keys() {
         use crate::executor::LinkKey;
@@ -2314,11 +2285,7 @@ mod tests {
     }
 
     /// Review focus: an operator who already set up connection sharing keeps theirs, whichever
-    /// variable carries it and however it is spelled. A second `ControlPath` from Volant would
-    /// silently win over theirs, since `ssh` keeps the first value it reads.
-    ///
-    /// What would make this red: `user_sets_control` reading one of the two variables only, or
-    /// matching the option names in one case only.
+    /// variable carries it and however it is spelled.
     #[test]
     fn user_control_options_are_left_alone() {
         for (key, words) in [
@@ -2346,12 +2313,8 @@ mod tests {
         }
     }
 
-    /// The same review focus, for the operator's ssh configuration file: `ssh -G` reads it the
-    /// way the connection will. The file is passed with `-F` so the test does not depend on the
-    /// account it runs under.
-    ///
-    /// What would make this red: `ssh -G` asked with Volant's own options on its command line,
-    /// which it then reports back, so the empty configuration would read as set.
+    /// The same review focus, for the operator's ssh configuration file: `ssh -G` reads it the way
+    /// the connection will.
     #[tokio::test]
     async fn a_control_path_in_the_ssh_configuration_is_left_alone() {
         let guard = scratch();
@@ -2378,11 +2341,8 @@ mod tests {
         }
     }
 
-    /// What `ssh` resolves from its configuration is not on Volant's command line, so it goes
-    /// into the socket name when the link opens: a `HostName` changed between two runs must not
-    /// send the second run down the first one's master, still alive for `ControlPersist`.
-    ///
-    /// What would make this red: the resolved name hashing Volant's options alone.
+    /// What `ssh` resolves from its configuration goes into the socket name, so a changed
+    /// `HostName` never rides the old master.
     #[tokio::test]
     async fn a_host_moved_in_the_ssh_configuration_gets_a_new_socket() {
         let guard = scratch();
@@ -2486,10 +2446,8 @@ mod tests {
         }
     }
 
-    /// `ssh -O exit` reaches the socket the link would use, and returns even though nothing
-    /// answers there the way a master would.
-    ///
-    /// What would make this red: the command sent to another path, or not bounded.
+    /// `ssh -O exit` reaches the socket the link would use, and returns even though nothing answers
+    /// there the way a master would.
     #[cfg(unix)]
     #[tokio::test]
     async fn stopping_a_shared_connection_speaks_to_its_socket() {
@@ -2543,11 +2501,8 @@ mod tests {
         assert!(!target.ssh_argv("true").join(" ").contains("Control"));
     }
 
-    /// Anybody able to put a socket in the directory can hand the next `ssh` a connection of
-    /// their own, so an existing directory must be this user's, at mode 0700.
-    ///
-    /// What would make this red: the owner or the mode left unchecked on a directory that
-    /// already exists.
+    /// Anybody able to put a socket in the directory can hand the next `ssh` a connection of their
+    /// own, so an existing directory must be this user's, at mode 0700.
     #[cfg(unix)]
     #[test]
     fn the_socket_directory_is_refused_unless_it_is_private() {
@@ -2651,8 +2606,6 @@ mod tests {
 
     /// The soft limit is lowered first: on a machine where it already equals the hard limit,
     /// asserting on what is there would pass with the mechanism removed.
-    ///
-    /// What would make this red: the raise not happening, or stopping short of the hard limit.
     #[cfg(unix)]
     #[test]
     fn the_open_file_limit_is_raised_to_the_hard_limit() {

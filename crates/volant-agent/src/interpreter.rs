@@ -108,11 +108,6 @@ mod tests {
 
     /// The candidate order is the reference's own fallback list, and a bare name is resolved
     /// against `PATH` while an absolute one is taken as it stands.
-    ///
-    /// What would make this red: the order rearranged, which would pick a different
-    /// interpreter from the one the reference picks on the same host and silently change which
-    /// Python a playbook runs under; or a bare name reported unresolved, which the controller
-    /// would then hand to a shell that may resolve it differently.
     #[test]
     fn the_candidate_order_is_the_reference_s_own() {
         assert_eq!(
@@ -131,11 +126,6 @@ mod tests {
     }
 
     /// Discovery reports absolute paths only, every one of them executable, with no duplicates.
-    ///
-    /// What would make this red: the same interpreter reported twice under two names - on a
-    /// normal Linux host `python3.12`, `/usr/bin/python3` and `python3` are frequently the same
-    /// file, and a controller counting candidates would think it had three choices; or a
-    /// relative path reported, which is not something the controller can execute directly.
     #[cfg(unix)]
     #[test]
     fn discovery_reports_absolute_executable_paths_without_duplicates() {
@@ -157,12 +147,6 @@ mod tests {
 
     /// De-duplication keeps the first occurrence where it was, the candidate order decides which
     /// interpreter comes first, and a candidate stops at the first `PATH` entry that answers it.
-    ///
-    /// What would make this red: a `sort` of the result, which reverses these two paths; a walk
-    /// over the candidates in any other order, which the second assertion pins with two distinct
-    /// files and no symlink between them; or a `PATH` walk that carries on past a hit it has
-    /// already reported, which would append `a/python3` to the first vector - an interpreter the
-    /// name `python3` does not resolve to on that host.
     #[cfg(unix)]
     #[test]
     fn de_duplication_keeps_the_first_name_a_file_was_found_under() {
@@ -202,12 +186,6 @@ mod tests {
     }
 
     /// An interpreter is reported where it was found, not where it points.
-    ///
-    /// What would make this red: reporting the canonical path. `python3 -m venv` symlinks the
-    /// virtualenv's `python3.12` at the system one; a module run under the target has the
-    /// virtualenv's `site-packages` off `sys.path` and fails to import what only the virtualenv
-    /// has - or finds an older copy system-wide and succeeds against the wrong version. It also
-    /// collapses every environment on the host into one reported entry.
     #[cfg(unix)]
     #[test]
     fn a_symlinked_interpreter_is_reported_where_it_was_found() {
@@ -234,10 +212,6 @@ mod tests {
 
     /// Two hardlinks to one interpreter are one interpreter: what de-duplicates is the file, not
     /// the path that reached it.
-    ///
-    /// What would make this red: a de-duplication keyed on the canonical path, which resolves
-    /// symlinks and not links, so a source build or a conda-style layout would be reported as
-    /// two interpreters where the host has one.
     #[cfg(unix)]
     #[test]
     fn hardlinked_names_for_one_interpreter_collapse() {
@@ -250,12 +224,8 @@ mod tests {
         );
     }
 
-    /// A file this process cannot execute is not an interpreter, and the candidate falls through
-    /// to the next entry on `PATH`.
-    ///
-    /// What would make this red: the executable test dropped, which would report `a/python3` and
-    /// hand the controller a file it cannot run; or the `PATH` walk broken, which would report
-    /// nothing at all - the second entry is the positive control that tells those two apart.
+    /// A file this process cannot execute is not an interpreter, and the candidate falls through to
+    /// the next entry on `PATH`.
     #[cfg(unix)]
     #[test]
     fn a_candidate_that_cannot_be_executed_falls_through_to_the_next_path_entry() {
@@ -276,11 +246,6 @@ mod tests {
     }
 
     /// A relative `PATH` entry is not searched.
-    ///
-    /// What would make this red: joining a candidate onto it anyway. The result is resolved
-    /// against the agent's own working directory, wherever the ssh exec dropped it, so an
-    /// executable named `python3.12` sitting there is reported - ahead of the system
-    /// interpreters, and at a path the reference never looked at.
     #[cfg(unix)]
     #[test]
     fn a_relative_path_entry_is_not_searched() {
@@ -295,12 +260,7 @@ mod tests {
         );
     }
 
-    /// A host with no Python at all reports an empty list rather than guessing. The controller
-    /// turns that into a refusal naming the host; a guess would turn it into a confusing
-    /// "command not found" from a module that never ran.
-    ///
-    /// The second assertion is the one about a real host: candidates to look for and a `PATH` to
-    /// look on, and nothing named like a Python on it.
+    /// A host with no Python at all reports an empty list rather than guessing.
     #[cfg(unix)]
     #[test]
     fn a_host_without_python_reports_nothing() {

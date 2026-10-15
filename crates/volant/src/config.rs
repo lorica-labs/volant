@@ -522,13 +522,8 @@ mod tests {
         parse(text, Path::new(base), "ansible.cfg").expect("the sample parses")
     }
 
-    /// Cross-host batching is off unless a `[volant] batching` line asks for it, and the
-    /// section a shared file carries for the other engine is read here without disturbing
-    /// `[defaults]` around it.
-    ///
-    /// What would make this red: the default turned on, which lets hosts run ahead through every
-    /// dependency no variable carries; or the key read with `bool_from_str` alone, which answers
-    /// nothing for `1` and leaves the option off for the spelling the documentation gives.
+    /// Cross-host batching is off unless a `[volant] batching` line asks for it, and that section
+    /// leaves `[defaults]` undisturbed.
     #[test]
     fn the_volant_section_carries_the_batching_switch() {
         assert!(!Config::default().batching, "the strict linear by default");
@@ -548,11 +543,8 @@ mod tests {
         assert_eq!(c.forks, 9);
     }
 
-    /// Natives are on unless the section or the environment turns them off, and a value that is
-    /// no switch is refused rather than read as one.
-    ///
-    /// What would make this red: `maybe` read as `false` the way the reference reads an unknown
-    /// word, which turns natives off with nothing said; or the environment arm dropped.
+    /// Natives are on unless the section or the environment turns them off, and a value that is no
+    /// switch is refused rather than read as one.
     #[test]
     fn the_volant_section_carries_the_native_modules_switch() {
         assert!(
@@ -713,17 +705,8 @@ native_modules = maybe
         }
     }
 
-    /// A zero, and a negative value with it, reach the caller as zero: refusing them is the
-    /// startup check's job, and silently falling back to five would run a playbook the
-    /// reference refuses outright.
-    ///
-    /// A value that is no number at all is a different refusal with a different code.
-    /// Measured on the development machine against `ansible-core 2.19.12`: `forks = many` in
-    /// `ansible.cfg` prints `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value:
-    /// Invalid value provided for 'integer': 'many'` and exits 5, before any play header.
-    ///
-    /// What would make this red: an unparsable `forks` or `timeout` quietly keeping a default,
-    /// or carrying a code other than the 5 the reference gives it.
+    /// A zero or negative setting reaches the caller as zero, and a non-number is refused with the
+    /// reference's code 5.
     #[test]
     fn an_integer_setting_is_read_or_refused_with_the_reference_s_code() {
         assert_eq!(cfg("[defaults]\nforks = 12\n", ".").forks, 12);
@@ -755,13 +738,6 @@ native_modules = maybe
 
     /// A negative connection timeout is refused rather than clamped, from the file and from the
     /// environment alike.
-    ///
-    /// Measured against `ansible-core 2.19.12`: `timeout = -1` reaches `ssh`, which answers
-    /// `command-line line 0: invalid time value`, and every host is UNREACHABLE at exit 4. The
-    /// reference does not run with it either; this release says so before it connects.
-    ///
-    /// What would make this red: `timeout = -1` clamped back to zero, which is `ssh`'s
-    /// `ConnectTimeout=0` - no limit at all, from a line written to shorten one.
     #[test]
     fn a_negative_timeout_is_refused_rather_than_clamped_to_no_limit() {
         assert_eq!(
@@ -780,9 +756,8 @@ native_modules = maybe
         assert!(shown.contains("/etc/x/ansible.cfg"), "{shown}");
     }
 
-    /// The same two settings from the environment, where the reference names the variable as
-    /// the origin instead of a file: `ANSIBLE_TIMEOUT=abc` exits 5 with
-    /// `Config 'DEFAULT_TIMEOUT' from 'env: ANSIBLE_TIMEOUT' ...`, measured.
+    /// The same two settings from the environment are refused the same way, naming the variable as
+    /// the origin.
     #[test]
     fn the_environment_arm_refuses_a_non_integer_the_same_way() {
         let saved_config = std::env::var("ANSIBLE_CONFIG").ok();

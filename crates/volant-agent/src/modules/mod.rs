@@ -273,14 +273,7 @@ mod tests {
     }
 
     /// The sentence and the module name are the reference's, not this engine's, and `shell` is
-    /// answered under `command` because that is the module the reference runs it with. `raw`
-    /// validates nothing at all: measured, a `raw` task carrying an argument no engine has runs
-    /// and reports `changed`.
-    ///
-    /// What would make this red: the message rewritten in this engine's words, which sends an
-    /// operator looking for a Volant bug instead of a typo; `shell` answering under its own name,
-    /// which no reference output contains; or `raw` starting to validate, which fails a playbook
-    /// the reference runs.
+    /// answered under `command` because that is the module the reference runs it with.
     #[test]
     fn an_argument_the_reference_does_not_have_gets_the_reference_s_sentence() {
         use crate::testing::args;
@@ -308,22 +301,7 @@ mod tests {
     }
 
     /// The pre-flight refuses `expand_argument_vars: true` before the first connection, and lets
-    /// `expand_argument_vars: "{{ flag }}"` through because it cannot read a template. The value
-    /// exists here, so the refusal fires here instead of the argument being dropped in silence -
-    /// which is the accepted-then-ignored failure the registry exists to close, arriving inside
-    /// the registry's own subject matter.
-    ///
-    /// It reads the value the way the reference reads a `type='bool'` argument, so the refusal
-    /// covers every spelling of the value it refuses, and the value that asks for what this
-    /// release already does still runs.
-    ///
-    /// `shell` answers for every value rather than for one, because the reference has no such
-    /// argument on `shell` at all and fails the task whatever it says.
-    ///
-    /// What would make this red: nothing checking the rendered value, which prints `$HOME`,
-    /// reports `changed` and exits 0 where the reference prints the home directory; or the
-    /// refusal firing on `command`'s name, which fails a task that ran identically under both
-    /// engines.
+    /// `expand_argument_vars: "{{ flag }}"` through because it cannot read a template.
     #[test]
     fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
         use crate::testing::args;

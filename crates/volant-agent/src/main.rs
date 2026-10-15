@@ -179,10 +179,8 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    /// A reader that panics says so on the channel rather than dropping its sender, which the
-    /// batch would read as a cancel nobody sent.
-    ///
-    /// What would make this red: the reader's panic left to end its thread without a word.
+    /// A reader that panics says so on the channel rather than dropping its sender, which the batch
+    /// would read as a cancel nobody sent.
     #[test]
     fn a_panicking_stdin_reader_reports_an_error() {
         let (tx, rx) = mpsc::channel();
@@ -195,11 +193,8 @@ mod tests {
         }
     }
 
-    /// A host without procfs still answers the probe with the hash of the file it was started
-    /// from, rather than failing it and leaving the host unreachable over an agent that runs.
-    ///
-    /// What would make this red: the absolute `argv[0]` fallback removed, which reads this test
-    /// binary through `current_exe` instead of the file named.
+    /// A host without procfs still answers the probe with the hash of the file it was started from,
+    /// rather than failing it and leaving the host unreachable over an agent that runs.
     #[test]
     fn without_procfs_the_hash_is_of_the_absolute_path_the_agent_was_started_by() {
         let dir = std::env::temp_dir().join(format!("volant-self-hash-{}", std::process::id()));

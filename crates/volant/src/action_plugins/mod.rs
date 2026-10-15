@@ -267,9 +267,6 @@ mod tests {
 
     /// A gathered fact sits in its own layer beside the host's map, not in it, and the backend
     /// `package` and `service` pick is read off it all the same.
-    ///
-    /// What would make this red: `fact` reading the host's own map alone, which misses every
-    /// gathered fact and sends a filtered `setup` for a manager the host already reported.
     #[test]
     fn a_gathered_fact_is_read_from_the_facts_layer() {
         let facts: Map<String, Value> =
@@ -281,13 +278,8 @@ mod tests {
         assert_eq!(fact(&vars, "pkg_mgr"), Some("apt"));
     }
 
-    /// The list holds what the reference runs through an action plugin and nothing this
-    /// release already runs itself.
-    ///
-    /// What would make this red: `setup` slipping in - it is `gather_facts` that has the action
-    /// plugin, and a run that cannot call `setup` gathers no facts at all - or one of the four
-    /// controller-side modules, which would refuse a playbook this release runs today; or a
-    /// plugin this release runs left in, which refuses it before its dispatch is ever reached.
+    /// The list holds what the reference runs through an action plugin and nothing this release
+    /// already runs itself.
     #[test]
     fn the_list_names_only_what_this_release_cannot_run() {
         for absent in [
@@ -340,9 +332,6 @@ mod tests {
     }
 
     /// Every plugin the modules page lists is one this release dispatches.
-    ///
-    /// What would make this red: a name added to `ACTION_PLUGINS` with no arm here, which the page
-    /// would then promise and the run would refuse.
     #[test]
     fn every_listed_plugin_has_a_kind() {
         for (name, _) in ACTION_PLUGINS {
@@ -352,11 +341,6 @@ mod tests {
 
     /// Every module a plugin can run is a builtin module ansible-core builds a payload for, and
     /// none is one this engine runs natively or on the controller.
-    ///
-    /// What would make this red: a name the union helper cannot build, which refuses every run
-    /// naming the plugin before the first connection, or a native one, which would go out as a
-    /// payload and stop running natively. `dnf` and `service` are plugins' names too and belong
-    /// here all the same: a plugin runs the module directly, as the reference's does.
     #[test]
     fn a_plugin_runs_only_what_the_union_can_hold() {
         for kind in [

@@ -1148,17 +1148,8 @@ mod tests {
         tree.read("h1\n")
     }
 
-    /// The four Galaxy roles of `just bench`, cut down to every line that reads a fact, as
-    /// published (geerlingguy.security 3.0.2, nginx 3.3.1, git 3.0.1, pip 3.1.2): conditions
-    /// on `ansible_facts.os_family` and on the bare `ansible_os_family`, `include_vars` and
-    /// `include_tasks` of templated names inside the role, a template whose `src` is a variable,
-    /// a role default reading the processor count, the `package` and `service` plugins, and
-    /// `ansible_facts['python']` by subscript.
-    ///
-    /// What would make this red: the role's templates or defaults left unread (`processor_*`
-    /// goes), the plugins' own reads forgotten (`pkg_mgr`, `service_mgr`), a templated name
-    /// inside a role taken as unread (every fact), or a connection variable such as
-    /// `ansible_user` taken for a fact.
+    /// The four Galaxy roles of `just bench`, cut to every line that reads a fact, read only facts
+    /// the native `setup` gathers.
     #[test]
     fn the_proof_roles_read_only_native_facts() {
         let tree = Tree::new();
@@ -1251,18 +1242,8 @@ mod tests {
         );
     }
 
-    /// The k3s-ansible playbook of `just bench-k3s` (pinned commit), cut down to every line that
-    /// reads a fact: the `lsb` and distribution conditions, `ansible_facts['service_mgr']`, the
-    /// firewalld source list that runs every host through `map('extract', hostvars)` and looks
-    /// into each by attribute, `ansible_facts.packages` and `.services` (written by
-    /// `package_facts` and `service_facts`, never by `setup`), the nftables template reading
-    /// `hostvars[host].ansible_default_ipv4`, the token read off the first server, and the
-    /// Raspberry Pi role's `include_tasks` over `with_first_found`, whose terms name a `set_fact`
-    /// variable and facts.
-    ///
-    /// What would make this red: `extract` with no key taken for a whole read, the attribute
-    /// paths in strings left unread (`default_ipv4` goes), the template body unread, or the
-    /// `package_facts` keys counted as `setup`'s.
+    /// The k3s-ansible playbook of `just bench-k3s`, cut to every line that reads a fact, reads
+    /// only facts the native `setup` gathers.
     #[test]
     fn the_k3s_playbook_reads_only_native_facts() {
         let tree = Tree::new();
@@ -1333,8 +1314,6 @@ mod tests {
 
     /// Review Focus 4: a fact read by a name only known once it renders reads any fact, and the
     /// Python `setup` stays.
-    ///
-    /// What would make this red: one of these constructs read as a set of keys.
     #[test]
     fn a_dynamic_fact_read_keeps_python_facts() {
         for (name, expr) in [
@@ -1389,8 +1368,6 @@ mod tests {
 
     /// The literal forms each read one key: attribute, subscript, another host's by name and by
     /// `extract` with a key, in its list form too.
-    ///
-    /// What would make this red: any of them read as every fact, or as the wrong key.
     #[test]
     fn a_literal_fact_read_is_one_key() {
         for (name, expr, key) in [
@@ -1424,8 +1401,6 @@ mod tests {
     }
 
     /// A key the native does not collect keeps the Python `setup`, and the profile names it.
-    ///
-    /// What would make this red: the check against `NATIVE_FACT_KEYS` skipped.
     #[test]
     fn a_key_outside_the_native_keeps_python_facts() {
         let read = read_one("ansible_mounts | map(attribute='mount')");
@@ -1440,10 +1415,8 @@ mod tests {
         );
     }
 
-    /// Where the text is: a template with a literal `src` outside any role, a `vars_files`
-    /// entry, a play variable, a `group_vars` file, and an `include_vars` file.
-    ///
-    /// What would make this red: any of those sources left unread, which drops its key.
+    /// Where the text is: a template with a literal `src` outside any role, a `vars_files` entry, a
+    /// play variable, a `group_vars` file, and an `include_vars` file.
     #[test]
     fn every_source_of_text_is_read() {
         let tree = Tree::new();
@@ -1476,10 +1449,8 @@ mod tests {
         );
     }
 
-    /// What the scan cannot open reads every fact: a templated name outside a role, a template
-    /// that is not there, a template pulling another in, and a role named by a template.
-    ///
-    /// What would make this red: any of those passed over.
+    /// What the scan cannot open reads every fact: a templated name outside a role, a template that
+    /// is not there, a template pulling another in, and a role named by a template.
     #[test]
     fn what_the_scan_cannot_open_reads_every_fact() {
         for (name, task) in [
@@ -1511,10 +1482,8 @@ mod tests {
         }
     }
 
-    /// Puppet's and Chef's facts, which the Python `setup` adds without the `ansible_` prefix,
-    /// are keys the native never collects.
-    ///
-    /// What would make this red: only `ansible_` words counted as facts.
+    /// Puppet's and Chef's facts, which the Python `setup` adds without the `ansible_` prefix, are
+    /// keys the native never collects.
     #[test]
     fn facter_and_ohai_facts_keep_python_facts() {
         for (name, expr, key) in [
@@ -1527,12 +1496,8 @@ mod tests {
         }
     }
 
-    /// A role whose templated file name renders outside the role: to a path built from
-    /// `playbook_dir`, to a name found only in the playbook's `templates/`, and to a task file the
-    /// walk never read.
-    ///
-    /// What would make this red: a templated name inside a role taken as one of the role's own
-    /// files without its values known and followed.
+    /// A templated file name that renders outside the role is followed: to `playbook_dir`, to the
+    /// playbook's `templates/`, and to an unread task file.
     #[test]
     fn a_templated_name_leaving_the_role_is_followed() {
         let role = |tree: &Tree| {
@@ -1622,9 +1587,6 @@ mod tests {
     }
 
     /// A block's own keywords in a file only the walk reaches (a dynamic include here) are read.
-    ///
-    /// What would make this red: `flatten` keeping a block's tasks and dropping its `when` and
-    /// `vars`.
     #[test]
     fn a_block_keyword_in_an_included_file_is_read() {
         let tree = Tree::new();
@@ -1645,8 +1607,6 @@ mod tests {
     }
 
     /// A play handler's include is followed, and what the included file reads counts.
-    ///
-    /// What would make this red: the walk taking only the handlers' module names.
     #[test]
     fn a_play_handler_include_is_read() {
         let tree = Tree::new();

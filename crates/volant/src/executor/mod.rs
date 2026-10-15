@@ -452,11 +452,7 @@ mod tests {
     use super::*;
 
     /// An interruption that arrives first keeps the run an interrupted one: a reason raised after
-    /// it is dropped, so the run exits 99 and not 1. A reason raised first is kept, and a second
-    /// one does not replace it.
-    ///
-    /// What would make this red: `raise` storing its reason whatever the stop already said,
-    /// which turns a Ctrl-C landing beside a missing handler into exit 1.
+    /// it is dropped, so the run exits 99 and not 1.
     #[test]
     fn an_interruption_that_came_first_is_not_turned_into_a_reason() {
         let (tx, rx) = watch::channel(false);

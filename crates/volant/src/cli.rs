@@ -724,9 +724,6 @@ mod tests {
 
     /// `--facts` takes one of its three words and nothing else, `auto` when it is not given, and
     /// `--profile` is a plain flag.
-    ///
-    /// What would make this red: the value read as free text, which would let a typo fall back
-    /// to `auto` and gather facts some other way than the one asked for.
     #[test]
     fn facts_takes_one_of_three_words() {
         let parse = |extra: &[&str]| {
@@ -741,11 +738,8 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue, "{err}");
     }
 
-    /// The switch and `--facts` reach every payload the run sends, from the environment through
-    /// the configuration to the union the tasks take their payloads from.
-    ///
-    /// What would make this red: the policy not put on the union, which leaves it at
-    /// `Natives::default()`; or put there from anything but the configuration and the flag.
+    /// The switch and `--facts` reach every payload the run sends, from the environment through the
+    /// configuration to the union the tasks take their payloads from.
     #[test]
     fn the_native_switch_and_facts_reach_the_payloads() {
         let core = |name: &str| python::ModuleFacts {
@@ -812,13 +806,8 @@ mod tests {
         text
     }
 
-    /// `--profile` adds nothing to standard output, where the run and its recap go, and
-    /// `VOLANT_PROFILE_JSON` gets the profile whatever became of the run: here a play that
-    /// matches no host, then a playbook that does not exist.
-    ///
-    /// What would make this red: the table printed on stdout, which puts it in the middle of
-    /// what a script compares against the reference; or the variable not read, which leaves the
-    /// golden comparison without the natives line it starts from.
+    /// `--profile` adds nothing to standard output, and `VOLANT_PROFILE_JSON` gets the profile
+    /// whatever became of the run.
     #[cfg(unix)]
     #[test]
     fn the_profile_stays_off_stdout_and_lands_in_its_file() {

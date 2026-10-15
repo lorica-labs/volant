@@ -248,14 +248,8 @@ mod tests {
         out
     }
 
-    /// A loop whose every item a `when` skips still prints the task's own `skipping: [host]`
-    /// line, after the item lines: measured on ansible-core 2.19.12, `v2_runner_on_skipped`
-    /// fires once for the task itself whenever the aggregate it is handed comes back skipped -
-    /// `geerlingguy.git : Build git.` with a false `when` does exactly this on a host that
-    /// already has git. Counts are unaffected: the aggregate always entered the recap.
-    ///
-    /// What would make this red: the aggregate line kept hidden the way a loop that ran (ok,
-    /// changed or failed) keeps it, which is what this code did before the fix.
+    /// A loop whose every item a `when` skips still prints the task's own `skipping: [host]` line
+    /// after the item lines.
     #[tokio::test]
     async fn a_loop_whose_every_item_is_skipped_shows_the_task_s_own_line() {
         assert_eq!(
@@ -269,11 +263,7 @@ mod tests {
     }
 
     /// A failure is ignored item by item: an item whose own `ignore_errors` rendered true shows
-    /// `...ignoring`, the other fails, and the task fails because one failure stands. When every
-    /// failed item is covered, the task and its aggregate line are ignored.
-    ///
-    /// What would make this red: one verdict read for the whole task, which either ignores the
-    /// item that asked not to be or fails the one that asked to be.
+    /// `...ignoring`, the other fails, and the task fails because one failure stands.
     #[tokio::test]
     async fn a_failure_is_ignored_item_by_item() {
         assert_eq!(

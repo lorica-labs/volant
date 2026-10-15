@@ -95,11 +95,6 @@ mod tests {
     use super::*;
 
     /// A managed host's value lands in the file as text and is never rendered again.
-    ///
-    /// The template's own text is the author's; what it reads from a host is data. What would
-    /// make this red: `render_file` built on `render_in`, whose extra passes render a result that
-    /// still carries a marker - the host's `{{ lookup('pipe', 'touch ...') }}` would run here, on
-    /// the controller, while writing the file.
     #[test]
     fn a_host_value_in_a_template_is_written_as_text() {
         let marker_guard = scratch();
@@ -170,11 +165,8 @@ mod tests {
         );
     }
 
-    /// The final newline of the file survives, and a template that renders to nothing but it
-    /// writes it: measured, a role's `sshd_config_snippet.j2` with its `if` false is one byte,
-    /// `\n`. The engine drops more than the source's own trailing newlines once a block tag's
-    /// `trim_blocks` eats one beside the render's own stripping; each pair below has the same
-    /// number of trailing newlines on both sides, however many the source held.
+    /// The final newline of the file survives, and a template that renders to nothing but it writes
+    /// it: measured, a role's `sshd_config_snippet.j2` with its `if` false is one byte, `\n`.
     #[test]
     fn the_final_newline_is_kept() {
         let r = |t: &str| {
@@ -190,9 +182,8 @@ mod tests {
         assert_eq!(r("{% raw %}a\n{% endraw %}\n\n"), "a\n\n");
     }
 
-    /// Jinja2's lexer rewrites every `\r\n` and lone `\r` in the source to `\n` before it ever
-    /// sees the template; minijinja does not. Without the normalisation, `\r` survives into a
-    /// render whose `newline_sequence` is still `\n`, and the crlf case below would double up.
+    /// Jinja2's lexer rewrites every `\r\n` and lone `\r` in the source to `\n` before it ever sees
+    /// the template; minijinja does not.
     #[test]
     fn the_source_s_own_crlf_is_normalised_like_the_reference() {
         assert_eq!(

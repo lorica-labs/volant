@@ -227,9 +227,6 @@ mod unit {
 
     /// Measured on ansible-core 2.19.12, in one expression each, and printed word for word: a
     /// boolean rendered into text is `True`/`False` in minijinja as it is in Jinja2.
-    ///
-    /// What would make this red: a test that reads a key the reference does not (`changed`
-    /// taken from anything but the result's own key), or one that accepts a string as a result.
     #[test]
     fn the_result_tests_read_a_result_as_the_reference_does() {
         let t = templar();
@@ -248,10 +245,8 @@ mod unit {
         );
     }
 
-    /// The aliases `core.py` maps to the same four functions, and the loop shape `changed`
-    /// reads when a result has no `changed` key of its own but a list of `results`.
-    ///
-    /// What would make this red: an alias left out, or `changed` ignoring `results`.
+    /// The aliases `core.py` maps to the same four functions, and the loop shape `changed` reads
+    /// when a result has no `changed` key of its own but a list of `results`.
     #[test]
     fn the_aliases_and_a_loop_result_answer_like_the_names() {
         let t = templar();
@@ -265,11 +260,8 @@ mod unit {
         );
     }
 
-    /// A result test on a name that has no value fails as any other read of it does, not with
-    /// the dictionary message: minijinja hands a test an undefined value rather than raising.
-    ///
-    /// What would make this red: the test reading the undefined value as an empty mapping or a
-    /// non-mapping, which would say `false` or `expects a dictionary`.
+    /// A result test on a name that has no value fails as any other read of it does, not with the
+    /// dictionary message: minijinja hands a test an undefined value rather than raising.
     #[test]
     fn a_result_test_on_an_undefined_name_is_an_undefined_error() {
         let err = templar()
@@ -280,9 +272,6 @@ mod unit {
 
     /// LooseVersion, as the reference's `version` test defaults to. Measured on ansible-core
     /// 2.19.12: `True False False`, and the two failures below word for word.
-    ///
-    /// What would make this red: comparing the two versions as strings (`'1.10' < '1.9'`), or
-    /// a component list that does not treat the shorter as the lesser.
     #[test]
     fn version_compares_the_reference_s_way() {
         let t = templar();
@@ -339,8 +328,6 @@ mod unit {
     }
 
     /// The four methods the measured roles call, through `pycompat`.
-    ///
-    /// What would make this red: the unknown-method callback not handing over to `pycompat`.
     #[test]
     fn python_methods_answer_on_values() {
         let t = templar();
@@ -356,11 +343,8 @@ mod unit {
         assert_eq!(t.render("{{ d.keys() | list }}", &m).unwrap(), json!(["k"]));
     }
 
-    /// The `template` module's render reads the same methods and tests, since real templates
-    /// call `.split()` too.
-    ///
-    /// What would make this red: `render_file` building an environment of its own instead of
-    /// starting from the one the tests and the method callback are registered on.
+    /// The `template` module's render reads the same methods and tests, since real templates call
+    /// `.split()` too.
     #[test]
     fn a_template_file_reads_the_methods_and_the_tests() {
         let mut m = Map::new();

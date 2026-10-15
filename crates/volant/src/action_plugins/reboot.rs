@@ -494,8 +494,6 @@ mod tests {
 
     /// A deadline past what an `Instant` holds is held far away instead of panicking the
     /// controller: `reboot_timeout: 18446744073709551615` is a `u64` the options accept.
-    ///
-    /// What would make this red: a plain sum, which panics on the overflow.
     #[test]
     fn a_deadline_that_overflows_is_held_far_away() {
         let now = Instant::now();
@@ -510,10 +508,8 @@ mod tests {
         object(value)
     }
 
-    /// The reference's defaults, for a `reboot: {}`: ten minutes, `whoami`, the five paths and
-    /// the message the measured `shutdown` line carried.
-    ///
-    /// What would make this red: a default of this engine's own in place of one of `reboot.py`'s.
+    /// The reference's defaults, for a `reboot: {}`: ten minutes, `whoami`, the five paths and the
+    /// message the measured `shutdown` line carried.
     #[test]
     fn the_defaults_are_the_reference_s() {
         let options = read_options(&Map::new()).expect("no arguments is fine");
@@ -552,9 +548,8 @@ mod tests {
         assert_eq!(msg, "invalid literal for int() with base 10: 'soon'");
     }
 
-    /// The shutdown line, per distribution and per argument: minutes from `pre_reboot_delay`,
-    /// `reboot` bare on Alpine, `+` minutes on Void, and a `reboot_command` split at its first
-    /// space into the program and the rest.
+    /// The shutdown line follows the reference's tables per distribution and argument, including a
+    /// `reboot_command` split at its first space.
     #[test]
     fn the_shutdown_line_follows_the_reference_s_tables() {
         let line = |args: Value, distribution: (&str, &str)| {

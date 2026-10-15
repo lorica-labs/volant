@@ -76,9 +76,6 @@ fn systemd_here() -> bool {
 
 /// A task that outlives its `timeout` while `service --status-all` hangs gets the Python path's
 /// answer for it, on the native path.
-///
-/// What would make this red: the SysV listing run without the task's deadline (the agent then
-/// waits the whole sleep, past the test's own limit), or a result other than the timeout's.
 #[test]
 fn a_hung_listing_ends_at_the_task_timeout() {
     if !systemd_here() {
@@ -110,9 +107,6 @@ fn a_hung_listing_ends_at_the_task_timeout() {
 }
 
 /// The controller's cancel stops the native while `service --status-all` hangs.
-///
-/// What would make this red: the cancel not asked while the listings run, which leaves the
-/// batch running until the sleep ends.
 #[test]
 fn a_cancel_stops_a_hung_listing() {
     if !systemd_here() {

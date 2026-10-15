@@ -56,17 +56,8 @@ fn a_protocol_mismatch_is_logged_before_ready() {
     agent.child.wait().unwrap();
 }
 
-/// The agent reports the interpreters it found on the `PATH` it was given, so `serve` has to
-/// call discovery rather than hand over a list it built from nothing.
-///
-/// What would make this red: `interpreters` wired to `Vec::new()`. Every other test in the suite
-/// stays green under that change - the unit tests drive discovery directly, and an empty list is
-/// byte for byte what a field that was never filled looks like on the wire - while every host on
-/// earth reports no Python.
-///
-/// `first()` rather than the whole list: `/usr/bin/python3` is a candidate whatever `PATH` says,
-/// so only the head of the list is this test's to decide. `python3.12` comes before it in the
-/// reference's order, and a `PATH` of one directory cannot produce a `python3.13`.
+/// The agent reports the interpreters it found on the `PATH` it was given, so `serve` has to call
+/// discovery rather than hand over a list it built from nothing.
 #[cfg(unix)]
 #[test]
 fn ready_names_the_interpreter_on_the_path_the_agent_was_given() {

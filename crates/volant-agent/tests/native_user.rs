@@ -136,9 +136,6 @@ fn handed_back_here(hung: &Hung) -> bool {
 
 /// A task whose `useradd` outlives its `timeout` gets the Python path's answer for it, on the
 /// native path.
-///
-/// What would make this red: `useradd` run without the task's deadline (the agent then waits the
-/// whole sleep, past the test's own limit), or a result other than the timeout's.
 #[test]
 fn a_hung_useradd_ends_at_the_task_timeout() {
     let hung = Hung::new("timeout");
@@ -164,9 +161,6 @@ fn a_hung_useradd_ends_at_the_task_timeout() {
 
 /// The controller's cancel stops the native while `useradd` hangs: sent once the command has
 /// started, so it reaches the command, not the task before it.
-///
-/// What would make this red: the cancel not asked while the command runs, which leaves the
-/// batch running until the sleep ends.
 #[test]
 fn a_cancel_stops_a_hung_useradd() {
     let hung = Hung::new("cancel");

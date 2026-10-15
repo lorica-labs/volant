@@ -15,10 +15,6 @@ use volant_protocol::{
 
 /// The agent answers for a payload it does not hold, keeps one whose bytes match its name, and
 /// refuses one whose bytes do not - each with a `BlobState` the controller can wait on.
-///
-/// What would make this red: a `put_blob` answered with nothing, which leaves the controller
-/// waiting on a state that never comes; or a refused payload answered `present: true`, which
-/// sends the batch at a blob that is not there and fails every task in it.
 #[test]
 fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
     let dir = std::env::temp_dir().join(format!("volant-agent-blobs-{}", std::process::id()));
@@ -156,11 +152,6 @@ fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
 }
 
 /// A `put_blob` that arrives while a batch is running is answered before the batch ends.
-///
-/// What would make this red: the message logged to the agent's stderr and discarded, which is
-/// what happened until now - a controller that sends the payload for the next play while a batch
-/// is still in flight would wait for a `BlobState` that never comes, and a wait with nothing
-/// behind it is a hang rather than a failure.
 #[test]
 fn a_put_blob_that_arrives_during_a_batch_is_answered() {
     let dir = std::env::temp_dir().join(format!("volant-agent-batch-blob-{}", std::process::id()));
@@ -239,17 +230,8 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A staged file is handed to the module under the argument it names, and is gone from the
-/// cache once the task has run.
-///
-/// What would make this red: the blob's own cache path handed to the module - `copy` moves
-/// its source, so the cache entry would vanish under a controller that believes the link
-/// still holds it; or the staged copy left behind, which keeps a rendered template, and the
-/// secret in it, on the host after the run.
-///
-/// Three tasks in one batch: one that reads its file, one that stages the same blob again and
-/// must find it consumed, and one that moves its file away as `copy` does, which the agent's
-/// own removal has to take in its stride.
+/// A staged file is handed to the module under the argument it names, and is gone from the cache
+/// once the task has run.
 #[test]
 fn a_staged_file_reaches_the_module_and_leaves_nothing_behind() {
     let scratch = Scratch::new("staged");
@@ -302,13 +284,8 @@ fn a_staged_file_reaches_the_module_and_leaves_nothing_behind() {
     assert_eq!(fs::read(&dest).unwrap(), b"the file the module moves\n");
 }
 
-/// A file that cannot be staged fails its task with the reason, and the module never starts:
-/// the union named here is not on the host, so a module that did start would fail on that
-/// instead.
-///
-/// What would make this red: a staging failure logged and the module run without its file, the
-/// "accepted then ignored" shape; or a corrupted blob moved out of the cache, which leaves the
-/// next `put_blob` nothing to replace and a staged file whose bytes nobody checked.
+/// A file that cannot be staged fails its task with the reason, and the module never starts: the
+/// union named here is not on the host, so a module that did start would fail on that instead.
 #[test]
 fn a_file_that_cannot_be_staged_fails_the_task_before_the_module_runs() {
     let scratch = Scratch::new("unstaged");
@@ -364,12 +341,8 @@ fn a_file_that_cannot_be_staged_fails_the_task_before_the_module_runs() {
     assert!(results.iter().all(TaskResult::failed));
 }
 
-/// The staged copy is removed when the module fails, here because the union it names is not on
-/// the host. Cancellation takes the same path: the removal follows the module whatever `Run` it
-/// returned.
-///
-/// What would make this red: the removal done only after a module that succeeded, which leaves
-/// a failed `template` task's rendering on the host.
+/// The staged copy is removed when the module fails, here because the union it names is not on the
+/// host.
 #[test]
 fn a_staged_file_is_removed_when_the_module_fails() {
     let scratch = Scratch::new("failed");
@@ -388,12 +361,8 @@ fn a_staged_file_is_removed_when_the_module_fails() {
     );
 }
 
-/// A staged copy the agent cannot remove fails its task, naming the path, even though the
-/// module itself succeeded. The module replaces its file with a directory, which `remove_file`
-/// refuses with something other than `NotFound`.
-///
-/// What would make this red: the removal error dropped, which reports green for a task whose
-/// rendered secret is still on the host.
+/// A staged copy the agent cannot remove fails its task, naming the path, even though the module
+/// itself succeeded.
 #[test]
 fn a_staged_file_that_cannot_be_removed_fails_the_task() {
     let scratch = Scratch::new("unremovable");
@@ -417,11 +386,8 @@ fn a_staged_file_that_cannot_be_removed_fails_the_task() {
     assert!(msg.contains(&*staged.to_string_lossy()), "{msg}");
 }
 
-/// A native module has nowhere to put a staged file, so a task asking for one fails by name and
-/// the blob stays in the cache.
-///
-/// What would make this red: the files dropped and `command` run without them, which reports
-/// green for a task that never saw its source.
+/// A native module has nowhere to put a staged file, so a task asking for one fails by name and the
+/// blob stays in the cache.
 #[test]
 fn a_native_module_cannot_take_staged_files() {
     let scratch = Scratch::new("native");
@@ -447,13 +413,8 @@ fn a_native_module_cannot_take_staged_files() {
     assert_eq!(entries(&link.stage_dir(&scratch.0)), vec![file]);
 }
 
-/// Two agents of one user on one cache - two inventory names for one machine, or two hosts
-/// delegating to one - are each sent the same file, and each module reads it, in the order that
-/// broke: both puts land before either task runs.
-///
-/// What would make this red: a staged file written to the shared cache. The second put finds
-/// the first one's file there and answers for it, the first task consumes it, and the second
-/// task fails `staging file <hash> for 'src': No such file or directory`.
+/// Two agents of one user on one cache are each sent the same file and each module reads it, even
+/// when both puts land before either task runs.
 #[test]
 fn two_agents_of_one_user_each_stage_their_own_copy_of_one_file() {
     let scratch = Scratch::new("two-links");
@@ -476,12 +437,8 @@ fn two_agents_of_one_user_each_stage_their_own_copy_of_one_file() {
     }
 }
 
-/// A file put and never taken - a batch cancelled before its task, a link dropped between the
-/// put and the batch - goes with the connection, and so does the connection's directory.
-///
-/// What would make this red: nothing removing the directory when the controller goes away,
-/// which leaves a rendered template, and the secret in it, on the host with nothing that will
-/// ever look for it.
+/// A file put and never taken - a batch cancelled before its task, a link dropped between the put
+/// and the batch - goes with the connection, and so does the connection's directory.
 #[test]
 fn a_file_put_and_never_taken_is_gone_when_the_connection_ends() {
     let scratch = Scratch::new("untaken");
@@ -503,9 +460,6 @@ fn a_file_put_and_never_taken_is_gone_when_the_connection_ends() {
 }
 
 /// `has_blob` answers for the shared cache only, never for a file this or any connection staged.
-///
-/// What would make this red: `holds` looking in the connection's directory too. The controller
-/// would then skip the put for a file one task already consumed, or that another link staged.
 #[test]
 fn has_blob_never_answers_for_a_staged_file() {
     let scratch = Scratch::new("has-staged");
@@ -521,14 +475,8 @@ fn has_blob_never_answers_for_a_staged_file() {
     );
 }
 
-/// An agent starting up removes what a dead agent of this user left on this host, and leaves
-/// alone a live one's directory, another host's, and the earlier layout that names no host.
-///
-/// What would make this red: the sweep removing a directory without asking whether its pid is
-/// alive - two runs reaching one host run two agents of one user at once, and the second to
-/// start would pull the file out from under the first one's module; or the sweep ignoring the
-/// host in the name. A home directory mounted over NFS shares the cache between hosts, and a pid
-/// that is dead here says nothing about the host that wrote it. The live pid is the test's own.
+/// An agent starting up removes what a dead agent of this user left on this host, and leaves alone
+/// a live one's directory, another host's, and the earlier layout that names no host.
 #[test]
 fn the_next_agent_sweeps_what_a_dead_agent_staged_and_keeps_a_live_ones() {
     use std::os::unix::fs::DirBuilderExt;
@@ -564,9 +512,6 @@ fn the_next_agent_sweeps_what_a_dead_agent_staged_and_keeps_a_live_ones() {
 
 /// A cache this agent does not own outright is not swept at all, even of an entry that would be
 /// swept in a private one.
-///
-/// What would make this red: the sweep acting before it checks the cache's owner and mode, which
-/// lets anyone who can write the directory name what this agent deletes.
 #[test]
 fn a_cache_others_can_write_is_not_swept() {
     use std::os::unix::fs::DirBuilderExt;
@@ -583,10 +528,6 @@ fn a_cache_others_can_write_is_not_swept() {
 }
 
 /// A deflated blob lands as the bytes it inflates to, under their hash.
-///
-/// What would make this red: the hash checked on the frame's bytes rather than on the inflated
-/// ones, which refuses every deflated blob; or the frame stored as it came, which leaves a zlib
-/// stream where the Python server expects a zip.
 #[test]
 fn a_deflated_blob_is_kept_under_the_hash_of_its_inflated_bytes() {
     let scratch = Scratch::new("deflated");
@@ -614,11 +555,6 @@ fn a_deflated_blob_is_kept_under_the_hash_of_its_inflated_bytes() {
 
 /// A blob cut short, a bomb, or a frame longer than the blob is refused with a log saying why,
 /// leaves nothing behind, and leaves the stream in step for the next blob.
-///
-/// What would make this red: the inflate ceiling removed (the bomb lands, 16 MiB where 64 KiB
-/// were announced); the length check removed (the raw blob cut short is kept as it came, until
-/// the hash notices); the frame after `put_blob` left unread (the next message is taken for
-/// the blob, and the agent answers nothing the controller can read).
 #[test]
 fn a_truncated_or_oversized_blob_is_refused_and_says_why() {
     let scratch = Scratch::new("refused");

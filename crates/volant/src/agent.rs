@@ -563,9 +563,6 @@ mod tests {
     }
 
     /// Every link of a run compares against, and uploads, the bytes the first one read.
-    ///
-    /// What would make this red: `read` going back to the disk each time, which the rewritten
-    /// file below would show through the clone.
     #[test]
     fn an_agent_file_is_read_and_hashed_once_per_source() {
         let tmp = scratch();
@@ -580,14 +577,8 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &again), "{:?}", again.bytes);
     }
 
-    /// `VOLANT_AGENT_DIR` comes first, then the agents built into the controller, then the
-    /// directory the controller sits in; an agent the controller does not embed is still found
-    /// there.
-    ///
-    /// What would make this red: the order in `ordered` changed. Embedded before the
-    /// environment, and a developer pointing `VOLANT_AGENT_DIR` at a freshly built agent silently
-    /// runs the release one instead; beside the executable before embedded, and a stale agent
-    /// left next to an upgraded controller wins over the one built with it.
+    /// `VOLANT_AGENT_DIR` comes first, then the embedded agents, then the controller's own
+    /// directory, where an unembedded agent is still found.
     #[test]
     fn agents_are_looked_up_in_the_environment_then_the_controller_then_beside_it() {
         let root = scratch();
@@ -619,12 +610,8 @@ mod tests {
         );
     }
 
-    /// An embedded agent that cannot be put on disk does not stop a run whose agent sits beside
-    /// the controller, and when nothing has one the error says why the embedded one was not used.
-    ///
-    /// What would make this red: an extraction failure returned from `find` as the answer (the
-    /// agent beside the controller is never reached), or dropped from the list of places looked
-    /// in (the operator reads "no agent" with no hint that the cache is the problem).
+    /// An embedded agent that cannot be put on disk does not stop a run whose agent sits beside the
+    /// controller, and when nothing has one the error says why the embedded one was not used.
     #[test]
     fn an_agent_that_cannot_be_extracted_falls_through_and_says_why() {
         let root = scratch();
@@ -647,11 +634,8 @@ mod tests {
         assert_eq!(source().local().unwrap(), beside);
     }
 
-    /// A controller started through a link looks for its agents next to the file the link
-    /// points at.
-    ///
-    /// What would make this red: the path used as `current_exe` gave it, which is the link's own
-    /// directory on macOS, where a linked install would then find no agent.
+    /// A controller started through a link looks for its agents next to the file the link points
+    /// at.
     #[test]
     fn the_agents_are_looked_for_beside_the_linked_file() {
         let tmp = scratch();
@@ -691,9 +675,6 @@ mod tests {
     }
 
     /// A frame goes deflated only past 4 KiB and only when that is shorter.
-    ///
-    /// What would make this red: a deflate kept when it grew, which the agent refuses as a frame
-    /// longer than its blob; or every small file deflated, for nothing.
     #[test]
     fn a_blob_is_deflated_only_when_it_is_large_and_that_is_shorter() {
         let small = BlobFrame::packed(vec![0; 4096]);
@@ -710,9 +691,6 @@ mod tests {
     }
 
     /// Bytes whose first 64 KiB do not compress go raw without a deflate of the whole of them.
-    ///
-    /// What would make this red: the sample check removed, which deflates a 40 MiB archive at
-    /// level 6 on every first send only to throw the result away.
     #[test]
     fn bytes_whose_sample_does_not_shrink_skip_the_whole_deflate() {
         let noise: Vec<u8> = (0..32 * 1024u32)
@@ -730,10 +708,6 @@ mod tests {
     }
 
     /// A blob asked for by many hosts at once is framed once, and every host gets that frame.
-    ///
-    /// What would make this red: the frames not kept by content hash, or the lookup and the
-    /// keeping in two separate steps with the deflate between them, either of which deflates the
-    /// same file once per host.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_blob_sent_to_many_hosts_is_framed_once() {
         let text = b"a log line that repeats\n".repeat(40_000);
@@ -759,10 +733,6 @@ mod tests {
 
     /// An agent that speaks the protocol before this one is refused at the handshake with the
     /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
-    ///
-    /// What would make this red: the version check dropped from `handshake`, or the version left
-    /// at 5, where this agent would be accepted and then take the first blob frame for a
-    /// malformed message.
     #[cfg(unix)]
     #[tokio::test]
     async fn an_agent_that_speaks_protocol_five_is_refused_at_the_handshake() {
@@ -792,17 +762,8 @@ mod tests {
         );
     }
 
-    /// What a link was told about a payload dies with that link, so a connection lost and
-    /// reopened asks again and the blob travels again.
-    ///
-    /// What would make this red: the memory moved anywhere that outlives one link - the map the
-    /// driver keeps its links in, the run's options - which is the tempting way to avoid sending
-    /// 631 KB again after a blip. The host behind the new link would then be sent a batch whose
-    /// payload the agent behind it never received, and its "unknown payload" reads as the module
-    /// failing.
-    ///
-    /// Asserted through `AgentLink` rather than through `BlobMemory::default()`: that a fresh map
-    /// is empty is true of a map kept anywhere, so it says nothing about where this one lives.
+    /// What a link was told about a payload dies with that link, so a connection lost and reopened
+    /// asks again and the blob travels again.
     #[tokio::test]
     async fn a_new_link_carries_no_memory_of_the_link_before_it() {
         let mut first = link();

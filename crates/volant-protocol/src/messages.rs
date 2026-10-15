@@ -332,12 +332,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Which results changed, against ansible-core 2.19.12 on the development machine: a module
-    /// printing each of these shapes, and the task's own line read - `changed:` for every
-    /// `true` here, `ok:` for every `false`, and a recap of `changed=3`.
-    ///
-    /// What would make this red: `changed: "yes"` or `changed: 1` reported as `ok`, which the
-    /// recap and every `notify` then miss.
+    /// Which result shapes count as changed, measured against ansible-core 2.19.12: `changed:` on
+    /// the task line and `changed=3` in the recap.
     #[test]
     fn a_result_changed_by_the_reference_s_own_rule() {
         let cases = [
@@ -365,12 +361,8 @@ mod tests {
         );
     }
 
-    /// Which results fail, against ansible-core 2.19.12 on the development machine: a module
-    /// printing each of these shapes (with `changed: false`) under `ignore_errors`, and the
-    /// task's own line read. `fatal` for every `true` here, `ok` for every `false`.
-    ///
-    /// What would make this red: a string `rc` of `"2"`, a `null` rc or a `failed: "yes"` read
-    /// as success - a failure reported as `ok`.
+    /// Which result shapes count as failed under `ignore_errors`, measured against ansible-core
+    /// 2.19.12: `fatal` for every `true` and `ok` for every `false`.
     #[test]
     fn a_result_fails_by_the_reference_s_own_rule() {
         let cases = [
@@ -407,13 +399,8 @@ mod tests {
         );
     }
 
-    /// Additive in both directions, like `Ready.interpreters`: a controller that does not know
-    /// `ran` or `natives` reads today's frames, and an agent that does not know `force_python`
-    /// runs the payload, which is what the flag asks for anyway.
-    ///
-    /// What would make this red: one of the three fields serialised when empty, which puts a
-    /// key on every task and every result; or one of them required on the way in, which makes a
-    /// frame from the other side's older build unreadable.
+    /// The native fields are additive: absent on the wire when empty, defaulted when an older peer
+    /// omits them.
     #[test]
     fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in() {
         let old = r#"{"type":"task_result","batch":1,"index":0,"result":{"changed":false}}"#;
@@ -478,13 +465,8 @@ mod tests {
         );
     }
 
-    /// A host with no Python carries no `interpreters` key at all, and a host with one carries
-    /// the list in the order the agent found them.
-    ///
-    /// What would make this red: the field serialised when empty, which puts an empty array in
-    /// every handshake of every host including the ones that never run a Python module; or the
-    /// list re-ordered on the way out, which hands the controller a different best interpreter
-    /// from the one the agent chose.
+    /// A host with no Python carries no `interpreters` key at all, and a host with one carries the
+    /// list in the order the agent found them.
     #[test]
     fn ready_carries_the_interpreters_only_when_the_host_has_some() {
         let ready = |interpreters: Vec<String>| FromAgent::Ready {
@@ -561,12 +543,8 @@ mod tests {
         assert!(!task.ignore_errors);
     }
 
-    /// A task with nothing to add to the environment does not carry the field at all, and one
-    /// that does carries it as a map of strings.
-    ///
-    /// What would make this red: `environment` serialised when it is empty, which would put a
-    /// key on every task of every batch; or the field dropped from the shape, which is how the
-    /// controller would send an environment the agent never sets.
+    /// A task with nothing to add to the environment does not carry the field at all, and one that
+    /// does carries it as a map of strings.
     #[test]
     fn the_environment_is_absent_when_empty_and_round_trips_when_set() {
         let task: Task = serde_json::from_str(r#"{"module":"raw"}"#).unwrap();
@@ -582,12 +560,8 @@ mod tests {
         assert!(serde_json::to_string(&task).unwrap().contains(r#""A":"1""#));
     }
 
-    /// A Python task carries the reference of its payload and nothing of the payload itself, and
-    /// a native task carries no payload field at all.
-    ///
-    /// What would make this red: `payload` serialised on every task, which puts a null on each of
-    /// the thousands of native tasks a real playbook sends; or the zip travelling inside `Task`,
-    /// which would re-send 631 KB once per task instead of once per run.
+    /// A Python task carries the reference of its payload and nothing of the payload itself, and a
+    /// native task carries no payload field at all.
     #[test]
     fn a_python_task_carries_a_payload_reference_and_a_native_one_carries_none() {
         let native: Task = serde_json::from_str(r#"{"module":"command"}"#).unwrap();
@@ -647,10 +621,6 @@ mod tests {
 
     /// A task that stages a file names the blob and the argument, and a task that stages none
     /// carries no `files` field at all.
-    ///
-    /// What would make this red: `files` serialised on every task, which puts an empty list on
-    /// the thousands of native tasks a playbook sends; or the bytes travelling inside `Task`,
-    /// which would bypass the hash the agent checks before it lets a blob be used.
     #[test]
     fn a_task_names_the_files_it_stages_and_nothing_else() {
         let bare: Task = serde_json::from_str(r#"{"module":"command"}"#).unwrap();
@@ -678,11 +648,7 @@ mod tests {
         assert!(!zero.skipped());
     }
 
-    /// The version moves with the shape. An agent that does not know `files` would run `copy`
-    /// with no source; an agent that does not know `payload` would run a Python task as an
-    /// unknown module; an agent that does not know `put_blob` would discard the frame and then
-    /// fail every task of the batch; an agent that speaks 5 would take a blob's binary frame for
-    /// a malformed message.
+    /// The version moves with the shape.
     #[test]
     fn the_protocol_version_is_six() {
         assert_eq!(PROTOCOL_VERSION, 6);

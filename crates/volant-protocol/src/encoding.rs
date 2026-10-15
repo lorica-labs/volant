@@ -127,10 +127,6 @@ mod tests {
     use super::*;
 
     /// One decoder for both crates, pinned to literal vectors rather than to itself.
-    ///
-    /// What would make this red: the `bits == 18` arm (one `=`, the commonest case) dropping
-    /// its second byte, which no round-trip test sees because the encoder beside it would
-    /// drop it too.
     #[test]
     fn base64_decodes_every_padding_by_known_answer() {
         assert_eq!(b64_decode("UEsDBA==").unwrap(), b"PK\x03\x04");
@@ -141,8 +137,7 @@ mod tests {
         assert!(b64_decode("").unwrap().is_empty());
     }
 
-    /// Padding is counted. What would make this red: the lenient decoder this replaces, which
-    /// read every `=` as "ignore and remember" and accepted a bare `=`.
+    /// Base64 padding is counted, so a bare `=` or padding the bits do not call for is refused.
     #[test]
     fn base64_refuses_padding_the_bits_do_not_call_for() {
         for bad in [
@@ -179,8 +174,7 @@ mod tests {
         assert_eq!(inflate(&deflate(b""), 0).unwrap(), b"");
     }
 
-    /// The ceiling holds. What would make this red: `inflate` without its limit, which hands a
-    /// stream of 1 KiB that inflates to 1 MiB back whole to a caller that announced 1000 bytes.
+    /// `inflate` refuses a stream that inflates past the limit its caller announced.
     #[test]
     fn inflate_refuses_a_stream_past_its_limit() {
         let bomb = deflate(&vec![0u8; 1024 * 1024]);

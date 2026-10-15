@@ -101,10 +101,6 @@ mod tests {
     use super::*;
 
     /// The order the reference searches in, with a role and without one.
-    ///
-    /// What would make this red: the playbook's directory searched before the role's, which
-    /// copies a playbook's file of the same name where the role meant its own, or `files/`
-    /// looked for under `files/` again.
     #[test]
     fn a_file_is_searched_where_the_reference_searches() {
         let role = Origin {
@@ -145,9 +141,6 @@ mod tests {
     }
 
     /// A file too big for one frame is refused before anything is encoded, naming both sizes.
-    ///
-    /// What would make this red: the limit dropped, which encodes a 65 MiB file into a frame the
-    /// agent refuses to read and ends the link, or a message without the two numbers.
     #[test]
     fn a_file_bigger_than_a_frame_is_refused_naming_both_sizes() {
         let big = vec![0u8; 65 * 1024 * 1024];

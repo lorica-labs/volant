@@ -1139,12 +1139,8 @@ mod tests {
         }
     }
 
-    /// The frame kept for a union is found by the zip's hash and holds that zip: storing an
-    /// entry keeps its deflated form, and the frame then comes from it without decoding the
-    /// union again, while another zip gets its own.
-    ///
-    /// What would make this red: the frames keyed by anything but the zip's content (the cache
-    /// key, the host), under which a union rebuilt in place would go up as the one before it.
+    /// The frame kept for a union is found by the zip's hash and comes from the stored deflated
+    /// form without decoding the union again.
     #[tokio::test]
     async fn the_frame_kept_for_a_union_is_found_by_its_content_alone() {
         let root = scratch();
@@ -1171,10 +1167,6 @@ mod tests {
 
     /// A deflated form that is missing, or is not the one the manifest names, is made again from
     /// the zip and written back, and the frame holds the zip: the entry is still a hit.
-    ///
-    /// What would make this red: the `.deflate` file read without its hash checked, which sends
-    /// every host whatever that file holds, and the agents refuse it one by one; or a missing
-    /// one taken for a miss, which rebuilds the whole union for a file the zip can give back.
     #[tokio::test]
     async fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
         let root = scratch();

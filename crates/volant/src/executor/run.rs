@@ -2987,18 +2987,6 @@ mod tests {
     use std::sync::Arc;
 
     /// Every row of `LOCAL_MODULES` has an arm in `run_local` behind it.
-    ///
-    /// Nothing but a name joins the two. The table is what the pre-flight consults, what the
-    /// documentation page is generated from and what decides a task runs on the controller
-    /// rather than on the host; the `match` in `run_local` is what then runs. A row added to the
-    /// table without an arm passes the loader, passes the pre-flight, shows its banner, and only
-    /// then fails on the host that reached it, telling the operator that a module the engine
-    /// advertises is "not a controller-side module". That is this project's most expensive bug
-    /// family - accepted, then silently not done - and it is the same totality property the
-    /// keyword tables carry, one level over.
-    ///
-    /// What would make this red: a name in `LOCAL_MODULES` that falls through to the catch-all
-    /// arm.
     #[tokio::test]
     async fn every_local_module_has_an_arm_in_run_local() {
         let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
@@ -3115,8 +3103,6 @@ mod tests {
 
     /// Measured on ansible-core 2.19.12: every condition true gives `All assertions passed`, and a
     /// `success_msg` takes its place.
-    ///
-    /// What would make this red: a passing assert reported failed, or `success_msg` dropped.
     #[tokio::test]
     async fn an_assert_that_holds_passes() {
         let r = local("assert", json!({"that": ["1 == 1", "2 > 1"]})).await;
@@ -3130,9 +3116,6 @@ mod tests {
 
     /// Measured on ansible-core 2.19.12: the failing element comes back as written, a string for
     /// `that: 1 == 2` and a boolean for `that: false`, and in a list it is the first false one.
-    ///
-    /// What would make this red: the rendered value or the last false element reported instead
-    /// of the first one as written, or `evaluated_to` missing.
     #[tokio::test]
     async fn a_failed_assert_names_the_first_false_element_as_written() {
         let r = local("assert", json!({"that": "1 == 2"})).await;
@@ -3148,10 +3131,7 @@ mod tests {
     }
 
     /// Measured on ansible-core 2.19.12: `fail_msg`, or its alias `msg`, replaces `msg` and leaves
-    /// `assertion` and `evaluated_to` in place. `quiet` changes the display only, which
-    /// `an_assert_shows_its_result_unless_quiet` pins.
-    ///
-    /// What would make this red: the alias refused or ignored, or `quiet` changing the result.
+    /// `assertion` and `evaluated_to` in place.
     #[tokio::test]
     async fn fail_msg_and_its_alias_replace_the_message_and_quiet_leaves_the_result_alone() {
         for key in ["fail_msg", "msg"] {
@@ -3169,10 +3149,6 @@ mod tests {
 
     /// The three refusals measured on ansible-core 2.19.12, the first two in its own words. The
     /// third fails the way every other conditional in this engine fails.
-    ///
-    /// What would make this red: an assert with no `that` passing, an unknown argument accepted,
-    /// the supported list or its alias spelled differently, or an undefined name panicking or
-    /// reading as false.
     #[tokio::test]
     async fn assert_refuses_what_the_reference_refuses() {
         let r = local("assert", json!({})).await;
@@ -3206,11 +3182,8 @@ mod tests {
         v
     }
 
-    /// Measured on ansible-core 2.19.12, after `register: r` on `command: echo "1 == 2"`: the
-    /// three forms below pass, the first two with the deprecation warning for the braces.
-    ///
-    /// What would make this red: `that` rendered along with the other arguments and refused
-    /// because that render read a registered value, although the render left no text to compile.
+    /// Measured on ansible-core 2.19.12, after `register: r` on `command: echo "1 == 2"`: the three
+    /// forms below pass, the first two with the deprecation warning for the braces.
     #[tokio::test]
     async fn a_that_reading_a_registered_value_reads_it_as_data() {
         for that in [
@@ -3227,16 +3200,8 @@ mod tests {
         }
     }
 
-    /// `that` is evaluated by the code that evaluates `when`, element by element, from the text
-    /// the playbook wrote. Asserted against `when` rather than against the reference because
-    /// the two agree in the reference as well: measured on ansible-core 2.19.12, every case
-    /// here gives an assert and a `when` the same outcome. Both evaluate again the untainted
-    /// string a `{{ }}` conditional renders to, as the reference does, and refuse a tainted one.
-    ///
-    /// What would make this red: `that` evaluated by code of its own, so that the two part ways
-    /// on any case here; or a `that` whose render read a host value refused in words of its own
-    /// rather than `when`'s. It cannot catch a regression of the second evaluation itself, which
-    /// moves both together; `Templar::condition`'s own tests hold that.
+    /// `that` is evaluated by the code that evaluates `when`, element by element, from the text the
+    /// playbook wrote.
     #[tokio::test]
     async fn a_that_is_evaluated_the_way_when_is() {
         let host_vars = with_registered(json!({"healthy": "true"}));
@@ -3262,12 +3227,8 @@ mod tests {
         }
     }
 
-    /// Measured on ansible-core 2.19.12: a `that` that is one template naming a list is that
-    /// list, each element a condition, and the one that fails is reported as the list held it.
-    /// A list a managed host wrote is data, and its strings are not compiled.
-    ///
-    /// What would make this red: the list itself taken as the condition, or a host's strings
-    /// evaluated on the controller.
+    /// Measured on ansible-core 2.19.12: a `that` that is one template naming a list is that list,
+    /// each element a condition, and the one that fails is reported as the list held it.
     #[tokio::test]
     async fn a_that_naming_a_list_is_that_list() {
         let host_vars = hvars(json!({"good": ["1 == 1", "2 == 2"], "bad": ["1 == 1", "1 == 2"]}));
@@ -3409,12 +3370,8 @@ mod tests {
         }
     }
 
-    /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an
-    /// agent's does: the reference's `TaskExecutor._execute` normalises every task's final
-    /// result with `maybe_raise_on_result`, wherever it ran. One that succeeds carries none.
-    ///
-    /// What would make this red: the normalisation left to the agent's results alone, which
-    /// registers no `exception` for a failed `fail` or `assert`.
+    /// A failed controller-side task registers `exception: "(traceback unavailable)"` as an agent's
+    /// does; one that succeeds carries none.
     #[tokio::test]
     async fn a_failed_controller_side_task_registers_an_exception() {
         for (module, args) in [("fail", json!({})), ("assert", json!({"that": "1 == 2"}))] {
@@ -3429,11 +3386,8 @@ mod tests {
         assert!(!r.0.contains_key("exception"), "{:?}", r.0);
     }
 
-    /// Measured on ansible-core 2.19.12: the default message, a custom one, and a list that stays
-    /// a list. An unknown argument is refused in a sentence of its own, unlike assert and pause.
-    ///
-    /// What would make this red: `msg` turned into a string, the default reworded, or the
-    /// refusal written like the other two.
+    /// Measured on ansible-core 2.19.12: the default message, a custom one, and a list that stays a
+    /// list. An unknown argument is refused in a sentence of its own, unlike assert and pause.
     #[tokio::test]
     async fn fail_fails_with_its_message_as_given() {
         let r = local("fail", json!({})).await;
@@ -3455,9 +3409,6 @@ mod tests {
     }
 
     /// Measured on ansible-core 2.19.12: `seconds: 0` still waits one second and says so.
-    ///
-    /// What would make this red: a zero pause that does not wait, or a result whose keys or
-    /// wording differ from the reference's.
     #[tokio::test]
     async fn a_pause_of_zero_seconds_waits_one() {
         let began = std::time::Instant::now();
@@ -3478,12 +3429,7 @@ mod tests {
     }
 
     /// Measured on ansible-core 2.19.12: `minutes: 153722867280912931` fails at once, because
-    /// Python's clock cannot hold that many nanoseconds. The bound is that clock's, a signed
-    /// 64-bit count of nanoseconds, so `seconds` has it too.
-    ///
-    /// What would make this red: the duration multiplied without a check, which panics in a
-    /// debug build and in a release build wraps to a pause of the wrong length that reports
-    /// `ok`.
+    /// Python's clock cannot hold that many nanoseconds.
     #[tokio::test]
     async fn a_pause_too_long_for_the_clock_fails_at_once() {
         for args in [
@@ -3502,9 +3448,6 @@ mod tests {
     }
 
     /// Measured on ansible-core 2.19.12, the two refusals of a pause.
-    ///
-    /// What would make this red: both durations accepted, one of them silently winning, or an
-    /// unknown argument accepted.
     #[tokio::test]
     async fn pause_refuses_what_the_reference_refuses() {
         let r = local("pause", json!({"minutes": 1, "seconds": 1})).await;
@@ -3525,9 +3468,6 @@ mod tests {
 
     /// Measured on ansible-core 2.19.12 with standard input not a terminal: a prompt warns, does
     /// not wait, and reports in minutes.
-    ///
-    /// What would make this red: a prompt that waits for an answer nobody can type, or a result
-    /// that loses the warning.
     #[tokio::test]
     async fn a_prompt_without_a_terminal_warns_and_goes_on() {
         let item = local_item(json!({"prompt": "Continue?"}));
@@ -3545,10 +3485,7 @@ mod tests {
     }
 
     /// On a terminal a prompt is a person waiting to answer, and this release cannot read the
-    /// answer. Showing the prompt and going on would accept the task and not do it, so it is
-    /// refused, and so is a pause with no duration, which waits for Enter in the reference.
-    ///
-    /// What would make this red: a prompt on a terminal that returns `ok` without waiting.
+    /// answer.
     #[tokio::test]
     async fn a_prompt_on_a_terminal_is_refused() {
         for args in [
@@ -3571,14 +3508,7 @@ mod tests {
         }
     }
 
-    /// An interrupted run does not sit out the rest of a pause, and the pause reports no result:
-    /// the driver ends the host's run on it, as it does on every other wait the stop ends, with
-    /// no task line and no count.
-    ///
-    /// What would make this red: a pause that waits on its timer alone, which holds a cancelled
-    /// run for as long as the playbook asked to wait (the five-second bound makes that red in
-    /// five seconds rather than ten minutes); or the interruption reported as a failed task,
-    /// `user requested abort!`, which counts `failed=1` for a run the operator stopped.
+    /// An interrupted run does not sit out the rest of a pause, and the pause reports no result.
     #[tokio::test]
     async fn an_interrupted_pause_ends_at_once() {
         let (stop_tx, mut stop) = watch::channel(false);
@@ -3594,20 +3524,8 @@ mod tests {
         assert!(r.is_none(), "{r:?}");
     }
 
-    /// Each complaint the argument check can make, in the reference's own words and in the order
-    /// it makes them.
-    ///
-    /// Measured on ansible-core 2.19.12 by asking for all four at once: missing required
-    /// arguments (sorted by name, whatever order the spec lists them in), then a type that
-    /// cannot be converted, then a value outside `choices`, then an argument the spec does not
-    /// have. A value the entry never named is still found when the host has a variable of that
-    /// name, which is what lets `-e needed=given` pass a check the role entry said nothing
-    /// about; a name the spec does not have is only refused when the entry wrote it, since a
-    /// host carries hundreds of variables the spec has never heard of.
-    ///
-    /// What would make this red: a check that passes a permissive conversion the reference
-    /// refuses, or refuses one it accepts - either way a role runs, or fails to run, on
-    /// arguments the reference judges differently.
+    /// Each complaint the argument check can make, in the reference's own words and in the order it
+    /// makes them.
     #[test]
     fn the_argument_check_speaks_the_reference_s_sentences() {
         let check = |provided: Value, host: Value| {
@@ -3693,16 +3611,6 @@ mod tests {
 
     /// `ansible_failed_task` carries the keys the reference carries, and the ones this engine
     /// models carry the task's own values.
-    ///
-    /// Measured on ansible-core 2.19.12: the dictionary has 46 keys, six of them the engine's
-    /// own bookkeeping (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`,
-    /// `loop_with`); of the forty left, `local_action` and the `with_*` lookups are absent
-    /// because the reference has already folded them into `action` and `loop`.
-    ///
-    /// What would make this red: a key dropped, which turns a rescue reading it into a failure
-    /// of its own; or `action` carrying the fully qualified module name, which the reference
-    /// keeps in a private key and which every playbook comparing `.action` to a short name
-    /// would then miss.
     #[test]
     fn the_failed_task_carries_the_reference_s_own_keys() {
         let mut task = task("ansible.builtin.command");
@@ -3769,16 +3677,8 @@ mod tests {
         assert_eq!(agg["results"][1]["ansible_loop_var"], json!("item"));
     }
 
-    /// Every result that ran, module or controller, comes out with `failed` set, the way
-    /// ansible-core's `TaskExecutor._execute` sets it before `register`: kept when the result
-    /// says it, otherwise `true` for a non-zero `rc` and `false` for anything else. Measured on
-    /// 2.19.12, registered values read `failed=False` for `ping`, `command: "true"` and `stat`,
-    /// `failed=True` for a `command: "false"` and a `file` that failed, and `ABSENT` for a task
-    /// `when` skipped, which never gets here.
-    ///
-    /// What would make this red: `failed` left absent, so `r.failed` is undefined on a
-    /// registered `ping`; or written `false` over a failure, which would be far worse - a task
-    /// that failed and reads as a success.
+    /// Every result that ran comes out with `failed` set: kept when the result says it, otherwise
+    /// true for a non-zero `rc`.
     #[test]
     fn a_result_that_ran_says_whether_it_failed() {
         let templar = templar();
@@ -3823,14 +3723,8 @@ mod tests {
         assert_eq!(r.0.get("failed"), Some(&json!(false)), "{:?}", r.0);
     }
 
-    /// The recap the reference printed for these five tasks on 2.19.12, measured with a module
-    /// printing each result: two ignored failures reporting `changed: true` and `changed: "yes"`,
-    /// a `changed: "yes"` under `changed_when: false`, a rescued failure reporting
-    /// `changed: true`, and the rescue's own `debug` - `ok=4 changed=2 rescued=1 ignored=2`
-    /// (the play's last `debug` made the reference's `ok=5`).
-    ///
-    /// What would make this red: `changed: "yes"` read as unchanged; `changed_when: false` losing
-    /// to it; or a failure that stopped the host counted as a change.
+    /// The recap counts changed, rescued and ignored as the reference did for these five tasks:
+    /// `ok=4 changed=2 rescued=1 ignored=2`.
     #[test]
     fn the_recap_counts_changed_the_way_the_reference_does() {
         let templar = templar();
@@ -3915,15 +3809,8 @@ mod tests {
         assert!(r.failed());
     }
 
-    /// `changed_when`, `failed_when` and `until` read the facts the task itself returned, laid
-    /// out as ansible-core 2.19.12's `TaskExecutor._execute` lays them before judging: a module's
-    /// flat and cleaned, its namespaced copy one level down; a `set_fact`'s as written, unless
-    /// `delegate_facts` sends them away; the registered name above them all.
-    ///
-    /// What would make this red: the conditions reading the item's variables alone (`x` is
-    /// undefined), the restricted names left in (`ansible_host` reads `evil`), the namespace
-    /// merged one level up as the store merges it, a delegated `set_fact` seeing its fact, or a
-    /// fact written after the registered name, which hides it.
+    /// `changed_when`, `failed_when` and `until` read the facts the task returned, laid out as
+    /// ansible-core 2.19.12 lays them before judging.
     #[test]
     fn failed_when_changed_when_and_until_read_the_facts_the_task_returned() {
         let templar = templar();
@@ -3963,12 +3850,7 @@ mod tests {
     }
 
     /// A `changed_when` or `failed_when` that cannot be evaluated keeps the module's keys, sets
-    /// `failed`, files the error under its own `_when_result` and evaluates nothing after it, as
-    /// ansible-core 2.19.12 does; the `msg` is the unknown error when the module sent none.
-    ///
-    /// What would make this red: the result replaced by one carrying the error as its `msg` (the
-    /// behaviour this replaced), the error filed under the other condition's key, `failed_when`
-    /// evaluated behind a broken `changed_when`, or the syntax prefix lost.
+    /// `failed` and files the error under `_when_result`.
     #[test]
     fn a_condition_that_cannot_be_evaluated_keeps_the_result() {
         let templar = templar();
@@ -4017,14 +3899,8 @@ mod tests {
         assert!(why.starts_with("Syntax error in template: "), "{why}");
     }
 
-    /// A task `failed_when` fails, whose result carries no `msg`, gets the one ansible-core's
-    /// `maybe_raise_on_result` gives it, and `exception` with it; a `msg` it has, even empty,
-    /// stays. `failed_when: false` over a failure moves `exception` aside. `until` reads the
-    /// result before any of that, and a run that ran out gets the same `msg`.
-    ///
-    /// What would make this red: the `msg` left off (the registered result has none), written
-    /// over one the module sent, `exception` left off, the suppressed exception kept as
-    /// `exception`, or the `msg` settled before `until` reads the result.
+    /// A `failed_when` failure whose result has no `msg` gets the reference's unknown-error `msg`
+    /// and an `exception`; an existing `msg` stays.
     #[test]
     fn a_failed_when_failure_with_no_msg_is_an_unknown_error() {
         let templar = templar();
@@ -4111,14 +3987,8 @@ mod tests {
         assert_eq!(r.0["exception"], json!("(traceback unavailable)"));
     }
 
-    /// A collection module whose string argument left a word that is not `key=value` fails each
-    /// item it runs, in the reference's words, before anything is sent; `when` still skips it,
-    /// and `failed_when: false` cannot pass it. A free-form collection module and a string that
-    /// is one template are not refused here.
-    ///
-    /// What would make this red: the refusal left to the pre-flight (the run stops at exit 4
-    /// before it starts), the task sent anyway, a skipped item refused, or `finish` judging the
-    /// refusal.
+    /// A collection module given a free-form string that is not `key=value` fails each item it
+    /// runs, in the reference's words, before anything is sent.
     #[test]
     fn a_raw_argument_on_a_collection_module_fails_the_task_when_it_runs() {
         let templar = templar();
@@ -4170,9 +4040,6 @@ mod tests {
 
     /// A `run_once` step's registered variable and facts are written for every live host of the
     /// batch; every other step writes for its own host alone.
-    ///
-    /// What would make this red: the broadcast dropped, which leaves the hosts that did not run
-    /// the task with an undefined variable behind it.
     #[test]
     fn a_run_once_step_writes_its_result_for_the_whole_batch() {
         let live = ["h1".to_string(), "h2".to_string()];
@@ -4344,11 +4211,8 @@ mod tests {
         }
     }
 
-    /// A payload the agent already holds is not sent again, and a payload it does not hold is
-    /// sent once for the whole link rather than once per batch.
-    ///
-    /// What would make this red: the `has_blob` question dropped, or its answer ignored, either
-    /// of which puts 631 KB on the wire before every batch of every run.
+    /// A payload the agent already holds is not sent again, and a payload it does not hold is sent
+    /// once for the whole link rather than once per batch.
     #[tokio::test]
     async fn a_payload_travels_once_per_link() {
         let mut logs = Vec::new();
@@ -4437,13 +4301,8 @@ mod tests {
         }
     }
 
-    /// A payload the agent refuses fails the batch, and the next batch of that host does not
-    /// send it again blindly.
-    ///
-    /// What would make this red: the refusal forgotten, which re-uploads the same rejected
-    /// payload before every batch for as long as the play lasts, each time failing the same
-    /// way; or the refusal read as success, which runs the batch against a host that holds no
-    /// payload and blames the module for it.
+    /// A payload the agent refuses fails the batch, and the next batch of that host does not send
+    /// it again blindly.
     #[tokio::test]
     async fn a_refused_payload_fails_the_batch_and_is_not_sent_again() {
         let mut logs = Vec::new();
@@ -4460,12 +4319,6 @@ mod tests {
     }
 
     /// An item that cannot be sent still reports, so the step gets a task line.
-    ///
-    /// What would make this red: the failure dropped instead of written into the item's slot.
-    /// The driver then has no result for that item, the reporting loop breaks on the first
-    /// `None`, the step is reported **not at all**, the empty batch comes back `Completed`, and
-    /// the play finishes `ok` having run nothing - no line, no failure, nothing in the recap.
-    /// That is the failure this whole engine is written against.
     #[test]
     fn an_item_that_cannot_be_sent_still_reports() {
         let items = [bare_item(), bare_item()];
@@ -4481,11 +4334,8 @@ mod tests {
         }
     }
 
-    /// A step that can be sent leaves the results alone and carries every item that is not
-    /// skipped, keyed by its own index.
-    ///
-    /// What would make this red: a skipped item counted in, which sends a task the `when` left
-    /// out, or the index lost, which files an item's result under another item.
+    /// A step that can be sent leaves the results alone and carries every item that is not skipped,
+    /// keyed by its own index.
     #[test]
     fn a_step_that_travels_carries_the_items_that_are_not_skipped() {
         let mut items = [bare_item(), bare_item()];
@@ -4498,11 +4348,6 @@ mod tests {
     }
 
     /// A module that needs a payload and has none is refused by name rather than sent.
-    ///
-    /// What would make this red: the task sent as if it were native, which the agent answers
-    /// with its unknown-module sentence - read by an operator as a typo in a module name that is
-    /// spelled perfectly. A dynamic include names its file while the play runs, so a module only
-    /// it mentions is not in the blob this run built before connecting.
     #[test]
     fn a_module_with_no_payload_built_for_it_is_refused_by_name() {
         let failure = python_for("lineinfile", None, None)
@@ -4565,11 +4410,7 @@ mod tests {
         }
     }
 
-    /// A batch the agent reports cancelled when this side never asked is an error, not a stop:
-    /// an agent whose stdin reader died reads its own end of input as a cancel, and taking that
-    /// at its word ends the host's play with nothing failed.
-    ///
-    /// What would make this red: the agent's `Cancelled` passed on as if the run had stopped.
+    /// A batch the agent reports cancelled when this side never asked is an error, not a stop.
     #[tokio::test]
     async fn a_cancel_nobody_asked_for_is_an_error() {
         let (_stop_tx, mut stop) = watch::channel(false);
@@ -4599,10 +4440,6 @@ mod tests {
     }
 
     /// A run told to stop asks the agent to stop the batch it is running.
-    ///
-    /// What would make this red: the cancel never sent - an operator's interruption then leaves
-    /// the agent running the batch to completion on the host while the controller walks away, so
-    /// the run reports as stopped and the host keeps changing.
     #[tokio::test]
     async fn a_stopped_run_asks_the_agent_to_stop_the_batch() {
         let (stop_tx, mut stop) = watch::channel(false);
@@ -4848,13 +4685,7 @@ mod tests {
         }
     }
 
-    /// A batch reads only the frames of its own id. A probe abandoned at a deadline after a
-    /// reconnection can still answer on the link, and those late frames reach the next batch
-    /// first; filed there, they become its first sub-task's result, and their `BatchDone` ends
-    /// it before its own answer arrives.
-    ///
-    /// What would make this red: the batch id of `TaskResult` or `BatchDone` not compared with
-    /// the one awaited, which returns the stale `probe` result for batch 2.
+    /// A batch reads only the frames of its own id.
     #[tokio::test]
     async fn a_batch_ignores_the_frames_of_another_batch() {
         let mut stop = watch::channel(false).1;
@@ -5046,14 +4877,8 @@ mod tests {
         vec!["/usr/bin/python3".to_string()]
     }
 
-    /// A `package` task reaches the host as the module its package manager names, and nothing
-    /// else: with the facts gathered it asks nothing first; without them it asks `setup` for
-    /// `ansible_pkg_mgr` alone, then runs that module.
-    ///
-    /// What would make this red: `package` still refused, or sent as the `package` module itself -
-    /// which the reference never runs, since its plugin is where the choice lives - or the filtered
-    /// `setup` result written into the host's facts, which the reference does not keep: measured
-    /// on ansible-core 2.19.12, it runs that `setup` again at every such task.
+    /// A `package` task reaches the host as the module its manager names, asking `setup` for
+    /// `ansible_pkg_mgr` alone when facts are missing.
     #[tokio::test]
     async fn a_package_task_runs_the_module_its_manager_names() {
         use crate::action_plugins::Kind;
@@ -5794,10 +5619,6 @@ mod tests {
     }
 
     /// The two halves of a payload meet here or the step does not travel.
-    ///
-    /// What would make this red: a step sent with a payload and no interpreter chosen, which
-    /// asks the agent to run a module under nothing, or a step whose interpreter could not be
-    /// chosen sent anyway - both of which report the agent's confusion instead of the reason.
     #[test]
     fn a_step_travels_with_both_halves_of_its_payload_or_not_at_all() {
         let module = module_payload("ab");
@@ -5877,12 +5698,8 @@ mod tests {
         );
     }
 
-    /// A frame belonging to a batch, read while a blob question is outstanding, stops the
-    /// exchange rather than being skipped.
-    ///
-    /// What would make this red: skipping it, which reads the next frame as the answer to this
-    /// question - here a `present: true` that belongs to nothing - and runs a batch against a
-    /// host that holds no payload.
+    /// A frame belonging to a batch, read while a blob question is outstanding, stops the exchange
+    /// rather than being skipped.
     #[tokio::test]
     async fn a_batch_frame_during_a_blob_question_is_the_stream_out_of_step() {
         let mut logs = Vec::new();
@@ -6139,9 +5956,6 @@ mod tests {
 
     /// A batch with no task in it is not sent: there is nothing for the agent to answer, and the
     /// batch ends the way an agent ends an empty one.
-    ///
-    /// What would make this red: a `RunBatch` with no tasks put on the wire, which a host whose
-    /// agent reported no Python pays a round trip for, batch after batch.
     #[tokio::test]
     async fn an_empty_batch_is_not_sent() {
         let mut agent = FakeAgent::answering(Vec::new());
@@ -6177,15 +5991,7 @@ mod tests {
         json!({"src": src.display().to_string(), "dest": dest})
     }
 
-    /// Two items copying the same bytes each put them on the host, as a staged file and without
-    /// asking first: the first `copy` consumed the blob it staged, and nothing the link or the
-    /// agent's shared cache holds stands in for the second.
-    ///
-    /// What would make this red: the file blob kept in the link's memory, so the second item
-    /// sends nothing and its `copy` runs against a `src` the agent no longer holds; or a
-    /// `has_blob` asked first, which another link to the same host account can answer yes to
-    /// for a file it is about to consume - either way the answers scripted for the staging land
-    /// in the wrong exchange.
+    /// Two items copying the same bytes each stage them on the host, without asking first.
     #[tokio::test]
     async fn the_same_content_is_staged_for_every_item() {
         use crate::action_plugins::Kind;
@@ -6424,14 +6230,8 @@ mod tests {
         }
     }
 
-    /// The attempt rule on its own, for `retries: 2` and a run that keeps failing: a retry after
-    /// runs 1 and 2 showing `(2 retries left)` and `(1 retries left)`, a third run, and then the
-    /// failure reporting `attempts: 2`. Read from ansible-core 2.19.12 `task_executor.py`
-    /// (`retries = 1 + R`, `attempts = retries - 1` on running out) and measured there with a
-    /// `shell` appending a line: three lines, `"attempts": 2`.
-    ///
-    /// What would make this red: the loop ending after R runs, which is one run fewer than the
-    /// reference; `attempts` reporting R + 1; or a retry line after the last run.
+    /// With `retries: 2` a failing task runs three times and the failure reports `attempts: 2`, as
+    /// `task_executor.py` does.
     #[test]
     fn retries_r_is_r_plus_one_runs_reporting_r_attempts() {
         let mut t = task("command");
@@ -6738,11 +6538,8 @@ mod tests {
         }
     }
 
-    /// A stop raised while one attempt ends is honoured before the next begins, even with no
-    /// delay to wait through: the item ends there with no result, and nothing more is sent.
-    ///
-    /// What would make this red: a zero delay skipping the look at the stop, which starts the
-    /// second attempt and sends its batch before the stop is noticed.
+    /// A stop raised while one attempt ends is honoured before the next begins, even with no delay
+    /// to wait through: the item ends there with no result, and nothing more is sent.
     #[tokio::test]
     async fn a_stop_between_two_attempts_ends_the_item_at_once() {
         let (tx, mut stop) = watch::channel(false);
@@ -6850,14 +6647,8 @@ mod tests {
         record_registered(store, &t, &["h1".to_string()], &results, &[]);
     }
 
-    /// A registered result carries no `invocation`, as the reference registers it - measured on
-    /// ansible-core 2.19.12, `s.invocation` after a registered `stat` fails with `object of type
-    /// 'dict' has no attribute 'invocation'` - while `-vvv` still shows it on the task's line.
-    /// A loop's items keep theirs: the reference deletes the top-level key alone.
-    ///
-    /// What would make this red: the key kept in the registered value, which makes a native
-    /// module and the Python module it stands in for register two different things; or removed
-    /// from the result itself, which takes it off the `-vvv` line.
+    /// A registered result carries no `invocation`, as the reference registers it, while `-vvv`
+    /// still shows it on the task's line.
     #[test]
     fn a_registered_result_drops_its_invocation_and_the_line_keeps_it() {
         struct Sink(Arc<Mutex<Vec<u8>>>);
@@ -7299,19 +7090,8 @@ mod tests {
         }
     }
 
-    /// `AgentLink`'s `stop_batch` is a one-line forward to `cancel`, and `AgentChannel` is
-    /// `pub(super)`: no integration test file can reach it, only a mock `FakeLink` can, and
-    /// every other test in this module drives the trait through that mock. `cancel` itself is
-    /// proven directly, against a real agent, in `local_transport.rs` - this is the trait's own
-    /// forward, against a real agent, called the way the driver actually calls it.
-    ///
-    /// The link stays open until after the check: `local_transport.rs`'s own
-    /// `dropping_the_link_lets_the_agent_stop_its_task` proves the agent stops everything on its
-    /// own once the connection closes, so a test that dropped the link right after calling
-    /// `stop_batch` could pass for that unrelated reason and prove nothing about the forward.
-    ///
-    /// What would make this red: emptying `AgentLink`'s `stop_batch` body (returning `true`
-    /// without calling `cancel`), which nothing else in this suite would catch.
+    /// `AgentLink`'s `stop_batch` forwards to `cancel`, called against a real agent the way the
+    /// driver calls it.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
@@ -7866,10 +7646,7 @@ mod tests {
     }
 
     /// `Relinker::relink` stops the host's master and reconnects under the `reboot` task's own
-    /// `connect_timeout`: both must name one socket, or the stop misses the master the
-    /// reconnection then rides.
-    ///
-    /// What would make this red: `connecttimeout` hashed into the socket name again.
+    /// `connect_timeout`, naming one socket both times.
     #[tokio::test]
     async fn a_reboot_with_its_own_connect_timeout_stops_and_reopens_one_socket() {
         let kept = shared_to_h1(Path::new("/run/user/1000/volant-cm"));
@@ -7939,16 +7716,8 @@ mod tests {
         stops
     }
 
-    /// The delegate `h1` rebooted twice while its delegating host kept two links to it, which
-    /// share one socket. The escalated link sat idle on the first master (M1, gone); the plain
-    /// one reconnected after the first reboot and rides M2, which the second reboot left on a
-    /// dropped connection. The escalated link is used first: its check fails at once, on M1, and
-    /// M2 must still be stopped, or the reconnection attaches to it and waits on a dead
-    /// connection. And the plain link, retired with it, must reconnect unchecked through the new
-    /// master, not be checked, fail, and stop that master in its turn.
-    ///
-    /// What would make this red: the master stopped only after a check that timed out, or the
-    /// host's other links left in place.
+    /// The delegate `h1` rebooted twice while its delegating host kept two links to it, which share
+    /// one socket.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_failed_check_stops_the_master_and_retires_the_hosts_other_links() {
@@ -7999,15 +7768,8 @@ mod tests {
         );
     }
 
-    /// The same two links, one step earlier: after the first reboot the plain link fails its
-    /// check, retires the escalated one and reopens the master as M2. The host reboots again and
-    /// drops M2's connection without a word. The escalated key is used next: it has no kept link
-    /// to check, and its socket was last proven at the first reboot, so M2 is stopped before it
-    /// connects. The plain link, retired then, reconnects through the escalated key's new master
-    /// without a third stop.
-    ///
-    /// What would make this red: a key with no kept link connecting through the socket without
-    /// the socket having been proven at the host's current reboot count.
+    /// The same two links, one step earlier: after the first reboot the plain link fails its check,
+    /// retires the escalated one and reopens the master as M2.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_key_with_no_kept_link_does_not_ride_a_master_older_than_the_last_reboot() {
@@ -8066,13 +7828,8 @@ mod tests {
         );
     }
 
-    /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`
-    /// under `timeout: 2` whose host never comes back ends at two seconds with the timeout's own
-    /// result, not after `reboot_timeout`. Read from ansible-core 2.19.12 `task_executor.py`: the
-    /// alarm wraps the action's whole run and raises out of it.
-    ///
-    /// What would make this red: the keyword left to each sub-task, which the waits between them
-    /// never see, so the item runs to `reboot_timeout` and reports the plugin's own failure.
+    /// The `timeout` keyword bounds a plugin's whole item, the host's return included: a `reboot`
+    /// under `timeout: 2` ends at two seconds.
     #[tokio::test]
     async fn the_timeout_keyword_bounds_a_plugin_s_whole_item() {
         let mut stop = watch::channel(false).1;
@@ -8099,14 +7856,7 @@ mod tests {
         assert_eq!(timeouts(relink.retired.last().expect("a probe")), [Some(1)]);
     }
 
-    /// A probe the item's deadline abandoned is cancelled on the host. The agent runs one batch
-    /// at a time and drops a `RunBatch` that arrives while another runs, so a probe left running
-    /// swallows the next item's first batch, whose answer then never comes. The fake runs
-    /// batches the way the agent does; the next batch is bounded, so the defect fails the test
-    /// rather than hanging it. An agent that does not confirm the cancel has its link replaced.
-    ///
-    /// What would make this red: the probe dropped without a `Cancel` (the next batch is
-    /// dropped and never answered), or an unconfirmed cancel leaving the busy link in place.
+    /// A probe the item's deadline abandoned is cancelled on the host.
     #[tokio::test]
     async fn a_probe_abandoned_at_the_deadline_is_cancelled() {
         fn fresh() -> FakeAgent {
@@ -8156,11 +7906,8 @@ mod tests {
         }
     }
 
-    /// A `shutdown` that answered and then took the link down reports its answer: a refusal
-    /// written just before the connection closed is still a refusal.
-    ///
-    /// What would make this red: the answer thrown away because the link went, which reports
-    /// the host unreachable when the shutdown was refused.
+    /// A `shutdown` that answered and then took the link down reports its answer: a refusal written
+    /// just before the connection closed is still a refusal.
     #[tokio::test]
     async fn a_shutdown_answer_before_the_link_went_is_kept() {
         let mut stop = watch::channel(false).1;
@@ -8229,12 +7976,8 @@ mod tests {
         }
     }
 
-    /// Reconnecting drops every link kept for the host - its own and the escalated one - and
-    /// no other host's, and puts a fresh link in place of the one the plugin holds. Run against
-    /// real agents on the local connection.
-    ///
-    /// What would make this red: the escalated link left in the map, which the next escalated
-    /// task reuses unchecked - it was checked once this play - and fails on as a dead host.
+    /// Reconnecting drops every link kept for the host - its own and the escalated one - and no
+    /// other host's, and puts a fresh link in place of the one the plugin holds.
     #[cfg(unix)]
     #[tokio::test]
     async fn reconnecting_drops_the_host_s_links_and_no_other() {
@@ -8276,14 +8019,8 @@ mod tests {
         }
     }
 
-    /// A link another host's driver keeps to a host this one rebooted is checked again before
-    /// it is reused, and replaced when the reboot killed it. Two drivers' maps, one run's count:
-    /// `h2`'s driver delegated to `h1` and kept the link; `h1`'s driver rebooted `h1`; `h2`
-    /// delegates to `h1` again. In the k3s proof the agents delegate to the first server like
-    /// this.
-    ///
-    /// What would make this red: the reboot count left out of the check, which hands `h2` the
-    /// dead link it checked earlier in the play, and reports it unreachable.
+    /// A link another host's driver keeps to a host this one rebooted is checked again before it is
+    /// reused, and replaced when the reboot killed it.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {

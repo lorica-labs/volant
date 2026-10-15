@@ -204,12 +204,8 @@ mod tests {
         Scratch(dir)
     }
 
-    /// The four variables the plugin adds are the controller's, except a `dest` whose render
-    /// read a managed host, which stays that host's value; and the item's own provenance is kept.
-    ///
-    /// What would make this red: `template_destpath` inserted trusted whatever `dest` read, which
-    /// hands a host's string to any later render as author content, or the clone losing the
-    /// item's untrusted names.
+    /// The four variables the plugin adds are the controller's, except a `dest` whose render read a
+    /// managed host, which stays that host's value; and the item's own provenance is kept.
     #[test]
     fn a_dest_a_host_named_stays_the_host_s_value() {
         let mut item = HostVars::default();
@@ -302,15 +298,6 @@ mod tests {
     }
 
     /// What a managed host wrote reaches the file it is rendered into as text.
-    ///
-    /// The fact is set the way a registered result or a gathered fact is, as untrusted, and read
-    /// through the host's real variables. Unix only: the lookup it carries is a `touch`.
-    ///
-    /// What would make this red: the template rendered through `Templar::render`, whose extra
-    /// passes run the host's string on the controller; or the rendered bytes rendered once more
-    /// on their way into the blob. The control is what keeps the marker's absence from passing
-    /// for a `lookup` that does nothing here: the same lookup written by the template's author
-    /// does run.
     #[cfg(unix)]
     #[test]
     fn a_host_value_reaches_the_rendered_file_as_text() {
@@ -346,13 +333,6 @@ mod tests {
     }
 
     /// A `src` whose render read a managed host is refused before anything is looked up.
-    ///
-    /// Measured on ansible-core 2.19.12: a `template` whose `src` is a registered `stdout` sends
-    /// the controller file it names, rendered, to the host. This refuses it, on purpose.
-    ///
-    /// What would make this red: the refusal made after the search, which answers "Could not
-    /// find or access" for the path that names nothing, or dropped, which renders the one that
-    /// exists.
     #[test]
     fn a_template_a_host_named_is_never_read() {
         let dir = with_template("secret.j2", "secret\n");
@@ -373,15 +353,6 @@ mod tests {
 
     /// The module's options reach the render, and the four variables the plugin sets are the
     /// reference's.
-    ///
-    /// Measured on ansible-core 2.19.12 with this template, in `cat -A`: `trim_blocks` on and
-    /// `lstrip_blocks` off by default, the final newline kept, `newline_sequence` applied to the
-    /// whole output, `template_path` the `src` as written, `template_destpath` the `dest` and
-    /// `template_fullpath` the path found.
-    ///
-    /// What would make this red: an option read and dropped on its way to the render, the
-    /// escaped spelling of `newline_sequence` taken as the four characters it is written with,
-    /// or a variable set from the wrong path.
     #[test]
     fn the_options_and_variables_are_the_reference_s() {
         let dir = with_template("opts.j2", OPTS);
@@ -410,9 +381,6 @@ mod tests {
     }
 
     /// `ansible_managed` is the reference's default unless the variable is already there.
-    ///
-    /// What would make this red: the plugin's value written over one the playbook set, which is
-    /// what the reference refrains from doing.
     #[test]
     fn ansible_managed_is_set_only_when_absent() {
         let dir = with_template("m.j2", "{{ ansible_managed }}\n");
@@ -426,13 +394,8 @@ mod tests {
         assert_eq!(staged(&sent(plugin.as_mut())), "managed by hand\n");
     }
 
-    /// The final sub-task is `copy`, named after the template, without the template's own
-    /// options, and `mode: preserve` is the template file's mode.
-    ///
-    /// What would make this red: `trim_blocks` or `newline_sequence` handed to `copy`, which
-    /// refuses an argument it does not know; the mode left as `preserve`, which the module would
-    /// read off the staged copy; or `_original_basename` taken from anything but the template,
-    /// which names the file wrongly under a directory `dest`.
+    /// The final sub-task is `copy`, named after the template, without the template's own options,
+    /// and `mode: preserve` is the template file's mode.
     #[cfg(unix)]
     #[test]
     fn copy_gets_the_template_s_name_and_none_of_its_options() {
@@ -454,11 +417,6 @@ mod tests {
     }
 
     /// What is refused before any sub-task, each in the reference's words where it has some.
-    ///
-    /// What would make this red: a check dropped, which runs `stat` for a task that cannot
-    /// succeed; a delimiter accepted and ignored, which renders a template written for other
-    /// delimiters as if it were not one; or the search's refusal given the prefix `copy` puts
-    /// on it, which the reference's `template` does not.
     #[test]
     fn what_cannot_be_rendered_is_refused_before_the_host_is_asked() {
         let dir = with_template("t.j2", "x\n");
@@ -545,11 +503,8 @@ mod tests {
         assert!(msg.contains("other.j2"), "{msg}");
     }
 
-    /// A render too big for one frame is refused, naming both sizes, before anything is put on
-    /// the host.
-    ///
-    /// What would make this red: the limit not applied to the rendered bytes, which puts a frame
-    /// on the wire the agent refuses to read and ends the link.
+    /// A render too big for one frame is refused, naming both sizes, before anything is put on the
+    /// host.
     #[test]
     fn a_render_bigger_than_a_frame_is_refused() {
         let len = MAX_FILE_LEN + 1;

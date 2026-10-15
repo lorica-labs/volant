@@ -31,9 +31,6 @@ type Place = (&'static str, &'static [keywords::Keyword], fn(&str) -> bool);
 
 /// Every keyword the reference knows has a row in `keywords.rs`, at the same place, and no row
 /// there names a keyword the reference does not know.
-///
-/// What would make this red: a keyword the reference added (or one of ours misspelled), since the
-/// row would otherwise be read as a module name, or refused as unknown, without anyone deciding.
 #[test]
 fn the_keyword_tables_are_the_references() {
     let r = reference();
@@ -76,9 +73,6 @@ fn the_keyword_tables_are_the_references() {
 }
 
 /// Every `meta` action the reference accepts is either run or refused by name.
-///
-/// What would make this red: an action the reference added (2.19 may have `end_batch` and
-/// `end_role`) answered with "invalid meta action", the message for a typo.
 #[test]
 fn every_meta_action_is_known() {
     for action in names(&reference(), &["meta"]) {
@@ -95,9 +89,6 @@ fn every_meta_action_is_known() {
 }
 
 /// Every builtin module the reference ships is a builtin here, and has a route.
-///
-/// What would make this red: a module missing from `BUILTIN_MODULES`, which a playbook would
-/// then be told is a typo.
 #[test]
 fn the_builtin_modules_are_the_references() {
     let r = reference();
@@ -526,7 +517,7 @@ fn probe_dir(test: &str) -> std::path::PathBuf {
     dir
 }
 
-/// What would make this red: any change to what the engine supports without `just docs-parity`.
+/// The parity page lists exactly what the engine supports, as `just docs-parity` writes it.
 #[test]
 fn the_parity_page_matches_the_engine() {
     // The lookup rows ask `lookup_supported`, a name check that never runs a lookup.
@@ -570,12 +561,8 @@ fn the_probes_classify_what_they_should() {
     ));
 }
 
-/// A collection built for Windows or for network devices holds its modules and action plugins
-/// for a later milestone, whatever this release would do with them, while its filters, tests and
-/// lookups stay in scope: they run on the controller, whatever the hosts are.
-///
-/// What would make this red: `ansible.windows.win_copy` shown as running because it is a module,
-/// or `ansible.netcommon`'s filters held back with its connections.
+/// A Windows or network collection holds its modules and action plugins for later, while its
+/// filters, tests and lookups stay in scope.
 #[test]
 fn a_windows_or_network_collection_waits_only_for_its_modules_and_actions() {
     let rows = matrix(&probe_dir("traits"));
@@ -599,10 +586,8 @@ fn a_windows_or_network_collection_waits_only_for_its_modules_and_actions() {
     );
 }
 
-/// An option runs when every spelling the reference accepts parses here, and is partial when
-/// only some do: `-i` and `--inventory` run even though `--inventory-file` does not.
-///
-/// What would make this red: one spelling probed for the whole option again.
+/// An option runs when every spelling the reference accepts parses here, and is partial when only
+/// some do: `-i` and `--inventory` run even though `--inventory-file` does not.
 #[test]
 fn an_option_is_judged_on_every_spelling() {
     let rows = matrix(&probe_dir("options"));
@@ -618,12 +603,8 @@ fn an_option_is_judged_on_every_spelling() {
     assert_eq!(status("-C, --check"), Some(Status::NotYet));
 }
 
-/// A collection's module waits for a later release only when it needs another platform: a
-/// network device's persistent connection, or Windows. A collection that ships one network
-/// plugin among modules that run from the controller keeps those modules in scope.
-///
-/// What would make this red: the whole collection judged by one plugin again
-/// (`community.vmware` ships an `httpapi` plugin), or a network module counted as in scope.
+/// A collection's module waits for a later release only when it needs another platform: a network
+/// device's persistent connection, or Windows.
 #[test]
 fn a_module_waits_only_when_it_needs_another_platform() {
     let rows = matrix(&probe_dir("platform"));
@@ -639,11 +620,8 @@ fn a_module_waits_only_when_it_needs_another_platform() {
     assert_eq!(status("cisco.ios.ios_acls"), Some(Status::Later));
 }
 
-/// Every builtin action plugin of the reference is implemented here or refused by name: a new
-/// one would otherwise run as its plain module and be counted as running.
-///
-/// What would make this red: an action plugin whose module is routed to the Python path, the
-/// way `uri` would be if it left `BUILTIN_ACTION_PLUGINS`.
+/// Every builtin action plugin of the reference is implemented here or refused by name: a new one
+/// would otherwise run as its plain module and be counted as running.
 #[test]
 fn every_builtin_action_plugin_is_implemented_or_refused() {
     for a in names(&reference(), &["builtin", "action"]) {

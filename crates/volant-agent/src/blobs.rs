@@ -691,10 +691,6 @@ mod tests {
 
     /// A payload whose bytes do not hash to the name it arrived under never lands, and the error
     /// says both hashes so an operator can tell a corrupted transfer from a wrong name.
-    ///
-    /// What would make this red: the hash checked after the file is renamed into place, which
-    /// leaves a poisoned cache entry that every later run reuses; or the check skipped when the
-    /// file already exists, which is the same hole one run later.
     #[test]
     fn a_blob_whose_hash_does_not_match_is_refused_before_it_lands() {
         let dir = scratch();
@@ -724,11 +720,6 @@ mod tests {
 
     /// A file already sitting under a hash is answered for only once its bytes are read back and
     /// hashed, and one that does not match is replaced rather than handed out.
-    ///
-    /// What would make this red: `holds` answering from the name alone. `remote_tmp` is
-    /// world-writable on most hosts and the name of a payload is public - it is the hash of a zip
-    /// built from a released ansible-core - so a local user who plants a file under it would have
-    /// their zip answered for, never re-sent, and run as whoever the agent runs as.
     #[test]
     fn a_planted_blob_is_not_trusted_on_its_name() {
         let root = scratch();
@@ -758,10 +749,6 @@ mod tests {
 
     /// A payload already in the cache and still matching its name is handed back where it is, not
     /// written again.
-    ///
-    /// What would make this red: the file rewritten on every `put_blob`, which spends the
-    /// transfer this cache exists to avoid. Proved on the inode, because a rewrite goes through a
-    /// new temporary file and a rename.
     #[cfg(unix)]
     #[test]
     fn a_matching_blob_already_present_is_not_written_again() {
@@ -782,13 +769,8 @@ mod tests {
         );
     }
 
-    /// A cache directory anyone but this agent can write is refused, with its mode in the
-    /// message, rather than chmod'ed into shape.
-    ///
-    /// What would make this red: `create_dir_all` followed by an unconditional chmod. Against a
-    /// directory the agent owns that hides the planting window this test stands in for; against
-    /// one another user owns it returns `EPERM` on every run from then on, and two operators
-    /// sharing a `/var/tmp` break each other permanently.
+    /// A cache directory anyone but this agent can write is refused, with its mode in the message,
+    /// rather than chmod'ed into shape.
     #[cfg(unix)]
     #[test]
     fn a_cache_directory_others_can_write_is_refused() {
@@ -807,11 +789,8 @@ mod tests {
         assert!(holds(remote_tmp, &hash_of(zip)).is_err());
     }
 
-    /// The cache is closed to everyone but its owner: `remote_tmp` is world-writable on most
-    /// hosts, and a payload another user could drop in would be answered for on its name alone.
-    ///
-    /// The umask is deliberately loose, so the mode has to come from the directory being created
-    /// with it rather than from whatever the developer's shell happened to set.
+    /// The cache is closed to everyone but its owner: `remote_tmp` is world-writable on most hosts,
+    /// and a payload another user could drop in would be answered for on its name alone.
     #[cfg(unix)]
     #[test]
     fn the_cache_directory_is_private_to_the_agent() {
@@ -833,10 +812,6 @@ mod tests {
     }
 
     /// A blob name that is not 64 lowercase hex characters never reaches the filesystem.
-    ///
-    /// What would make this red: `path` joining whatever arrives. Task 3 opens what `path`
-    /// returns, so a `Task.payload.blob` of `../../home/mallory/evil` would read and run a file
-    /// from outside the cache.
     #[test]
     fn a_blob_name_that_is_not_a_hash_is_refused() {
         let dir = scratch();
@@ -858,11 +833,8 @@ mod tests {
         }
     }
 
-    /// A raw frame is the blob only at exactly the announced length, and a deflated one only
-    /// when it inflates to exactly that length.
-    ///
-    /// What would make this red: the length check after decoding removed, which takes a frame
-    /// cut short on the controller's side for the whole blob and leaves only the hash to notice.
+    /// A raw frame is the blob only at exactly the announced length, and a deflated one only when
+    /// it inflates to exactly that length.
     #[test]
     fn a_blob_is_decoded_only_at_its_announced_length() {
         let zip = b"PK\x03\x04 and the rest of the zip".repeat(50);
@@ -886,9 +858,6 @@ mod tests {
 
     /// The frame after a `put_blob` is read as bytes, whatever they look like, and the message
     /// after it is read as a message again: the stream stays in step through a refused frame.
-    ///
-    /// What would make this red: the read of the blob frame skipped (the frame is taken for the
-    /// next message), or a frame longer than `len` refused without being read through.
     #[test]
     fn a_blob_frame_is_read_as_bytes_and_the_stream_stays_in_step() {
         use volant_protocol::frame::write_frame;
@@ -920,13 +889,8 @@ mod tests {
         assert!(read_incoming(&mut input).unwrap().is_none());
     }
 
-    /// A `put_blob` that does not read still has its frame read through, never taken for the
-    /// next message, and is answered as a refused blob; a `len` past the limit is refused
-    /// without the frame being held.
-    ///
-    /// What would make this red: a `put_blob` with an unknown encoding dropped whole, which
-    /// leaves its frame to be read as a message (here a `cancel`) and the controller waiting for
-    /// a `BlobState`; or the limit left to `decoded`, after the frame is in memory.
+    /// A `put_blob` that does not read has its frame read through and is answered as a refused
+    /// blob. A `len` past the limit is refused without the frame being held.
     #[test]
     fn a_put_blob_that_does_not_read_never_leaves_its_frame_behind() {
         use volant_protocol::frame::write_frame;
@@ -986,9 +950,6 @@ mod tests {
 
     /// A payload larger than what the filesystem has left is refused with both figures and the
     /// directory in the message.
-    ///
-    /// What would make this red: the space checked after the write, where the operator gets
-    /// `ENOSPC` on a temporary name and no idea how far short the host is.
     #[cfg(unix)]
     #[test]
     fn a_payload_larger_than_the_filesystem_is_refused_with_both_figures() {
@@ -1016,11 +977,8 @@ mod tests {
         check_space(free_bytes, dir.path(), 1).expect("one byte fits");
     }
 
-    /// `store` asks about free space before it writes, and refuses without leaving a temporary
-    /// file behind.
-    ///
-    /// What would make this red: the call to the guard dropped while the guard itself stays in
-    /// the file, which every other test in here would let through.
+    /// `store` asks about free space before it writes, and refuses without leaving a temporary file
+    /// behind.
     #[test]
     fn store_refuses_a_payload_the_filesystem_cannot_hold() {
         let dir = scratch();
@@ -1048,13 +1006,8 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotADirectory, "{err}");
     }
 
-    /// The cache root is read back from the agent's own path only where the ssh transport puts
-    /// it. Anywhere else the agent was started from names somebody else's directory.
-    ///
-    /// What would make this red: taking the grandparent whatever it is. A system-wide install
-    /// runs `/usr/local/bin/volant-agent` over the local transport, and the cache would be
-    /// `/usr/local/volant-blobs-...`, which an ordinary user cannot create and which a run under
-    /// `sudo` would leave behind owned by root.
+    /// The cache root is read back from the agent's own path only where the ssh transport puts it.
+    /// Anywhere else the agent was started from names somebody else's directory.
     #[test]
     fn the_cache_root_comes_from_the_agents_path_only_where_the_transport_puts_it() {
         assert_eq!(
@@ -1065,11 +1018,8 @@ mod tests {
         assert_eq!(tmp_from_exe(Path::new("volant-agent")), None);
     }
 
-    /// A host name becomes one path component with no `-` in it, so the sweep's last `-` is
-    /// always the one before the pid.
-    ///
-    /// What would make this red: a `/` kept, which puts the directory somewhere other than the
-    /// cache; or no cap, which lets a long name past the filesystem's limit on one component.
+    /// A host name becomes one path component with no `-` in it, so the sweep's last `-` is always
+    /// the one before the pid.
     #[test]
     fn a_host_name_becomes_one_safe_component() {
         assert_eq!(host_component(b"web-1.example_org"), "web_1.example_org");

@@ -696,13 +696,8 @@ mod tests {
         })
     }
 
-    /// Both outputs measured on ansible-core 2.19.12, copied byte for byte: keys sorted, indent
-    /// 4 by default, the dashes of a list not indented under their key, `'yes'`, `'1'` and `''`
-    /// quoted because YAML 1.1 would read them as something else, `é` left as it is, and a
-    /// string holding a newline single-quoted and folded with an empty line for it.
-    ///
-    /// What would make this red: keys emitted in insertion order (the input above is not
-    /// sorted), a list indented under its key, or any quoting rule of the emitter changed.
+    /// `to_nice_yaml` prints ansible-core 2.19.12's exact bytes: sorted keys, indent 4, unindented
+    /// list dashes and its quoting rules.
     #[test]
     fn to_nice_yaml_prints_the_reference_s_bytes() {
         assert_eq!(
@@ -715,10 +710,7 @@ mod tests {
         );
     }
 
-    /// One string per rule that stops PyYAML writing a string plain. Beyond the two measured
-    /// outputs, each line here was checked against PyYAML 6.0.3 with `Dumper=CSafeDumper`
-    /// (libyaml, what ansible-core uses when it is there), `allow_unicode=True,
-    /// default_flow_style=False, indent=4`; the pure-Python `SafeDumper` agrees on every one.
+    /// One string per rule that stops PyYAML writing a string plain.
     #[test]
     fn a_string_is_quoted_exactly_when_pyyaml_quotes_it() {
         let cases: &[(&str, &str)] = &[
@@ -795,9 +787,8 @@ mod tests {
         );
     }
 
-    /// `to_yaml` keeps PyYAML's default flow style: a collection that holds only scalars is
-    /// written inline, the others as blocks, with an indent of 2. A plain scalar at the root is
-    /// not followed by `...`: that marker is `emitter.py`'s, and libyaml does not write it.
+    /// `to_yaml` keeps PyYAML's default flow style: a collection that holds only scalars is written
+    /// inline, the others as blocks, with an indent of 2.
     #[test]
     fn to_yaml_writes_a_collection_of_scalars_inline() {
         assert_eq!(
@@ -834,12 +825,8 @@ mod tests {
         }
     }
 
-    /// Where libyaml's emitter and `emitter.py` part, ansible-core's output is libyaml's, and
-    /// so is this. Each vector was printed by PyYAML 6.0.3's `CSafeDumper`.
-    ///
-    /// What would make this red: `emitter.py`'s printable set (an emoji or `\x85` written as
-    /// they are), its fold of a long double-quoted run at any escape, its `...` after a root
-    /// scalar, or its 122-character limit on a simple key.
+    /// Where libyaml's emitter and `emitter.py` part, ansible-core's output is libyaml's, and so is
+    /// this. Each vector was printed by PyYAML 6.0.3's `CSafeDumper`.
     #[test]
     fn where_libyaml_and_emitter_py_differ_this_is_libyaml() {
         assert_eq!(

@@ -2691,6 +2691,7 @@ async fn send_batch<C: AgentChannel>(
                     ledger.ran.push((index, module, ran));
                 }
                 if let Some(slot) = received.get_mut(index) {
+                    drop_internal_keys(&mut result);
                     add_output_lines(&mut result);
                     summarise_exception(&mut result);
                     *slot = Some(result);
@@ -2725,6 +2726,17 @@ async fn send_batch<C: AgentChannel>(
 /// module result that lacks them, so a Python module's result has them there; here the agent
 /// writes them for `command` and `raw` alone, and every result an agent sends passes through
 /// [`run_agent_batch`], plugin sub-tasks included.
+/// A result a host sent, without the keys only the controller may set: every `_volant_` key,
+/// which the renderer reads (an error chain names files on the controller), and every
+/// `_ansible_` key but `_ansible_parsed`, as the reference's `remove_internal_keys` drops them
+/// from a module's return. Measured on ansible-core 2.19.12: a module returning
+/// `_ansible_verbose_always` gets a warning and its result printed on one line.
+fn drop_internal_keys(result: &mut TaskResult) {
+    result.0.retain(|key, _| {
+        !key.starts_with("_volant_") && (!key.starts_with("_ansible_") || key == "_ansible_parsed")
+    });
+}
+
 fn add_output_lines(result: &mut TaskResult) {
     for (key, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
         if result.0.contains_key(lines) {
@@ -4669,6 +4681,56 @@ mod tests {
     }
 
     /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
+    /// A host cannot set the keys the controller reads: a forged error chain naming a controller
+    /// file is dropped before anything renders it, and so is a forged `_ansible_` flag.
+    #[tokio::test]
+    async fn a_host_cannot_forge_the_controller_s_internal_keys() {
+        let dir = std::env::temp_dir().join(format!("volant-forge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "line one\nsecret-line-two\n").expect("the secret");
+        let mut agent = FakeAgent::answering(
+            one_result(
+                5,
+                json!({
+                    "failed": true,
+                    "msg": "forged",
+                    (crate::render::CHAIN_KEY): [{"msg": "x", "path": secret.display().to_string(), "line": 2, "col": 1}],
+                    (crate::render::ERROR_KEY): "Task failed: forged block",
+                    "_ansible_verbose_always": true,
+                    "_ansible_parsed": true,
+                }),
+            )
+            .to_vec(),
+        );
+        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+        let (received, _) = run_agent_batch(
+            &mut agent,
+            "h1",
+            5,
+            tasks,
+            None,
+            &[],
+            &mut watch::channel(false).1,
+            &mut false,
+            &mut Vec::new(),
+        )
+        .await;
+        let mut result = received[0].clone().expect("a result");
+        settle_failure(&mut result, &task("command"));
+        let keys: Vec<&String> = result.0.keys().collect();
+        assert!(
+            !keys.iter().any(|k| *k == crate::render::CHAIN_KEY)
+                && !result.0.contains_key("_ansible_verbose_always")
+                && result.0.contains_key("_ansible_parsed"),
+            "{keys:?}"
+        );
+        let block = crate::render::ErrorBlock::of(&result, None, false);
+        assert!(block.causes.is_empty(), "{block:?}");
+        assert!(!block.message.contains("forged block"), "{block:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn a_batch_result_is_mapped_the_way_the_reference_reports_it() {
         {

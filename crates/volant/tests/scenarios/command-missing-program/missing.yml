@@ -26,3 +26,17 @@
       ignore_errors: true
     - debug:
         msg: "{{ dir.rc }} {{ dir.cmd }}"
+    - name: credentials in a URL are masked
+      command: nosuch-program https://user:s3cret@host/x user:pw@host:path
+      register: url
+      ignore_errors: true
+    - debug:
+        var: url.cmd
+    - name: a shell whose executable cannot start
+      shell: echo https://user:s3cret@host/x
+      args:
+        executable: /nonexistent/sh
+      register: lined
+      ignore_errors: true
+    - debug:
+        var: lined

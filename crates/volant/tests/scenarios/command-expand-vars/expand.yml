@@ -3,6 +3,8 @@
   environment:
     FOO: bar
     HOME: /srv/home/
+  vars:
+    expand: false
   tasks:
     - name: every spelling
       command: /bin/echo $FOO ${FOO} ~ ~/x $NOPE ${NOPE} $$ a$FOO ~root x~ $ ${ ~root/x "$FOO" \$FOO ${FOO:-d} ~nosuchaccount
@@ -58,3 +60,10 @@
       ignore_errors: true
     - debug:
         var: missing.cmd
+    - name: a templated switch
+      command: /bin/echo $FOO
+      args:
+        expand_argument_vars: "{{ expand }}"
+      register: templated
+    - debug:
+        var: templated.stdout

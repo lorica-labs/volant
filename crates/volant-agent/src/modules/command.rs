@@ -37,20 +37,23 @@ pub(crate) fn execute(
     let timeout = ctx.timeout;
     // Every boolean here is read the way the reference reads one, spellings and all: `"false"`,
     // `"no"` and `0` turn the argument off there, and `Value::as_bool` sees none of them.
-    let uses_shell = uses_shell || args.get("_uses_shell").and_then(arg_bool).unwrap_or(false);
-    let strip_empty_ends = args
-        .get("strip_empty_ends")
-        .and_then(arg_bool)
-        .unwrap_or(true);
+    let flag = |name: &str, default: bool| bool_arg(args, name, default);
+    let (uses_shell, strip_empty_ends, add_newline, expand_vars_on) = match (
+        flag("_uses_shell", false),
+        flag("strip_empty_ends", true),
+        flag("stdin_add_newline", true),
+        flag("expand_argument_vars", true),
+    ) {
+        (Ok(shell), Ok(strip), Ok(newline), Ok(expand)) => {
+            (uses_shell || shell, strip, newline, expand)
+        }
+        (Err(r), ..) | (_, Err(r), ..) | (_, _, Err(r), _) | (.., Err(r)) => return Run::Done(r),
+    };
     let chdir = args.get("chdir").and_then(Value::as_str);
     // Measured on ansible-core 2.19.12: the newline is appended without looking at what the value
     // already ends with, so a value that ends in one gets a second.
     let stdin_data = args.get("stdin").and_then(Value::as_str).map(|s| {
-        if args
-            .get("stdin_add_newline")
-            .and_then(arg_bool)
-            .unwrap_or(true)
-        {
+        if add_newline {
             format!("{s}\n")
         } else {
             s.to_string()
@@ -97,12 +100,7 @@ pub(crate) fn execute(
     // Measured on ansible-core 2.19.12: `command` expands `$VAR`, `${VAR}` and `~` in each word it
     // runs, on by default; `shell` does not, with an `argv` or without. The task still reports the
     // words as written, and only a failure to run reports them expanded.
-    if !uses_shell
-        && args
-            .get("expand_argument_vars")
-            .and_then(arg_bool)
-            .unwrap_or(true)
-    {
+    if !uses_shell && expand_vars_on {
         let var = |name: &str| {
             ctx.environment
                 .get(name)
@@ -136,7 +134,14 @@ pub(crate) fn execute(
                 let err = std::io::Error::from_raw_os_error(libc::ENOTDIR);
                 return Run::Done(chdir_failure(display, dir, &err));
             }
-            Ok(_) => {}
+            Ok(_) =>
+            {
+                #[cfg(unix)]
+                if !crate::natives::common::access(dir, libc::X_OK) {
+                    let err = std::io::Error::last_os_error();
+                    return Run::Done(chdir_failure(display, dir, &err));
+                }
+            }
         }
     }
     let guard_base = chdir.map(Path::new);
@@ -190,14 +195,7 @@ pub(crate) fn execute(
     let mut child = match command.spawn() {
         Ok(child) => child,
         #[cfg(unix)]
-        Err(err) => {
-            return Run::Done(exec_failure(
-                &argv,
-                uses_shell && from_argv.is_none(),
-                raw,
-                &err,
-            ));
-        }
+        Err(err) => return Run::Done(exec_failure(&argv, &err)),
         #[cfg(not(unix))]
         Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
     };
@@ -480,6 +478,37 @@ fn spawn_failure(cmd: Value, chdir: Option<&str>, err: &std::io::Error) -> TaskR
     TaskResult(result)
 }
 
+/// A boolean argument as the reference reads it: unset (or null) is `default`, and a value it
+/// cannot convert fails the task with its own sentence. The list of valid spellings is a Python
+/// set, so the reference prints it in an order that changes from run to run; this one is fixed.
+fn bool_arg(args: &Map<String, Value>, name: &str, default: bool) -> Result<bool, TaskResult> {
+    let value = match args.get(name) {
+        None | Some(Value::Null) => return Ok(default),
+        Some(value) => value,
+    };
+    if let Some(flag) = arg_bool(value) {
+        return Ok(flag);
+    }
+    let (kind, why) = match value {
+        Value::String(text) => ("str", text.clone()),
+        Value::Number(n) => (if n.is_f64() { "float" } else { "int" }, n.to_string()),
+        Value::Array(_) => ("list", String::new()),
+        _ => ("dict", String::new()),
+    };
+    let why = if matches!(value, Value::Array(_) | Value::Object(_)) {
+        format!("<class '{kind}'> cannot be converted to a bool")
+    } else {
+        format!(
+            "The value '{why}' is not a valid boolean. Valid booleans include: 'n', 1, '0', 0, 'true', 't', 'off', 'y', 'on', 'f', 'no', 'false', 'yes', '1'"
+        )
+    };
+    let mut result = TaskResult::failed_with(format!(
+        "argument '{name}' is of type {kind} and we were unable to convert to bool: {why}"
+    ));
+    result.0.insert("changed".into(), json!(false));
+    Err(result)
+}
+
 /// A `chdir` that cannot be entered, as the reference reports it (measured on 2.19.12): the words as
 /// written, `rc` and the clock null, nothing run, and the errno in the `exception`.
 #[cfg(unix)]
@@ -511,16 +540,11 @@ fn chdir_failure(cmd: Value, dir: &str, err: &std::io::Error) -> TaskResult {
 
 /// A program that would not start, as the reference reports `Popen` raising: `rc` is the errno,
 /// `cmd` is the words after expansion, quoted and joined into one string, and the cause is in the
-/// `exception`. A shell line is split the way `_clean_args` splits it.
+/// `exception`. A shell line is the `executable -c line` that was started.
 #[cfg(unix)]
-fn exec_failure(argv: &[String], shell_line: bool, raw: &str, err: &std::io::Error) -> TaskResult {
+fn exec_failure(argv: &[String], err: &std::io::Error) -> TaskResult {
     let errno = err.raw_os_error().unwrap_or(libc::EIO);
-    let words: Vec<String> = if shell_line {
-        shlex::split(raw).unwrap_or_default()
-    } else {
-        argv.to_vec()
-    };
-    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let words: Vec<&str> = argv.iter().map(String::as_str).collect();
     let mut result = Map::new();
     result.insert("cmd".into(), json!(clean_args(&words)));
     result.insert("rc".into(), json!(errno));
@@ -757,6 +781,55 @@ mod tests {
         if let Some(msg) = msg {
             assert!(r.0["msg"].as_str().unwrap().starts_with(msg), "{:?}", r.0);
         }
+    }
+
+    /// A boolean argument the reference cannot convert fails the task with its sentence.
+    #[rstest]
+    #[case::string(json!("maybe"), "of type str and we were unable to convert to bool: The value 'maybe' is not a valid boolean.")]
+    #[case::int(json!(2), "of type int and we were unable to convert to bool: The value '2' is not a valid boolean.")]
+    #[case::list(json!(["a"]), "of type list and we were unable to convert to bool: <class 'list'> cannot be converted to a bool")]
+    fn an_unreadable_boolean_fails_the_task(#[case] value: Value, #[case] want: &str) {
+        let r = done(execute(
+            &args(json!({"_raw_params": "echo hi", "expand_argument_vars": value})),
+            false,
+            &Context::default(),
+            &|| false,
+        ));
+        let msg = r.0["msg"].as_str().unwrap_or_default();
+        assert!(
+            r.failed()
+                && msg.starts_with("argument 'expand_argument_vars' is ")
+                && msg.contains(want),
+            "{:?}",
+            r.0
+        );
+    }
+
+    /// A directory the agent may not search fails as an unusable `chdir`, not as a program that
+    /// would not start.
+    #[test]
+    fn a_chdir_without_search_permission_is_a_chdir_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root searches any directory, so there is nothing to see.
+        if unsafe { libc::geteuid() } != 0 {
+            let r = done(execute(
+                &args(json!({"_raw_params": "echo hi", "chdir": locked.to_str().unwrap()})),
+                false,
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(
+                r.0["msg"], "Unable to change directory before execution.",
+                "{:?}",
+                r.0
+            );
+            assert_eq!(r.0["rc"], Value::Null);
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     /// Each form runs the way the reference runs it: the shell form through `sh`, `argv`

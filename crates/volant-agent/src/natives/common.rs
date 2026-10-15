@@ -641,8 +641,8 @@ pub fn os_error(err: &io::Error, path: &str) -> String {
 }
 
 /// `AnsibleModule._clean_args(args)`, the `cmd` of a failed `run_command`: the word after one
-/// that starts `pass` (after up to two `-`) masked, or the part after its `=`, then each word
-/// `shlex.quote`d. `heuristic_log_sanitize` is not applied: it only rewrites `user:pass@` URLs.
+/// that starts `pass` (after up to two `-`) masked, or the part after its `=`, every other word
+/// run through `heuristic_log_sanitize`, then each word `shlex.quote`d.
 pub fn clean_args(words: &[&str]) -> String {
     let mut clean = Vec::new();
     let mut masked = false;
@@ -663,13 +663,61 @@ pub fn clean_args(words: &[&str]) -> String {
             }
             masked = true;
         }
-        clean.push((*word).to_string());
+        clean.push(heuristic_log_sanitize(word));
     }
     clean
         .iter()
         .map(|word| shlex_quote(word))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `heuristic_log_sanitize` without `no_log_values`: the password of every `user:password@host`
+/// and `scheme://user:password@host` in `data` becomes `********`. It also eats text that only
+/// looks like one, as the reference does.
+fn heuristic_log_sanitize(data: &str) -> String {
+    let data: Vec<char> = data.chars().collect();
+    let find = |needle: &[char], from: usize, to: usize| -> Option<usize> {
+        let to = to.min(data.len());
+        (from..to).find(|&i| i + needle.len() <= to && data[i..i + needle.len()] == *needle)
+    };
+    let rfind = |needle: &[char], to: usize| -> Option<usize> {
+        let to = to.min(data.len());
+        (0..to)
+            .rev()
+            .find(|&i| i + needle.len() <= to && data[i..i + needle.len()] == *needle)
+    };
+    // Pieces in the order the reference inserts them at the front: reversed at the end.
+    let mut pieces: Vec<String> = Vec::new();
+    let text = |from: usize, to: usize| data[from..to].iter().collect::<String>();
+    let mut begin = data.len();
+    let mut prev_begin = begin;
+    loop {
+        let Some(end) = rfind(&['@'], begin) else {
+            pieces.push(text(0, begin));
+            break;
+        };
+        let mut sep = None;
+        let mut sep_search_end = end;
+        while sep.is_none() {
+            begin = rfind(&[':', '/', '/'], sep_search_end).unwrap_or(0);
+            sep = find(&[':'], begin + 3, end);
+            if sep.is_none() {
+                if begin == 0 {
+                    pieces.push(text(0, prev_begin));
+                    break;
+                }
+                sep_search_end = begin;
+            }
+        }
+        let Some(sep) = sep else { break };
+        pieces.push(text(end, prev_begin));
+        pieces.push("********".into());
+        pieces.push(text(begin, sep + 1));
+        prev_begin = begin;
+    }
+    pieces.reverse();
+    pieces.concat()
 }
 
 /// The `exception` `fail_json(exception=ex)` sends for the `OSError` `Popen` raised, measured on
@@ -686,7 +734,7 @@ pub fn popen_error(errno: i32, program: &str) -> Value {
     let cause = if errno == libc::EAGAIN || errno == libc::ENOMEM {
         format!("[Errno {errno}] {strerror}")
     } else {
-        format!("[Errno {errno}] {strerror}: b'{program}'")
+        format!("[Errno {errno}] {strerror}: {}", bytes_repr(program))
     };
     serde_json::json!({
         "__ansible_type": "ErrorSummary",
@@ -739,7 +787,7 @@ pub fn strerror(errno: i32) -> Option<&'static str> {
 }
 
 /// Python's `repr()` of `text` encoded as bytes.
-fn bytes_repr(text: &str) -> String {
+pub fn bytes_repr(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
         '"'
     } else {
@@ -1023,6 +1071,34 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::super::setup::unbounded;
     use super::*;
+
+    /// `heuristic_log_sanitize` answers as the reference's does (measured on 2.19.12), quirks included.
+    #[test]
+    fn credentials_are_masked_as_the_reference_masks_them() {
+        for (text, want) in [
+            ("https://u:secret@h/x", "https://u:********@h/x"),
+            ("user:pw@host:path", "user:********@host:path"),
+            ("a@b", "a@b"),
+            ("x://a:b@c/y://d:e@f", "x://a:********@c/y://d:********@f"),
+            ("ssh://git@host/r", "ssh:********@host/r"),
+            ("p:q@r@s", "p:q@r@s"),
+            ("http://u:p@h/@z", "http://u:********@z"),
+            ("\u{e9}:\u{fc}@x", "\u{e9}:\u{fc}@x"),
+            ("a:b@", "a:b@"),
+        ] {
+            assert_eq!(heuristic_log_sanitize(text), want, "{text}");
+        }
+    }
+
+    /// The program in a `Popen` error is printed as a Python bytes literal.
+    #[test]
+    fn a_program_name_is_printed_as_bytes() {
+        let cause = popen_error(2, "/tmp/it's\\a\u{e9}")["event"]["chain"]["event"]["msg"].clone();
+        assert_eq!(
+            cause,
+            json!(r#"[Errno 2] No such file or directory: b"/tmp/it's\\a\xc3\xa9""#)
+        );
+    }
 
     /// The invocation resolves aliases and defaults, hands back unknown arguments, and prints OS errors like Python.
     #[test]

@@ -685,8 +685,7 @@ fn free_bytes(_dir: &Path) -> io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use crate::testing::scratch;
 
     use volant_protocol::encoding::deflate;
 
@@ -698,7 +697,7 @@ mod tests {
     /// file already exists, which is the same hole one run later.
     #[test]
     fn a_blob_whose_hash_does_not_match_is_refused_before_it_lands() {
-        let dir = tempdir();
+        let dir = scratch();
         let zip = b"not really a zip";
         let wrong = "0".repeat(64);
         let err = store(dir.path().to_str().unwrap(), &wrong, zip, false).unwrap_err();
@@ -715,7 +714,7 @@ mod tests {
     /// A payload that does match lands under its hash and is readable back byte for byte.
     #[test]
     fn a_matching_blob_lands_under_its_hash() {
-        let dir = tempdir();
+        let dir = scratch();
         let zip = b"pretend this is a zip";
         let h = hash_of(zip);
         let at = store(dir.path().to_str().unwrap(), &h, zip, false).unwrap();
@@ -732,7 +731,7 @@ mod tests {
     /// their zip answered for, never re-sent, and run as whoever the agent runs as.
     #[test]
     fn a_planted_blob_is_not_trusted_on_its_name() {
-        let root = tempdir();
+        let root = scratch();
         let remote_tmp = root.path().to_str().unwrap();
         let zip = b"pretend this is a zip";
         let h = hash_of(zip);
@@ -768,7 +767,7 @@ mod tests {
     fn a_matching_blob_already_present_is_not_written_again() {
         use std::os::unix::fs::MetadataExt;
 
-        let dir = tempdir();
+        let dir = scratch();
         let remote_tmp = dir.path().to_str().unwrap();
         let zip = b"pretend this is a zip";
         let h = hash_of(zip);
@@ -795,7 +794,7 @@ mod tests {
     fn a_cache_directory_others_can_write_is_refused() {
         use std::os::unix::fs::DirBuilderExt;
 
-        let root = tempdir();
+        let root = scratch();
         let remote_tmp = root.path().to_str().unwrap();
         fs::DirBuilder::new()
             .mode(0o755)
@@ -818,7 +817,7 @@ mod tests {
     fn the_cache_directory_is_private_to_the_agent() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir();
+        let dir = scratch();
         let zip = b"pretend this is a zip";
         // SAFETY: nextest runs each test in its own process, so this reaches no other test.
         let previous = unsafe { libc::umask(0o022) };
@@ -840,7 +839,7 @@ mod tests {
     /// from outside the cache.
     #[test]
     fn a_blob_name_that_is_not_a_hash_is_refused() {
-        let dir = tempdir();
+        let dir = scratch();
         let remote_tmp = dir.path().to_str().unwrap();
         for name in [
             "../volant-agent-0.1.0/volant-agent",
@@ -993,7 +992,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_payload_larger_than_the_filesystem_is_refused_with_both_figures() {
-        let dir = tempdir();
+        let dir = scratch();
         // The figure the check itself read: the space left moves while other tests write.
         let seen = std::cell::Cell::new(None);
         let err = check_space(
@@ -1024,7 +1023,7 @@ mod tests {
     /// the file, which every other test in here would let through.
     #[test]
     fn store_refuses_a_payload_the_filesystem_cannot_hold() {
-        let dir = tempdir();
+        let dir = scratch();
         let remote_tmp = dir.path().to_str().unwrap();
         let zip = b"pretend this is a zip";
         let err = store_with(|_| Ok(0), remote_tmp, &hash_of(zip), zip, false).unwrap_err();
@@ -1041,7 +1040,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_remote_tmp_the_cache_cannot_be_created_under_fails() {
-        let dir = tempdir();
+        let dir = scratch();
         let occupied = dir.path().join("occupied");
         fs::write(&occupied, b"").unwrap();
         let zip = b"pretend this is a zip";
@@ -1081,33 +1080,5 @@ mod tests {
 
     fn hash_of(bytes: &[u8]) -> String {
         blake3::hash(bytes).to_hex().to_string()
-    }
-
-    /// A directory of this process's own, removed when the test ends. The agent depends on
-    /// `libc`, `serde_json`, `shlex`, `volant-protocol` and `blake3`, and a temporary-directory
-    /// crate for a handful of tests is not worth carrying onto every managed host.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn tempdir() -> TempDir {
-        static COUNT: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "volant-blobs-test-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).expect("the test directory is created");
-        TempDir(dir)
     }
 }

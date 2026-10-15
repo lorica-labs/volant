@@ -1219,55 +1219,35 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{scratch, write};
     use serde_json::json;
 
-    fn tree() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "volant-vars-{}-{}",
-            std::process::id(),
-            rand_suffix()
-        ));
-        std::fs::create_dir_all(dir.join("inventory/group_vars/web")).unwrap();
-        std::fs::create_dir_all(dir.join("inventory/host_vars")).unwrap();
-        std::fs::create_dir_all(dir.join("play/group_vars")).unwrap();
-        std::fs::create_dir_all(dir.join("play/host_vars")).unwrap();
-        std::fs::write(
-            dir.join("inventory/hosts.ini"),
-            "[web]\nweb1 tier=ini\n[web:vars]\nfrom=ini_group\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("inventory/group_vars/all.yml"),
-            "layer: inv_all\nonly_inv_all: 1\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("inventory/group_vars/web/10-first.yml"),
-            "layer: inv_web\nsplit: first\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("inventory/group_vars/web/20-second.yaml"),
-            "split: second\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("inventory/host_vars/web1.json"),
-            r#"{"layer": "inv_host"}"#,
-        )
-        .unwrap();
-        std::fs::write(dir.join("play/group_vars/all"), "play_all: yes\n").unwrap();
-        std::fs::write(dir.join("play/host_vars/web1.yml"), "layer: play_host\n").unwrap();
-        std::fs::write(dir.join("play/group_vars/.hidden.yml"), "hidden: true\n").unwrap();
-        std::fs::write(dir.join("play/group_vars/all.yml~"), "backup: true\n").unwrap();
-        dir
-    }
-
-    fn rand_suffix() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    fn tree() -> tempfile::TempDir {
+        let tmp = scratch();
+        let dir = tmp.path();
+        for (rel, text) in [
+            (
+                "inventory/hosts.ini",
+                "[web]\nweb1 tier=ini\n[web:vars]\nfrom=ini_group\n",
+            ),
+            (
+                "inventory/group_vars/all.yml",
+                "layer: inv_all\nonly_inv_all: 1\n",
+            ),
+            (
+                "inventory/group_vars/web/10-first.yml",
+                "layer: inv_web\nsplit: first\n",
+            ),
+            ("inventory/group_vars/web/20-second.yaml", "split: second\n"),
+            ("inventory/host_vars/web1.json", r#"{"layer": "inv_host"}"#),
+            ("play/group_vars/all", "play_all: yes\n"),
+            ("play/host_vars/web1.yml", "layer: play_host\n"),
+            ("play/group_vars/.hidden.yml", "hidden: true\n"),
+            ("play/group_vars/all.yml~", "backup: true\n"),
+        ] {
+            write(dir, rel, text);
+        }
+        tmp
     }
 
     fn store(dir: &Path) -> (Inventory, VarStore) {
@@ -1294,8 +1274,9 @@ mod tests {
 
     #[test]
     fn directories_layer_in_ansible_order() {
-        let dir = tree();
-        let (_, mut store) = store(&dir);
+        let tmp = tree();
+        let dir = tmp.path();
+        let (_, mut store) = store(dir);
         let v = store.for_host("web1", &scope(&["web1"]));
         assert_eq!(
             v["layer"],
@@ -1316,12 +1297,12 @@ mod tests {
             "yes as data is a boolean too, matching PyYAML"
         );
         assert!(!v.contains_key("hidden") && !v.contains_key("backup"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn play_task_fact_and_extra_vars_stack_on_top() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path();
         let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
         let extra: Map<String, Value> = json!({"layer": "extra"}).as_object().unwrap().clone();
         let mut store = VarStore::new(
@@ -1346,7 +1327,6 @@ mod tests {
         assert_eq!(v["f"], json!(2), "task vars beat vars_files");
         assert_eq!(v["t"], json!(2), "set_fact beats task vars");
         assert_eq!(v["fact"], json!("set"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Every host variable the engine reads to decide where, as whom or under what a task runs
@@ -1552,8 +1532,9 @@ mod tests {
 
     #[test]
     fn magic_variables_are_present() {
-        let dir = tree();
-        let (_, mut store) = store(&dir);
+        let tmp = tree();
+        let dir = tmp.path();
+        let (_, mut store) = store(dir);
         let v = store.for_host("web1", &scope(&["web1"]));
         assert_eq!(v["inventory_hostname"], json!("web1"));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
@@ -1603,7 +1584,6 @@ mod tests {
         );
         assert_eq!(v["omit"], json!(omit_token()));
         assert_eq!(v["ansible_check_mode"], json!(false));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// `ansible_run_tags` and `ansible_skip_tags`, read by the condition of the `k3s_server`
@@ -1688,8 +1668,9 @@ mod tests {
     /// to render against, or two hosts of the inventory handed two different maps.
     #[test]
     fn the_shared_hostvars_view_answers_for_every_host() {
-        let dir = tree();
-        let (_, mut store) = store(&dir);
+        let tmp = tree();
+        let dir = tmp.path();
+        let (_, mut store) = store(dir);
         let view = store.hostvars_shared("web1");
         assert_eq!(view["web1"]["tier"], json!("ini"));
         assert!(
@@ -2117,11 +2098,11 @@ mod tests {
     /// (the fact is undefined); a fact named `template_path` answering over the lookup's own.
     #[test]
     fn a_gathered_fact_reaches_a_template_lookup() {
-        let dir = std::env::temp_dir().join(format!("volant-vars-lookup-{}", rand_suffix()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("t.j2"), "{{ ansible_x }} {{ template_path }}").unwrap();
+        let tmp = scratch();
+        let dir = tmp.path();
+        write(dir, "t.j2", "{{ ansible_x }} {{ template_path }}");
         let inventory = Inventory::parse_ini("h1\n").unwrap();
-        let mut store = VarStore::new(&inventory, None, &dir, Map::new()).unwrap();
+        let mut store = VarStore::new(&inventory, None, dir, Map::new()).unwrap();
         store.gather_facts(
             "h1",
             json!({"ansible_x": "hello", "template_path": "/from/a/host"})
@@ -2129,7 +2110,7 @@ mod tests {
                 .unwrap(),
         );
         let play = scope(&["h1"]);
-        let templar = Templar::new(dir.clone());
+        let templar = Templar::new(dir.to_path_buf());
         let untrusted = store.untrusted_of("h1", &play);
         let layers = store.layered_for_host("h1", &play);
         let merged = store.for_host("h1", &play);
@@ -2152,7 +2133,6 @@ mod tests {
         let got = render(&layers.map, &layers.facts);
         assert_eq!(got, render(&merged, &Arc::default()));
         assert_eq!(got, json!("hello t.j2"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -2176,15 +2156,16 @@ mod tests {
 
     #[test]
     fn extra_vars_take_key_value_json_and_files() {
-        let dir = tree();
-        std::fs::write(dir.join("extra.yml"), "from_file: 1\nlayer: file\n").unwrap();
+        let tmp = tree();
+        let dir = tmp.path();
+        write(dir, "extra.yml", "from_file: 1\nlayer: file\n");
         let parsed = parse_extra_vars(
             &[
                 "a=1 b=two".to_string(),
                 r#"{"c": [1]}"#.to_string(),
                 "@extra.yml".to_string(),
             ],
-            &dir,
+            dir,
         )
         .unwrap();
         assert_eq!(parsed["a"], json!("1"), "key=value extra vars are strings");
@@ -2192,7 +2173,6 @@ mod tests {
         assert_eq!(parsed["c"], json!([1]));
         assert_eq!(parsed["from_file"], json!(1));
         assert_eq!(parsed["layer"], json!("file"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -2205,8 +2185,9 @@ mod tests {
 
     #[test]
     fn a_broken_vars_file_names_itself() {
-        let dir = tree();
-        std::fs::write(dir.join("play/group_vars/all.yml"), "a: [1,\n").unwrap();
+        let tmp = tree();
+        let dir = tmp.path();
+        write(dir, "play/group_vars/all.yml", "a: [1,\n");
         let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
         let err = VarStore::new(
             &inv,
@@ -2216,7 +2197,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("all.yml"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A vars file holding a document start and a comment and nothing else is an empty mapping.
@@ -2230,8 +2210,8 @@ mod tests {
     /// in place of a mapping, which lets `42` through.
     #[test]
     fn a_vars_file_holding_only_a_comment_is_empty_and_a_scalar_is_refused() {
-        let dir = std::env::temp_dir().join(format!("volant-empty-vars-{}", rand_suffix()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = scratch();
+        let dir = tmp.path();
         for text in [
             "---\n# Empty file\n",
             "---\n# This space intentionally left blank.\n",
@@ -2249,6 +2229,5 @@ mod tests {
                 "{text:?}: {err:#}"
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -314,16 +314,11 @@ fn argument_spec(role: &Path, entry: &str) -> anyhow::Result<ArgumentSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::scratch;
 
-    fn tree() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "volant-roles-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+    fn tree() -> tempfile::TempDir {
+        let tmp = scratch();
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("roles/base/defaults/main")).unwrap();
         std::fs::create_dir_all(dir.join("roles/base/vars")).unwrap();
         std::fs::create_dir_all(dir.join("roles/base/tasks")).unwrap();
@@ -345,7 +340,7 @@ mod tests {
             "allow_duplicates: true\ndependencies:\n  - role: other\n    p: v\n",
         )
         .unwrap();
-        dir
+        tmp
     }
 
     /// The measured reading rules for a role's directories: a `defaults/main/` directory is
@@ -356,7 +351,8 @@ mod tests {
     /// first file of the directory, which loses every name the later ones do not set.
     #[test]
     fn a_defaults_directory_merges_its_files_in_name_order() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path().to_path_buf();
         let role = load(&dir.join("roles/base"), &RoleFrom::default()).unwrap();
         assert_eq!(role.defaults["x"], serde_json::json!("b"), "b.yml is later");
         assert_eq!(role.defaults["y"], serde_json::json!("from-first"));
@@ -366,7 +362,6 @@ mod tests {
         assert_eq!(role.dependencies.len(), 1);
         assert_eq!(role.dependencies[0].name, "other");
         assert_eq!(role.dependencies[0].params["p"], serde_json::json!("v"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Measured on ansible-core 2.19.12: `defaults/main.yml` beside a `defaults/main/` directory
@@ -374,7 +369,8 @@ mod tests {
     /// variable the reference never gives it.
     #[test]
     fn a_file_beats_a_directory_of_the_same_name() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path().to_path_buf();
         std::fs::write(dir.join("roles/base/defaults/main.yml"), "x: fromfile\n").unwrap();
         let role = load(&dir.join("roles/base"), &RoleFrom::default()).unwrap();
         assert_eq!(role.defaults["x"], serde_json::json!("fromfile"));
@@ -382,14 +378,14 @@ mod tests {
             !role.defaults.contains_key("y"),
             "the directory is not read at all"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A file the entry asked for by name and that is not there stops the run in the reference's
     /// own words; one it never asked for is simply absent.
     #[test]
     fn a_named_file_that_is_not_there_is_refused_and_a_missing_main_is_not() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path().to_path_buf();
         let from = RoleFrom {
             tasks: "nosuch".to_string(),
             ..RoleFrom::default()
@@ -404,7 +400,6 @@ mod tests {
         let role = load(&dir.join("roles/bare"), &RoleFrom::default()).unwrap();
         assert!(role.tasks.is_empty(), "a role may have no tasks at all");
         assert_eq!(role.defaults["q"], serde_json::json!(1));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The searched list, and the sentence a missing role is refused with, are the reference's
@@ -415,7 +410,8 @@ mod tests {
     /// which changes the number every script around the run reads.
     #[test]
     fn a_missing_role_names_every_path_and_exits_1() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path().to_path_buf();
         let config = Config {
             roles_path: vec![PathBuf::from("/opt/roles")],
             ..Config::default()
@@ -439,18 +435,17 @@ mod tests {
         assert!(text.contains("/opt/roles"), "{text}");
         assert!(text.contains(&dir.display().to_string()), "{text}");
         assert_eq!(crate::stats::error_code(&err), 1, "{text}");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A three-part name is looked for in the collections, beside the playbook first.
     #[test]
     fn a_collection_role_is_found_under_ansible_collections() {
-        let dir = tree();
+        let tmp = tree();
+        let dir = tmp.path().to_path_buf();
         let role = dir.join("collections/ansible_collections/acme/demo/roles/hello");
         std::fs::create_dir_all(role.join("tasks")).unwrap();
         std::fs::write(role.join("tasks/main.yml"), "- debug: msg=hi\n").unwrap();
         let search = RoleSearch::new(&dir, &Config::default());
         assert_eq!(search.locate("acme.demo.hello").unwrap(), role);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

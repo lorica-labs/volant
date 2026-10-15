@@ -222,13 +222,8 @@ fn version_test(
 
 #[cfg(test)]
 mod unit {
+    use crate::testing::templar;
     use serde_json::{Map, json};
-
-    use super::super::Templar;
-
-    fn templar() -> Templar {
-        Templar::new(std::env::temp_dir())
-    }
 
     /// Measured on ansible-core 2.19.12, in one expression each, and printed word for word: a
     /// boolean rendered into text is `True`/`False` in minijinja as it is in Jinja2.

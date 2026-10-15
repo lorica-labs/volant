@@ -479,6 +479,7 @@ fn walk(root: &Path, path: &Path, create: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::scratch;
     use std::collections::BTreeSet;
 
     use serde_json::json;
@@ -486,14 +487,6 @@ mod tests {
 
     use super::*;
     use crate::vars::HostVars;
-
-    /// A fresh directory of this test process's own under the system's temporary directory.
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("volant-fetch-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     fn start_with(
         args: Value,
@@ -591,7 +584,8 @@ mod tests {
     /// chose.
     #[test]
     fn a_dest_a_host_named_is_never_written() {
-        let dir = scratch("host-named");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("chosen");
         let untrusted: BTreeSet<String> = ["dest".to_string()].into();
         for escalated in [false, true] {
@@ -624,7 +618,8 @@ mod tests {
     /// reference does, which writes the marker.
     #[test]
     fn a_src_that_climbs_out_of_dest_is_refused_and_nothing_is_written() {
-        let dir = scratch("climb");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let marker = dir.join("esc.txt");
         let dest = dir.join("fetched");
         let climb = format!(
@@ -661,7 +656,8 @@ mod tests {
     /// writes wherever a host's `stat` or `slurp` says the file is.
     #[test]
     fn a_path_the_host_names_back_cannot_climb_out_either() {
-        let dir = scratch("reported");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         // Out of `probe-hostname/`, into a sibling host's directory: still under `dest`, and
         // still refused.
@@ -692,7 +688,8 @@ mod tests {
     /// host `a`'s directory and `..`'s beside `dest`.
     #[test]
     fn a_host_name_that_is_not_one_path_component_is_refused() {
-        let dir = scratch("names");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         for host in ["a/b", "..", ".", ""] {
             let mut plugin = start_with(
@@ -733,7 +730,8 @@ mod tests {
     #[test]
     fn a_symlink_inside_dest_never_redirects_the_write() {
         use std::os::unix::fs::symlink;
-        let dir = scratch("links");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let outside = dir.join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("target.txt"), "kept").unwrap();
@@ -799,7 +797,8 @@ mod tests {
     /// slurps and rewrites the file on every run, or the bytes rendered, which writes `2`.
     #[test]
     fn a_file_is_written_under_its_host_and_left_alone_once_there() {
-        let dir = scratch("written");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         let data = b"{{ 1 + 1 }}\n";
         let sum = sha1_hex(data);
@@ -842,7 +841,8 @@ mod tests {
     /// red: a `stat` first, which the reference does not send.
     #[test]
     fn under_become_the_file_is_slurped_without_a_stat() {
-        let dir = scratch("become");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         let args = json!({"src": "/etc/k.yaml", "dest": dest.display().to_string()});
         let mut plugin = start_with(args.clone(), &BTreeSet::new(), "probe-hostname", true);
@@ -863,7 +863,8 @@ mod tests {
     /// directory `dest` replaced by the file.
     #[test]
     fn flat_writes_dest_or_the_name_inside_it() {
-        let dir = scratch("flat");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let into = format!("{}/", dir.join("into").display());
         let mut plugin =
             start_plain(json!({"src": "/tmp/v/d/one.txt", "dest": into, "flat": true}));
@@ -908,7 +909,8 @@ mod tests {
     /// this red: a missing file written as an empty one, or a directory slurped.
     #[test]
     fn a_missing_source_follows_fail_on_missing_and_a_directory_fails() {
-        let dir = scratch("missing");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched").display().to_string();
         let not_found = json!({"failed": true, "msg": "file not found: /nope"});
         for (fail_on_missing, failed) in [(false, None), (true, Some(json!(true)))] {
@@ -997,7 +999,8 @@ mod tests {
     /// the host's file, or the mismatched file renamed into place.
     #[test]
     fn a_checksum_mismatch_writes_nothing() {
-        let dir = scratch("mismatch");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         let file = dest.join("probe-hostname/one.txt");
         for validate in [true, false] {
@@ -1032,7 +1035,8 @@ mod tests {
     /// place is a directory, the same path a full disk takes.
     #[test]
     fn a_failed_write_leaves_no_temporary_file() {
-        let dir = scratch("failed-write");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         let file = dest.join("probe-hostname/one.txt");
         std::fs::create_dir_all(&file).unwrap();
@@ -1058,7 +1062,8 @@ mod tests {
     /// and a write fails, mismatches, or reports `changed` for a file holding the other's bytes.
     #[test]
     fn two_hosts_fetching_to_one_path_do_not_mix_their_bytes() {
-        let dir = scratch("concurrent");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let target = dir.join("kubeconfig");
         for round in 0..20 {
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -1112,7 +1117,8 @@ mod tests {
     #[test]
     fn a_file_fetched_again_keeps_its_mode() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = scratch("mode");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let target = dir.join("kubeconfig");
         std::fs::write(&target, "old").unwrap();
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -1133,7 +1139,8 @@ mod tests {
     /// fetches in another host's directory under `dest`.
     #[test]
     fn a_host_directory_a_host_named_is_refused() {
-        let dir = scratch("loop-var");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let dest = dir.join("fetched");
         let mut vars = HostVars::default();
         vars.insert_untrusted("inventory_hostname".into(), json!("other-host"));

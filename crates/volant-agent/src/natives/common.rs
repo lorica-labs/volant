@@ -978,7 +978,7 @@ mod tests {
                 default: || Value::Null,
             },
         ];
-        let args = |v: Value| v.as_object().unwrap().clone();
+        use crate::testing::args;
         assert_eq!(
             invocation(SPEC, &args(json!({"dest": "/etc/hostname"}))),
             json!({"module_args": {
@@ -1010,7 +1010,7 @@ mod tests {
             aliases: &["dest"],
             default: || Value::Null,
         }];
-        let args = |v: Value| v.as_object().unwrap().clone();
+        use crate::testing::args;
         assert_eq!(check_names(SPEC, &args(json!({"dest": "/a"}))), Ok(()));
         assert!(check_names(SPEC, &args(json!({"path": "/a", "dest": "/a"}))).is_err());
         assert!(check_names(SPEC, &args(json!({"path": "/a", "bogus": 1}))).is_err());

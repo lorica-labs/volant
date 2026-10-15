@@ -283,7 +283,7 @@ mod tests {
     /// the reference runs.
     #[test]
     fn an_argument_the_reference_does_not_have_gets_the_reference_s_sentence() {
-        let args = |v: Value| v.as_object().unwrap().clone();
+        use crate::testing::args;
         for spec in [&COMMAND, &SHELL] {
             let msg = unsupported_parameters(
                 spec,
@@ -326,7 +326,7 @@ mod tests {
     /// engines.
     #[test]
     fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
-        let args = |v: Value| v.as_object().unwrap().clone();
+        use crate::testing::args;
         for refused in [json!(true), json!("true"), json!("YES"), json!(1)] {
             assert_eq!(
                 refused_argument(

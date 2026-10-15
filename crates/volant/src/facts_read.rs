@@ -1076,20 +1076,18 @@ fn close(s: &str, open: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::scratch;
 
     /// A scratch tree for one test, removed when it goes out of scope.
-    struct Tree(PathBuf);
+    struct Tree(tempfile::TempDir);
 
     impl Tree {
-        fn new(name: &str) -> Tree {
-            let dir = std::env::temp_dir()
-                .join(format!("volant-facts-read-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            Tree(dir)
+        fn new() -> Tree {
+            Tree(scratch())
         }
 
         fn file(&self, path: &str, text: &str) -> &Self {
-            let path = self.0.join(path);
+            let path = self.0.path().join(path);
             std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
             std::fs::write(path, text).expect("a file");
             self
@@ -1097,10 +1095,10 @@ mod tests {
 
         /// Every play of `site.yml`, compiled with `roles/` beside it, read under `inventory`.
         fn read(&self, inventory: &str) -> FactsRead {
-            let pb =
-                crate::playbook::load(&self.0.join("site.yml")).unwrap_or_else(|e| panic!("{e:#}"));
+            let pb = crate::playbook::load(&self.0.path().join("site.yml"))
+                .unwrap_or_else(|e| panic!("{e:#}"));
             let search = crate::roles::RoleSearch {
-                paths: vec![self.0.join("roles")],
+                paths: vec![self.0.path().join("roles")],
                 collections: Vec::new(),
             };
             let compiled: Vec<Compiled> = pb
@@ -1120,15 +1118,10 @@ mod tests {
             let reach = Reach::walk(&walked).unwrap_or_else(|e| panic!("{e:#}"));
             let inventory =
                 crate::inventory::Inventory::parse_ini(inventory).expect("an inventory");
-            let store = VarStore::new(&inventory, None, &self.0, Map::new()).expect("a var store");
+            let store =
+                VarStore::new(&inventory, None, self.0.path(), Map::new()).expect("a var store");
             let plays: Vec<(&Play, &Compiled)> = pb.plays.iter().zip(&compiled).collect();
             facts_read(&plays, &reach, &store)
-        }
-    }
-
-    impl Drop for Tree {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
@@ -1144,8 +1137,8 @@ mod tests {
     }
 
     /// One task file holding `when` over `expr`, in a play of its own.
-    fn read_one(name: &str, expr: &str) -> FactsRead {
-        let tree = Tree::new(name);
+    fn read_one(expr: &str) -> FactsRead {
+        let tree = Tree::new();
         tree.file(
             "site.yml",
             &format!(
@@ -1168,7 +1161,7 @@ mod tests {
     /// `ansible_user` taken for a fact.
     #[test]
     fn the_proof_roles_read_only_native_facts() {
-        let tree = Tree::new("roles");
+        let tree = Tree::new();
         tree.file(
             "site.yml",
             "- hosts: targets\n  become: true\n  roles:\n    - geerlingguy.security\n    - geerlingguy.nginx\n    - geerlingguy.git\n    - geerlingguy.pip\n",
@@ -1272,7 +1265,7 @@ mod tests {
     /// `package_facts` keys counted as `setup`'s.
     #[test]
     fn the_k3s_playbook_reads_only_native_facts() {
-        let tree = Tree::new("k3s");
+        let tree = Tree::new();
         tree.file(
             "site.yml",
             "- name: Cluster prep\n  hosts: k3s_cluster\n  gather_facts: true\n  roles:\n    - role: prereq\n    - role: raspberrypi\n\
@@ -1384,10 +1377,13 @@ mod tests {
             ("legacy-vars", "query('ansible.legacy.vars', fact_name)"),
             ("lookup-space", "lookup ('vars', fact_name)"),
         ] {
-            let read = read_one(name, expr);
-            assert!(matches!(read, FactsRead::All(_)), "{expr}: {read:?}");
-            assert!(!native_gather_allowed(&read), "{expr}");
-            assert_eq!(decide(&read).0, Facts::Python, "{expr}");
+            let read = read_one(expr);
+            assert!(
+                matches!(read, FactsRead::All(_)),
+                "{name}: {expr}: {read:?}"
+            );
+            assert!(!native_gather_allowed(&read), "{name}: {expr}");
+            assert_eq!(decide(&read).0, Facts::Python, "{name}: {expr}");
         }
     }
 
@@ -1423,7 +1419,7 @@ mod tests {
                 "nodename",
             ),
         ] {
-            assert_eq!(keys(&read_one(name, expr)), &set(&[key]), "{expr}");
+            assert_eq!(keys(&read_one(expr)), &set(&[key]), "{name}: {expr}");
         }
     }
 
@@ -1432,7 +1428,7 @@ mod tests {
     /// What would make this red: the check against `NATIVE_FACT_KEYS` skipped.
     #[test]
     fn a_key_outside_the_native_keeps_python_facts() {
-        let read = read_one("mounts", "ansible_mounts | map(attribute='mount')");
+        let read = read_one("ansible_mounts | map(attribute='mount')");
         assert_eq!(keys(&read), &set(&["mounts"]));
         assert!(!native_gather_allowed(&read));
         assert_eq!(
@@ -1450,7 +1446,7 @@ mod tests {
     /// What would make this red: any of those sources left unread, which drops its key.
     #[test]
     fn every_source_of_text_is_read() {
-        let tree = Tree::new("sources");
+        let tree = Tree::new();
         tree.file(
             "site.yml",
             concat!(
@@ -1504,7 +1500,7 @@ mod tests {
                 "include_vars: \"{{ ansible_user_dir }}/vars.yml\"",
             ),
         ] {
-            let tree = Tree::new(name);
+            let tree = Tree::new();
             tree.file(
                 "site.yml",
                 &format!("- hosts: all\n  tasks:\n    - {task}\n"),
@@ -1525,9 +1521,9 @@ mod tests {
             ("facter", "facter_virtual == 'kvm'", "facter_virtual"),
             ("ohai", "ohai_platform", "ohai_platform"),
         ] {
-            let read = read_one(name, expr);
-            assert_eq!(keys(&read), &set(&[key]), "{expr}");
-            assert!(!native_gather_allowed(&read), "{expr}");
+            let read = read_one(expr);
+            assert_eq!(keys(&read), &set(&[key]), "{name}: {expr}");
+            assert!(!native_gather_allowed(&read), "{name}: {expr}");
         }
     }
 
@@ -1556,7 +1552,7 @@ mod tests {
                      - include_tasks: \"{{ hook }}\"\n",
                 );
         };
-        let tree = Tree::new("leave-playbook-dir");
+        let tree = Tree::new();
         role(&tree);
         tree.file(
             "group_vars/all.yml",
@@ -1564,7 +1560,7 @@ mod tests {
         );
         assert!(matches!(tree.read("h1\n"), FactsRead::All(_)));
 
-        let tree = Tree::new("leave-by-name");
+        let tree = Tree::new();
         role(&tree);
         tree.file("group_vars/all.yml", "conf: custom.j2\n").file(
             "templates/custom.j2",
@@ -1574,14 +1570,14 @@ mod tests {
         assert_eq!(keys(&read), &set(&["hostname", "virtualization_type"]));
         assert!(!native_gather_allowed(&read));
 
-        let tree = Tree::new("leave-hook");
+        let tree = Tree::new();
         role(&tree);
-        let hook = tree.0.join("hooks/extra.yml");
+        let hook = tree.0.path().join("hooks/extra.yml");
         tree.file("hooks/extra.yml", "- debug: msg=\"{{ ansible_mounts }}\"\n")
             .file("group_vars/all.yml", &format!("hook: {}\n", hook.display()));
         assert!(matches!(tree.read("h1\n"), FactsRead::All(_)));
 
-        let tree = Tree::new("leave-hook-templated");
+        let tree = Tree::new();
         role(&tree);
         tree.file("hooks/extra.yml", "- debug: msg=\"{{ ansible_mounts }}\"\n")
             .file(
@@ -1591,7 +1587,7 @@ mod tests {
         assert!(matches!(tree.read("h1\n"), FactsRead::All(_)));
 
         // A variable named by a template can be any variable.
-        let tree = Tree::new("leave-set-fact");
+        let tree = Tree::new();
         role(&tree);
         tree.file(
             "roles/web/tasks/pick.yml",
@@ -1600,7 +1596,7 @@ mod tests {
         assert!(matches!(tree.read("h1\n"), FactsRead::All(_)));
 
         // `with_first_found` finds a file in the playbook's `files/` before the role's own.
-        let tree = Tree::new("leave-first-found");
+        let tree = Tree::new();
         role(&tree);
         tree.file(
             "roles/web/tasks/os.yml",
@@ -1612,7 +1608,7 @@ mod tests {
 
         // Known values alone: a name read, a fact standing for any name, followed out of the
         // role to the playbook's `vars/`.
-        let tree = Tree::new("stay");
+        let tree = Tree::new();
         role(&tree);
         tree.file("vars/Debian.yml", "x: \"{{ ansible_lsb }}\"\n")
             .file(
@@ -1631,7 +1627,7 @@ mod tests {
     /// `vars`.
     #[test]
     fn a_block_keyword_in_an_included_file_is_read() {
-        let tree = Tree::new("block");
+        let tree = Tree::new();
         tree.file("site.yml", "- hosts: all\n  roles:\n    - base\n")
             .file(
                 "roles/base/tasks/main.yml",
@@ -1653,7 +1649,7 @@ mod tests {
     /// What would make this red: the walk taking only the handlers' module names.
     #[test]
     fn a_play_handler_include_is_read() {
-        let tree = Tree::new("handler");
+        let tree = Tree::new();
         tree.file(
             "site.yml",
             "- hosts: all\n  tasks:\n    - debug: msg=x\n  handlers:\n    - name: reconfigure\n      include_tasks: handlers/reconfigure.yml\n",

@@ -1812,10 +1812,7 @@ mod tests {
 
     use super::*;
     use crate::playbook::parse;
-
-    fn compiled(text: &str) -> Compiled {
-        selected(text, &selection(&[], &[]))
-    }
+    use crate::testing::{compiled, play, scratch};
 
     /// The three states the doc comment on [`beside_or_in_role`] measures against
     /// UBUNTU22-CIS: only beside the importer, only in the role's own `tasks/`, and both -
@@ -1827,9 +1824,8 @@ mod tests {
     /// this crate's own test gate.
     #[test]
     fn beside_or_in_role_prefers_beside_and_falls_back_to_the_role() {
-        let dir =
-            std::env::temp_dir().join(format!("volant-beside-or-in-role-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let file_dir = dir.join("tasks/sub");
         let role_tasks = dir.join("tasks");
         std::fs::create_dir_all(&file_dir).unwrap();
@@ -1863,7 +1859,7 @@ mod tests {
     /// shift the whole list by one and say nothing about the layout these tests are about.
     /// `a_play_that_gathers_facts_opens_with_the_setup_module` is the one that turns it back on.
     fn selected(text: &str, selection: &TagSelection) -> Compiled {
-        let mut pb = parse(text, "x.yml").unwrap_or_else(|e| panic!("{e:#}"));
+        let mut pb = play(text);
         pb.plays[0].gather_facts = false;
         compile(&pb.plays[0], &RoleSearch::default(), selection).unwrap_or_else(|e| panic!("{e:#}"))
     }
@@ -2819,8 +2815,8 @@ mod tests {
             &'static [&'static str],
             Option<&'static [&'static str]>,
         );
-        let dir = std::env::temp_dir().join(format!("volant-include-tags-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         for role in ["r", "r2", "r3", "nest"] {
             std::fs::create_dir_all(dir.join("roles").join(role).join("tasks")).unwrap();
         }
@@ -2915,7 +2911,6 @@ mod tests {
         .unwrap()
         .expect_err("an inherited check_mode: true");
         assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Inserting steps one past the last step of a block's body grows that body and shifts the
@@ -3043,7 +3038,7 @@ mod tests {
     #[test]
     fn a_play_that_gathers_facts_opens_with_the_setup_module() {
         let text = "- hosts: all\n  tasks:\n    - name: body\n      command: \"true\"\n";
-        let pb = parse(text, "x.yml").expect("a playbook");
+        let pb = play(text);
         let gathering = |selection: &TagSelection| {
             compile(&pb.plays[0], &RoleSearch::default(), selection).expect("a compiled play")
         };

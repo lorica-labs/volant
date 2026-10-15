@@ -878,10 +878,9 @@ pub(super) fn display(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{hvars, task};
     use super::*;
+    use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
 
     /// Each shape below was run through `ansible-core 2.19.12` as a `debug: msg=` argument
     /// first, and the expectations are what it printed: a key nested three levels down goes,
@@ -1194,107 +1193,85 @@ mod tests {
             .collect()
     }
 
-    /// `ignore_errors` written as a template is rendered for each item that runs, and read the
-    /// way ansible-core's `boolean(strict=True)` reads a keyword. Measured on ansible-core
-    /// 2.19.12: `ignore_errors: "{{ ansible_check_mode }}"` on a failing `command` fails the task
-    /// outside `--check`, and a render that is not a boolean fails it with `Error processing
-    /// keyword 'ignore_errors': The value ... could not be converted to 'bool'.`
-    ///
-    /// What would make this red: the render in `prepare` removed, which leaves every template
-    /// reading as not ignoring, `"{{ true }}"` included; a reader narrower than the reference's,
-    /// which refuses `-e lenient=1`; or a render that is not a boolean read as `false` rather
-    /// than refused.
+    /// A templated `ignore_errors` is read like a strict boolean, once per item, and also in an included file.
     #[test]
-    fn a_templated_ignore_errors_is_rendered_when_the_task_runs() {
-        let store = store_at(Path::new("."));
-        for (template, want) in [
-            ("{{ ansible_check_mode }}", false),
-            ("{{ true }}", true),
-            ("{{ 1 }}", true),
-            ("{{ 0.0 }}", false),
-            ("{{ ' Y ' }}", true),
-            ("{{ 'Off' }}", false),
-            ("{{ 't' }}", true),
-        ] {
+    fn a_templated_ignore_errors_is_rendered_per_item_and_in_includes() {
+        {
+            let store = store_at(Path::new("."));
+            for (template, want) in [
+                ("{{ ansible_check_mode }}", false),
+                ("{{ true }}", true),
+                ("{{ 1 }}", true),
+                ("{{ 0.0 }}", false),
+                ("{{ ' Y ' }}", true),
+                ("{{ 'Off' }}", false),
+                ("{{ 't' }}", true),
+            ] {
+                assert_eq!(
+                    verdicts(&failing(template), &store),
+                    [Some(want)],
+                    "{template}"
+                );
+            }
+            for (template, shown) in [("{{ 'maybe' }}", "'maybe'"), ("{{ 2 }}", "2")] {
+                let Err(err) = prepared(&failing(template), &store) else {
+                    panic!("{template} is not a boolean");
+                };
+                assert!(
+                    err.0.contains(&format!(
+                        "Error processing keyword 'ignore_errors': The value {shown} could not be converted to 'bool'."
+                    )),
+                    "{}",
+                    err.0
+                );
+            }
+
+            // A task a `when` left out never renders it, so a template it could not render is not
+            // its problem; a task that wrote no template carries no verdict of its own.
+            let mut step = failing("{{ nosuch }}");
+            step.task.when = vec!["false".into()];
+            assert!(prepared(&step, &store).is_ok());
+            let step = step_of(task("command"), Origin::default());
+            assert_eq!(verdicts(&step, &store), [None]);
+        }
+        {
+            let store = store_at(Path::new("."));
+            let mut step = failing("{{ item }}");
+            step.task.loop_items = Some(json!([true, false, "yes"]));
             assert_eq!(
-                verdicts(&failing(template), &store),
-                [Some(want)],
-                "{template}"
+                verdicts(&step, &store),
+                [Some(true), Some(false), Some(true)]
             );
+
+            let mut values = Map::new();
+            values.insert("item".into(), json!(false));
+            step.include_params = Some(Arc::new(IncludeParams {
+                values,
+                untrusted: BTreeSet::new(),
+            }));
+            step.task.loop_items = Some(json!([true]));
+            assert_eq!(verdicts(&step, &store), [Some(true)]);
+
+            let mut step = failing("{{ true }}");
+            step.task.loop_items = Some(json!([1, 2]));
+            step.task.when = vec!["item == 1".into()];
+            assert_eq!(verdicts(&step, &store), [Some(true), None]);
         }
-        for (template, shown) in [("{{ 'maybe' }}", "'maybe'"), ("{{ 2 }}", "2")] {
-            let Err(err) = prepared(&failing(template), &store) else {
-                panic!("{template} is not a boolean");
-            };
-            assert!(
-                err.0.contains(&format!(
-                    "Error processing keyword 'ignore_errors': The value {shown} could not be converted to 'bool'."
-                )),
-                "{}",
-                err.0
-            );
+        {
+            let store = store_at(Path::new("."));
+            let mut step = failing("{{ lenient }}");
+            step.origin = Arc::new(Origin {
+                depth: 1,
+                ..Origin::default()
+            });
+            let mut values = Map::new();
+            values.insert("lenient".into(), json!(true));
+            step.include_params = Some(Arc::new(IncludeParams {
+                values,
+                untrusted: BTreeSet::new(),
+            }));
+            assert_eq!(verdicts(&step, &store), [Some(true)]);
         }
-
-        // A task a `when` left out never renders it, so a template it could not render is not
-        // its problem; a task that wrote no template carries no verdict of its own.
-        let mut step = failing("{{ nosuch }}");
-        step.task.when = vec!["false".into()];
-        assert!(prepared(&step, &store).is_ok());
-        let step = step_of(task("command"), Origin::default());
-        assert_eq!(verdicts(&step, &store), [None]);
-    }
-
-    /// Each loop item renders its own verdict against its own variables, so items can disagree,
-    /// and an outer `item` an include handed down does not decide for the inner loop's items. An
-    /// item a `when` left out renders nothing.
-    ///
-    /// What would make this red: the verdict rendered once against the task's variables, which
-    /// fails on `item` as undefined, or reads the outer one for every item.
-    #[test]
-    fn each_loop_item_renders_its_own_ignore_errors() {
-        let store = store_at(Path::new("."));
-        let mut step = failing("{{ item }}");
-        step.task.loop_items = Some(json!([true, false, "yes"]));
-        assert_eq!(
-            verdicts(&step, &store),
-            [Some(true), Some(false), Some(true)]
-        );
-
-        let mut values = Map::new();
-        values.insert("item".into(), json!(false));
-        step.include_params = Some(Arc::new(IncludeParams {
-            values,
-            untrusted: BTreeSet::new(),
-        }));
-        step.task.loop_items = Some(json!([true]));
-        assert_eq!(verdicts(&step, &store), [Some(true)]);
-
-        let mut step = failing("{{ true }}");
-        step.task.loop_items = Some(json!([1, 2]));
-        step.task.when = vec!["item == 1".into()];
-        assert_eq!(verdicts(&step, &store), [Some(true), None]);
-    }
-
-    /// A step an include brought in goes through the same `prepare`, so its templated
-    /// `ignore_errors` is rendered too, and against what the include handed down.
-    ///
-    /// What would make this red: the render tied to steps compiled with the play rather than
-    /// to every step `prepare` is given.
-    #[test]
-    fn a_templated_ignore_errors_in_an_included_file_is_rendered_too() {
-        let store = store_at(Path::new("."));
-        let mut step = failing("{{ lenient }}");
-        step.origin = Arc::new(Origin {
-            depth: 1,
-            ..Origin::default()
-        });
-        let mut values = Map::new();
-        values.insert("lenient".into(), json!(true));
-        step.include_params = Some(Arc::new(IncludeParams {
-            values,
-            untrusted: BTreeSet::new(),
-        }));
-        assert_eq!(verdicts(&step, &store), [Some(true)]);
     }
 
     /// An undefined variable in `loop:` or `with_*` waits for the task's `when`, the way
@@ -1360,104 +1337,90 @@ mod tests {
         assert!(!err.is_undefined(), "{}", err.0);
     }
 
-    /// `role_path` and `ansible_search_path` in a role's task and in a playbook's. Measured on
-    /// ansible-core 2.19.12 (sanitised): `role_path=~/.../roles/probe | search=['~/.../roles/probe',
-    /// '~/.../roles/probe/tasks', '~/...']`, and outside a role the path is the playbook's
-    /// directory alone with `role_path` undefined.
-    ///
-    /// What would make this red: the playbook's task listing its directory twice; `role_path`
-    /// defined outside a role; or either inserted as data, which leaves a host fact of the same
-    /// name in charge of where the lookups look.
+    /// A role's task carries its role path and search path, and a host's facts never choose them.
     #[test]
-    fn a_role_s_task_carries_its_role_path_and_search_path() {
-        let play = PathBuf::from("/srv/play");
-        let role = play.join("roles/probe");
-        let store = store_at(&play);
-        store.lock().unwrap().set_untrusted_fact(
-            "h1",
-            "ansible_search_path",
-            json!(["/from/a/host"]),
-        );
-        let in_role = step_of(
-            task("command"),
-            Origin {
-                file_dir: role.join("tasks"),
-                role_dir: Some(role.clone()),
-                depth: 0,
-                inherited: None,
-            },
-        );
-        let vars = &prepared(&in_role, &store).unwrap()[0].vars;
-        assert_eq!(vars.map["role_path"], json!("/srv/play/roles/probe"));
-        assert_eq!(
-            vars.map["ansible_search_path"],
-            json!([
-                "/srv/play/roles/probe",
-                "/srv/play/roles/probe/tasks",
-                "/srv/play"
-            ])
-        );
-        assert!(!vars.untrusted.contains("ansible_search_path"));
-        assert!(!vars.untrusted.contains("role_path"));
+    fn the_role_path_and_search_path_are_the_engine_s_own() {
+        {
+            let play = PathBuf::from("/srv/play");
+            let role = play.join("roles/probe");
+            let store = store_at(&play);
+            store.lock().unwrap().set_untrusted_fact(
+                "h1",
+                "ansible_search_path",
+                json!(["/from/a/host"]),
+            );
+            let in_role = step_of(
+                task("command"),
+                Origin {
+                    file_dir: role.join("tasks"),
+                    role_dir: Some(role.clone()),
+                    depth: 0,
+                    inherited: None,
+                },
+            );
+            let vars = &prepared(&in_role, &store).unwrap()[0].vars;
+            assert_eq!(vars.map["role_path"], json!("/srv/play/roles/probe"));
+            assert_eq!(
+                vars.map["ansible_search_path"],
+                json!([
+                    "/srv/play/roles/probe",
+                    "/srv/play/roles/probe/tasks",
+                    "/srv/play"
+                ])
+            );
+            assert!(!vars.untrusted.contains("ansible_search_path"));
+            assert!(!vars.untrusted.contains("role_path"));
 
-        let in_play = step_of(
-            task("command"),
-            Origin {
-                file_dir: play.clone(),
-                role_dir: None,
-                depth: 0,
-                inherited: None,
-            },
-        );
-        let vars = &prepared(&in_play, &store).unwrap()[0].vars;
-        assert_eq!(vars.map["ansible_search_path"], json!(["/srv/play"]));
-        assert!(!vars.map.contains_key("role_path"));
-    }
-
-    /// A managed host that reports `role_path` and `ansible_search_path` as facts does not choose
-    /// where a role's lookups look on the controller. Gathered facts are a layer read ahead of
-    /// the host's own map, so the engine's two values have to leave that layer as they are
-    /// written, which `HostVars::insert` does.
-    ///
-    /// What would make this red: the two written straight into `map`, under the host's facts,
-    /// which then answer with a directory the host chose.
-    #[test]
-    fn a_host_s_facts_never_choose_the_search_path() {
-        let play = PathBuf::from("/srv/play");
-        let role = play.join("roles/probe");
-        let store = store_at(&play);
-        store.lock().unwrap().gather_facts(
-            "h1",
-            json!({"role_path": "/tmp/x", "ansible_search_path": ["/tmp/x"]})
-                .as_object()
-                .unwrap(),
-        );
-        let in_role = step_of(
-            task("command"),
-            Origin {
-                file_dir: role.join("tasks"),
-                role_dir: Some(role.clone()),
-                depth: 0,
-                inherited: None,
-            },
-        );
-        let vars = &prepared(&in_role, &store).unwrap()[0].vars;
-        assert_eq!(vars.get("role_path"), Some(&json!("/srv/play/roles/probe")));
-        assert_eq!(
-            vars.get("ansible_search_path"),
-            Some(&json!([
-                "/srv/play/roles/probe",
-                "/srv/play/roles/probe/tasks",
-                "/srv/play"
-            ]))
-        );
-        let templar = Templar::new(play.clone());
-        assert_eq!(
-            templar.render("{{ role_path }}", vars).unwrap(),
-            json!("/srv/play/roles/probe"),
-            "a template reads the engine's value too"
-        );
-        assert!(!vars.untrusted.contains("role_path"));
+            let in_play = step_of(
+                task("command"),
+                Origin {
+                    file_dir: play.clone(),
+                    role_dir: None,
+                    depth: 0,
+                    inherited: None,
+                },
+            );
+            let vars = &prepared(&in_play, &store).unwrap()[0].vars;
+            assert_eq!(vars.map["ansible_search_path"], json!(["/srv/play"]));
+            assert!(!vars.map.contains_key("role_path"));
+        }
+        {
+            let play = PathBuf::from("/srv/play");
+            let role = play.join("roles/probe");
+            let store = store_at(&play);
+            store.lock().unwrap().gather_facts(
+                "h1",
+                json!({"role_path": "/tmp/x", "ansible_search_path": ["/tmp/x"]})
+                    .as_object()
+                    .unwrap(),
+            );
+            let in_role = step_of(
+                task("command"),
+                Origin {
+                    file_dir: role.join("tasks"),
+                    role_dir: Some(role.clone()),
+                    depth: 0,
+                    inherited: None,
+                },
+            );
+            let vars = &prepared(&in_role, &store).unwrap()[0].vars;
+            assert_eq!(vars.get("role_path"), Some(&json!("/srv/play/roles/probe")));
+            assert_eq!(
+                vars.get("ansible_search_path"),
+                Some(&json!([
+                    "/srv/play/roles/probe",
+                    "/srv/play/roles/probe/tasks",
+                    "/srv/play"
+                ]))
+            );
+            let templar = Templar::new(play.clone());
+            assert_eq!(
+                templar.render("{{ role_path }}", vars).unwrap(),
+                json!("/srv/play/roles/probe"),
+                "a template reads the engine's value too"
+            );
+            assert!(!vars.untrusted.contains("role_path"));
+        }
     }
 
     /// A task's own `vars:` built from a lookup that needs the role's search path to find its
@@ -1473,9 +1436,8 @@ mod tests {
     /// unevaluated call stored where a later, one-pass read can no longer template it.
     #[test]
     fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
-        let play =
-            std::env::temp_dir().join(format!("volant-prepare-searchpath-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&play);
+        let play_guard = scratch();
+        let play = play_guard.path().to_path_buf();
         let role = play.join("roles/probe");
         std::fs::create_dir_all(role.join("templates")).expect("role dir");
         std::fs::write(role.join("templates/t.j2"), "{{ '{{ 1 + 1 }}' }}").expect("template file");
@@ -1519,8 +1481,6 @@ mod tests {
             "{:?}",
             vars.untrusted
         );
-
-        let _ = std::fs::remove_dir_all(&play);
     }
 
     fn plan() -> PlayPlan {
@@ -1536,186 +1496,165 @@ mod tests {
         }
     }
 
-    fn defaults() -> ConnectionDefaults {
-        ConnectionDefaults {
-            remote_user: None,
-            private_key: None,
-            host_key_checking: true,
-            remote_tmp: "~/.ansible/tmp".into(),
-            connect_timeout: Duration::from_secs(10),
-            r#become: false,
-            become_user: "root".into(),
-            become_method: "sudo".into(),
-            become_password: None,
+    /// The `become` flag and its target user: host variable, then task keyword, then play keyword, then root.
+    #[test]
+    fn become_follows_the_variable_then_the_task_then_the_play() {
+        {
+            let templar = templar();
+            let escalate = |task_become, play_become, host: Value| {
+                let mut t = task("command");
+                t.r#become = task_become;
+                let mut p = plan();
+                p.r#become = play_become;
+                become_for(&t, &p, &hvars(host), &defaults(), &templar).unwrap()
+            };
+            assert!(
+                escalate(None, Some(true), json!({"ansible_become": false})).is_none(),
+                "the variable turns a play's become off"
+            );
+            assert!(
+                escalate(None, Some(false), json!({"ansible_become": true})).is_some(),
+                "and turns it on where the play said no"
+            );
+            assert!(
+                escalate(Some(true), None, json!({"ansible_become": false})).is_none(),
+                "a task keyword loses to the variable too"
+            );
+            assert!(
+                escalate(Some(false), Some(true), json!({})).is_none(),
+                "with no variable, the task keyword beats the play's"
+            );
+            assert!(
+                escalate(None, Some(true), json!({})).is_some(),
+                "and the play keyword stands on its own"
+            );
+            assert!(
+                escalate(None, None, json!({"ansible_become": "yes"})).is_some(),
+                "a variable spelled the way Ansible content spells it is still a boolean"
+            );
+        }
+        {
+            let templar = templar();
+            let mut t = task("command");
+            t.r#become = Some(true);
+            let mut p = plan();
+            p.become_user = Some("play".into());
+            assert_eq!(
+                become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
+                    .unwrap()
+                    .unwrap()
+                    .user,
+                "play"
+            );
+            t.become_user = Some("task".into());
+            assert_eq!(
+                become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
+                    .unwrap()
+                    .unwrap()
+                    .user,
+                "task"
+            );
+            let host = hvars(json!({"ansible_become_user": "host"}));
+            assert_eq!(
+                become_for(&t, &p, &host, &defaults(), &templar)
+                    .unwrap()
+                    .unwrap()
+                    .user,
+                "host",
+                "the variable wins here as well"
+            );
+            let bare = task("command");
+            let mut d = defaults();
+            d.r#become = true;
+            assert_eq!(
+                become_for(&bare, &plan(), &HostVars::default(), &d, &templar)
+                    .unwrap()
+                    .unwrap()
+                    .user,
+                "root",
+                "nothing said anywhere means root, as in Ansible"
+            );
+            let templated = hvars(json!({"ansible_become_user": "{{ who }}", "who": "deploy"}));
+            assert_eq!(
+                become_for(&t, &p, &templated, &defaults(), &templar)
+                    .unwrap()
+                    .unwrap()
+                    .user,
+                "deploy",
+                "a templated user is resolved before the link is keyed by it"
+            );
         }
     }
 
-    /// The order measured against `ansible-core 2.19.12`: `ansible_become` wins over both
-    /// keywords, in both directions, and the task keyword wins over the play's.
+    /// A per-item `become_user` and an unsupported method are refused by name.
     #[test]
-    fn a_host_variable_beats_both_become_keywords() {
-        let templar = Templar::new(std::env::temp_dir());
-        let escalate = |task_become, play_become, host: Value| {
+    fn a_become_that_cannot_be_honoured_says_why() {
+        {
+            let templar = templar();
             let mut t = task("command");
-            t.r#become = task_become;
-            let mut p = plan();
-            p.r#become = play_become;
-            become_for(&t, &p, &hvars(host), &defaults(), &templar).unwrap()
-        };
-        assert!(
-            escalate(None, Some(true), json!({"ansible_become": false})).is_none(),
-            "the variable turns a play's become off"
-        );
-        assert!(
-            escalate(None, Some(false), json!({"ansible_become": true})).is_some(),
-            "and turns it on where the play said no"
-        );
-        assert!(
-            escalate(Some(true), None, json!({"ansible_become": false})).is_none(),
-            "a task keyword loses to the variable too"
-        );
-        assert!(
-            escalate(Some(false), Some(true), json!({})).is_none(),
-            "with no variable, the task keyword beats the play's"
-        );
-        assert!(
-            escalate(None, Some(true), json!({})).is_some(),
-            "and the play keyword stands on its own"
-        );
-        assert!(
-            escalate(None, None, json!({"ansible_become": "yes"})).is_some(),
-            "a variable spelled the way Ansible content spells it is still a boolean"
-        );
-    }
-
-    #[test]
-    fn the_target_user_follows_the_same_order_and_defaults_to_root() {
-        let templar = Templar::new(std::env::temp_dir());
-        let mut t = task("command");
-        t.r#become = Some(true);
-        let mut p = plan();
-        p.become_user = Some("play".into());
-        assert_eq!(
-            become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
-                .unwrap()
-                .unwrap()
-                .user,
-            "play"
-        );
-        t.become_user = Some("task".into());
-        assert_eq!(
-            become_for(&t, &p, &HostVars::default(), &defaults(), &templar)
-                .unwrap()
-                .unwrap()
-                .user,
-            "task"
-        );
-        let host = hvars(json!({"ansible_become_user": "host"}));
-        assert_eq!(
-            become_for(&t, &p, &host, &defaults(), &templar)
-                .unwrap()
-                .unwrap()
-                .user,
-            "host",
-            "the variable wins here as well"
-        );
-        let bare = task("command");
-        let mut d = defaults();
-        d.r#become = true;
-        assert_eq!(
-            become_for(&bare, &plan(), &HostVars::default(), &d, &templar)
-                .unwrap()
-                .unwrap()
-                .user,
-            "root",
-            "nothing said anywhere means root, as in Ansible"
-        );
-        let templated = hvars(json!({"ansible_become_user": "{{ who }}", "who": "deploy"}));
-        assert_eq!(
-            become_for(&t, &p, &templated, &defaults(), &templar)
-                .unwrap()
-                .unwrap()
-                .user,
-            "deploy",
-            "a templated user is resolved before the link is keyed by it"
-        );
-    }
-
-    /// `become_user: "{{ item }}"` escalates per item in the reference, measured on the
-    /// development machine: two items, `root` then the invoking account, and each ran as its
-    /// own. Here it fails the task, because escalation is settled once per batch and one batch
-    /// is one message to one agent under one user. What this pins is the message: it names the
-    /// keyword and says why, where it used to say only that some option held an undefined
-    /// variable.
-    #[test]
-    fn a_become_user_that_changes_per_loop_item_says_why_it_cannot() {
-        let templar = Templar::new(std::env::temp_dir());
-        let mut t = task("command");
-        t.r#become = Some(true);
-        t.become_user = Some("{{ item }}".into());
-        t.loop_items = Some(json!(["root", "deploy"]));
-        let err = become_for(&t, &plan(), &HostVars::default(), &defaults(), &templar).unwrap_err();
-        assert!(
-            err.0.contains("become_user") && err.0.contains("per loop item"),
-            "{}",
-            err.0
-        );
-    }
-
-    /// A method arriving as a variable is refused by its name rather than quietly escalating
-    /// with `sudo`: running the task under rules nobody wrote is worse than not running it.
-    #[test]
-    fn an_unsupported_become_method_variable_fails_the_task() {
-        let templar = Templar::new(std::env::temp_dir());
-        let mut t = task("command");
-        t.r#become = Some(true);
-        let err = become_for(
-            &t,
-            &plan(),
-            &hvars(json!({"ansible_become_method": "su"})),
-            &defaults(),
-            &templar,
-        )
-        .unwrap_err();
-        assert!(
-            err.0.contains("su") && err.0.contains("not supported"),
-            "{}",
-            err.0
-        );
-        assert_eq!(
-            become_for(
-                &task("command"),
+            t.r#become = Some(true);
+            t.become_user = Some("{{ item }}".into());
+            t.loop_items = Some(json!(["root", "deploy"]));
+            let err =
+                become_for(&t, &plan(), &HostVars::default(), &defaults(), &templar).unwrap_err();
+            assert!(
+                err.0.contains("become_user") && err.0.contains("per loop item"),
+                "{}",
+                err.0
+            );
+        }
+        {
+            let templar = templar();
+            let mut t = task("command");
+            t.r#become = Some(true);
+            let err = become_for(
+                &t,
                 &plan(),
                 &hvars(json!({"ansible_become_method": "su"})),
                 &defaults(),
                 &templar,
             )
-            .unwrap(),
-            None,
-            "a task that escalates nowhere is not refused for a method it never runs"
-        );
-        let d = ConnectionDefaults {
-            become_method: "doas".into(),
-            ..defaults()
-        };
-        let err = become_for(&t, &plan(), &HostVars::default(), &d, &templar).unwrap_err();
-        assert!(
-            err.0.contains("doas") && err.0.contains("not supported"),
-            "the defaults are refused for an escalating task the startup pass could not see: {}",
-            err.0
-        );
-        assert_eq!(
-            become_for(
-                &task("command"),
-                &plan(),
-                &HostVars::default(),
-                &d,
-                &templar
-            )
-            .unwrap(),
-            None,
-            "and the same defaults leave a task that never escalates alone"
-        );
+            .unwrap_err();
+            assert!(
+                err.0.contains("su") && err.0.contains("not supported"),
+                "{}",
+                err.0
+            );
+            assert_eq!(
+                become_for(
+                    &task("command"),
+                    &plan(),
+                    &hvars(json!({"ansible_become_method": "su"})),
+                    &defaults(),
+                    &templar,
+                )
+                .unwrap(),
+                None,
+                "a task that escalates nowhere is not refused for a method it never runs"
+            );
+            let d = ConnectionDefaults {
+                become_method: "doas".into(),
+                ..defaults()
+            };
+            let err = become_for(&t, &plan(), &HostVars::default(), &d, &templar).unwrap_err();
+            assert!(
+                err.0.contains("doas") && err.0.contains("not supported"),
+                "the defaults are refused for an escalating task the startup pass could not see: {}",
+                err.0
+            );
+            assert_eq!(
+                become_for(
+                    &task("command"),
+                    &plan(),
+                    &HostVars::default(),
+                    &d,
+                    &templar
+                )
+                .unwrap(),
+                None,
+                "and the same defaults leave a task that never escalates alone"
+            );
+        }
     }
 
     /// The password never has to be quoted, logged or formatted, so the one place it could still
@@ -1768,7 +1707,7 @@ mod tests {
         let store = Mutex::new(
             VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
         );
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let live = Progress::default();
         let plan = plan();
         let of = |name: &str| {
@@ -1806,37 +1745,9 @@ mod tests {
         );
     }
 
-    /// A directory of fixture files, removed when the test ends however it ends.
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(tag: &str) -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("volant-with-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("the scratch directory");
-            // Canonical, so a path the lookup prints compares equal on a machine whose temporary
-            // directory is a symlink.
-            Scratch(dir.canonicalize().expect("the scratch directory resolves"))
-        }
-
-        fn write(&self, rel: &str) -> String {
-            let path = self.0.join(rel);
-            std::fs::create_dir_all(path.parent().expect("a parent")).expect("the parent");
-            std::fs::write(&path, "x").expect("the fixture file");
-            path.display().to_string()
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     /// The one task of `yaml`, read by the loader, as a step written in `origin`.
     fn loaded(yaml: &str, origin: Origin) -> Step {
-        let pb = crate::playbook::parse(yaml, "x.yml").expect("the playbook loads");
+        let pb = play(yaml);
         let Some(crate::playbook::TaskOrBlock::Task(t)) = pb.plays[0].tasks.first() else {
             panic!("one task");
         };
@@ -1868,21 +1779,21 @@ mod tests {
     /// loop that is not a list), `skip` read as a failure, or the order of the candidates lost.
     #[test]
     fn with_first_found_walks_the_file_it_found_and_nothing_under_skip() {
-        let dir = Scratch::new("first-found");
+        let dir = scratch();
         let task = |skip: &str| {
             format!(
                 "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{{{ airgap_dir }}}}/k3s-{{{{ k3s_arch }}}}\"\n            - \"{{{{ airgap_dir }}}}/k3s\"\n{skip}      vars:\n        airgap_dir: {}\n        k3s_arch: arm64\n",
-                dir.0.display()
+                dir.path().display()
             )
         };
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let step = loaded(&task("          skip: true\n"), Origin::default());
         assert_eq!(step.task.loop_with.as_deref(), Some("first_found"));
 
         assert_eq!(bound(&step, &store).unwrap(), []);
-        let plain = dir.write("k3s");
+        let plain = write(dir.path(), "k3s", "x").display().to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(plain), false)]);
-        let arch = dir.write("k3s-arm64");
+        let arch = write(dir.path(), "k3s-arm64", "x").display().to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(arch), false)]);
 
         std::fs::remove_file(&arch).expect("the file goes");
@@ -1905,24 +1816,28 @@ mod tests {
     /// rather than for `first_found` alone.
     #[test]
     fn with_fileglob_walks_every_match_and_one_match_is_a_list_of_one() {
-        let dir = Scratch::new("fileglob");
+        let dir = scratch();
         let task = |pattern: &str| {
             format!(
                 "- hosts: all\n  tasks:\n    - name: Distribute K3s images\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{pattern}\"\n      vars:\n        airgap_dir: {}\n",
-                dir.0.display()
+                dir.path().display()
             )
         };
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let step = loaded(&task("{{ airgap_dir }}/*.tar.gz"), Origin::default());
         assert_eq!(step.task.loop_with.as_deref(), Some("fileglob"));
         assert_eq!(bound(&step, &store).unwrap(), []);
 
-        let one = dir.write("images-2.tar.gz");
+        let one = write(dir.path(), "images-2.tar.gz", "x")
+            .display()
+            .to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(one), false)]);
-        let first = dir.write("images-1.tar.gz");
-        dir.write("images.txt");
+        let first = write(dir.path(), "images-1.tar.gz", "x")
+            .display()
+            .to_string();
+        write(dir.path(), "images.txt", "x").display().to_string();
         // Directory-listing order, as `glob.glob` answers: no sort.
-        let listed: Vec<(Value, bool)> = std::fs::read_dir(&dir.0)
+        let listed: Vec<(Value, bool)> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().path().display().to_string())
             .filter(|path| *path == first || *path == one)
@@ -1952,10 +1867,14 @@ mod tests {
     #[test]
     fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_choice_as_data()
     {
-        let dir = Scratch::new("raspberrypi");
-        let role = dir.0.join("roles/raspberrypi");
-        let default = dir.write("roles/raspberrypi/tasks/setup/default.yml");
-        let ubuntu = dir.write("roles/raspberrypi/tasks/setup/Ubuntu.yml");
+        let dir = scratch();
+        let role = dir.path().join("roles/raspberrypi");
+        let default = write(dir.path(), "roles/raspberrypi/tasks/setup/default.yml", "x")
+            .display()
+            .to_string();
+        let ubuntu = write(dir.path(), "roles/raspberrypi/tasks/setup/Ubuntu.yml", "x")
+            .display()
+            .to_string();
         let yaml = "- hosts: all\n  tasks:\n    - name: Execute OS related tasks on the Raspberry Pi - {{ action_ }}\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"{{ action_ }}/{{ detected_distribution }}-{{ detected_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ detected_distribution }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}.yml\"\n        - \"{{ action_ }}/default.yml\"\n      vars:\n        state: present\n        action_: >-\n          {% if state == 'present' %}setup{% else %}teardown{% endif %}\n      when:\n        - raspberry_pi | default(false)\n";
         let step = loaded(
             yaml,
@@ -1966,7 +1885,7 @@ mod tests {
                 inherited: None,
             },
         );
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let items = prepared(&step, &store).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].vars.map["item"], json!(default));
@@ -1994,16 +1913,18 @@ mod tests {
     /// one chosen for the action; or `skip: true` failing when `vars/` holds nothing.
     #[test]
     fn with_first_found_searches_the_directory_its_action_names() {
-        let dir = Scratch::new("first-found-subdir");
-        let role = dir.0.join("roles/probe");
+        let dir = scratch();
+        let role = dir.path().join("roles/probe");
         let in_role = || Origin {
             file_dir: role.join("tasks"),
             role_dir: Some(role.clone()),
             depth: 0,
             inherited: None,
         };
-        let store = store_at(&dir.0);
-        let template = dir.write("roles/probe/templates/t.j2");
+        let store = store_at(dir.path());
+        let template = write(dir.path(), "roles/probe/templates/t.j2", "x")
+            .display()
+            .to_string();
         let step = loaded(
             "- hosts: all\n  tasks:\n    - template:\n        src: \"{{ item }}\"\n        dest: /tmp/t\n      with_first_found:\n        - t.j2\n",
             in_role(),
@@ -2015,7 +1936,9 @@ mod tests {
             in_role(),
         );
         assert_eq!(bound(&vars, &store).unwrap(), []);
-        let found = dir.write("roles/probe/vars/a.yml");
+        let found = write(dir.path(), "roles/probe/vars/a.yml", "x")
+            .display()
+            .to_string();
         assert_eq!(bound(&vars, &store).unwrap(), [(json!(found), false)]);
     }
 
@@ -2029,11 +1952,17 @@ mod tests {
     /// `pipe` touches; or it placed in the `with_` path alone, which leaves `loop:` open.
     #[test]
     fn a_found_path_that_looks_like_a_template_is_refused_and_never_rendered() {
-        let dir = Scratch::new("found-template");
-        let marker = PathBuf::from(format!("{}.marker", dir.0.display()));
-        let _ = std::fs::remove_file(&marker);
-        let named = dir.write("{{ lookup('pipe', 'touch ' ~ airgap_dir ~ '.marker') }}.tar.gz");
-        let store = store_at(&dir.0);
+        let root = scratch();
+        let dir = root.path().join("files");
+        let marker = root.path().join("files.marker");
+        let named = write(
+            &dir,
+            "{{ lookup('pipe', 'touch ' ~ airgap_dir ~ '.marker') }}.tar.gz",
+            "x",
+        )
+        .display()
+        .to_string();
+        let store = store_at(&dir);
         for looping in [
             "with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n",
             "loop: \"{{ [lookup('fileglob', airgap_dir ~ '/*.tar.gz')] }}\"\n",
@@ -2041,7 +1970,7 @@ mod tests {
             let step = loaded(
                 &format!(
                     "- hosts: all\n  tasks:\n    - copy:\n        src: \"{{{{ item }}}}\"\n        dest: /tmp/images/\n      {looping}      vars:\n        airgap_dir: {}\n",
-                    dir.0.display()
+                    dir.display()
                 ),
                 Origin::default(),
             );
@@ -2055,6 +1984,5 @@ mod tests {
             );
             assert!(!marker.exists(), "{looping}: the name's command ran");
         }
-        let _ = std::fs::remove_file(&marker);
     }
 }

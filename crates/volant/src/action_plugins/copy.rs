@@ -431,20 +431,14 @@ impl Plugin for Copy {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::scratch;
     use std::collections::BTreeSet;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use serde_json::{Map, Value, json};
 
     use super::*;
     use crate::action_plugins::{Context, Plugin, Step};
-
-    /// A directory of this test process's own under the system's temporary directory.
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("volant-copy-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     /// The plugin as the driver starts it, for arguments `prepare` rendered, the names among them
     /// whose render read a managed host, and a playbook in `playbook_dir`.
@@ -477,7 +471,7 @@ mod tests {
     }
 
     fn start_copy(args: &Map<String, Value>, untrusted: &BTreeSet<String>) -> Box<dyn Plugin> {
-        start_in(args, untrusted, &scratch("playbook"))
+        start_in(args, untrusted, &std::env::temp_dir())
     }
 
     /// A `src` whose render read a managed host is refused before anything is read.
@@ -492,7 +486,8 @@ mod tests {
     /// blob, one `put_blob` away from the host.
     #[test]
     fn a_source_a_host_named_is_never_read() {
-        let dir = scratch("secret");
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let secret = dir.join("controller-secret");
         std::fs::write(&secret, "secret").unwrap();
         let untrusted: BTreeSet<String> = ["src".to_string()].into();
@@ -520,8 +515,9 @@ mod tests {
     const HELLO_SHA1: &str = "f572d396fae9206628714fb2ce00f72e94f2258f";
 
     /// A playbook directory holding `files/hello.txt`, and the arguments of a task copying it.
-    fn hello(name: &str, extra: Value) -> (PathBuf, Map<String, Value>) {
-        let dir = scratch(name);
+    fn hello(extra: Value) -> (tempfile::TempDir, Map<String, Value>) {
+        let tmp = scratch();
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("files")).unwrap();
         std::fs::write(dir.join("files/hello.txt"), "hello\n").unwrap();
         let Value::Object(mut args) = json!({"src": "hello.txt", "dest": "/tmp/v/hello.txt"})
@@ -531,7 +527,7 @@ mod tests {
         if let Value::Object(extra) = extra {
             args.extend(extra);
         }
-        (dir, args)
+        (tmp, args)
     }
 
     fn run(plugin: &mut dyn Plugin, last: Option<Value>) -> Sub {
@@ -555,9 +551,10 @@ mod tests {
         }
     }
 
-    fn copy_task(name: &str, extra: Value) -> Box<dyn Plugin> {
-        let (dir, args) = hello(name, extra);
-        start_in(&args, &BTreeSet::new(), &dir)
+    fn copy_task(extra: Value) -> (tempfile::TempDir, Box<dyn Plugin>) {
+        let (tmp, args) = hello(extra);
+        let plugin = start_in(&args, &BTreeSet::new(), tmp.path());
+        (tmp, plugin)
     }
 
     /// The `stat` module's own parameters, read off `ansible/modules/stat.py` of ansible-core
@@ -584,7 +581,7 @@ mod tests {
     /// `get_attributes` left at their defaults, which run `file` and `lsattr` for nothing.
     #[test]
     fn the_stat_is_the_reference_s() {
-        let mut plugin = copy_task("stat", json!({}));
+        let (_dir, mut plugin) = copy_task(json!({}));
         let sub = run(plugin.as_mut(), None);
         assert_eq!(sub.module, "stat");
         assert_eq!(
@@ -612,7 +609,7 @@ mod tests {
     /// source it does not take.
     #[test]
     fn an_identical_file_is_not_sent() {
-        let mut plugin = copy_task("same", json!({"mode": "0644"}));
+        let (_dir, mut plugin) = copy_task(json!({"mode": "0644"}));
         run(plugin.as_mut(), None);
         let sub = run(
             plugin.as_mut(),
@@ -665,7 +662,7 @@ mod tests {
     /// there, or the controller's path left in `src`, which the host would read as its own.
     #[test]
     fn a_different_file_is_sent_once() {
-        let mut plugin = copy_task("different", json!({"backup": true}));
+        let (_dir, mut plugin) = copy_task(json!({"backup": true}));
         run(plugin.as_mut(), None);
         let zeros = "0".repeat(40);
         let sub = run(
@@ -692,7 +689,7 @@ mod tests {
     /// source matches and so is never created.
     #[test]
     fn an_absent_file_is_sent() {
-        let mut plugin = copy_task("absent", json!({}));
+        let (_dir, mut plugin) = copy_task(json!({}));
         run(plugin.as_mut(), None);
         let sub = run(plugin.as_mut(), Some(json!({"stat": {"exists": false}})));
         assert_sent(&sub, json!({}));
@@ -707,8 +704,9 @@ mod tests {
     /// keep, or a sum asked for that the reference does not compute.
     #[test]
     fn force_false_leaves_an_existing_file_alone() {
-        let (dir, args) = hello("force", json!({"force": false}));
-        let mut plugin = start_in(&args, &BTreeSet::new(), &dir);
+        let (tmp, args) = hello(json!({"force": false}));
+        let dir = tmp.path();
+        let mut plugin = start_in(&args, &BTreeSet::new(), dir);
         let sub = run(plugin.as_mut(), None);
         assert_eq!(sub.args["get_checksum"], json!(false));
         let result = done(
@@ -731,7 +729,7 @@ mod tests {
     /// the file on every run, or `content` let into a directory.
     #[test]
     fn a_directory_dest_takes_the_basename() {
-        let mut plugin = copy_task("dir", json!({"dest": "/tmp/v"}));
+        let (_dir, mut plugin) = copy_task(json!({"dest": "/tmp/v"}));
         run(plugin.as_mut(), None);
         let sub = run(
             plugin.as_mut(),
@@ -747,7 +745,7 @@ mod tests {
         assert_eq!(sub.args["dest"], json!("/tmp/v"));
 
         // A trailing `/` says it is a directory: the name inside it is the one looked at.
-        let mut plugin = copy_task("slash", json!({"dest": "/tmp/v/"}));
+        let (_dir, mut plugin) = copy_task(json!({"dest": "/tmp/v/"}));
         assert_eq!(
             run(plugin.as_mut(), None).args["path"],
             json!("/tmp/v/hello.txt")
@@ -830,7 +828,8 @@ mod tests {
     /// succeed, or a directory `src` copied as if it were a file.
     #[test]
     fn what_cannot_be_copied_is_refused_before_the_host_is_asked() {
-        let (dir, _) = hello("refused", json!({}));
+        let (tmp, _) = hello(json!({}));
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("files/tree")).unwrap();
         for (args, msg) in [
             (
@@ -869,7 +868,7 @@ mod tests {
             let Value::Object(args) = args else {
                 unreachable!()
             };
-            let mut plugin = start_in(&args, &BTreeSet::new(), &dir);
+            let mut plugin = start_in(&args, &BTreeSet::new(), dir);
             let Step::Done(result) = plugin.next(None) else {
                 panic!("a sub-task was sent for {args:?}")
             };
@@ -885,12 +884,13 @@ mod tests {
     /// whole file and runs `stat` for a transfer that can never happen.
     #[test]
     fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
-        let (dir, mut args) = hello("big", json!({}));
+        let (tmp, mut args) = hello(json!({}));
+        let dir = tmp.path();
         let big = std::fs::File::create(dir.join("files/big.bin")).unwrap();
         let len = crate::action_plugins::files::MAX_FILE_LEN + 1;
         big.set_len(u64::try_from(len).unwrap()).unwrap();
         args.insert("src".into(), json!("big.bin"));
-        let mut plugin = start_in(&args, &BTreeSet::new(), &dir);
+        let mut plugin = start_in(&args, &BTreeSet::new(), dir);
         let Step::Done(result) = plugin.next(None) else {
             panic!("a sub-task was sent")
         };
@@ -913,7 +913,7 @@ mod tests {
     /// into a directory the host cannot read, or the module's failure rewritten.
     #[test]
     fn a_failed_sub_task_ends_the_task() {
-        let mut plugin = copy_task("stat-failed", json!({}));
+        let (_dir, mut plugin) = copy_task(json!({}));
         run(plugin.as_mut(), None);
         let result = done(
             plugin.as_mut(),
@@ -925,7 +925,7 @@ mod tests {
             json!("Failed to get information on remote file (/tmp/v/hello.txt): Permission denied")
         );
 
-        let mut plugin = copy_task("validate", json!({"validate": "test -s %s"}));
+        let (_dir, mut plugin) = copy_task(json!({"validate": "test -s %s"}));
         run(plugin.as_mut(), None);
         run(plugin.as_mut(), Some(json!({"stat": {"exists": false}})));
         let failed = json!({"changed": false, "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",

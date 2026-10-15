@@ -838,6 +838,7 @@ dependencies = [
  "saphyr-parser",
  "serde_json",
  "shlex",
+ "tempfile",
  "tokio",
  "volant-protocol",
 ]
@@ -849,9 +850,11 @@ dependencies = [
  "blake3",
  "libc",
  "regex",
+ "rstest",
  "serde_json",
  "sha1_smol",
  "shlex",
+ "tempfile",
  "volant-agent",
  "volant-protocol",
 ]
@@ -861,6 +864,7 @@ name = "volant-protocol"
 version = "0.1.0-alpha.7"
 dependencies = [
  "miniz_oxide",
+ "rstest",
  "serde",
  "serde_json",
  "sha1_smol",

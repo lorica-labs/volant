@@ -639,11 +639,13 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::super::{Templar, Vars};
+    use crate::testing::scratch;
 
     /// A role laid out the way the reference measured one: `templates/`, `files/`, `tasks/`, and
     /// `ansible_search_path` naming the role, its `tasks/` and the playbook directory, in that
     /// order.
     struct Role {
+        _tmp: tempfile::TempDir,
         dir: PathBuf,
     }
 
@@ -671,7 +673,7 @@ mod tests {
         }
         assert!(!super::supported("items"));
         assert!(!super::supported("community.general.env"));
-        let t = Templar::new(std::env::temp_dir());
+        let t = crate::testing::templar();
         let err = t.render("{{ lookup('nosuch') }}", &Map::new()).unwrap_err();
         assert!(
             err.0
@@ -682,14 +684,13 @@ mod tests {
     }
 
     impl Role {
-        fn new(tag: &str) -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("volant-lookups-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
+        fn new() -> Self {
+            let tmp = scratch();
+            let dir = tmp.path().to_path_buf();
             for sub in ["role/templates", "role/files", "role/tasks"] {
                 std::fs::create_dir_all(dir.join(sub)).unwrap();
             }
-            Self { dir }
+            Self { _tmp: tmp, dir }
         }
 
         fn write(&self, rel: &str, text: &str) -> &Self {
@@ -712,12 +713,6 @@ mod tests {
         }
     }
 
-    impl Drop for Role {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
-
     fn templar(base: &Path) -> Templar {
         Templar::new(base.to_path_buf())
     }
@@ -732,7 +727,7 @@ mod tests {
     /// and both reads would show `2`.
     #[test]
     fn what_a_template_lookup_rendered_is_never_rendered_again() {
-        let role = Role::new("trust");
+        let role = Role::new();
         role.write("role/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");
         let t = templar(&role.dir);
         let mut map = role.vars();
@@ -769,7 +764,7 @@ mod tests {
     /// default options (the final newline kept), against the task's variables.
     #[test]
     fn a_template_lookup_renders_the_role_s_template() {
-        let role = Role::new("snip");
+        let role = Role::new();
         role.write("role/templates/snip.j2", "from role templates {{ who }}\n");
         let t = templar(&role.dir);
         assert_eq!(
@@ -790,7 +785,7 @@ mod tests {
     /// read does, and one that names no file says which.
     #[test]
     fn a_template_lookup_fails_on_an_undefined_name_and_a_missing_file() {
-        let role = Role::new("fail");
+        let role = Role::new();
         role.write("role/templates/u.j2", "{{ nobody_set_this }}");
         let t = templar(&role.dir);
         let err = t
@@ -811,7 +806,7 @@ mod tests {
     /// A template that looks itself up fails the task instead of overflowing the stack.
     #[test]
     fn a_template_that_looks_itself_up_fails() {
-        let role = Role::new("loop");
+        let role = Role::new();
         role.write(
             "role/templates/self.j2",
             "{{ lookup('template', 'self.j2') }}",
@@ -825,16 +820,15 @@ mod tests {
     /// A plain directory of files, for the absolute-pattern case `lookup('fileglob')` takes
     /// straight: no role, no search path, just a controller directory the pattern already names.
     struct Dir {
+        _tmp: tempfile::TempDir,
         path: PathBuf,
     }
 
     impl Dir {
-        fn new(tag: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("volant-fileglob-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).unwrap();
-            Self { path }
+        fn new() -> Self {
+            let tmp = scratch();
+            let path = tmp.path().to_path_buf();
+            Self { _tmp: tmp, path }
         }
 
         fn write(&self, name: &str) -> &Self {
@@ -873,7 +867,7 @@ mod tests {
     /// What would make this red: a wildcard matching a dot-file, or a dot pattern missing one.
     #[test]
     fn fileglob_skips_dot_files_unless_the_pattern_starts_with_a_dot() {
-        let dir = Dir::new("hidden");
+        let dir = Dir::new();
         dir.write(".h.txt").write("a.txt");
         let t = Templar::new(dir.path.clone());
         let hidden = dir.path.join(".h.txt").display().to_string();
@@ -904,7 +898,7 @@ mod tests {
     /// What would make this red: the matches sorted.
     #[test]
     fn fileglob_keeps_the_directory_listing_order() {
-        let dir = Dir::new("order");
+        let dir = Dir::new();
         // Written out of order (every seventh letter), so neither a listing in creation order nor
         // one in reverse creation order (tmpfs) is sorted.
         let names: Vec<String> = (0..26u8)
@@ -926,12 +920,6 @@ mod tests {
         );
     }
 
-    impl Drop for Dir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     /// The two static `with_fileglob` patterns of the `airgap` role, against a fixture
     /// directory: `k3s-selinux*.rpm` and `*.tar.gz`, both rendered to an absolute pattern the
     /// way `"{{ airgap_dir }}/..."` does. `container-selinux-1.rpm` proves the pattern is
@@ -944,7 +932,7 @@ mod tests {
     /// globbed directly, or a directory counted as a match.
     #[test]
     fn fileglob_matches_the_two_static_airgap_patterns() {
-        let dir = Dir::new("airgap");
+        let dir = Dir::new();
         dir.write("container-selinux-1.rpm")
             .write("k3s-selinux-1.rpm")
             .write("k3s-selinux-1.el8.rpm")
@@ -987,7 +975,7 @@ mod tests {
     /// from both instead of stopping at the first that has any.
     #[test]
     fn fileglob_prefers_files_over_the_entry_itself() {
-        let role = Role::new("fileglob");
+        let role = Role::new();
         role.write("role/files/only-in-files.conf", "f")
             .write("role/only-in-role.conf", "r")
             .write("role/both.conf", "role's own")
@@ -1021,7 +1009,7 @@ mod tests {
     /// `lookup()` only unwraps or joins a result that has something in it.
     #[test]
     fn fileglob_with_no_match_is_an_empty_list_not_an_error() {
-        let role = Role::new("fileglob-empty");
+        let role = Role::new();
         let t = templar(&role.dir);
         assert_eq!(
             t.render("{{ lookup('fileglob', 'nope*.txt') }}", &role.vars())
@@ -1035,7 +1023,7 @@ mod tests {
     /// not (`lookup('vars', 'l1', 'l2')` with `l2: [1]`), and `wantlist=True` keeps it always.
     #[test]
     fn lookup_joins_several_string_results_with_a_comma() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = crate::testing::templar();
         let vars = json!({"x": "a", "y": "b", "l": [1]});
         let r = |text: &str| t.render(text, vars.as_object().unwrap()).unwrap();
         assert_eq!(r("{{ lookup('vars', 'x', 'y') }}"), json!("a,b"));
@@ -1053,7 +1041,7 @@ mod tests {
     /// too since there is exactly one match.
     #[test]
     fn fileglob_answers_under_its_ansible_builtin_alias_too() {
-        let role = Role::new("fileglob-alias");
+        let role = Role::new();
         role.write("role/files/x.conf", "x");
         let t = templar(&role.dir);
         assert_eq!(
@@ -1074,7 +1062,7 @@ mod tests {
     /// finds the bare `second.txt` the reference does not.
     #[test]
     fn first_found_tries_each_name_against_the_search_path_only() {
-        let role = Role::new("ff");
+        let role = Role::new();
         role.write("role/files/second.txt", "2")
             .write("role/templates/snip.j2", "x");
         let t = templar(&role.dir);
@@ -1126,7 +1114,7 @@ mod tests {
     /// and `second.txt` is not found), or a mapping that keeps the keyword's `skip`.
     #[test]
     fn first_found_joins_the_paths_keyword_and_a_mapping_resets_the_options() {
-        let role = Role::new("ffopt");
+        let role = Role::new();
         role.write("role/files/second.txt", "2");
         let t = templar(&role.dir);
         let vars = role.vars();
@@ -1161,7 +1149,7 @@ mod tests {
     /// writes `{{ b }}` into a result nothing renders again; or the host's name rendered too.
     #[test]
     fn a_template_lookup_reads_a_chained_variable_resolved() {
-        let role = Role::new("chain");
+        let role = Role::new();
         role.write("role/templates/chain.j2", "{{ a }}");
         let t = templar(&role.dir);
         let mut map = role.vars();
@@ -1197,7 +1185,7 @@ mod tests {
     /// lookups with `undefined value` where the reference prints `ok` and `none`.
     #[test]
     fn a_name_that_cannot_be_resolved_fails_only_when_it_is_read() {
-        let role = Role::new("lazy");
+        let role = Role::new();
         role.write(
             "role/templates/branch.j2",
             "{% if use_proxy %}{{ proxy }}{% endif %}ok",
@@ -1225,7 +1213,7 @@ mod tests {
     /// (`ansible_managed` undefined), or overwriting an `ansible_managed` the playbook set.
     #[test]
     fn a_template_lookup_sets_the_template_variables() {
-        let role = Role::new("tvars");
+        let role = Role::new();
         role.write(
             "role/templates/m.j2",
             "{{ ansible_managed | comment }}\n{{ template_path }} {{ template_fullpath }}\n",

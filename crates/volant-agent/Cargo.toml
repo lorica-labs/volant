@@ -31,6 +31,8 @@ volant-protocol.workspace = true
 test-natives = []
 
 [dev-dependencies]
+rstest.workspace = true
+tempfile.workspace = true
 volant-agent = { path = ".", features = ["test-natives"] }
 
 [package.metadata.cargo-machete]

@@ -220,21 +220,20 @@ impl Plugin for Unarchive {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use serde_json::json;
 
     use super::*;
     use crate::action_plugins::files::MAX_FILE_LEN;
+    use crate::testing::scratch;
 
-    /// A directory of this test process's own under the system's temporary directory, holding
-    /// `files/` and an existing `dest/`.
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("volant-unarchive-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(dir.join("files")).unwrap();
-        std::fs::create_dir_all(dir.join("dest")).unwrap();
-        dir
+    /// A scratch directory holding `files/` and an existing `dest/`.
+    fn layout() -> tempfile::TempDir {
+        let tmp = scratch();
+        std::fs::create_dir_all(tmp.path().join("files")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("dest")).unwrap();
+        tmp
     }
 
     fn start_in(
@@ -339,7 +338,8 @@ mod tests {
     /// second path, which names nothing on the controller.
     #[test]
     fn a_source_a_host_named_is_never_read() {
-        let dir = scratch("secret");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let secret = dir.join("controller-secret");
         std::fs::write(&secret, "secret").unwrap();
         let untrusted: BTreeSet<String> = ["src".to_string()].into();
@@ -371,7 +371,8 @@ mod tests {
     /// does not accept, or the exclusivity check dropped, silently preferring one of the two.
     #[test]
     fn copy_becomes_remote_src_and_the_two_together_are_refused() {
-        let dir = scratch("copy-flag");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let mut task_args = args(&dir, json!({"copy": false}));
         let mut plugin = start_plain(&task_args, &dir);
         run(plugin.as_mut(), None);
@@ -396,7 +397,8 @@ mod tests {
     /// succeed, or a leading `~` read as an ordinary character and searched for as one.
     #[test]
     fn what_cannot_be_unpacked_is_refused_before_the_host_is_asked() {
-        let dir = scratch("refused");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         for (extra, msg) in [
             (
                 json!({"dest": null}),
@@ -441,7 +443,8 @@ mod tests {
     /// read as "not there".
     #[test]
     fn creates_already_there_skips_before_dest_is_asked() {
-        let dir = scratch("creates");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let task_args = args(&dir, json!({"creates": "/tmp/unarchive-marker"}));
         let mut plugin = start_plain(&task_args, &dir);
         let sub = run(plugin.as_mut(), None);
@@ -484,7 +487,8 @@ mod tests {
     /// wording.
     #[test]
     fn a_destination_that_is_not_a_directory_is_refused() {
-        let dir = scratch("dest-file");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let task_args = args(&dir, json!({}));
         for stat_result in [
             json!({"stat": {"exists": false}}),
@@ -523,7 +527,8 @@ mod tests {
     /// controller's path left in `src`, which the host would read as its own.
     #[test]
     fn a_local_source_is_staged_and_sent() {
-        let dir = scratch("local");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let task_args = args(&dir, json!({"decrypt": false}));
         let mut plugin = start_plain(&task_args, &dir);
         past_dest(plugin.as_mut(), false);
@@ -562,7 +567,8 @@ mod tests {
     /// given less `decrypt`.
     #[test]
     fn remote_src_sends_the_module_alone() {
-        let dir = scratch("remote");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let mut task_args = args(&dir, json!({"remote_src": true, "decrypt": false}));
         task_args.insert("src".into(), json!("/on/the/host.tar.gz"));
         let mut plugin = start_in(&task_args, &["src".to_string()].into(), &dir);
@@ -586,7 +592,8 @@ mod tests {
     /// whole archive and stages it for a transfer that can never happen.
     #[test]
     fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
-        let dir = scratch("big");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let mut task_args = args(&dir, json!({}));
         let big = std::fs::File::create(dir.join("files/big.tar.gz")).unwrap();
         let len = MAX_FILE_LEN + 1;
@@ -613,7 +620,8 @@ mod tests {
     /// platform's `Is a directory` wording and no hint of what was wrong with the task.
     #[test]
     fn a_directory_source_is_refused_by_name() {
-        let dir = scratch("dir-src");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let mut task_args = args(&dir, json!({}));
         std::fs::create_dir_all(dir.join("files/tree")).unwrap();
         task_args.insert("src".into(), json!("tree"));
@@ -633,7 +641,8 @@ mod tests {
     /// which points the operator at `remote_src`.
     #[test]
     fn a_missing_source_names_where_it_looked() {
-        let dir = scratch("missing");
+        let dir_guard = layout();
+        let dir = dir_guard.path().to_path_buf();
         let mut task_args = args(&dir, json!({}));
         task_args.insert("src".into(), json!("nope.tar.gz"));
         let mut plugin = start_plain(&task_args, &dir);

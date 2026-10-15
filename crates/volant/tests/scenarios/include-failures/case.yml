@@ -1,0 +1,10 @@
+# Includes inside rescues and cleanups, a misspelt notify on a failed task, and a templated ignore_errors.
+runs:
+  - args: [-i, inv.ini, in-block.yml]
+  - args: [-i, inv.ini, cleanup.yml]
+  - args: [-i, inv.ini, draining.yml]
+  - args: [-i, inv.ini, cleanup-rescue.yml]
+  - args: [-i, inv.ini, notify-typo-failed.yml]
+  - args: [-i, inv.ini, ignore-templated.yml, -e, 'cmd_lenient=true inc_lenient=true']
+  - args: [-i, inv.ini, ignore-templated.yml, -e, 'cmd_lenient=false inc_lenient=true']
+  - args: [-i, inv.ini, ignore-templated.yml, -e, 'cmd_lenient=true inc_lenient=false']

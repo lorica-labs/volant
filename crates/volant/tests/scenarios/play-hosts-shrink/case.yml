@@ -1,0 +1,2 @@
+# A failed host leaves ansible_play_hosts but stays in ansible_play_hosts_all.
+args: [-i, inventory.ini, live.yml]

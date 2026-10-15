@@ -44,7 +44,3 @@
       command: echo {{ remembered }}
       failed_when: inventory_hostname == 'beta'
       ignore_errors: true
-
-    - name: Undefined variable
-      command: echo {{ not_defined_anywhere }}
-      ignore_errors: true

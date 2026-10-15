@@ -1,0 +1,4 @@
+# A play that ignores one failure ends clean; one that does not stops the host and exits 2.
+runs:
+  - args: [-i, inventory.ini, site.yml]
+  - args: [failing.yml]

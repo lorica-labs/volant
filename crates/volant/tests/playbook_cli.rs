@@ -124,36 +124,6 @@ fn settings() -> insta::Settings {
     s
 }
 
-#[test]
-fn a_playbook_runs_end_to_end_with_ansible_output() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("inventory.ini"),
-        &fixture("site.yml"),
-    ]);
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    settings().bind(|| insta::assert_snapshot!(String::from_utf8(out.stdout).unwrap()));
-}
-
-#[test]
-fn a_failing_task_stops_the_host_and_exits_2() {
-    let out = volant(&["playbook", &fixture("failing.yml")]);
-    assert_eq!(out.status.code(), Some(2));
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("fatal: [localhost]: FAILED!"), "{text}");
-    assert!(
-        !text.contains("Never reached"),
-        "tasks after a failure must not be displayed: {text}"
-    );
-    assert!(text.contains("failed=1"), "{text}");
-}
-
 /// Measured on ansible-core 2.19.12 with two hosts and standard input not a terminal: a `pause`
 /// runs for the first host alone.
 #[test]
@@ -393,76 +363,6 @@ fn a_bad_playbook_exits_1_with_the_error_on_stderr() {
 }
 
 #[test]
-fn variables_loops_conditions_and_facts_render_like_ansible() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("vars/inventory.ini"),
-        &fixture("vars/site.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout.clone()).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    settings().bind(|| insta::assert_snapshot!(text));
-}
-
-#[test]
-fn a_variable_naming_a_later_bound_variable_still_renders() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("late/inventory.ini"),
-        &fixture("late/site.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("TASK [Say everything]"),
-        "a task name renders against the task's own vars: {text}"
-    );
-    assert!(
-        text.contains("(item=a) => {\n    \"msg\": \"greet a\"\n}")
-            && text.contains("(item=b) => {\n    \"msg\": \"greet b\"\n}"),
-        "a play var naming the loop variable renders per item: {text}"
-    );
-    assert!(
-        text.contains("ok: [alpha] => {\n    \"msg\": \"hello there\"\n}"),
-        "a templated value read through hostvars renders: {text}"
-    );
-}
-
-#[test]
-fn a_failed_host_leaves_the_following_plays() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("vars/inventory.ini"),
-        &fixture("two-plays.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let survivors = text
-        .split("TASK [Survivors only]")
-        .nth(1)
-        .expect("second play ran");
-    assert!(survivors.contains("changed: [alpha]"), "{text}");
-    assert!(
-        !survivors.contains("[beta]"),
-        "beta must be gone from the second play: {text}"
-    );
-    assert!(
-        text.contains(
-            "beta                       : ok=0    changed=0    unreachable=0    failed=1"
-        ),
-        "{text}"
-    );
-}
-
-#[test]
 fn a_deferred_render_error_does_not_resurrect_a_host_that_already_failed() {
     let out = volant(&[
         "playbook",
@@ -606,34 +506,6 @@ fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
         "the file it could not read is named: {text}\n{err}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// An `ansible_connection` naming no plugin fails that host's task, as ansible-core 2.19.12 does,
-/// and the other hosts run on.
-#[test]
-fn an_unknown_connection_fails_that_host_s_task_not_the_run() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("bad-connection.ini"),
-        &fixture("all-fail.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        text.contains(
-            r#"fatal: [bad]: FAILED! => {"changed": false, "msg": "Task failed: the connection plugin 'carrier_pigeon' was not found"}"#
-        ),
-        "{text}"
-    );
-    assert!(
-        text.contains("PLAY RECAP"),
-        "the run must finish with a recap: {text}"
-    );
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "both hosts failed a task: {text}"
-    );
 }
 
 #[test]
@@ -1427,34 +1299,6 @@ fn a_host_reading_hostvars_waits_for_the_others(#[values(false, true)] batching:
     }
 }
 
-/// `ansible_play_hosts` follows the hosts still in the play while `ansible_play_hosts_all` keeps
-/// the list it started with, as the reference does.
-#[test]
-fn play_hosts_shrink_when_a_host_fails_but_all_stays() {
-    let dir = std::env::temp_dir().join(format!("volant-live-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("live.yml"),
-        "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"{{ (inventory_hostname == 'alpha') | ternary('false', 'true') }}\"\n    - debug:\n        msg: \"{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}\"\n",
-    )
-    .unwrap();
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            &dir.join("live.yml").display().to_string(),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        text.contains("ok: [beta] => {\n    \"msg\": \"beta of alpha,beta\"\n}"),
-        "{text}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// The failure path the barrier has to survive: `beta` waits for a host that is dying, so the
 /// live set shrinks under it and the wait ends instead of outliving `alpha`.
 #[test]
@@ -1551,95 +1395,35 @@ fn banner_section<'a>(text: &'a str, banner: &str) -> &'a str {
     }
 }
 
-/// A loop over an undefined variable under a block whose `when` is false is skipped, not failed.
+/// A loop naming an undefined variable under a true `when` fails the task. The scenario
+/// `loops-skipped` has the false and the rendering cases; the reference words this error as a chain.
 #[test]
-fn an_undefined_loop_under_a_false_when_is_skipped() {
+fn an_undefined_loop_under_a_true_when_fails_the_task() {
     let dir = std::env::temp_dir().join(format!("volant-loop-when-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("other.yml"), "- debug: { msg: included }\n").unwrap();
-    let play = |gate: &str, list: &str| {
-        format!(
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: {gate}\n      block:\n        - name: Copy\n          debug: {{ msg: ran }}\n          loop: {list}\n          register: r\n        - name: Inc\n          include_tasks: other.yml\n          loop: {list}\n    - name: Show\n      debug: {{ msg: \"{{{{ r | list | sort | join(',') }}}}\" }}\n"
-        )
-    };
-    let run = |name: &str, body: String| {
-        let path = dir.join(name);
-        std::fs::write(&path, body).unwrap();
-        let out = volant_within(&["playbook", &path.display().to_string()], PROBE_DEADLINE);
-        let text = String::from_utf8(out.stdout).unwrap();
-        (out.status.code(), text)
-    };
-    // The first line is what is left of the banner's row of stars.
-    let lines = |text: &str, task: &str| -> Vec<String> {
-        section(text, task)
-            .lines()
-            .skip(1)
-            .map(|line| line.trim_end().to_string())
-            .filter(|line| !line.is_empty())
-            .collect()
-    };
-
-    let (code, text) = run("false.yml", play("nope is defined", "\"{{ nope }}\""));
-    assert_eq!(code, Some(0), "{text}");
-    assert_eq!(lines(&text, "Copy"), ["skipping: [localhost]"], "{text}");
-    assert_eq!(lines(&text, "Inc"), ["skipping: [localhost]"], "{text}");
-    assert!(
-        text.contains(r#""msg": "changed,false_condition,skip_reason,skipped""#),
-        "the plain skip is registered: {text}"
-    );
-    assert!(
-        text.contains("ok=1    changed=0    unreachable=0    failed=0    skipped=2"),
-        "{text}"
-    );
-
-    let (code, text) = run("true.yml", play("nope is not defined", "\"{{ nope }}\""));
-    assert_eq!(code, Some(2), "{text}");
+    let path = dir.join("true.yml");
+    std::fs::write(
+        &path,
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - when: nope is not defined
+      block:
+        - name: Copy
+          debug: { msg: ran }
+          loop: \"{{ nope }}\"
+",
+    )
+    .unwrap();
+    let out = volant_within(&["playbook", &path.display().to_string()], PROBE_DEADLINE);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(
         section(&text, "Copy").contains("The task includes an option with an undefined variable."),
         "{text}"
     );
-
-    // A loop that renders keeps reading its `when` per item.
-    let (code, text) = run("fine.yml", play("nope is defined", "[a, b]"));
-    assert_eq!(code, Some(0), "{text}");
-    assert_eq!(
-        lines(&text, "Copy"),
-        [
-            "skipping: [localhost] => (item=a)",
-            "skipping: [localhost] => (item=b)",
-            "skipping: [localhost]",
-        ],
-        "{text}"
-    );
     std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// A loop whose every item a `when` skips prints each item, then one more `skipping: [localhost]`
-/// line for the task.
-#[test]
-fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
-    let out = volant_within(
-        &["playbook", &fixture("loop-all-skipped.yml")],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    // The first line is what is left of the banner's row of stars.
-    let lines: Vec<&str> = section(&text, "Every item skipped")
-        .lines()
-        .skip(1)
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty())
-        .collect();
-    assert_eq!(
-        lines,
-        [
-            "skipping: [localhost] => (item=a)",
-            "skipping: [localhost] => (item=b)",
-            "skipping: [localhost]",
-        ],
-        "{text}"
-    );
 }
 
 /// Measured against the reference: an undefined variable is the only `vars_files` template failure
@@ -1777,146 +1561,6 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A failure inside a nested block runs the `always` of every block around it, innermost first, and
-/// then the host leaves the play.
-#[test]
-fn a_failure_runs_the_cleanups_around_it_and_stops_there() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/always.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let inner = text
-        .find("TASK [Inner cleanup]")
-        .expect("the inner cleanup");
-    let outer = text
-        .find("TASK [Outer cleanup]")
-        .expect("the outer cleanup");
-    assert!(inner < outer, "innermost first: {text}");
-    assert!(
-        !text.contains("Never reached"),
-        "nothing behind the failure runs, inside the block or after it: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=2    changed=2    unreachable=0    failed=1"
-        ),
-        "the two cleanups are counted and the failure is the only one: {text}"
-    );
-}
-
-/// A failure whose cleanup is written as a block runs the whole cleanup.
-#[test]
-fn a_cleanup_written_as_a_block_runs_all_of_it() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/nested-cleanup.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let one = text.find("TASK [Cleanup one]").expect("the first cleanup");
-    let two = text.find("TASK [Cleanup two]").expect("the second cleanup");
-    assert!(one < two, "the cleanup runs in order: {text}");
-    assert!(
-        !text.contains("Never reached"),
-        "nothing behind the failure runs: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=2    changed=2    unreachable=0    failed=1"
-        ),
-        "both cleanups are counted and the failure is the only one: {text}"
-    );
-}
-
-/// A failure a `rescue` takes is shown as a failure, counted as `rescued`, and the play goes on for
-/// that host - while a host that failed nothing walks past the rescue without entering it.
-#[test]
-fn a_failure_in_a_block_is_rescued_and_the_play_goes_on() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("blocks/inv.ini"),
-            &fixture("blocks/rescue.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "a rescued failure is not a failed run: {text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        text.contains("fatal: [h1]: FAILED!"),
-        "a rescued task still says it failed: {text}"
-    );
-    let rescue = section(&text, "Rescue task");
-    assert!(
-        rescue.contains("Fails in the block / command / rc="),
-        "the rescue reads the two variables the failure set: {text}"
-    );
-    assert!(
-        !rescue.contains("[h2]"),
-        "only the host that failed enters the rescue: {text}"
-    );
-    let never = section(&text, "Never reached on h1");
-    assert!(
-        never.contains("changed: [h2]") && !never.contains("[h1]"),
-        "the body goes on for h2 and stops for h1: {text}"
-    );
-    assert!(
-        section(&text, "After the block").contains("\"msg\": \"hosts=2\""),
-        "a rescued host is still one of the play's hosts: {text}"
-    );
-    assert!(
-        text.contains("h1                         : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=1"),
-        "the failure is counted as rescued and nothing else: {text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=4    changed=3    unreachable=0    failed=0    skipped=1    rescued=0"),
-        "the host that failed nothing steps over the rescue: {text}"
-    );
-}
-
-/// A rescue that fails itself still runs the `always`, and then the host leaves the play.
-#[test]
-fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("blocks/inv.ini"),
-            &fixture("blocks/rescue-fails.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let always = section(&text, "Always after failed rescue");
-    assert!(
-        always.contains("[h1]") && always.contains("[h2]"),
-        "the cleanup runs for the host on its way out as well: {text}"
-    );
-    assert!(
-        always.contains("\"msg\": \"hosts=1\""),
-        "the host whose rescue failed has already left the live set: {text}"
-    );
-    assert!(
-        !section(&text, "Not reached on h1").contains("[h1]"),
-        "the host leaves the play after its cleanup: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=1"
-        ),
-        "the body's rescue is kept and the rescue's own failure stands: {text}"
-    );
-}
-
 /// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that names
 /// it.
 #[test]
@@ -1941,72 +1585,6 @@ fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
             "localhost                  : ok=1    changed=1    unreachable=1    failed=0    skipped=0    rescued=0"
         ),
         "the step it did run is counted, and the loss is counted once: {text}"
-    );
-}
-
-/// A failure `ignore_errors` swallows never reaches the rescue: the body carries on.
-#[test]
-fn ignore_errors_inside_a_block_does_not_enter_the_rescue() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/ignored.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("...ignoring"), "{text}");
-    assert!(
-        text.contains("TASK [Still in the body]"),
-        "the body carries on under an ignored failure: {text}"
-    );
-    assert!(
-        !text.contains("TASK [Never rescued]"),
-        "an ignored failure is not a failure to recover from: {text}"
-    );
-    assert!(
-        text.contains("localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1"),
-        "counted as ignored, never as rescued: {text}"
-    );
-}
-
-/// A `meta` shows one banner per live host and counts nothing.
-#[test]
-fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("blocks/three-hosts.ini"),
-            &fixture("blocks/meta.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        text.matches("TASK [meta]").count(),
-        2,
-        "one banner per live host, and none for the host that has left: {text}"
-    );
-    assert_eq!(
-        text.matches("h0                         : ok=0    changed=0    unreachable=0    failed=1")
-            .count(),
-        1,
-        "the host that failed is out of the play: {text}"
-    );
-    assert_eq!(
-        text.matches("h1                         : ok=1").count(),
-        1,
-        "the meta counts nothing, so only the task behind it does: {text}"
-    );
-    assert_eq!(
-        text.matches("h2                         : ok=1").count(),
-        1,
-        "{text}"
     );
 }
 
@@ -2154,45 +1732,6 @@ fn an_unknown_handler_is_refused_with_exit_1() {
     assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
 }
 
-/// A templated `ignore_errors`, rendered per host, decides on an ordinary task; an include whose
-/// file cannot be loaded fails the host whatever it says.
-#[test]
-fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
-    let run = |cmd: &str, inc: &str| {
-        let out = volant_within(
-            &[
-                "playbook",
-                "-i",
-                &fixture("include/inv.ini"),
-                &fixture("include/ignore-templated.yml"),
-                "-e",
-                &format!("cmd_lenient={cmd} inc_lenient={inc}"),
-            ],
-            PROBE_DEADLINE,
-        );
-        (out.status.code(), String::from_utf8(out.stdout).unwrap())
-    };
-    let (code, text) = run("true", "true");
-    assert_eq!(code, Some(2), "{text}");
-    assert!(!text.contains("\"msg\": \"after\""), "{text}");
-    assert!(
-        text.contains("failed=1") && text.contains("ignored=1"),
-        "{text}"
-    );
-
-    let (code, text) = run("false", "true");
-    assert_eq!(code, Some(2), "{text}");
-    assert!(!text.contains("a missing file"), "{text}");
-
-    let (code, text) = run("true", "false");
-    assert_eq!(code, Some(2), "{text}");
-    assert!(!text.contains("\"msg\": \"after\""), "{text}");
-    assert!(
-        text.contains("failed=1") && text.contains("ignored=1"),
-        "{text}"
-    );
-}
-
 /// A `notify` in an included file naming no handler ends the run at exit 1, whatever
 /// `ignore_errors` or a `rescue` says.
 #[test]
@@ -2221,27 +1760,6 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
             assert!(!text.contains(never), "{playbook} printed {never}: {text}");
         }
     }
-}
-
-/// A task that failed notifies nothing, so its misspelt handler is never looked up: the reference
-/// searches for a handler in the ok branch of `_process_pending_results` alone.
-#[test]
-fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/notify-typo-failed.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    let errors = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
-    assert!(text.contains("...ignoring"), "{text}");
-    assert!(text.contains(r#""msg": "after""#), "{text}");
-    assert!(!text.contains("reloaded"), "{text}");
 }
 
 /// A templated `notify` in an included file is refused by name, as it is in the play, rather than
@@ -3646,133 +3164,6 @@ fn an_import_statement_refuses_an_argument_it_does_not_take() {
     }
 }
 
-/// A `rescue` around an `include_tasks` takes a failure raised by a task the include brought in.
-#[test]
-fn a_rescue_takes_a_failure_raised_inside_an_include() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/in-block.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("\"msg\": \"rescued included task that fails\""),
-        "{text}"
-    );
-    assert!(text.contains("\"msg\": \"always\""), "{text}");
-    assert!(text.contains("\"msg\": \"past\""), "{text}");
-    assert!(
-        text.contains("h1                         : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=1"),
-        "{text}"
-    );
-}
-
-/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out of
-/// a failed block, plus a `loop` over an empty list.
-#[test]
-fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/cleanup.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(text.matches("skipping: [h").count(), 2, "{text}");
-    let dir = fixture("include");
-    assert!(
-        text.contains(&format!("included: {dir}/inc-a.yml for h1, h2")),
-        "{text}"
-    );
-    assert!(
-        text.contains(&format!("included: {dir}/inc-b.yml for h1, h2")),
-        "{text}"
-    );
-    assert!(text.contains("\"msg\": \"past\""), "{text}");
-    for host in ["h1", "h2"] {
-        assert!(
-            text.contains(&format!(
-                "{host}                         : ok=5    changed=0    unreachable=0    failed=0    skipped=1    rescued=1"
-            )),
-            "{text}"
-        );
-    }
-}
-
-/// A host draining the `always` of a block nobody rescues reaches an include written in that
-/// section, and the rest of the section still runs behind what the include brought in.
-#[test]
-fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/draining.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let dir = fixture("include");
-    assert!(
-        text.contains(&format!("included: {dir}/inc-b.yml for h1, h2")),
-        "{text}"
-    );
-    assert!(text.contains("\"msg\": \"second\""), "{text}");
-    assert!(
-        !text.contains("\"msg\": \"past\""),
-        "the step behind the block is not run for a host on its way out: {text}"
-    );
-    for host in ["h1", "h2"] {
-        assert!(
-            text.contains(&format!(
-                "{host}                         : ok=3    changed=0    unreachable=0    failed=1    skipped=0    rescued=0"
-            )),
-            "{text}"
-        );
-    }
-}
-
-/// A rescue inside an `always` a host is draining takes its own failure, an include between the
-/// two, and the host drains on behind it.
-#[test]
-fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/cleanup-rescue.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert_eq!(text.matches("\"msg\": \"rest\"").count(), 2, "{text}");
-    assert!(
-        !text.contains("\"msg\": \"past\""),
-        "both hosts are on their way out of the play: {text}"
-    );
-    assert!(
-        text.contains("h1                         : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=1"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=4    changed=0    unreachable=0    failed=1    skipped=1    rescued=0"),
-        "{text}"
-    );
-}
-
 /// A file that includes itself is bounded rather than followed.
 #[test]
 fn an_include_that_includes_itself_is_bounded() {
@@ -3966,191 +3357,6 @@ fn import_playbook_written_as_a_task_is_refused_by_its_own_name() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// The lines one run printed, without the blank ones, so a test can say what came in what order.
-fn lines(out: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-/// The same rule without `serial`: a play whose every host fails is a batch that lost every host,
-/// so the play behind it never appears.
-#[test]
-fn every_host_failing_ends_the_run_before_the_next_play() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            &fixture("serial/allfail.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert_eq!(text.matches("PLAY [").count(), 1, "{text}");
-    assert!(!text.contains("second"), "the next play never runs: {text}");
-    assert!(text.contains("PLAY RECAP"), "{text}");
-}
-
-/// A play whose resolved hosts have all failed already is not a batch that lost them: its banner
-/// prints alone and the run carries on.
-#[test]
-fn a_play_whose_hosts_have_all_failed_shows_its_banner_alone() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            &fixture("serial/onefail.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let order: Vec<String> = lines(&out)
-        .into_iter()
-        .filter(|l| l.starts_with("PLAY [") || l.starts_with("TASK ["))
-        .map(|l| l.split('*').next().unwrap_or_default().trim().to_string())
-        .collect();
-    assert_eq!(
-        order,
-        [
-            "PLAY [h1,h2]",
-            "TASK [command]",
-            "PLAY [h1]",
-            "PLAY [h2]",
-            "TASK [debug]",
-        ],
-        "the banner of the emptied play stands alone and the play behind it runs: {text}"
-    );
-    assert!(
-        !text.contains("skipping: no hosts matched"),
-        "a play whose hosts failed is not a pattern that matched nothing: {text}"
-    );
-    assert!(
-        !text.contains("second-h1-only") && text.contains(r#""msg": "third""#),
-        "{text}"
-    );
-}
-
-/// A batch whose hosts had all failed before it started runs nothing, says nothing beyond its
-/// banner, and does **not** end the run.
-#[test]
-fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            &fixture("serial/already_failed.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert_eq!(
-        text.matches("PLAY [all]").count(),
-        5,
-        "one banner for the first play, three for the batches, one for the third: {text}"
-    );
-    assert!(
-        text.contains("ok: [h2] => {\n    \"msg\": \"h2 / h2,h3 / h1,h2,h3\"\n}")
-            && text.contains("ok: [h3] => {\n    \"msg\": \"h3 / h2,h3 / h1,h2,h3\"\n}"),
-        "the batches of the surviving hosts run, one host each: {text}"
-    );
-    assert!(
-        !text.contains(
-            "[h1] => {
-    \"msg\""
-        ),
-        "the failed host runs nothing: {text}"
-    );
-    assert!(
-        text.contains(r#""msg": "third""#),
-        "the play behind the emptied batch runs: {text}"
-    );
-}
-
-/// `vars_files` is read once per batch of a `serial` play, so a path templated on
-/// `ansible_play_batch` reads a different file for each batch.
-#[test]
-fn vars_files_is_read_per_batch_not_per_play() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            &fixture("serial/vars_files.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains("ok: [h2] => {\n    \"msg\": \"batch=h2 marker=from-h2\"\n}"),
-        "h2's own batch reads h2's own vars_files: {text}"
-    );
-    assert!(
-        text.contains("ok: [h3] => {\n    \"msg\": \"batch=h3 marker=from-h3\"\n}"),
-        "h3's own batch reads h3's own vars_files, not h2's: {text}"
-    );
-}
-
-/// A `run_once` task that fails takes every other host of the batch out of the play.
-#[test]
-fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/run-once-fails.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(text.contains("fatal: [h1]: FAILED!"), "{text}");
-    assert!(
-        !text.contains("after on"),
-        "nothing runs behind a run_once that failed: {text}"
-    );
-    assert!(
-        !text.contains("h2                         :"),
-        "a host that ran nothing has no recap line: {text}"
-    );
-
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/run-once-rescued.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "the rescued host is not the whole play: {text}"
-    );
-    assert!(text.contains(r#""msg": "rescued on h1""#), "{text}");
-    assert!(text.contains(r#""msg": "after on h1""#), "{text}");
-    assert!(
-        !text.contains("on h2"),
-        "the other host leaves rather than entering a rescue it never failed into: {text}"
-    );
-    assert!(
-        text.contains("h1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1"),
-        "{text}"
-    );
-    assert!(!text.contains("h2                         :"), "{text}");
-}
-
 /// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the exit
 /// code stays the unreachable one.
 #[test]
@@ -4197,25 +3403,6 @@ fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
     );
     assert!(!text.contains("gone                 "), "{text}");
     assert!(!text.contains(r#""msg": "after""#), "{text}");
-}
-
-/// A host that has failed is still a valid delegate.
-#[test]
-fn a_failed_host_is_still_a_valid_delegate() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/delegate-failed-host.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(text.contains("fatal: [h3]: FAILED!"), "{text}");
-    assert!(text.contains("changed: [h1 -> h3]"), "{text}");
-    assert!(text.contains(r#""msg": "hi""#), "{text}");
 }
 
 /// A directory of this test's own, with a payload file whose text is a Jinja expression that

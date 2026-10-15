@@ -1,0 +1,2 @@
+# Variables, loops, conditions and registered results render as ansible-playbook prints them.
+args: [-i, inventory.ini, site.yml]

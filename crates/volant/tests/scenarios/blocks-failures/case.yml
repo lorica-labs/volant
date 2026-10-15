@@ -1,0 +1,8 @@
+# Cleanups, rescues and meta around a failure.
+runs:
+  - args: [always.yml]
+  - args: [nested-cleanup.yml]
+  - args: [ignored.yml]
+  - args: [-i, inv.ini, rescue.yml]
+  - args: [-i, inv.ini, rescue-fails.yml]
+  - args: [-i, three-hosts.ini, meta.yml]

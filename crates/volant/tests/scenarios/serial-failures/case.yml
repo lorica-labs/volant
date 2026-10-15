@@ -1,0 +1,6 @@
+# Plays and batches whose hosts have failed.
+runs:
+  - args: [-i, inv.ini, allfail.yml]
+  - args: [-i, inv.ini, onefail.yml]
+  - args: [-i, inv.ini, already_failed.yml]
+  - args: [-i, inv.ini, vars_files.yml]

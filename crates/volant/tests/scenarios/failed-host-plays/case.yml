@@ -1,0 +1,2 @@
+# A host that failed in one play is gone from the plays behind it.
+args: [-i, inventory.ini, two-plays.yml]

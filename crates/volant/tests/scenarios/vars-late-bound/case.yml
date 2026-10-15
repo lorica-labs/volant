@@ -1,0 +1,2 @@
+# A variable naming a later-bound one, a loop variable or a hostvars read still renders.
+args: [-i, inventory.ini, site.yml]

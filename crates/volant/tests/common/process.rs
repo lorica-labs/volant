@@ -24,20 +24,28 @@ pub fn run_within(command: &mut Command, deadline: Duration, stdin: Option<&[u8]
         .stderr(Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| panic!("{what} starts: {e}"));
-    if let Some(bytes) = stdin {
+    // Written from a thread of its own: a child that answers before it has read everything blocks
+    // on a full output pipe, which only the wait below drains.
+    let writer = stdin.map(|bytes| {
         use std::io::Write as _;
-        child
-            .stdin
-            .take()
-            .expect("the child's standard input")
-            .write_all(bytes)
-            .expect("the input reaches the child");
-    }
+        let bytes = bytes.to_vec();
+        let mut pipe = child.stdin.take().expect("the child's standard input");
+        std::thread::spawn(move || {
+            // A child that exits without reading it all closes the pipe: not a failure of the test.
+            let _ = pipe.write_all(&bytes);
+        })
+    });
     let pid = child.id();
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || send.send(child.wait_with_output()));
-    let Ok(out) = receive.recv_timeout(deadline) else {
+    let received = receive.recv_timeout(deadline);
+    if received.is_err() {
         kill_group(pid);
+    }
+    if let Some(writer) = writer {
+        writer.join().expect("the writing thread ends");
+    }
+    let Ok(out) = received else {
         let out = receive
             .recv()
             .expect("the waiting thread answers")

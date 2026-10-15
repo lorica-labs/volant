@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [Smoke test] **************************************************************\n\nTASK [Say hello] ***************************************************************\nchanged: [localhost]\n\nTASK [Fail but keep going] *****************************************************\n[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <golden-tmp>/site.yml:8:7\n\n6       command: echo hello\n7\n8     - name: Fail but keep going\n        ^ column 7\n\nfatal: [localhost]: FAILED! => {\"changed\": true, \"cmd\": [\"false\"], \"delta\": \"0:00:00.006130\", \"end\": \"2026-10-15 22:05:58.267241\", \"msg\": \"non-zero return code\", \"rc\": 1, \"start\": \"2026-10-15 22:05:58.261111\", \"stderr\": \"\", \"stderr_lines\": [], \"stdout\": \"\", \"stdout_lines\": []}\n...ignoring\n\nTASK [Skip because the path exists] ********************************************\nok: [localhost]\n\nTASK [Shell arithmetic] ********************************************************\nchanged: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=4    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   \n\n"
+  },
+  {
+    "code": 2,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Break] *******************************************************************\n[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <golden-tmp>/failing.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - name: Break\n        ^ column 7\n\nfatal: [localhost]: FAILED! => {\"changed\": true, \"cmd\": [\"false\"], \"delta\": \"0:00:00.006427\", \"end\": \"2026-10-15 22:06:00.398497\", \"msg\": \"non-zero return code\", \"rc\": 1, \"start\": \"2026-10-15 22:06:00.392070\", \"stderr\": \"\", \"stderr_lines\": [], \"stdout\": \"\", \"stdout_lines\": []}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

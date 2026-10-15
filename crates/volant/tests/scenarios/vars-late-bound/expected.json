@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [Late binding] ************************************************************\n\nTASK [Say everything] **********************************************************\nok: [alpha] => (item=a) => {\n    \"msg\": \"greet a\"\n}\nok: [alpha] => (item=b) => {\n    \"msg\": \"greet b\"\n}\n\nTASK [Through hostvars] ********************************************************\nok: [alpha] => {\n    \"msg\": \"hello there\"\n}\n\nPLAY RECAP *********************************************************************\nalpha                      : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

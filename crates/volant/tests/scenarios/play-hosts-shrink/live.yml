@@ -1,0 +1,6 @@
+- hosts: web
+  gather_facts: false
+  tasks:
+    - command: "{{ (inventory_hostname == 'alpha') | ternary('false', 'true') }}"
+    - debug:
+        msg: "{{ ansible_play_hosts | join(',') }} of {{ ansible_play_hosts_all | join(',') }}"

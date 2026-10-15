@@ -1,0 +1,2 @@
+# An unknown connection plugin fails that host's task, not the run.
+args: [-i, bad.ini, all-fail.yml]

@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - when: nope is defined
+      block:
+        - name: Copy
+          debug: { msg: ran }
+          loop: "{{ nope }}"
+          register: r
+        - name: Inc
+          include_tasks: other.yml
+          loop: "{{ nope }}"
+    - name: Show
+      debug: { msg: "{{ r | list | sort | join(',') }}" }

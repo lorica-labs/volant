@@ -1,0 +1,5 @@
+# A loop whose items a condition leaves out prints each item and the task's own skipping line; an undefined loop under a false when is skipped.
+runs:
+  - args: [all-skipped.yml]
+  - args: [false.yml]
+  - args: [fine.yml]

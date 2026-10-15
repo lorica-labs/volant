@@ -62,9 +62,10 @@ pub fn results_by_task(stdout: &str) -> Map<String, Value> {
                     }
                 }
             }
-            if let Ok(value) = serde_json::from_str(&body) {
-                results.insert(task.clone(), value);
-            }
+            let value = serde_json::from_str(&body).unwrap_or_else(|e| {
+                panic!("task {task}: a result body that is not JSON ({e}): {body}")
+            });
+            results.insert(task.clone(), value);
         }
     }
     results

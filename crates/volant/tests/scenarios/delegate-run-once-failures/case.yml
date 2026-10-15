@@ -1,0 +1,5 @@
+# A failing run_once task, a rescued one, and a failed host as a delegate.
+runs:
+  - args: [-i, inv.ini, run-once-fails.yml]
+  - args: [-i, inv.ini, run-once-rescued.yml]
+  - args: [-i, inv.ini, delegate-failed-host.yml]

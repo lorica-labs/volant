@@ -267,13 +267,6 @@ pub mod tests {
 
     /// The probe run by a real interpreter answers what the reference's own calls answer on the
     /// same interpreter: `platform.python_version()`, `platform.architecture()[0]`, the `ssl`
-    /// import, `sys.executable`, `locale.setlocale`, the zone fields of `date_time`, and the
-    /// `distro` that `import distro` finds. And its hand-written JSON carries any text an
-    /// environment can hold.
-    ///
-    /// What would make this red: a shortcut that stops agreeing with the call it replaces, or an
-    /// environment value with a quote, a backslash, a newline or a character outside ASCII
-    /// coming back different, or not at all.
     #[test]
     fn a_real_interpreter_answers_the_probe_as_the_reference_s_calls_do() {
         let tricky = "a\"b\\c\nd\té 😀 \u{7f}";
@@ -314,11 +307,8 @@ pub mod tests {
         assert_eq!(probe.python["version"]["major"], 3);
     }
 
-    /// A `distro` package found beside the interpreter is reported with its version, read off
-    /// its source, whether it is a single module or a package.
-    ///
-    /// What would make this red: a system `distro` reported as absent, which lets the native
-    /// answer with the bundled 1.9.0's version rules where 1.5 would give `11` for `11.11`.
+    /// A `distro` package found beside the interpreter is reported with its version, read off its
+    /// source, whether it is a single module or a package.
     #[test]
     fn a_system_distro_is_reported_with_its_version() {
         let fake = FakeRoot::new("probe-distro");
@@ -355,11 +345,8 @@ pub mod tests {
         );
     }
 
-    /// Nothing is kept from one probe to the next: a `distro` installed between two gathers,
-    /// or a time zone moved, shows in the second.
-    ///
-    /// What would make this red: the probe cached per agent, which answers the second gather
-    /// with the first one's `distro` and zone.
+    /// Nothing is kept from one probe to the next: a `distro` installed between two gathers, or a
+    /// time zone moved, shows in the second.
     #[test]
     fn each_probe_sees_what_changed_since_the_last() {
         let fake = FakeRoot::new("probe-fresh");

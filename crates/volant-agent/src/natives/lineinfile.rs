@@ -1124,19 +1124,7 @@ mod tests {
         found
     }
 
-    /// Every recorded `lineinfile` case, played in the golden play's order on the same files:
-    /// the missing file, `create` with a mode, the same again, a line appended, replaced with a
-    /// backup, a mode alone, `insertafter`, `search_string`, `validate` passing and failing,
-    /// removals, a directory, and the last match of `regexp` and of `insertafter` among two.
-    /// The two cases outside the subset (a lookahead, `backrefs`) must hand back with the file
-    /// untouched; the file is then given what the Python module left, for the cases after them.
-    ///
-    /// What would make this red: the first match taken instead of the last
-    /// (`lineinfile-last-match`, `lineinfile-insertafter-last`), `diff` missing or shaped
-    /// otherwise (every case that has one), `found` missing from a removal, a backup named
-    /// otherwise than `<path>.<pid>.<date>@<time>~` or holding other content, `validate` run
-    /// after the file was replaced (`lineinfile-validate-fail` leaves `d=6` alone), a message
-    /// or an `rc` worded otherwise, or a lookahead answered.
+    /// Every recorded `lineinfile` case, played in the golden play's order on the same files.
     #[test]
     fn lineinfile_answers_every_recorded_case_like_the_reference() {
         let (scratch, context) = scratch("lineinfile");
@@ -1221,19 +1209,7 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// The branches the golden play does not reach, each against what ansible-core 2.19.12's
-    /// module did to the same file with the same arguments (measured with `ansible localhost -m
-    /// lineinfile`): `insertbefore` on the last and the first match, `BOF`, an `insertafter` on
-    /// a last line without its newline (the reference glues the new line to it), an append to a
-    /// file without a final newline, an exact line already there with and without its newline,
-    /// removals by `line` (a `\r\n` line included) and by `search_string`, `firstmatch` for
-    /// `regexp`, `insertafter` whose line follows already, `EOF` given, `insertbefore: EOF`
-    /// read as an expression, an `insertafter` that matches nothing, `$` against a `\r\n` line,
-    /// a removal from a missing file and `create` under missing directories.
-    ///
-    /// What would make this red: any rule of `present` or `absent` ported otherwise, such as
-    /// `$` matching before `\r\n`, the newline fixed before an `insertafter` on the last line,
-    /// or `rstrip` taking only one `\n`.
+    /// The branches the golden play does not reach, each against what the reference's module answered.
     #[test]
     fn lineinfile_matches_the_reference_on_every_other_branch() {
         type Case = (
@@ -1432,308 +1408,310 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// An expression only Python's `re` reads goes to the Python module, and the file is as it
-    /// was: k3s-ansible's two lookaheads (`K3S_TOKEN`, the token templated in and left empty),
-    /// a lookbehind, `(?P=name)`, `\Z`, a back reference, an inline flag, a possessive repeat,
-    /// an atomic group, a POSIX class Rust would read, a `\u` escape, as `regexp`, as
-    /// `insertafter` and in a removal.
-    ///
-    /// What would make this red: a lookahead accepted by the translation, or anything written
-    /// before handing back.
+    /// A Python-only regex falls back; translation reads patterns as Python reads bytes.
     #[test]
-    fn a_python_only_regex_falls_back() {
-        let (scratch, context) = scratch("lineinfile-regex");
-        let path = scratch.path("f.conf");
-        write(&path, "K3S_TOKEN=old\nb=2\n", 0o644);
-        let snapshot_before = snapshot(&scratch);
-        for pattern in [
-            r"^K3S_TOKEN=\s*(?!s3cr3t\s*$)",
-            r"^K3S_TOKEN=\s*(?!\s*$)",
-            r"(?<=K)3S",
-            r"(?P<k>b)=(?P=k)",
-            r"b=2\Z",
-            r"(b)=\1",
-            r"(?i)k3s",
-            r"b=2*+",
-            r"(?>b)",
-            r"[[:alpha:]]",
-            // `b`, which Python refuses in a bytes pattern and Rust reads as `b`.
-            concat!('\\', "u0062"),
-        ] {
+    fn a_regex_is_translated_as_python_reads_bytes_or_falls_back() {
+        {
+            let (scratch, context) = scratch("lineinfile-regex");
+            let path = scratch.path("f.conf");
+            write(&path, "K3S_TOKEN=old\nb=2\n", 0o644);
+            let snapshot_before = snapshot(&scratch);
+            for pattern in [
+                r"^K3S_TOKEN=\s*(?!s3cr3t\s*$)",
+                r"^K3S_TOKEN=\s*(?!\s*$)",
+                r"(?<=K)3S",
+                r"(?P<k>b)=(?P=k)",
+                r"b=2\Z",
+                r"(b)=\1",
+                r"(?i)k3s",
+                r"b=2*+",
+                r"(?>b)",
+                r"[[:alpha:]]",
+                // `b`, which Python refuses in a bytes pattern and Rust reads as `b`.
+                concat!('\\', "u0062"),
+            ] {
+                for args in [
+                    json!({"path": path, "regexp": pattern, "line": "K3S_TOKEN=new"}),
+                    json!({"path": path, "insertafter": pattern, "line": "c=3"}),
+                    json!({"path": path, "regexp": pattern, "state": "absent"}),
+                ] {
+                    assert!(
+                        matches!(ask(&args, &context), NativeRun::Fallback(_)),
+                        "{args} was answered"
+                    );
+                    assert_eq!(
+                        snapshot(&scratch),
+                        snapshot_before,
+                        "{args} changed the disk"
+                    );
+                }
+            }
+        }
+        {
+            type Lines<'a> = &'a [(&'a [u8], bool)];
+            let cases: &[(&str, Lines<'_>)] = &[
+                (
+                    "^a$",
+                    &[
+                        (b"a\n", true),
+                        (b"a", true),
+                        (b"a\r\n", false),
+                        (b"ab\n", false),
+                    ],
+                ),
+                ("^$", &[(b"\n", true), (b"x\n", false), (b"", true)]),
+                (r"\d", &[("\u{663}\n".as_bytes(), false), (b"7", true)]),
+                (r"\w+=", &[("\u{e9}=\n".as_bytes(), false), (b"_x=1", true)]),
+                ("[\u{e9}]", &[(b"\xa9", true), (b"e", false)]),
+                ("\u{e9}+", &[(b"\xc3\xa9\xa9", true), (b"\xc3", false)]),
+                (r"a{,2}b", &[(b"b", true), (b"aab", true)]),
+                (r"x{", &[(b"x{", true), (b"x", false)]),
+                (r"x{}", &[(b"x{}", true)]),
+                (r"x{1,2", &[(b"x{1,2", true)]),
+                (r"\<a\>", &[(b"<a>", true), (b"a", false)]),
+                (r"[]a]", &[(b"]", true), (b"a", true), (b"b", false)]),
+                (r"[^]a]", &[(b"]", false), (b"b", true), (b"\n", true)]),
+                (r"[a-]", &[(b"-", true), (b"b", false)]),
+                (r"[\b]", &[(b"\x08", true), (b"b", false)]),
+                (r"\bfoo\b", &[(b"a foo.", true), (b"afoo", false)]),
+                (r"[\x41-\x43]x", &[(b"Bx", true), (b"Dx", false)]),
+                (
+                    r"\s",
+                    &[
+                        (b"\x0b", true),
+                        (b"\x1c", false),
+                        ("\u{a0}".as_bytes(), false),
+                    ],
+                ),
+                (r".", &[(b"\n", false), (b"\xff", true)]),
+                (r"a|", &[(b"zzz", true)]),
+                (r"(?P<k>a)b", &[(b"ab", true)]),
+                (
+                    r"\.\s+<\(k3s completion bash\)",
+                    &[(b". <(k3s completion bash)  # Added\n", true)],
+                ),
+                (
+                    r"Defaults(\s)*secure_path(\s)*=",
+                    &[(b"Defaults    secure_path = /sbin\n", true)],
+                ),
+                (
+                    r#"^include "/etc/nftables\.d/\*\.nft"$"#,
+                    &[(b"include \"/etc/nftables.d/*.nft\"\n", true)],
+                ),
+                (r"a*?b", &[(b"aab", true)]),
+                (r"(?:ab)+$", &[(b"abab\n", true)]),
+                (r"#x ", &[(b"#x y", true)]),
+            ];
+            for (pattern, lines) in cases {
+                let regex =
+                    compile("regexp", pattern).unwrap_or_else(|err| panic!("{pattern}: {err}"));
+                for (line, want) in *lines {
+                    assert_eq!(regex.is_match(line), *want, "{pattern} on {line:?}");
+                }
+            }
+            for refused in [
+                r"a**",
+                r"^*",
+                r"*a",
+                r"a{2}{3}",
+                r"a*??",
+                r"\8",
+                r"[\d-z]",
+                r"[z-a]",
+                r"(?<n>a)",
+                concat!('\\', "u0041"),
+                r"[a",
+                r"a\",
+            ] {
+                assert!(
+                    compile("regexp", refused).is_err(),
+                    "{refused} was accepted"
+                );
+            }
+        }
+    }
+
+    /// Two backups of one file keep their own content, and a backup never overwrites a file.
+    #[test]
+    fn a_backup_keeps_its_own_content_and_overwrites_nothing() {
+        {
+            let (scratch, context) = scratch("lineinfile-backups");
+            let path = scratch.path("f.conf");
+            write(&path, "a=1\n", 0o644);
+            let mut names = Vec::new();
+            for line in ["b=2", "c=3"] {
+                let args = json!({"path": path, "line": line, "backup": true});
+                let NativeRun::Done(result) = ask(&args, &context) else {
+                    panic!("{args} was handed back");
+                };
+                names.push(result.0["backup"].as_str().unwrap().to_string());
+            }
+            assert_ne!(names[0], names[1]);
+            assert_eq!(fs::read_to_string(&names[0]).unwrap(), "a=1\n");
+            assert_eq!(fs::read_to_string(&names[1]).unwrap(), "a=1\nb=2\n");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "a=1\nb=2\nc=3\n");
+            let pattern = format!(
+                r"^{}\.\d+\.\d{{4}}-\d{{2}}-\d{{2}}@\d{{2}}:\d{{2}}:\d{{2}}~$",
+                regex::escape(&path)
+            );
+            for name in &names {
+                assert!(
+                    Regex::new(&pattern).unwrap().is_match(name.as_bytes()),
+                    "{name} does not have the reference's shape"
+                );
+            }
+        }
+        {
+            let (scratch, _) = scratch("lineinfile-backup-taken");
+            let path = scratch.path("f.conf");
+            let taken = scratch.path("f.conf.1.2026-01-01@00:00:00~");
+            write(&path, "a=1\n", 0o644);
+            write(&taken, "older backup\n", 0o644);
+            assert!(matches!(
+                backup_copy(&path, &taken, super::super::setup::unbounded()),
+                Err(BackupError::Exists(_))
+            ));
+            assert_eq!(fs::read_to_string(&taken).unwrap(), "older backup\n");
+        }
+    }
+
+    /// An immutable file or one with xattrs or flags is handed back.
+    #[test]
+    fn a_file_the_native_cannot_change_faithfully_is_handed_back() {
+        {
+            if unsafe { libc::geteuid() } != 0 {
+                eprintln!("skipped: only root can make a file immutable");
+                return;
+            }
+            let (scratch, context) = scratch("lineinfile-immutable");
+            let path = scratch.path("f.conf");
+            write(&path, "a=1\n", 0o644);
+            let file = fs::File::open(&path).unwrap();
+            let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+            let mut flags: libc::c_long = 0;
+            // SAFETY: both ioctls read or write one `long`.
+            let set = unsafe {
+                libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
+                    flags |= IMMUTABLE;
+                    libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
+                }
+            };
+            if !set {
+                eprintln!("skipped: this file system takes no immutable flag");
+                return;
+            }
+            let before = snapshot(&scratch);
+            let answer = ask(&json!({"path": path, "line": "b=2"}), &context);
+            let after = snapshot(&scratch);
+            flags &= !IMMUTABLE;
+            // SAFETY: as above.
+            unsafe { libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) };
+            assert!(
+                matches!(answer, NativeRun::Fallback(_)),
+                "an immutable file was answered"
+            );
+            assert_eq!(after, before);
+        }
+        {
+            let (scratch, context) = scratch("lineinfile-xattr");
+            let tagged = scratch.path("x.conf");
+            let flagged = scratch.path("n.conf");
+            write(&tagged, "a=1\n", 0o644);
+            write(&flagged, "a=1\n", 0o644);
+            let name = CString::new(tagged.as_str()).unwrap();
+            // SAFETY: a valid path, attribute name and value.
+            let tagged_ok = unsafe {
+                libc::setxattr(
+                    name.as_ptr(),
+                    c"user.volant".as_ptr(),
+                    c"1".as_ptr().cast(),
+                    1,
+                    0,
+                )
+            } == 0;
+            let file = fs::File::open(&flagged).unwrap();
+            let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+            let mut flags: libc::c_long = 0;
+            // SAFETY: both ioctls read or write one `long`; 0x40 is `FS_NODUMP_FL`.
+            let flagged_ok = unsafe {
+                libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
+                    flags |= 0x40;
+                    libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
+                }
+            };
+            if !tagged_ok || !flagged_ok {
+                eprintln!("skipped: this file system takes no user xattr or no nodump flag");
+                return;
+            }
+            let before = snapshot(&scratch);
             for args in [
-                json!({"path": path, "regexp": pattern, "line": "K3S_TOKEN=new"}),
-                json!({"path": path, "insertafter": pattern, "line": "c=3"}),
-                json!({"path": path, "regexp": pattern, "state": "absent"}),
+                json!({"path": tagged, "line": "b=2"}),
+                json!({"path": flagged, "line": "b=2", "backup": true}),
             ] {
                 assert!(
                     matches!(ask(&args, &context), NativeRun::Fallback(_)),
                     "{args} was answered"
                 );
-                assert_eq!(
-                    snapshot(&scratch),
-                    snapshot_before,
-                    "{args} changed the disk"
-                );
+                assert_eq!(snapshot(&scratch), before, "{args} changed the disk");
             }
         }
     }
 
-    /// Patterns whose meaning differs between Python's `re` on bytes and Rust's `regex` in its
-    /// default Unicode mode, against what Python 3.13's `re.search` answered for each line, and
-    /// patterns Python refuses to compile.
-    ///
-    /// What would make this red: `$` left as Rust's (no match before a final `\n`), `\d` or `\w`
-    /// reading non-ASCII digits and letters, a non-ASCII character kept whole in a set, a brace
-    /// that is not a repeat refused, `\<` read as a word boundary, `[\b]` read as one, or a
-    /// pattern Python refuses answered.
+    /// A validate naming no program is not quoted; a failing one leaves the file untouched.
     #[test]
-    fn translation_reads_patterns_as_python_reads_bytes() {
-        type Lines<'a> = &'a [(&'a [u8], bool)];
-        let cases: &[(&str, Lines<'_>)] = &[
-            (
-                "^a$",
-                &[
-                    (b"a\n", true),
-                    (b"a", true),
-                    (b"a\r\n", false),
-                    (b"ab\n", false),
-                ],
-            ),
-            ("^$", &[(b"\n", true), (b"x\n", false), (b"", true)]),
-            (r"\d", &[("\u{663}\n".as_bytes(), false), (b"7", true)]),
-            (r"\w+=", &[("\u{e9}=\n".as_bytes(), false), (b"_x=1", true)]),
-            ("[\u{e9}]", &[(b"\xa9", true), (b"e", false)]),
-            ("\u{e9}+", &[(b"\xc3\xa9\xa9", true), (b"\xc3", false)]),
-            (r"a{,2}b", &[(b"b", true), (b"aab", true)]),
-            (r"x{", &[(b"x{", true), (b"x", false)]),
-            (r"x{}", &[(b"x{}", true)]),
-            (r"x{1,2", &[(b"x{1,2", true)]),
-            (r"\<a\>", &[(b"<a>", true), (b"a", false)]),
-            (r"[]a]", &[(b"]", true), (b"a", true), (b"b", false)]),
-            (r"[^]a]", &[(b"]", false), (b"b", true), (b"\n", true)]),
-            (r"[a-]", &[(b"-", true), (b"b", false)]),
-            (r"[\b]", &[(b"\x08", true), (b"b", false)]),
-            (r"\bfoo\b", &[(b"a foo.", true), (b"afoo", false)]),
-            (r"[\x41-\x43]x", &[(b"Bx", true), (b"Dx", false)]),
-            (
-                r"\s",
-                &[
-                    (b"\x0b", true),
-                    (b"\x1c", false),
-                    ("\u{a0}".as_bytes(), false),
-                ],
-            ),
-            (r".", &[(b"\n", false), (b"\xff", true)]),
-            (r"a|", &[(b"zzz", true)]),
-            (r"(?P<k>a)b", &[(b"ab", true)]),
-            (
-                r"\.\s+<\(k3s completion bash\)",
-                &[(b". <(k3s completion bash)  # Added\n", true)],
-            ),
-            (
-                r"Defaults(\s)*secure_path(\s)*=",
-                &[(b"Defaults    secure_path = /sbin\n", true)],
-            ),
-            (
-                r#"^include "/etc/nftables\.d/\*\.nft"$"#,
-                &[(b"include \"/etc/nftables.d/*.nft\"\n", true)],
-            ),
-            (r"a*?b", &[(b"aab", true)]),
-            (r"(?:ab)+$", &[(b"abab\n", true)]),
-            (r"#x ", &[(b"#x y", true)]),
-        ];
-        for (pattern, lines) in cases {
-            let regex = compile("regexp", pattern).unwrap_or_else(|err| panic!("{pattern}: {err}"));
-            for (line, want) in *lines {
-                assert_eq!(regex.is_match(line), *want, "{pattern} on {line:?}");
-            }
-        }
-        for refused in [
-            r"a**",
-            r"^*",
-            r"*a",
-            r"a{2}{3}",
-            r"a*??",
-            r"\8",
-            r"[\d-z]",
-            r"[z-a]",
-            r"(?<n>a)",
-            concat!('\\', "u0041"),
-            r"[a",
-            r"a\",
-        ] {
-            assert!(
-                compile("regexp", refused).is_err(),
-                "{refused} was accepted"
-            );
-        }
-    }
-
-    /// Two `backup: true` edits of one file in a row, well inside one second, as a role's
-    /// consecutive tasks run: two backups under two names, each holding the file as it was
-    /// before its own edit, as the reference leaves them (its number is a new module pid each
-    /// task).
-    ///
-    /// What would make this red: the number shared by every task of the agent (the second edit
-    /// then finds the name taken and hands back, or overwrote the first backup before the fix).
-    #[test]
-    fn two_backups_of_one_file_keep_their_own_content() {
-        let (scratch, context) = scratch("lineinfile-backups");
-        let path = scratch.path("f.conf");
-        write(&path, "a=1\n", 0o644);
-        let mut names = Vec::new();
-        for line in ["b=2", "c=3"] {
-            let args = json!({"path": path, "line": line, "backup": true});
-            let NativeRun::Done(result) = ask(&args, &context) else {
-                panic!("{args} was handed back");
+    fn a_validate_is_not_quoted_and_a_failing_one_leaves_the_file() {
+        {
+            let (scratch, context) = scratch("lineinfile-no-program");
+            let args =
+                json!({"path": scratch.path("f.conf"), "line": "b=2", "validate": "'secret %s"});
+            let cancelled = || false;
+            let clock = clock(&context, &cancelled);
+            let params = module_args(SPEC, args.as_object().unwrap());
+            let request = request(&params, clock).ok().unwrap();
+            let Err(Stop::Fail(fail)) =
+                write_changes(&request, b"b=2\n", &context.remote_tmp, clock)
+            else {
+                panic!("the write did not fail");
             };
-            names.push(result.0["backup"].as_str().unwrap().to_string());
+            assert_eq!(fail["msg"], "validate names no program");
         }
-        assert_ne!(names[0], names[1]);
-        assert_eq!(fs::read_to_string(&names[0]).unwrap(), "a=1\n");
-        assert_eq!(fs::read_to_string(&names[1]).unwrap(), "a=1\nb=2\n");
-        assert_eq!(fs::read_to_string(&path).unwrap(), "a=1\nb=2\nc=3\n");
-        let pattern = format!(
-            r"^{}\.\d+\.\d{{4}}-\d{{2}}-\d{{2}}@\d{{2}}:\d{{2}}:\d{{2}}~$",
-            regex::escape(&path)
-        );
-        for name in &names {
-            assert!(
-                Regex::new(&pattern).unwrap().is_match(name.as_bytes()),
-                "{name} does not have the reference's shape"
-            );
-        }
-    }
-
-    /// A backup never goes over a file that already has its name: the copy is refused and the
-    /// file there is left as it was, which the native turns into a hand-back.
-    ///
-    /// What would make this red: the backup opened with `create` instead of `create_new`.
-    #[test]
-    fn a_backup_never_overwrites_a_file() {
-        let (scratch, _) = scratch("lineinfile-backup-taken");
-        let path = scratch.path("f.conf");
-        let taken = scratch.path("f.conf.1.2026-01-01@00:00:00~");
-        write(&path, "a=1\n", 0o644);
-        write(&taken, "older backup\n", 0o644);
-        assert!(matches!(
-            backup_copy(&path, &taken, super::super::setup::unbounded()),
-            Err(BackupError::Exists(_))
-        ));
-        assert_eq!(fs::read_to_string(&taken).unwrap(), "older backup\n");
-    }
-
-    /// An immutable file goes to the Python module untouched: the rename would fail there, and
-    /// the module words that exception. Setting the flag needs root.
-    ///
-    /// What would make this red: the flag check dropped, the native then failing with its own
-    /// wording after the temporary file was written.
-    #[test]
-    fn an_immutable_file_is_handed_back() {
-        if unsafe { libc::geteuid() } != 0 {
-            eprintln!("skipped: only root can make a file immutable");
-            return;
-        }
-        let (scratch, context) = scratch("lineinfile-immutable");
-        let path = scratch.path("f.conf");
-        write(&path, "a=1\n", 0o644);
-        let file = fs::File::open(&path).unwrap();
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
-        let mut flags: libc::c_long = 0;
-        // SAFETY: both ioctls read or write one `long`.
-        let set = unsafe {
-            libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
-                flags |= IMMUTABLE;
-                libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
+        {
+            let (scratch, context) = scratch("lineinfile-validate");
+            let path = scratch.path("f.conf");
+            write(&path, "a=1\n", 0o644);
+            for (validate, msg) in [
+                (
+                    "sh -c 'echo bad >&2; exit 3' %s",
+                    "failed to validate: rc:3 error:bad\n",
+                ),
+                ("true", "validate must contain %s: true"),
+            ] {
+                let args =
+                    json!({"path": path, "line": "b=2", "validate": validate, "backup": true});
+                let NativeRun::Done(result) = ask(&args, &context) else {
+                    panic!("{validate} was handed back");
+                };
+                assert_eq!(result.0["msg"], msg);
+                assert_eq!(result.0["failed"], true);
+                assert_eq!(fs::read_to_string(&path).unwrap(), "a=1\n");
+                assert_eq!(fs::read_dir(scratch.path(".tmp")).unwrap().count(), 0);
             }
-        };
-        if !set {
-            eprintln!("skipped: this file system takes no immutable flag");
-            return;
+            let backups = fs::read_dir(&scratch.0)
+                .unwrap()
+                .filter(|entry| {
+                    entry
+                        .as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with('~')
+                })
+                .count();
+            assert_eq!(backups, 2, "one backup per task");
         }
-        let before = snapshot(&scratch);
-        let answer = ask(&json!({"path": path, "line": "b=2"}), &context);
-        let after = snapshot(&scratch);
-        flags &= !IMMUTABLE;
-        // SAFETY: as above.
-        unsafe { libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) };
-        assert!(
-            matches!(answer, NativeRun::Fallback(_)),
-            "an immutable file was answered"
-        );
-        assert_eq!(after, before);
     }
 
-    /// A `validate` that splits into no program fails without quoting the command, which can
-    /// carry a secret: the reference, whose `shlex.split` raises on it, quotes none of it. The
-    /// up-front check hands such a `validate` back, so only the write itself reaches this.
-    ///
-    /// What would make this red: the message carrying the `validate` value.
-    #[test]
-    fn a_validate_naming_no_program_is_not_quoted() {
-        let (scratch, context) = scratch("lineinfile-no-program");
-        let args = json!({"path": scratch.path("f.conf"), "line": "b=2", "validate": "'secret %s"});
-        let cancelled = || false;
-        let clock = clock(&context, &cancelled);
-        let params = module_args(SPEC, args.as_object().unwrap());
-        let request = request(&params, clock).ok().unwrap();
-        let Err(Stop::Fail(fail)) = write_changes(&request, b"b=2\n", &context.remote_tmp, clock)
-        else {
-            panic!("the write did not fail");
-        };
-        assert_eq!(fail["msg"], "validate names no program");
-    }
-
-    /// A `validate` that fails leaves the file as it was, with the reference's message: the
-    /// exit code and the standard error, newline kept. The backup the reference makes before
-    /// validating is made. A `validate` without `%s` fails with the reference's own message.
-    ///
-    /// What would make this red: the file replaced before validating, the standard error or
-    /// the exit code missing from the message, or the temporary file left behind.
-    #[test]
-    fn a_failing_validate_leaves_the_file_untouched() {
-        let (scratch, context) = scratch("lineinfile-validate");
-        let path = scratch.path("f.conf");
-        write(&path, "a=1\n", 0o644);
-        for (validate, msg) in [
-            (
-                "sh -c 'echo bad >&2; exit 3' %s",
-                "failed to validate: rc:3 error:bad\n",
-            ),
-            ("true", "validate must contain %s: true"),
-        ] {
-            let args = json!({"path": path, "line": "b=2", "validate": validate, "backup": true});
-            let NativeRun::Done(result) = ask(&args, &context) else {
-                panic!("{validate} was handed back");
-            };
-            assert_eq!(result.0["msg"], msg);
-            assert_eq!(result.0["failed"], true);
-            assert_eq!(fs::read_to_string(&path).unwrap(), "a=1\n");
-            assert_eq!(fs::read_dir(scratch.path(".tmp")).unwrap().count(), 0);
-        }
-        let backups = fs::read_dir(&scratch.0)
-            .unwrap()
-            .filter(|entry| {
-                entry
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with('~')
-            })
-            .count();
-        assert_eq!(backups, 2, "one backup per task");
-    }
-
-    /// Outside the subset, and wherever the reference would warn, convert or refuse, the task
-    /// goes to the Python module with nothing written: `backrefs`, `attributes`,
-    /// `unsafe_writes`, a boolean or a string given as something else, a state outside its
-    /// choices, options the reference holds mutually exclusive, an empty `regexp`, an unknown
-    /// option, a relative path, a link as the path, a task `environment`, a `validate` Python
-    /// would expand or cannot run, a mode Python reads otherwise, and no `remote_tmp`.
-    ///
-    /// What would make this red: any of those answered, or anything created or changed before
-    /// handing back.
+    /// Outside the subset, or where the reference would warn, convert or refuse, nothing is written.
     #[test]
     fn lineinfile_hands_back_before_changing_anything() {
         let (scratch, context) = scratch("lineinfile-back");
@@ -1818,61 +1796,8 @@ mod tests {
         }
     }
 
-    /// A file with an extended attribute (which `copystat` would copy), or with an inode flag
-    /// a copy would not get (which `backup_local` would set with `chattr`), goes to the Python
-    /// module untouched when the task changes it.
-    ///
-    /// What would make this red: either check dropped, and the file rewritten without them.
-    #[test]
-    fn a_file_with_xattrs_or_flags_is_handed_back() {
-        let (scratch, context) = scratch("lineinfile-xattr");
-        let tagged = scratch.path("x.conf");
-        let flagged = scratch.path("n.conf");
-        write(&tagged, "a=1\n", 0o644);
-        write(&flagged, "a=1\n", 0o644);
-        let name = CString::new(tagged.as_str()).unwrap();
-        // SAFETY: a valid path, attribute name and value.
-        let tagged_ok = unsafe {
-            libc::setxattr(
-                name.as_ptr(),
-                c"user.volant".as_ptr(),
-                c"1".as_ptr().cast(),
-                1,
-                0,
-            )
-        } == 0;
-        let file = fs::File::open(&flagged).unwrap();
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
-        let mut flags: libc::c_long = 0;
-        // SAFETY: both ioctls read or write one `long`; 0x40 is `FS_NODUMP_FL`.
-        let flagged_ok = unsafe {
-            libc::ioctl(fd, libc::FS_IOC_GETFLAGS, &raw mut flags) == 0 && {
-                flags |= 0x40;
-                libc::ioctl(fd, libc::FS_IOC_SETFLAGS, &raw const flags) == 0
-            }
-        };
-        if !tagged_ok || !flagged_ok {
-            eprintln!("skipped: this file system takes no user xattr or no nodump flag");
-            return;
-        }
-        let before = snapshot(&scratch);
-        for args in [
-            json!({"path": tagged, "line": "b=2"}),
-            json!({"path": flagged, "line": "b=2", "backup": true}),
-        ] {
-            assert!(
-                matches!(ask(&args, &context), NativeRun::Fallback(_)),
-                "{args} was answered"
-            );
-            assert_eq!(snapshot(&scratch), before, "{args} changed the disk");
-        }
-    }
-
-    /// A `validate` that hangs ends with the task's `timeout`, as the Python module does, and
-    /// with the controller's cancel; the file stays as it was either way.
-    ///
-    /// What would make this red: `validate` run outside the executor, which waits for it, or
-    /// the temporary file moved into place anyway.
+    /// A `validate` that hangs ends with the task's `timeout`, as the Python module does, and with
+    /// the controller's cancel; the file stays as it was either way.
     #[test]
     fn a_hung_validate_ends_with_the_timeout_or_the_cancel() {
         let (scratch, mut context) = scratch("lineinfile-hung");

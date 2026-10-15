@@ -821,52 +821,13 @@ mod tests {
 
     use std::path::{Path, PathBuf};
 
+    use rstest::rstest;
     use serde_json::json;
 
     use crate::modules::{Context, Run};
 
-    /// A server whose interpreter cannot even start is a task failure carrying the interpreter's
-    /// own words, not a silent `ok`.
-    ///
-    /// What would make this red: the start error swallowed and the task reported ok, which is
-    /// the accepted-then-ignored shape this project refuses; or the interpreter's stderr
-    /// dropped, which sends an operator looking in the wrong place.
-    #[test]
-    fn an_interpreter_that_cannot_start_fails_the_task_with_its_own_message() {
-        let dir = scratch();
-        let fake = program(
-            dir.path(),
-            "python3",
-            "#!/bin/sh\necho 'boom: no python here' >&2\nexit 3\n",
-        );
-        let err = Server::start(
-            fake.to_str().unwrap(),
-            Path::new("/nonexistent.zip"),
-            &|| false,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("boom: no python here"), "{err}");
-        assert!(err.to_string().contains(fake.to_str().unwrap()), "{err}");
-    }
-
-    /// An interpreter that is not there at all names itself and the system error, so an operator
-    /// is not left guessing which of the two ends is missing.
-    #[test]
-    fn an_interpreter_that_is_not_there_names_itself() {
-        let err = Server::start(
-            "/nonexistent/python3",
-            Path::new("/nonexistent.zip"),
-            &|| false,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("/nonexistent/python3"), "{err}");
-    }
-
-    /// The module_utils come from the blob, not from the interpreter. This is the proof: the
-    /// dev host's `/usr/bin/python3` has no ansible-core at all, and the module still runs.
-    ///
-    /// What would make this red: the server importing ansible from the interpreter's own
-    /// site-packages, which works on a developer's machine and fails on every managed host.
+    /// The module_utils come from the blob, not from the interpreter. This is the proof: the dev
+    /// host's `/usr/bin/python3` has no ansible-core at all, and the module still runs.
     #[test]
     fn the_module_utils_come_from_the_blob_and_not_from_the_interpreter() {
         assert_ne!(
@@ -900,81 +861,70 @@ mod tests {
         assert!(!result.failed());
     }
 
-    /// One server runs task after task, and what one module did to its own process does not
-    /// reach the next: each module runs in a fork of a parent that never imports a module.
-    ///
-    /// What would make this red: running the module in the server process itself, which is the
-    /// whole reason the fork is there - measured, the second module then sees the first one's
-    /// environment, working directory, `sys.path` and umask.
+    /// One module does not reach the next, and the task environment reaches the module and stops there.
     #[test]
-    fn one_module_does_not_reach_the_next() {
-        let blob = stub_blob(
-            r#"
+    fn a_task_environment_stops_at_its_own_module() {
+        {
+            let blob = stub_blob(
+                r#"
     import os
     marker = os.environ.get("VOLANT_PROBE_MARKER", "clean")
     os.environ["VOLANT_PROBE_MARKER"] = "dirty"
     os.chdir("/")
     print(json.dumps({"marker": marker, "cwd": os.getcwd()}))
 "#,
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let first = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        let second = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(first.0["marker"], "clean");
-        assert_eq!(
-            second.0["marker"], "clean",
-            "the second module saw what the first one did to its own process"
-        );
-        assert!(server.alive(), "the server outlives a task");
-    }
-
-    /// The task's `environment` reaches the module's process, and only that task's.
-    #[test]
-    fn the_task_environment_reaches_the_module_and_stops_there() {
-        let blob = stub_blob(
-            r#"
+            );
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            let first = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            let second = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(first.0["marker"], "clean");
+            assert_eq!(
+                second.0["marker"], "clean",
+                "the second module saw what the first one did to its own process"
+            );
+            assert!(server.alive(), "the server outlives a task");
+        }
+        {
+            let blob = stub_blob(
+                r#"
     import os
     print(json.dumps({"seen": os.environ.get("VOLANT_TASK_VAR", "unset")}))
 "#,
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let mut context = Context::default();
-        context
-            .environment
-            .insert("VOLANT_TASK_VAR".into(), "here".into());
-        let with = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &context,
-            &|| false,
-        ));
-        let without = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(with.0["seen"], "here");
-        assert_eq!(without.0["seen"], "unset", "it leaked into the next task");
+            );
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            let mut context = Context::default();
+            context
+                .environment
+                .insert("VOLANT_TASK_VAR".into(), "here".into());
+            let with = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &context,
+                &|| false,
+            ));
+            let without = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(with.0["seen"], "here");
+            assert_eq!(without.0["seen"], "unset", "it leaked into the next task");
+        }
     }
 
     /// A module's imports are done in the server once its first child runs, so its later children
     /// find them done, and the first child still imports them itself.
-    ///
-    /// What would make this red: no import in the server (the second and third children import the
-    /// dependency again); the import done before the fork (the first child finds it done, and the
-    /// server's import delays the first task); or the imports stopping at the first one that fails
-    /// (the module's `try`/`except ImportError` ends them before the dependency).
     #[test]
     fn a_module_s_imports_are_done_in_the_server_once_its_first_child_runs() {
         let blob = runpy_blob(&[]);
@@ -1020,17 +970,7 @@ mod tests {
         );
     }
 
-    /// A module's later children take its spec from the server, which found it while importing
-    /// the module's dependencies, instead of asking the path for it again: Python 3.12's zipimport
-    /// compiles the whole module to build one. The finder that hands it over is gone from
-    /// `sys.meta_path` by the time the module runs.
-    ///
-    /// The spy is a finder the interpreter installs as it starts (`sitecustomize`), so it is in
-    /// the server and every child from the beginning, and sees every lookup of the module that
-    /// reaches the path: the server's own, while it imports, and the first child's.
-    ///
-    /// What would make this red: the spec not handed over (the second and third children look the
-    /// module up too); or the finder left behind (the module sees it on `sys.meta_path`).
+    /// A module's later children take its spec from the server instead of asking the path again.
     #[test]
     fn a_module_s_later_children_take_its_spec_from_the_server() {
         let blob = runpy_blob(&[(
@@ -1080,16 +1020,7 @@ mod tests {
         assert_eq!(results[2].0["finders"][0], "Spy", "{:?}", results[2].0);
     }
 
-    /// Each environment gets a server started with it, so what the server imports ahead is
-    /// imported under the environment the task's child runs with; one server serves every task
-    /// with the same environment; and a server with an environment replaces the previous one that
-    /// had another, so a loop that changes a variable per task does not pile up servers.
-    ///
-    /// What would make this red: the key without the environment (task `b` runs under the server
-    /// started for `a`, and imports ahead under `a`); the server started without it (the parent's
-    /// own environment lacks the variable); or the old environment's server kept alive.
-    ///
-    /// Linux only: it reads the server's start-up environment and liveness from `/proc`.
+    /// Each environment gets a server started with it, so imports ahead run under the task's environment.
     #[test]
     #[cfg(target_os = "linux")]
     fn each_environment_gets_a_server_started_with_it() {
@@ -1134,228 +1065,236 @@ mod tests {
         );
     }
 
-    /// A package from outside the payload and the standard library is never imported ahead: it
-    /// can read host state as it loads, and each child reads it afresh, as the reference's does.
-    /// The module_util that imports it stays cold with it.
-    ///
-    /// The second module has the `HAS_REQUESTS` shape: its module_util catches the import's
-    /// failure, and the module takes it with `from package import module_util`, which finds the
-    /// module_util on its package before it looks in `sys.modules`.
-    ///
-    /// What would make this red: the server importing it (the second task reads the file's old
-    /// content, frozen in the server by the first task's import); or the dropped module_util left
-    /// bound on its package (the `probe_from` task reads the `None` it worked out while the
-    /// package was refused).
+    /// A package outside the payload, served by another finder or setting itself up as it loads, is
+    /// imported by each child and stays cold.
     #[test]
-    fn a_package_outside_the_payload_is_imported_by_each_child() {
-        let blob = runpy_blob(&[
-            (
-                "ansible/module_utils/uses_third.py",
-                "import volant_third_party\nVALUE = volant_third_party.VALUE\n",
-            ),
-            (
-                "ansible/module_utils/maybe_third.py",
-                "try:\n    import volant_third_party\n    VALUE = volant_third_party.VALUE\nexcept ImportError:\n    VALUE = None\n",
-            ),
-            (
-                "ansible/modules/probe.py",
-                "import json, os\nfrom ansible.module_utils.uses_third import VALUE\nprint(json.dumps({\"value\": VALUE, \"parent\": os.getppid()}))\n",
-            ),
-            (
-                "ansible/modules/probe_from.py",
-                "import json, os\nfrom ansible.module_utils import maybe_third\nprint(json.dumps({\"value\": maybe_third.VALUE, \"parent\": os.getppid()}))\n",
-            ),
-        ]);
-        let site = scratch();
-        let data = scratch();
-        let state = data.path().join("state");
-        std::fs::write(&state, "one").unwrap();
-        let state_literal = format!("{:?}", state.to_str().unwrap());
-        std::fs::write(
-            site.path().join("volant_third_party.py"),
-            format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
-        )
-        .unwrap();
-        // No bytecode written into the site directory: that would move it, and the server would
-        // be replaced for that reason instead.
-        let environment = BTreeMap::from([
-            (
-                "PYTHONPATH".to_string(),
-                site.path().to_str().unwrap().to_string(),
-            ),
-            ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
-        ]);
-        let mut server =
-            Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
-        // Two tasks before the change: the server answers the second only once it has done its
-        // imports for the first, so nothing it does races the change.
-        for _ in 0..2 {
+    fn a_package_outside_the_payload_is_imported_by_each_child_whoever_serves_it() {
+        {
+            let blob = runpy_blob(&[
+                (
+                    "ansible/module_utils/uses_third.py",
+                    "import volant_third_party\nVALUE = volant_third_party.VALUE\n",
+                ),
+                (
+                    "ansible/module_utils/maybe_third.py",
+                    "try:\n    import volant_third_party\n    VALUE = volant_third_party.VALUE\nexcept ImportError:\n    VALUE = None\n",
+                ),
+                (
+                    "ansible/modules/probe.py",
+                    "import json, os\nfrom ansible.module_utils.uses_third import VALUE\nprint(json.dumps({\"value\": VALUE, \"parent\": os.getppid()}))\n",
+                ),
+                (
+                    "ansible/modules/probe_from.py",
+                    "import json, os\nfrom ansible.module_utils import maybe_third\nprint(json.dumps({\"value\": maybe_third.VALUE, \"parent\": os.getppid()}))\n",
+                ),
+            ]);
+            let site = scratch();
+            let data = scratch();
+            let state = data.path().join("state");
+            std::fs::write(&state, "one").unwrap();
+            let state_literal = format!("{:?}", state.to_str().unwrap());
+            std::fs::write(
+                site.path().join("volant_third_party.py"),
+                format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
+            )
+            .unwrap();
+            // No bytecode written into the site directory: that would move it, and the server would
+            // be replaced for that reason instead.
+            let environment = BTreeMap::from([
+                (
+                    "PYTHONPATH".to_string(),
+                    site.path().to_str().unwrap().to_string(),
+                ),
+                ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
+            ]);
+            let mut server =
+                Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
+            // Two tasks before the change: the server answers the second only once it has done its
+            // imports for the first, so nothing it does races the change.
+            for _ in 0..2 {
+                for fqn in ["ansible.modules.probe", "ansible.modules.probe_from"] {
+                    let before = call(&mut server, fqn);
+                    assert_eq!(before.0["value"], "one", "{fqn}: {:?}", before.0);
+                }
+            }
+            std::fs::write(&state, "two").unwrap();
             for fqn in ["ansible.modules.probe", "ansible.modules.probe_from"] {
-                let before = call(&mut server, fqn);
-                assert_eq!(before.0["value"], "one", "{fqn}: {:?}", before.0);
+                let after = call(&mut server, fqn);
+                assert_eq!(after.0["value"], "two", "{fqn}: {:?}", after.0);
+                assert_eq!(
+                    after.0["parent"],
+                    u64::from(server.child.id()),
+                    "the server was replaced"
+                );
             }
         }
-        std::fs::write(&state, "two").unwrap();
-        for fqn in ["ansible.modules.probe", "ansible.modules.probe_from"] {
-            let after = call(&mut server, fqn);
-            assert_eq!(after.0["value"], "two", "{fqn}: {:?}", after.0);
-            assert_eq!(
-                after.0["parent"],
-                u64::from(server.child.id()),
-                "the server was replaced"
+        {
+            let blob = runpy_blob(&[
+                (
+                    "ansible/module_utils/uses_elsewhere.py",
+                    "import volant_served_elsewhere\nVALUE = volant_served_elsewhere.VALUE\n",
+                ),
+                (
+                    "ansible/modules/probe.py",
+                    "import json\nfrom ansible.module_utils.uses_elsewhere import VALUE\nprint(json.dumps({\"value\": VALUE}))\n",
+                ),
+            ]);
+            let site = scratch();
+            let elsewhere = scratch();
+            let state = elsewhere.path().join("state");
+            std::fs::write(&state, "one").unwrap();
+            let state_literal = format!("{:?}", state.to_str().unwrap());
+            let source = elsewhere.path().join("served.py");
+            std::fs::write(
+                &source,
+                format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
+            )
+            .unwrap();
+            let source_literal = format!("{:?}", source.to_str().unwrap());
+            std::fs::write(
+            site.path().join("sitecustomize.py"),
+            format!(
+                "import importlib.util, sys\n\n\nclass Elsewhere:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"volant_served_elsewhere\":\n            return importlib.util.spec_from_file_location(name, {source_literal})\n        return None\n\n\nsys.meta_path.append(Elsewhere())\n"
+            ),
+        )
+        .unwrap();
+            let environment = BTreeMap::from([
+                (
+                    "PYTHONPATH".to_string(),
+                    site.path().to_str().unwrap().to_string(),
+                ),
+                ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
+            ]);
+            let mut server =
+                Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
+            for _ in 0..2 {
+                let before = call(&mut server, "ansible.modules.probe");
+                assert_eq!(before.0["value"], "one", "{:?}", before.0);
+            }
+            std::fs::write(&state, "two").unwrap();
+            let after = call(&mut server, "ansible.modules.probe");
+            assert_eq!(after.0["value"], "two", "{:?}", after.0);
+        }
+        {
+            let vendor = scratch();
+            std::fs::write(
+                vendor.path().join("volant_vendored.py"),
+                "VALUE = \"vendored\"\n",
+            )
+            .unwrap();
+            let vendor_literal = format!("{:?}", vendor.path().to_str().unwrap());
+            let blob = runpy_blob(&[
+                (
+                    "ansible/module_utils/basic.py",
+                    "from ansible.module_utils.common import warnings as _warnings\n",
+                ),
+                ("ansible/module_utils/common/__init__.py", ""),
+                (
+                    "ansible/module_utils/common/warnings.py",
+                    "_global_warnings = {}\n_global_deprecations = {}\n",
+                ),
+                (
+                    "ansible/module_utils/deprecating.py",
+                    "from ansible.module_utils.common import warnings\nwarnings._global_deprecations[\"old\"] = None\n",
+                ),
+                (
+                    "ansible/modules/noisy.py",
+                    "import json\nimport ansible.module_utils.deprecating\nprint(json.dumps({}))\n",
+                ),
+                (
+                    "ansible/modules/reader.py",
+                    "import json\nfrom ansible.module_utils.common import warnings\nprint(json.dumps({\"deprecations\": sorted(warnings._global_deprecations)}))\n",
+                ),
+                (
+                    "ansible/modules/vendoring.py",
+                    "import json\nimport ansible.module_utils.vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
+                ),
+                (
+                    "ansible/modules/vendoring_from.py",
+                    "import json\nfrom ansible.module_utils import vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
+                ),
+            ]);
+            std::fs::write(
+                blob.path().join("ansible/module_utils/vendoring.py"),
+                format!("import sys\nsys.path.insert(0, {vendor_literal})\n"),
+            )
+            .unwrap();
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            for _ in 0..2 {
+                for fqn in [
+                    "ansible.modules.vendoring",
+                    "ansible.modules.vendoring_from",
+                ] {
+                    let vendored = call(&mut server, fqn);
+                    assert_eq!(vendored.0["value"], "vendored", "{fqn}: {:?}", vendored.0);
+                }
+                let noisy = call(&mut server, "ansible.modules.noisy");
+                assert!(!noisy.failed(), "{:?}", noisy.0);
+            }
+            let reader = call(&mut server, "ansible.modules.reader");
+            assert_eq!(reader.0["deprecations"], json!([]), "{:?}", reader.0);
+        }
+    }
+
+    /// The server imports ahead only what the module always imports, only once the result is sent,
+    /// and only the payload and the standard library.
+    #[test]
+    fn the_server_imports_ahead_only_what_the_module_always_imports() {
+        {
+            let logs = scratch();
+            let log = logs.path().join("imports");
+            let log_literal = format!("{:?}", log.to_str().unwrap());
+            let logged = format!(
+                "import os\nwith open({log_literal}, \"a\") as log:\n    log.write(__name__ + \"\\n\")\n"
             );
-        }
-    }
-
-    /// A dependency that sets up the process for its own later use as it loads - its vendored
-    /// directory on `sys.path`, a deprecation in ansible's list - is not kept in the server
-    /// without that setup: it stays cold, so each child imports it and gets both, as the
-    /// reference's does, and no other module's task inherits the deprecation.
-    ///
-    /// What would make this red: the state put back and the module kept (the second `vendoring`
-    /// task cannot import what its dependency's directory holds); the dropped module left bound
-    /// on its package (the same, for `vendoring_from`, which takes it with `from ... import`); or
-    /// ansible's lists left out of the state (the `reader` task returns the deprecation).
-    #[test]
-    fn a_dependency_that_sets_itself_up_as_it_loads_stays_cold() {
-        let vendor = scratch();
-        std::fs::write(
-            vendor.path().join("volant_vendored.py"),
-            "VALUE = \"vendored\"\n",
-        )
-        .unwrap();
-        let vendor_literal = format!("{:?}", vendor.path().to_str().unwrap());
-        let blob = runpy_blob(&[
-            (
-                "ansible/module_utils/basic.py",
-                "from ansible.module_utils.common import warnings as _warnings\n",
-            ),
-            ("ansible/module_utils/common/__init__.py", ""),
-            (
-                "ansible/module_utils/common/warnings.py",
-                "_global_warnings = {}\n_global_deprecations = {}\n",
-            ),
-            (
-                "ansible/module_utils/deprecating.py",
-                "from ansible.module_utils.common import warnings\nwarnings._global_deprecations[\"old\"] = None\n",
-            ),
-            (
-                "ansible/modules/noisy.py",
-                "import json\nimport ansible.module_utils.deprecating\nprint(json.dumps({}))\n",
-            ),
-            (
-                "ansible/modules/reader.py",
-                "import json\nfrom ansible.module_utils.common import warnings\nprint(json.dumps({\"deprecations\": sorted(warnings._global_deprecations)}))\n",
-            ),
-            (
-                "ansible/modules/vendoring.py",
-                "import json\nimport ansible.module_utils.vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
-            ),
-            (
-                "ansible/modules/vendoring_from.py",
-                "import json\nfrom ansible.module_utils import vendoring\n\n\ndef main():\n    import volant_vendored\n    print(json.dumps({\"value\": volant_vendored.VALUE}))\n\n\nmain()\n",
-            ),
-        ]);
-        std::fs::write(
-            blob.path().join("ansible/module_utils/vendoring.py"),
-            format!("import sys\nsys.path.insert(0, {vendor_literal})\n"),
-        )
-        .unwrap();
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        for _ in 0..2 {
-            for fqn in [
-                "ansible.modules.vendoring",
-                "ansible.modules.vendoring_from",
-            ] {
-                let vendored = call(&mut server, fqn);
-                assert_eq!(vendored.0["value"], "vendored", "{fqn}: {:?}", vendored.0);
+            let blob = runpy_blob(&[
+                ("ansible/module_utils/after_failure.py", logged.as_str()),
+                ("ansible/module_utils/in_except.py", logged.as_str()),
+                ("ansible/module_utils/in_if.py", logged.as_str()),
+                (
+                    "ansible/modules/probe.py",
+                    "import json\ntry:\n    import volant_no_such_module\n    import ansible.module_utils.after_failure\nexcept ImportError:\n    pass\ntry:\n    import os\nexcept ImportError:\n    import ansible.module_utils.in_except\nif json is None:\n    import ansible.module_utils.in_if\nprint(json.dumps({}))\n",
+                ),
+            ]);
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            for _ in 0..2 {
+                let result = call(&mut server, "ansible.modules.probe");
+                assert!(!result.failed(), "{:?}", result.0);
             }
-            let noisy = call(&mut server, "ansible.modules.noisy");
-            assert!(!noisy.failed(), "{:?}", noisy.0);
+            assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "");
         }
-        let reader = call(&mut server, "ansible.modules.reader");
-        assert_eq!(reader.0["deprecations"], json!([]), "{:?}", reader.0);
-    }
-
-    /// The server imports only what runs whenever the module loads: not an `except` or an `if`
-    /// branch, and not what follows a failed import in a `try` body - none of which the module's
-    /// own children run.
-    ///
-    /// What would make this red: any of those followed (the log names the server).
-    #[test]
-    fn the_server_imports_only_what_the_module_always_imports() {
-        let logs = scratch();
-        let log = logs.path().join("imports");
-        let log_literal = format!("{:?}", log.to_str().unwrap());
-        let logged = format!(
-            "import os\nwith open({log_literal}, \"a\") as log:\n    log.write(__name__ + \"\\n\")\n"
-        );
-        let blob = runpy_blob(&[
-            ("ansible/module_utils/after_failure.py", logged.as_str()),
-            ("ansible/module_utils/in_except.py", logged.as_str()),
-            ("ansible/module_utils/in_if.py", logged.as_str()),
-            (
+        {
+            let gates = scratch();
+            let gate = gates.path().join("open");
+            let gate_literal = format!("{:?}", gate.to_str().unwrap());
+            let blob = runpy_blob(&[(
                 "ansible/modules/probe.py",
-                "import json\ntry:\n    import volant_no_such_module\n    import ansible.module_utils.after_failure\nexcept ImportError:\n    pass\ntry:\n    import os\nexcept ImportError:\n    import ansible.module_utils.in_except\nif json is None:\n    import ansible.module_utils.in_if\nprint(json.dumps({}))\n",
-            ),
-        ]);
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        for _ in 0..2 {
-            let result = call(&mut server, "ansible.modules.probe");
-            assert!(!result.failed(), "{:?}", result.0);
-        }
-        assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "");
-    }
-
-    /// The server imports ahead only once the task's result is sent: a task never waits for it,
-    /// and its `timeout` never covers it.
-    ///
-    /// The dependency blocks in the server alone until the test opens a gate, which it does only
-    /// after the first task has returned.
-    ///
-    /// What would make this red: the imports done while the child runs (the result frame waits
-    /// for them, and the first task times out).
-    #[test]
-    fn the_server_imports_ahead_only_once_the_result_is_sent() {
-        let gates = scratch();
-        let gate = gates.path().join("open");
-        let gate_literal = format!("{:?}", gate.to_str().unwrap());
-        let blob = runpy_blob(&[(
-            "ansible/modules/probe.py",
-            "import json\nimport ansible.module_utils.gated\nprint(json.dumps({}))\n",
-        )]);
-        std::fs::write(
+                "import json\nimport ansible.module_utils.gated\nprint(json.dumps({}))\n",
+            )]);
+            std::fs::write(
             blob.path().join("ansible/module_utils/gated.py"),
             format!(
                 "import os, sys, time\nif getattr(sys.modules[\"__main__\"], \"__file__\", None) is None:\n    while not os.path.exists({gate_literal}):\n        time.sleep(0.01)\n"
             ),
         )
         .unwrap();
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let first = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context {
-                timeout: Some(Duration::from_secs(5)),
-                ..Context::default()
-            },
-            &|| false,
-        ));
-        std::fs::write(&gate, "").unwrap();
-        assert!(!first.failed(), "{:?}", first.0);
-        let second = call(&mut server, "ansible.modules.probe");
-        assert!(!second.failed(), "{:?}", second.0);
-    }
-
-    /// What the server may import ahead: the payload and the standard library, and nothing under
-    /// a `*-packages` directory even inside the standard library's own (Debian and Ubuntu put
-    /// `dist-packages` there).
-    ///
-    /// What would make this red: a site directory inside the standard library let through, or the
-    /// payload or the standard library refused.
-    #[test]
-    fn only_the_payload_and_the_standard_library_are_imported_ahead() {
-        const CHECK: &str = r#"
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            let first = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context {
+                    timeout: Some(Duration::from_secs(5)),
+                    ..Context::default()
+                },
+                &|| false,
+            ));
+            std::fs::write(&gate, "").unwrap();
+            assert!(!first.failed(), "{:?}", first.0);
+            let second = call(&mut server, "ansible.modules.probe");
+            assert!(!second.failed(), "{:?}", second.0);
+        }
+        {
+            const CHECK: &str = r#"
 import json, sys, sysconfig
 ns = {"__name__": "server"}
 exec(sys.argv[1], ns)
@@ -1370,25 +1309,21 @@ print(json.dumps([
     outside.allowed("/payloadx/ansible/__init__.py"),
 ]))
 "#;
-        let out = Command::new(HOST_PYTHON)
-            .args(["-c", CHECK, SERVER])
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let seen: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(seen, json!([true, true, false, false, false, false]));
+            let out = Command::new(HOST_PYTHON)
+                .args(["-c", CHECK, SERVER])
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let seen: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(seen, json!([true, true, false, false, false, false]));
+        }
     }
 
-    /// A loop whose items alternate two environments, all in one batch, runs every item: a server
-    /// replaced because the other environment needed the place was evicted, not stopped, and
-    /// does not spend the batch's allowance for servers that die.
-    ///
-    /// What would make this red: an eviction counted as a start of a server that died (the fifth
-    /// item, the third start of `p1`, is refused as "stopped twice in one batch").
+    /// A loop alternating two environments in one batch runs every item.
     #[test]
     fn a_loop_alternating_two_environments_runs_every_item() {
         let root = scratch();
@@ -1406,61 +1341,6 @@ print(json.dumps([
             let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
             assert!(!result.failed(), "{proxy}: {:?}", result.0);
         }
-    }
-
-    /// A name no directory on the path holds, served by a finder something else installed (an
-    /// editable install's, setuptools' `distutils` redirect), is refused like any package from
-    /// outside the payload: nothing checked where it comes from.
-    ///
-    /// What would make this red: the server letting the other finder serve it (the task after
-    /// the change reads the file's old content).
-    #[test]
-    fn a_package_another_finder_serves_is_imported_by_each_child() {
-        let blob = runpy_blob(&[
-            (
-                "ansible/module_utils/uses_elsewhere.py",
-                "import volant_served_elsewhere\nVALUE = volant_served_elsewhere.VALUE\n",
-            ),
-            (
-                "ansible/modules/probe.py",
-                "import json\nfrom ansible.module_utils.uses_elsewhere import VALUE\nprint(json.dumps({\"value\": VALUE}))\n",
-            ),
-        ]);
-        let site = scratch();
-        let elsewhere = scratch();
-        let state = elsewhere.path().join("state");
-        std::fs::write(&state, "one").unwrap();
-        let state_literal = format!("{:?}", state.to_str().unwrap());
-        let source = elsewhere.path().join("served.py");
-        std::fs::write(
-            &source,
-            format!("with open({state_literal}) as fh:\n    VALUE = fh.read()\n"),
-        )
-        .unwrap();
-        let source_literal = format!("{:?}", source.to_str().unwrap());
-        std::fs::write(
-            site.path().join("sitecustomize.py"),
-            format!(
-                "import importlib.util, sys\n\n\nclass Elsewhere:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"volant_served_elsewhere\":\n            return importlib.util.spec_from_file_location(name, {source_literal})\n        return None\n\n\nsys.meta_path.append(Elsewhere())\n"
-            ),
-        )
-        .unwrap();
-        let environment = BTreeMap::from([
-            (
-                "PYTHONPATH".to_string(),
-                site.path().to_str().unwrap().to_string(),
-            ),
-            ("PYTHONDONTWRITEBYTECODE".to_string(), "1".to_string()),
-        ]);
-        let mut server =
-            Server::start_in(HOST_PYTHON, blob.path(), &environment, &|| false).unwrap();
-        for _ in 0..2 {
-            let before = call(&mut server, "ansible.modules.probe");
-            assert_eq!(before.0["value"], "one", "{:?}", before.0);
-        }
-        std::fs::write(&state, "two").unwrap();
-        let after = call(&mut server, "ansible.modules.probe");
-        assert_eq!(after.0["value"], "two", "{:?}", after.0);
     }
 
     /// A server still importing ahead is given up on after a bounded wait (300 ms here): the task
@@ -1484,33 +1364,6 @@ print(json.dumps([
         std::fs::write(gate, "").unwrap();
     }
 
-    /// A cancel while the task waits for the server to finish importing ahead ends the wait, and
-    /// the server is kept for the next task.
-    ///
-    /// What would make this red: the wait deaf to the cancel (it runs out, the server is given
-    /// up on, and the task after the cancel runs under another one).
-    #[test]
-    fn a_cancel_ends_the_wait_for_the_server_s_imports() {
-        let (blob, gate) = gated_blob();
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let first = call(&mut server, "ansible.modules.probe");
-        assert!(!first.failed(), "{:?}", first.0);
-        let cancelled = server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| true,
-        );
-        assert!(matches!(cancelled, Run::Cancelled));
-        std::fs::write(&gate, "").unwrap();
-        let after = call(&mut server, "ansible.modules.probe");
-        assert!(!after.failed(), "{:?}", after.0);
-        assert_eq!(
-            after.0["parent"], first.0["parent"],
-            "the server was replaced"
-        );
-    }
-
     /// A payload whose `probe` imports a dependency that, in the server alone, blocks until the
     /// returned gate file exists. The module reports the server it ran under.
     fn gated_blob() -> (tempfile::TempDir, PathBuf) {
@@ -1532,11 +1385,6 @@ print(json.dumps([
     }
 
     /// A replacement that cannot start fails the task with its own words, not the old server's.
-    ///
-    /// What would make this red: the old server's last words read into the failure (the message
-    /// carries what the old server had on its stderr).
-    ///
-    /// Linux only: the module writes into the server's own stderr through `/proc/<pid>/fd/2`.
     #[test]
     #[cfg(target_os = "linux")]
     fn a_replacement_that_cannot_start_speaks_for_itself() {
@@ -1564,16 +1412,7 @@ print(json.dumps([
         assert!(!msg.contains("old server words"), "{msg}");
     }
 
-    /// What the server imports for a module is imported with nothing to read and nowhere to
-    /// write, and leaves the process as it found it: a dependency that changes the environment,
-    /// the working directory, the umask, `sys.path` or `sys.stdout` as it loads reaches no other
-    /// module's task, and one that reads stdin or prints does not touch the agent's frames.
-    ///
-    /// What would make this red, each alone: any of those five left as the import left it (the
-    /// reader sees the change, or prints into /dev/null); the import reading the agent's stdin
-    /// (it swallows the next request, and the task behind it gets no answer); the import writing
-    /// to the agent's stdout (a word in the middle of the frames); or its stderr reaching the
-    /// server's own, where the last words of a server that dies later would open with it.
+    /// What the server imports for a module leaves the process as it found it.
     #[test]
     fn what_the_server_imports_for_a_module_leaves_it_as_it_was() {
         let blob = runpy_blob(&[
@@ -1615,12 +1454,7 @@ print(json.dumps([
         );
     }
 
-    /// An import that fails in the server - a dependency that raises, even `SystemExit`, or a
-    /// module whose source does not parse - leaves the server running, and the module's child
-    /// fails with the same message every time, as it did before the server imported anything.
-    ///
-    /// What would make this red: the failure escaping the import, which ends the server under the
-    /// task; or only `Exception` caught, which `SystemExit` gets through.
+    /// An import that fails in the server leaves it running and fails only the module's child.
     #[test]
     fn an_import_that_fails_in_the_server_fails_only_in_the_child() {
         let blob = runpy_blob(&[
@@ -1658,12 +1492,7 @@ print(json.dumps([
         assert!(server.alive());
     }
 
-    /// A package that appears on the server's path after it imported a module's dependencies is
-    /// seen by that module's next task, as the reference's fresh interpreter sees it: the server
-    /// asks to be replaced, and the agent starts a new one for the task, once.
-    ///
-    /// What would make this red: the parent forking from what it imported before the package
-    /// came, so the module_util that worked out `HAS = False` then keeps saying it.
+    /// A package installed after a module's imports is seen by that module's next task.
     #[test]
     fn a_package_installed_after_a_module_s_imports_is_seen_by_its_next_task() {
         let blob = runpy_blob(&[
@@ -1711,11 +1540,8 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A task whose environment sets `PYTHONPATH` runs under an interpreter started with it, as
-    /// the reference's does, and the warm server behind it is left as it was.
-    ///
-    /// What would make this red: the task run by the warm server, whose child sets the variable
-    /// after the interpreter has read it, so the module cannot import what the path holds.
+    /// A task whose environment sets `PYTHONPATH` runs under an interpreter started with it, as the
+    /// reference's does, and the warm server behind it is left as it was.
     #[test]
     fn a_task_that_sets_pythonpath_gets_an_interpreter_started_with_it() {
         let root = scratch();
@@ -1760,137 +1586,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A module that writes nothing fails the task and says so.
-    ///
-    /// What would make this red: an empty stdout read as an empty result, which reports a task
-    /// that did nothing as green. Measured: `os._exit` discards the stdout buffer, so a module
-    /// that printed its result and exited that way emits nothing at all - this is the shape that
-    /// bug takes on the wire.
-    #[test]
-    fn a_module_that_writes_no_result_fails_the_task() {
-        let blob = stub_blob("\n    pass\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("the module wrote no result"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// A module that writes something that is not a result fails the task carrying what it wrote,
-    /// so the operator reads the traceback instead of guessing.
-    #[test]
-    fn a_module_that_writes_noise_fails_the_task_carrying_it() {
-        let blob = stub_blob("\n    print('Traceback: everything is on fire')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("everything is on fire"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// A result with anything after it is not a result.
-    ///
-    /// What would make this red: parsing the first JSON value and ignoring the rest, which would
-    /// report a module green while the bytes behind its result say it printed a warning, a
-    /// traceback, or a second result.
-    #[test]
-    fn a_result_followed_by_noise_is_not_taken_as_the_result() {
-        let blob =
-            stub_blob("\n    print(json.dumps({\"changed\": True}))\n    print('and then this')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"].as_str().unwrap().contains("and then this"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// A module killed by a signal fails the task naming the signal, and never reports an empty
-    /// `ok`: the module did not finish, whatever it had printed by then.
-    #[test]
-    fn a_module_killed_by_a_signal_fails_the_task() {
-        let blob = stub_blob("\n    import os, signal\n    os.kill(os.getpid(), signal.SIGKILL)\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("the module was killed by signal 9"),
-            "{:?}",
-            result.0
-        );
-        assert!(server.alive(), "the server survives its child being killed");
-    }
-
-    /// The signal wins over a result the module had already printed: the out-of-memory killer
-    /// leaves a perfectly parseable half behind, and a module that did not finish did not succeed.
-    ///
-    /// What would make this red: `result()` reading `stdout` before it looks at `signal`, which
-    /// reports this task `ok` with the module's own words.
-    #[test]
-    fn a_result_printed_before_a_signal_is_not_taken_as_the_result() {
-        let blob = stub_blob(
-            "\n    import os, signal\n    print(json.dumps({\"changed\": False, \"msg\": \"all done\"}))\n    sys.stdout.flush()\n    os.kill(os.getpid(), signal.SIGKILL)\n",
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed(), "{:?}", result.0);
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("the module was killed by signal 9"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// The oversized-result sentence quotes the bound the server applied, which it sends in the
-    /// frame: the server is the side that enforces it, and a figure kept on this side as well
-    /// would go on naming the old bound the day the server's changes.
-    ///
-    /// What would make this red: the sentence built from a constant of this crate again.
+    /// The oversized-result sentence quotes the bound the server sent in its frame.
     #[test]
     fn the_oversized_result_sentence_quotes_the_server_s_own_limit() {
         let result = result(&json!({
@@ -1911,190 +1607,146 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A cancel that arrives while the server is still importing `module_utils` is answered as a
-    /// cancel, without waiting for the server to be ready. The payload's own loader sleeps as it
-    /// is imported, which is where a slow `module_utils` import spends its time.
-    ///
-    /// What would make this red: `Server::start` waiting for the ready frame without asking the
-    /// predicate. The task then ends a minute later, at `START_TIMEOUT`, as a refused server
-    /// instead of a cancel.
+    /// A cancel while the server starts or imports is answered as a cancel, without waiting for it.
     #[test]
-    fn a_cancel_while_the_server_starts_is_a_cancel() {
-        let root = scratch();
-        let tmp = root.path().to_str().unwrap().to_string();
-        let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
-        batch_started();
-        let run = run(
-            &payload,
-            &args(json!({})),
-            &Context {
-                remote_tmp: tmp.clone(),
-                ..Context::default()
-            },
-            &|| true,
-        )
-        .0;
-        assert!(
-            matches!(run, Run::Cancelled),
-            "the start was not cancelled: {:?}",
-            match run {
-                Run::Done(result) => Value::Object(result.0),
-                Run::Cancelled => Value::Null,
-            }
-        );
-    }
-
-    /// A payload is hashed once for as long as its server lives, not once per task: measured on
-    /// the real union, the hash costs 1.18 ms per task, 4 to 9 % of a warm one.
-    ///
-    /// What would make this red: `holds` called for every task again.
-    #[test]
-    fn a_payload_is_hashed_once_while_its_server_lives() {
-        let root = scratch();
-        let tmp = root.path().to_str().unwrap().to_string();
-        let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
-        batch_started();
-        let before = crate::blobs::HASHED.load(Ordering::Relaxed);
-        for _ in 0..3 {
-            let result = done(
-                run(
-                    &payload,
-                    &args(json!({})),
-                    &Context {
-                        remote_tmp: tmp.clone(),
-                        ..Context::default()
-                    },
-                    &|| false,
-                )
-                .0,
+    fn a_cancel_during_start_or_import_is_a_cancel() {
+        {
+            let root = scratch();
+            let tmp = root.path().to_str().unwrap().to_string();
+            let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
+            batch_started();
+            let run = run(
+                &payload,
+                &args(json!({})),
+                &Context {
+                    remote_tmp: tmp.clone(),
+                    ..Context::default()
+                },
+                &|| true,
+            )
+            .0;
+            assert!(
+                matches!(run, Run::Cancelled),
+                "the start was not cancelled: {:?}",
+                match run {
+                    Run::Done(result) => Value::Object(result.0),
+                    Run::Cancelled => Value::Null,
+                }
             );
-            assert!(!result.failed(), "{:?}", result.0);
         }
-        assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
+        {
+            let (blob, gate) = gated_blob();
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            let first = call(&mut server, "ansible.modules.probe");
+            assert!(!first.failed(), "{:?}", first.0);
+            let cancelled = server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| true,
+            );
+            assert!(matches!(cancelled, Run::Cancelled));
+            std::fs::write(&gate, "").unwrap();
+            let after = call(&mut server, "ansible.modules.probe");
+            assert!(!after.failed(), "{:?}", after.0);
+            assert_eq!(
+                after.0["parent"], first.0["parent"],
+                "the server was replaced"
+            );
+        }
     }
 
-    /// A payload replaced under a live server is verified again before the next task uses it,
-    /// both ways a file can change under the same name with its old length and modification
-    /// time: a new file renamed over it, the shape `store` writes, where only the inode moves;
-    /// and a write in place with the time put back, as `touch -r` does, where only the change
-    /// time moves.
-    ///
-    /// What would make this red: the fingerprint left out of the decision to skip the hash, or
-    /// the inode or the change time left out of the fingerprint. The second task then runs
-    /// against bytes nobody checked.
+    /// A payload is hashed once while its server lives and verified again when replaced under it.
     #[test]
-    fn a_payload_replaced_under_a_live_server_is_verified_again() {
-        for renamed in [true, false] {
+    fn a_payload_is_hashed_once_and_verified_again_when_replaced() {
+        {
             let root = scratch();
             let tmp = root.path().to_str().unwrap().to_string();
             let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
             batch_started();
-            let first = done(
-                run(
-                    &payload,
-                    &args(json!({})),
-                    &Context {
-                        remote_tmp: tmp.clone(),
-                        ..Context::default()
-                    },
-                    &|| false,
-                )
-                .0,
-            );
-            assert!(!first.failed(), "{:?}", first.0);
-
-            let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
-            let old = std::fs::metadata(&at).unwrap();
-            let mut bytes = std::fs::read(&at).unwrap();
-            let last = bytes.len() - 1;
-            bytes[last] ^= 0xff;
-            let target = if renamed {
-                at.with_extension("fresh")
-            } else {
-                at.clone()
-            };
-            std::fs::write(&target, &bytes).unwrap();
-            std::fs::File::options()
-                .write(true)
-                .open(&target)
-                .unwrap()
-                .set_modified(old.modified().unwrap())
-                .unwrap();
-            if renamed {
-                std::fs::rename(&target, &at).unwrap();
+            let before = crate::blobs::HASHED.load(Ordering::Relaxed);
+            for _ in 0..3 {
+                let result = done(
+                    run(
+                        &payload,
+                        &args(json!({})),
+                        &Context {
+                            remote_tmp: tmp.clone(),
+                            ..Context::default()
+                        },
+                        &|| false,
+                    )
+                    .0,
+                );
+                assert!(!result.failed(), "{:?}", result.0);
             }
+            assert_eq!(crate::blobs::HASHED.load(Ordering::Relaxed) - before, 1);
+        }
+        {
+            for renamed in [true, false] {
+                let root = scratch();
+                let tmp = root.path().to_str().unwrap().to_string();
+                let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
+                batch_started();
+                let first = done(
+                    run(
+                        &payload,
+                        &args(json!({})),
+                        &Context {
+                            remote_tmp: tmp.clone(),
+                            ..Context::default()
+                        },
+                        &|| false,
+                    )
+                    .0,
+                );
+                assert!(!first.failed(), "{:?}", first.0);
 
-            let second = done(
-                run(
-                    &payload,
-                    &args(json!({})),
-                    &Context {
-                        remote_tmp: tmp.clone(),
-                        ..Context::default()
-                    },
-                    &|| false,
-                )
-                .0,
-            );
-            assert_eq!(
-                second.0["msg"],
-                format!("payload {} is not on this host", payload.blob),
-                "renamed {renamed}: {:?}",
-                second.0
-            );
+                let at = crate::blobs::path(root.path().to_str().unwrap(), &payload.blob).unwrap();
+                let old = std::fs::metadata(&at).unwrap();
+                let mut bytes = std::fs::read(&at).unwrap();
+                let last = bytes.len() - 1;
+                bytes[last] ^= 0xff;
+                let target = if renamed {
+                    at.with_extension("fresh")
+                } else {
+                    at.clone()
+                };
+                std::fs::write(&target, &bytes).unwrap();
+                std::fs::File::options()
+                    .write(true)
+                    .open(&target)
+                    .unwrap()
+                    .set_modified(old.modified().unwrap())
+                    .unwrap();
+                if renamed {
+                    std::fs::rename(&target, &at).unwrap();
+                }
+
+                let second = done(
+                    run(
+                        &payload,
+                        &args(json!({})),
+                        &Context {
+                            remote_tmp: tmp.clone(),
+                            ..Context::default()
+                        },
+                        &|| false,
+                    )
+                    .0,
+                );
+                assert_eq!(
+                    second.0["msg"],
+                    format!("payload {} is not on this host", payload.blob),
+                    "renamed {renamed}: {:?}",
+                    second.0
+                );
+            }
         }
     }
 
-    /// A module that fails the way Ansible modules fail - a result saying `failed` - is reported
-    /// as that result, not as an agent error. The module's own words are the truth.
-    #[test]
-    fn a_module_that_reports_its_own_failure_is_reported_as_it_wrote_it() {
-        let blob = stub_blob(
-            "\n    print(json.dumps({\"failed\": True, \"msg\": \"nothing to do here\"}))\n    raise SystemExit(1)\n",
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert_eq!(result.0["msg"], "nothing to do here");
-    }
-
-    /// A module that says nothing about `changed` reports `changed: false`, the way
-    /// ansible-core's `TaskExecutor._execute` fills it in: `ping` prints `{"ping": "pong"}` and
-    /// the reference registers `{"changed": false, "failed": false, "ping": "pong"}` (measured on
-    /// 2.19.12; `failed` is a separate normalisation).
-    ///
-    /// What would make this red: the module's JSON handed back as printed, so `when: r.changed`
-    /// on a registered `ping` is undefined here and false under the reference.
-    #[test]
-    fn a_module_silent_about_changed_reports_it_false() {
-        let blob = stub_blob("\n    print(json.dumps({\"ping\": \"pong\"}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            Value::Object(result.0),
-            json!({"changed": false, "ping": "pong"})
-        );
-    }
-
-    /// The server reports where a task's time went: the fork, the import up to the module
-    /// building its `AnsibleModule`, and the rest. The stub sleeps 20 ms before building it and
-    /// 30 ms after, so each figure has a floor it cannot fall under, and a module that never
-    /// builds one reports no import at all rather than a made-up one.
-    ///
-    /// What would make this red: the timing pipe not read, or read before the child wrote it
-    /// (every figure `None`); the mark taken somewhere else than `AnsibleModule.__init__` (an
-    /// import or a module time under its floor); or a result frame without `timing` read as
-    /// zeros rather than as unmeasured.
+    /// The server reports where a task's time went: the fork, the import up to the module building
+    /// its `AnsibleModule`, and the rest.
     #[test]
     fn the_server_reports_where_the_time_went() {
         let blob = stub_blob(
@@ -2136,52 +1788,51 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// The fill-in is only for an absent `changed`: a module that changed something says so.
-    ///
-    /// What would make this red: `changed: false` written over what the module printed.
+    /// A cancelled module is killed and the server survives; a cancel is still a cancel when the
+    /// server cannot finish reaping.
     #[test]
-    fn a_module_that_reports_a_change_keeps_it() {
-        let blob = stub_blob("\n    print(json.dumps({\"changed\": True}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.changed());
-    }
-
-    /// A cancelled task kills the module's process group and answers `Cancelled`, and the server
-    /// is still there for the next batch.
-    ///
-    /// What would make this red: the agent waiting for a module that will never end, which is
-    /// the hang a `Cancel` exists to stop; or killing the server along with the child, which
-    /// would make every later task pay a restart.
-    #[test]
-    fn a_cancelled_module_is_killed_and_the_server_survives() {
-        let blob = stub_blob(SLEEP_IF_ASKED);
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let run = server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({"sleep": 120})),
-            &Context::default(),
-            &|| true,
-        );
-        // Not an assertion about elapsed time: the cancelled call only answers `Cancelled` once
-        // the server has handed back the child's result, so a kill that missed would have ended
-        // this call as a failed task instead.
-        assert!(matches!(run, Run::Cancelled), "the task was not cancelled");
-        assert!(server.alive());
-        // The server answers again, which it could not do if the cancelled task had left a
-        // frame of its own unread in the pipe.
-        let after = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(after.0["slept"], false, "{:?}", after.0);
+    fn a_cancelled_module_is_reaped_and_the_server_survives_or_is_given_up() {
+        {
+            let blob = stub_blob(SLEEP_IF_ASKED);
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            let run = server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({"sleep": 120})),
+                &Context::default(),
+                &|| true,
+            );
+            // Not an assertion about elapsed time: the cancelled call only answers `Cancelled` once
+            // the server has handed back the child's result, so a kill that missed would have ended
+            // this call as a failed task instead.
+            assert!(matches!(run, Run::Cancelled), "the task was not cancelled");
+            assert!(server.alive());
+            // The server answers again, which it could not do if the cancelled task had left a
+            // frame of its own unread in the pipe.
+            let after = done(server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(after.0["slept"], false, "{:?}", after.0);
+        }
+        {
+            let blob = stub_blob(
+                "\n    import os, subprocess\n    subprocess.Popen(['sleep', '120'], preexec_fn=os.setsid)\n    import time\n    time.sleep(120)\n",
+            );
+            let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+            server.reap_timeout = Duration::from_millis(300);
+            let run = server.run(
+                &payload("ansible.modules.probe"),
+                &args(json!({})),
+                &Context::default(),
+                &|| true,
+            );
+            assert!(
+                matches!(run, Run::Cancelled),
+                "a cancel became something else"
+            );
+        }
     }
 
     /// A module that outlives its `timeout` is killed and reported as timed out, in the same
@@ -2209,35 +1860,86 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         assert!(server.alive());
     }
 
-    /// A task naming a payload this host does not hold fails saying which one, rather than
-    /// starting a server against a blob that is not there.
-    ///
-    /// What would make this red: the cache trusted on the name, which task 1 already refuses, or
-    /// a missing payload reported as a module error - an operator would go looking at the module.
+    /// A payload that is not cached fails naming it; one no server can start against refuses the
+    /// rest of the batch.
     #[test]
-    fn a_task_whose_payload_is_not_cached_fails_naming_it() {
-        let hash = "0".repeat(64);
-        let result = done(
-            run(
-                &PythonPayload {
-                    blob: hash.clone(),
-                    module_fqn: "ansible.modules.ping".into(),
-                    profile: "legacy".into(),
-                    rlimit_nofile: 0,
-                    extensions: Map::new(),
-                    interpreter: HOST_PYTHON.into(),
-                },
-                &args(json!({})),
-                &Context::default(),
-                &|| false,
-            )
-            .0,
-        );
-        assert!(result.failed());
-        assert_eq!(
-            result.0["msg"],
-            format!("payload {hash} is not on this host")
-        );
+    fn an_uncached_or_unstartable_payload_is_refused_naming_it() {
+        {
+            let hash = "0".repeat(64);
+            let result = done(
+                run(
+                    &PythonPayload {
+                        blob: hash.clone(),
+                        module_fqn: "ansible.modules.ping".into(),
+                        profile: "legacy".into(),
+                        rlimit_nofile: 0,
+                        extensions: Map::new(),
+                        interpreter: HOST_PYTHON.into(),
+                    },
+                    &args(json!({})),
+                    &Context::default(),
+                    &|| false,
+                )
+                .0,
+            );
+            assert!(result.failed());
+            assert_eq!(
+                result.0["msg"],
+                format!("payload {hash} is not on this host")
+            );
+        }
+        {
+            let root = scratch();
+            let tmp = root.path().to_str().unwrap().to_string();
+            let zip = b"not a payload at all";
+            let hash = blake3::hash(zip).to_hex().to_string();
+            crate::blobs::store(root.path().to_str().unwrap(), &hash, zip, false).unwrap();
+
+            let payload = PythonPayload {
+                blob: hash,
+                module_fqn: "ansible.modules.ping".into(),
+                profile: "legacy".into(),
+                rlimit_nofile: 0,
+                extensions: Map::new(),
+                interpreter: HOST_PYTHON.into(),
+            };
+            batch_started();
+            let first = done(
+                run(
+                    &payload,
+                    &args(json!({})),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            );
+            let second = done(
+                run(
+                    &payload,
+                    &args(json!({})),
+                    &Context {
+                        remote_tmp: tmp.clone(),
+                        ..Context::default()
+                    },
+                    &|| false,
+                )
+                .0,
+            );
+
+            assert!(first.failed() && second.failed());
+            assert!(
+                first.0["msg"].as_str().unwrap().contains(HOST_PYTHON),
+                "{:?}",
+                first.0
+            );
+            assert_eq!(
+                first.0["msg"], second.0["msg"],
+                "every task behind the first one is answered with the same sentence"
+            );
+        }
     }
 
     /// The interpreter the task names is the one the module runs under, not whatever the agent
@@ -2273,10 +1975,6 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
 
     /// A server that has died fails the task that needed it, saying so, instead of waiting on a
     /// pipe nobody is answering.
-    ///
-    /// What would make this red: the write or the read blocking for ever on a dead parent, which
-    /// is a hung batch rather than a failed task; or the death reported as the module's failure,
-    /// which sends an operator to read a module that never ran.
     #[test]
     fn a_server_that_died_fails_the_task_it_was_needed_for() {
         let blob = stub_blob(SLEEP_IF_ASKED);
@@ -2299,76 +1997,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         assert!(!server.alive());
     }
 
-    /// A payload that no server can be started against refuses the rest of the batch with one
-    /// sentence, rather than paying a failed start - a quarter of a second, measured - for every
-    /// task behind it.
-    ///
-    /// The blob here is cached and verified but is not a payload at all, so the interpreter
-    /// cannot import `module_utils` from it: the same shape as a payload built by a controller
-    /// this agent does not understand.
-    #[test]
-    fn a_payload_no_server_can_start_against_refuses_the_rest_of_the_batch() {
-        let root = scratch();
-        let tmp = root.path().to_str().unwrap().to_string();
-        let zip = b"not a payload at all";
-        let hash = blake3::hash(zip).to_hex().to_string();
-        crate::blobs::store(root.path().to_str().unwrap(), &hash, zip, false).unwrap();
-
-        let payload = PythonPayload {
-            blob: hash,
-            module_fqn: "ansible.modules.ping".into(),
-            profile: "legacy".into(),
-            rlimit_nofile: 0,
-            extensions: Map::new(),
-            interpreter: HOST_PYTHON.into(),
-        };
-        batch_started();
-        let first = done(
-            run(
-                &payload,
-                &args(json!({})),
-                &Context {
-                    remote_tmp: tmp.clone(),
-                    ..Context::default()
-                },
-                &|| false,
-            )
-            .0,
-        );
-        let second = done(
-            run(
-                &payload,
-                &args(json!({})),
-                &Context {
-                    remote_tmp: tmp.clone(),
-                    ..Context::default()
-                },
-                &|| false,
-            )
-            .0,
-        );
-
-        assert!(first.failed() && second.failed());
-        assert!(
-            first.0["msg"].as_str().unwrap().contains(HOST_PYTHON),
-            "{:?}",
-            first.0
-        );
-        assert_eq!(
-            first.0["msg"], second.0["msg"],
-            "every task behind the first one is answered with the same sentence"
-        );
-    }
-
     /// One server serves every task of a batch: the second module's parent is the first's.
-    ///
-    /// What would make this red: `Servers::run` starting a server per task, which every other
-    /// test here lets through - each result is still right and every failure path still fires.
-    /// What is lost is the only thing this task exists for: 12.8 ms against 340 ms, measured.
-    ///
-    /// The same parent pid then makes the restart allowance observable. A server killed under the
-    /// table is replaced once, and the batch is refused when it dies a second time, rather than
-    /// paying a quarter of a second per task for a server that will not stay up.
     #[test]
     fn the_server_is_reused_across_the_tasks_of_a_batch() {
         let root = scratch();
@@ -2437,85 +2066,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A module that fills one pipe while writing its result on the other is read whole.
-    ///
-    /// What would make this red: the parent reading one pipe to the end before touching the
-    /// other. The child fills the 64 KiB stderr buffer long before it prints its result, the
-    /// parent is waiting on stdout, and neither ever moves again: the task hangs until the
-    /// deadline, or for ever without one.
-    #[test]
-    fn a_module_that_fills_one_pipe_while_writing_the_other_is_read_whole() {
-        let blob = stub_blob(
-            "\n    import sys\n    sys.stderr.write(\"x\" * (1024 * 1024))\n    sys.stderr.flush()\n    print(json.dumps({\"noisy\": True}))\n",
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(result.0["noisy"], true, "{:?}", result.0);
-    }
-
-    /// A module writing more than a frame can carry fails as an oversized result, and the server
-    /// lives.
-    ///
-    /// What would make this red: the parent putting everything in one frame. The agent refuses a
-    /// frame over 64 MiB, so a `slurp` of a large file would be reported as a dead server, the
-    /// server would be restarted, and a second one in the batch would refuse every task behind
-    /// it - blaming the engine for a module that worked.
-    #[test]
-    fn a_result_too_large_to_carry_fails_the_task_and_not_the_server() {
-        let blob = stub_blob("\n    import sys\n    sys.stdout.write(\"y\" * (5 * 1024 * 1024))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("more than 4194304 bytes, which is more than a result can carry"),
-            "the sentence does not quote the server's own limit: {:?}",
-            result.0
-        );
-        assert!(
-            server.alive(),
-            "an oversized result is not the server's fault"
-        );
-    }
-
-    /// A module's standard input is empty, not the agent's own request pipe.
-    ///
-    /// What would make this red: leaving fd 0 as the child inherited it. A module that reads
-    /// stdin - or anything it starts, git asking for a passphrase, apt reaching debconf - waits
-    /// on a pipe the agent only writes to between tasks, so it waits for ever: with `timeout:`
-    /// the task is a late timeout, without one the batch hangs until a `Cancel`.
-    #[test]
-    fn a_module_reads_end_of_file_from_its_standard_input() {
-        let blob =
-            stub_blob("\n    import sys\n    print(json.dumps({\"stdin\": sys.stdin.read()}))\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(result.0["stdin"], "", "{:?}", result.0);
-    }
-
     /// The server's own imports do not come from the agent's working directory.
-    ///
-    /// What would make this red: leaving the `''` that `python -c` puts at the head of
-    /// `sys.path`. It resolves to the agent's working directory at every import, and under
-    /// `become` that is the login user's home: a `selectors.py` an ordinary user dropped there
-    /// would run as root before the server ever read the payload.
     #[test]
     fn the_agents_working_directory_is_not_on_the_servers_path() {
         let root = scratch();
@@ -2539,10 +2090,6 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     }
 
     /// `rlimit_nofile` on the payload reaches the module's own process.
-    ///
-    /// What would make this red: the field carried by the protocol and applied by nobody, which
-    /// is how "the reference raises the limit and we do not" is discovered months later by a
-    /// module that runs out of descriptors.
     #[test]
     fn the_payload_raises_the_open_file_limit_of_the_module() {
         // Every figure here comes from this process rather than from the host's defaults. A
@@ -2592,61 +2139,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         set_open_files(soft, hard);
     }
 
-    /// A module that exits with a message keeps the message and fails.
-    ///
-    /// What would make this red: reading `SystemExit("msg")` as status 0, which drops the one
-    /// sentence the module chose to die with.
-    #[test]
-    fn a_module_that_exits_with_a_message_keeps_it() {
-        let blob = stub_blob("\n    raise SystemExit('nothing to work with here')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("nothing to work with here"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// A cancel whose child leaves a grandchild holding the server's pipe is still a cancel, once
-    /// the reap allowance (shortened to 300 ms) has run out.
-    #[test]
-    fn a_cancel_is_a_cancel_even_when_the_server_cannot_finish_reaping() {
-        let blob = stub_blob(
-            "\n    import os, subprocess\n    subprocess.Popen(['sleep', '120'], preexec_fn=os.setsid)\n    import time\n    time.sleep(120)\n",
-        );
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        server.reap_timeout = Duration::from_millis(300);
-        let run = server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| true,
-        );
-        assert!(
-            matches!(run, Run::Cancelled),
-            "a cancel became something else"
-        );
-    }
-
-    /// A module that leaves a daemon behind the way `module_utils.service.fork_process` does -
-    /// fork without exec, `setsid`, 0-2 on `/dev/null`, every other descriptor kept - and then
-    /// outlives its `timeout:` is timed out, and the next task runs on the same server. The
-    /// daemon still holds whatever pipe the child had open when it forked.
-    ///
-    /// What would make this red: the child keeping its stdout and stderr pipes open under their
-    /// own numbers, or the server reading the timing pipe to its end, or blocking on it. Either
-    /// waits on a daemon that lives a minute, until the agent gives the server up after
-    /// `REAP_TIMEOUT` and the next task starts a new one under another pid.
+    /// A daemon left behind by a module that outlives its timeout does not hold the server.
     #[test]
     fn a_daemon_the_module_leaves_behind_does_not_hold_the_server() {
         let blob = stub_blob(
@@ -2694,14 +2187,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A module whose `AnsibleModule(...)` call raises shows the traceback Python itself gives,
-    /// with no frame of the server's timing in it: that traceback is what the task's message
-    /// quotes. Called with an argument `__init__` does not take, Python raises at the call, so
-    /// the last frame is the module's own line.
-    ///
-    /// What would make this red: the timing mark taken by a wrapper around `__init__`, which
-    /// accepts any argument, calls the real one from its own frame, and so puts that frame at the
-    /// end of the traceback, between the module and the error.
+    /// A module whose `AnsibleModule(...)` call raises shows Python's own traceback, without timing frames.
     #[test]
     fn the_timing_mark_leaves_the_module_s_traceback_alone() {
         let blob = stub_blob(
@@ -2736,99 +2222,156 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// An interpreter that starts, says nothing and ends is a start failure naming itself and
-    /// saying it said nothing, rather than an empty message an operator cannot act on.
-    ///
-    /// What would make this red: reading the absence of a ready frame as a server that is ready,
-    /// which sends the first task into a pipe nobody is reading.
-    #[test]
-    fn an_interpreter_that_says_nothing_at_all_says_that() {
-        let dir = scratch();
-        let fake = program(dir.path(), "python3", "#!/bin/sh\nexit 0\n");
-        let err = Server::start(
-            fake.to_str().unwrap(),
-            Path::new("/nonexistent.zip"),
-            &|| false,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains(fake.to_str().unwrap()), "{err}");
-        assert!(err.to_string().contains("it said nothing"), "{err}");
-    }
-
-    /// A server that answers a request with anything but the pid of the child it forked fails the
-    /// task, and the table starts a fresh one for the next.
-    ///
-    /// What would make this red: taking whatever frame arrives as the child's pid. The agent
-    /// would then kill a process it was never told about on the next deadline - a pid it did not
-    /// choose, on a host it does not own - and read the real result as a `started` frame for the
-    /// task behind it, one task out of step for the rest of the batch.
-    #[test]
-    fn a_server_that_does_not_name_the_process_it_started_fails_the_task() {
-        let dir = scratch();
-        let fake = program(
-            dir.path(),
-            "python3",
-            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nprintf '\\0\\0\\0\\012{\"oops\":1}'\nsleep 30\n",
-        );
-        let mut server =
-            Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
+    /// A module that delivers no usable result fails the task carrying what it wrote, and the server lives.
+    #[rstest]
+    #[case::no_result("\n    pass\n", "the module wrote no result")]
+    #[case::noise(
+        "\n    print('Traceback: everything is on fire')\n",
+        "everything is on fire"
+    )]
+    #[case::result_followed_by_noise(
+        "\n    print(json.dumps({\"changed\": True}))\n    print('and then this')\n",
+        "and then this"
+    )]
+    #[case::killed_by_a_signal(
+        "\n    import os, signal\n    os.kill(os.getpid(), signal.SIGKILL)\n",
+        "the module was killed by signal 9"
+    )]
+    #[case::signal_after_a_result(
+        "\n    import os, signal\n    print(json.dumps({\"changed\": False, \"msg\": \"all done\"}))\n    sys.stdout.flush()\n    os.kill(os.getpid(), signal.SIGKILL)\n",
+        "the module was killed by signal 9"
+    )]
+    #[case::half_a_result(
+        "\n    import sys\n    sys.stdout.write('{\"changed\": tr')\n",
+        "{\"changed\": tr"
+    )]
+    #[case::exit_with_a_message(
+        "\n    raise SystemExit('nothing to work with here')\n",
+        "nothing to work with here"
+    )]
+    #[case::too_large_to_carry(
+        "\n    import sys\n    sys.stdout.write(\"y\" * (5 * 1024 * 1024))\n",
+        "more than 4194304 bytes, which is more than a result can carry"
+    )]
+    fn a_module_that_delivers_no_result_fails_the_task(#[case] body: &str, #[case] needle: &str) {
+        let blob = stub_blob(body);
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
             &Context::default(),
             &|| false,
         ));
-        assert!(result.failed());
+        assert!(result.failed(), "{:?}", result.0);
         assert!(
-            result.0["msg"]
-                .as_str()
+            result.0["msg"].as_str().unwrap().contains(needle),
+            "{:?}",
+            result.0
+        );
+        assert!(server.alive(), "the module's failure is not the server's");
+    }
+
+    /// A module's result is reported as it wrote it, with `changed` filled in as false when absent.
+    #[rstest]
+    #[case::own_failure(
+        "\n    print(json.dumps({\"failed\": True, \"msg\": \"nothing to do here\"}))\n    raise SystemExit(1)\n",
+        json!({"failed": true, "msg": "nothing to do here"}),
+        false
+    )]
+    #[case::silent_about_changed(
+        "\n    print(json.dumps({\"ping\": \"pong\"}))\n",
+        json!({"changed": false, "ping": "pong"}),
+        true
+    )]
+    #[case::a_change_is_kept(
+        "\n    print(json.dumps({\"changed\": True}))\n",
+        json!({"changed": true}),
+        false
+    )]
+    #[case::noisy_stderr(
+        "\n    import sys\n    sys.stderr.write(\"x\" * (1024 * 1024))\n    sys.stderr.flush()\n    print(json.dumps({\"noisy\": True}))\n",
+        json!({"noisy": true}),
+        false
+    )]
+    #[case::stdin_is_empty(
+        "\n    import sys\n    print(json.dumps({\"stdin\": sys.stdin.read()}))\n",
+        json!({"stdin": ""}),
+        false
+    )]
+    fn a_module_result_is_reported_as_it_wrote_it(
+        #[case] body: &str,
+        #[case] expected: Value,
+        #[case] exact: bool,
+    ) {
+        let blob = stub_blob(body);
+        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        let result = done(server.run(
+            &payload("ansible.modules.probe"),
+            &args(json!({})),
+            &Context::default(),
+            &|| false,
+        ));
+        if exact {
+            assert_eq!(Value::Object(result.0), expected);
+        } else {
+            for (key, want) in expected.as_object().unwrap() {
+                assert_eq!(&result.0[key], want, "{key}: {:?}", result.0);
+            }
+        }
+    }
+
+    /// An interpreter that cannot start, is not there, or starts and says nothing fails the task
+    /// naming itself and what happened. `$PY` stands for the interpreter's path.
+    #[rstest]
+    #[case::cannot_start(
+        Some("#!/bin/sh\necho 'boom: no python here' >&2\nexit 3\n"),
+        &["boom: no python here", "$PY"]
+    )]
+    #[case::not_there(None, &["/nonexistent/python3"])]
+    #[case::says_nothing(Some("#!/bin/sh\nexit 0\n"), &["$PY", "it said nothing"])]
+    fn an_interpreter_that_does_not_start_names_itself(
+        #[case] script: Option<&str>,
+        #[case] needles: &[&str],
+    ) {
+        let dir = scratch();
+        let path = match script {
+            Some(source) => program(dir.path(), "python3", source)
+                .to_str()
                 .unwrap()
-                .contains("did not say which process it started"),
-            "{:?}",
-            result.0
-        );
-        assert!(!server.alive(), "a server that lost the thread is not kept");
+                .to_string(),
+            None => "/nonexistent/python3".to_string(),
+        };
+        let err = Server::start(&path, Path::new("/nonexistent.zip"), &|| false)
+            .unwrap_err()
+            .to_string();
+        for needle in needles {
+            let needle = needle.replace("$PY", &path);
+            assert!(err.contains(&needle), "{needle:?} not in {err}");
+        }
     }
 
-    /// A server that ends in the middle of a task fails that task and says it was the server.
-    ///
-    /// What would make this red: the read at the end of a closed pipe taken for an empty result,
-    /// which reports a module that never ran as a task that did nothing.
-    #[test]
-    fn a_server_that_ends_in_the_middle_of_a_task_fails_it() {
-        let dir = scratch();
-        let fake = program(
-            dir.path(),
-            "python3",
-            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nexit 0\n",
-        );
-        let mut server =
-            Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"].as_str().unwrap().contains("stopped"),
-            "{:?}",
-            result.0
-        );
-    }
-
-    /// A server that takes a request and never answers fails the task rather than holding the
-    /// batch behind it; the reap allowance is shortened to 200 ms.
-    #[test]
-    fn a_server_that_never_answers_fails_the_task_instead_of_waiting_for_ever() {
+    /// A server that answers a request with anything but the pid it forked, ends mid task, or
+    /// never answers fails the task and is not kept; the reap allowance is shortened to 200 ms.
+    #[rstest]
+    #[case::wrong_frame(
+        "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nprintf '\\0\\0\\0\\012{\"oops\":1}'\nsleep 30\n",
+        "did not say which process it started"
+    )]
+    #[case::ends_mid_task(
+        "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nexit 0\n",
+        "stopped"
+    )]
+    #[case::never_answers(
+        "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nsleep 120\n",
+        "did not answer"
+    )]
+    fn a_server_that_breaks_the_handshake_fails_the_task(
+        #[case] script: &str,
+        #[case] needle: &str,
+    ) {
         let asked = Instant::now();
         let dir = scratch();
-        let fake = program(
-            dir.path(),
-            "python3",
-            "#!/bin/sh\nprintf '\\0\\0\\0\\016{\"ready\":true}'\nsleep 120\n",
-        );
+        let fake = program(dir.path(), "python3", script);
         let mut server =
             Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
         server.reap_timeout = Duration::from_millis(200);
@@ -2840,45 +2383,16 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         ));
         assert!(result.failed());
         assert!(
-            result.0["msg"].as_str().unwrap().contains("did not answer"),
+            result.0["msg"].as_str().unwrap().contains(needle),
             "{:?}",
             result.0
         );
-        assert!(
-            !server.alive(),
-            "a server that stopped answering is not kept"
-        );
-        // Not a measurement of speed: the fake sleeps for two minutes, so a ceiling far under that
+        assert!(!server.alive(), "a server that lost the thread is not kept");
+        // Not a measurement of speed: the fake sleeps for minutes, so a ceiling far under that
         // says only that the agent stopped waiting on its own terms rather than on the fake's.
         assert!(
             asked.elapsed() < Duration::from_secs(30),
             "the agent waited on the server rather than on its own allowance"
-        );
-    }
-
-    /// A module cut off in the middle of its result fails the task carrying what arrived.
-    ///
-    /// What would make this red: a parser that takes the first complete value and ignores the
-    /// rest, or one that repairs what it is given. Half an object is not a result, and a module
-    /// killed by the out-of-memory killer mid-print leaves exactly this.
-    #[test]
-    fn a_module_that_writes_half_a_result_fails_the_task_carrying_it() {
-        let blob = stub_blob("\n    import sys\n    sys.stdout.write('{\"changed\": tr')\n");
-        let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
-        let result = done(server.run(
-            &payload("ansible.modules.probe"),
-            &args(json!({})),
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(result.failed());
-        assert!(
-            result.0["msg"]
-                .as_str()
-                .unwrap()
-                .contains("{\"changed\": tr"),
-            "{:?}",
-            result.0
         );
     }
 

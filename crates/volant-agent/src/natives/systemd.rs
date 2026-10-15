@@ -782,13 +782,7 @@ esac"#;
         assert_eq!(Value::Object(ours), Value::Object(want));
     }
 
-    /// The module's split of a real `systemctl show`, and the two shapes around it: a value that
-    /// opens `{` and closes it lines later under an `Exec*` key, and a `{` that stays open under
-    /// another key, which is a single line.
-    ///
-    /// What would make this red: values kept unstripped; every `{` read as multi-line, which
-    /// swallows the rest of the output after such a `Description`; the lines of a multi-line
-    /// value joined with something else than `\n`; a line without `=` kept as a key.
+    /// The module's split of a real `systemctl show`, and the two shapes of a brace left open.
     #[test]
     fn systemctl_show_splits_like_the_module() {
         let status = parse_systemctl_show(SHOW_CRON);
@@ -816,501 +810,450 @@ esac"#;
         );
     }
 
-    /// `systemd-started-same`: cron running and enabled, asked `started` and `enabled`. Two
-    /// reads, no action, `changed: false`, and the status as `show` gave it.
-    ///
-    /// What would make this red: a `start` or an `enable` run on a unit already so; a missing
-    /// `-l`; `invocation` without a default the reference prints.
+    /// A running enabled unit is left alone; `enabled`, daemon reload, a missing unit and restarts report like the module.
     #[test]
-    fn a_running_enabled_unit_is_left_alone() {
-        let fake = Fake::new(CRON);
-        let answer = fake
-            .answer(json!({"name": "cron", "state": "started", "enabled": true}))
+    fn a_unit_is_left_alone_started_or_reported_like_the_module() {
+        {
+            let fake = Fake::new(CRON);
+            let answer = fake
+                .answer(json!({"name": "cron", "state": "started", "enabled": true}))
+                .unwrap();
+            assert_like_recording(
+                include_str!("../../../volant/tests/golden/module/systemd-started-same.json"),
+                &answer,
+            );
+            assert_eq!(
+                Value::Object(answer["status"].as_object().unwrap().clone()),
+                Value::Object(parse_systemctl_show(SHOW_CRON))
+            );
+            assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
+        }
+        {
+            let fake = Fake::new(CRON);
+            let answer = fake
+                .answer(json!({"name": "cron.service", "enabled": true}))
+                .unwrap();
+            assert_like_recording(
+                include_str!("../../../volant/tests/golden/module/systemd-enabled-only.json"),
+                &answer,
+            );
+            assert_eq!(
+                fake.calls(),
+                ["show cron.service", "is-enabled cron.service -l"]
+            );
+        }
+        {
+            let fake = Fake::new("");
+            let answer = fake.answer(json!({"daemon_reload": true})).unwrap();
+            let mut want: Map<String, Value> = serde_json::from_str(include_str!(
+                "../../../volant/tests/golden/module/systemd-daemon-reload.json"
+            ))
             .unwrap();
-        assert_like_recording(
-            include_str!("../../../volant/tests/golden/module/systemd-started-same.json"),
-            &answer,
-        );
-        assert_eq!(
-            Value::Object(answer["status"].as_object().unwrap().clone()),
-            Value::Object(parse_systemctl_show(SHOW_CRON))
-        );
-        assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
-    }
-
-    /// `systemd-enabled-only`: `enabled` alone reads the unit and changes nothing.
-    #[test]
-    fn enabled_alone_reads_and_does_not_start() {
-        let fake = Fake::new(CRON);
-        let answer = fake
-            .answer(json!({"name": "cron.service", "enabled": true}))
-            .unwrap();
-        assert_like_recording(
-            include_str!("../../../volant/tests/golden/module/systemd-enabled-only.json"),
-            &answer,
-        );
-        assert_eq!(
-            fake.calls(),
-            ["show cron.service", "is-enabled cron.service -l"]
-        );
-    }
-
-    /// `systemd-daemon-reload`: no unit, one reload, and the module's empty answer.
-    #[test]
-    fn a_daemon_reload_alone_answers_nothing_else() {
-        let fake = Fake::new("");
-        let answer = fake.answer(json!({"daemon_reload": true})).unwrap();
-        let mut want: Map<String, Value> = serde_json::from_str(include_str!(
-            "../../../volant/tests/golden/module/systemd-daemon-reload.json"
-        ))
-        .unwrap();
-        want.remove("action");
-        want.remove("_ansible_no_log");
-        assert_eq!(Value::Object(answer), Value::Object(want));
-        assert_eq!(fake.calls(), ["daemon-reload"]);
-    }
-
-    /// `systemd-missing-unit`: `show` succeeds with `LoadState=not-found`, no init script, and
-    /// `state` fails with the module's message before any action.
-    #[test]
-    fn a_missing_unit_fails_like_the_module() {
-        let fake =
-            Fake::new(r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#);
-        let answer = fake
-            .answer(json!({"name": "volant-no-such-unit", "state": "started"}))
-            .unwrap();
-        assert_like_recording(
-            include_str!("../../../volant/tests/golden/module/systemd-missing-unit.json"),
-            &answer,
-        );
-        assert_eq!(fake.calls(), ["show volant-no-such-unit"]);
-    }
-
-    /// A unit whose `MainPID` changes on `restart`: the status is the one `show` gave before the
-    /// action, `changed` is true and `state` is `started`, as for `reloaded`.
-    ///
-    /// What would make this red: `show` run after the action (the new `MainPID`); `changed`
-    /// false for a restart; `state` left `restarted`.
-    #[test]
-    fn restarted_and_reloaded_report_the_unit_as_found() {
-        let body = r#"case "$1" in
+            want.remove("action");
+            want.remove("_ansible_no_log");
+            assert_eq!(Value::Object(answer), Value::Object(want));
+            assert_eq!(fake.calls(), ["daemon-reload"]);
+        }
+        {
+            let fake = Fake::new(
+                r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#,
+            );
+            let answer = fake
+                .answer(json!({"name": "volant-no-such-unit", "state": "started"}))
+                .unwrap();
+            assert_like_recording(
+                include_str!("../../../volant/tests/golden/module/systemd-missing-unit.json"),
+                &answer,
+            );
+            assert_eq!(fake.calls(), ["show volant-no-such-unit"]);
+        }
+        {
+            let body = r#"case "$1" in
   show) printf 'LoadState=loaded\nActiveState=active\nMainPID=%s\n' "$(cat pid 2>/dev/null || echo 100)" ;;
   restart) echo 200 > pid ;;
 esac"#;
-        for (state, action) in [("restarted", "restart"), ("reloaded", "reload")] {
-            let fake = Fake::new(body);
-            let answer = fake
-                .answer(json!({"name": "volant-golden", "state": state}))
-                .unwrap();
-            assert_eq!(answer["changed"], true, "{state}");
-            assert_eq!(answer["state"], "started", "{state}");
-            assert_eq!(answer["status"]["MainPID"], "100", "{state}");
-            assert_eq!(
-                fake.calls(),
-                [
-                    "show volant-golden".to_string(),
-                    format!("{action} volant-golden")
-                ]
-            );
+            for (state, action) in [("restarted", "restart"), ("reloaded", "reload")] {
+                let fake = Fake::new(body);
+                let answer = fake
+                    .answer(json!({"name": "volant-golden", "state": state}))
+                    .unwrap();
+                assert_eq!(answer["changed"], true, "{state}");
+                assert_eq!(answer["state"], "started", "{state}");
+                assert_eq!(answer["status"]["MainPID"], "100", "{state}");
+                assert_eq!(
+                    fake.calls(),
+                    [
+                        "show volant-golden".to_string(),
+                        format!("{action} volant-golden")
+                    ]
+                );
+            }
         }
     }
 
-    /// Each state against a running and a stopped unit: the action the module takes, or none.
+    /// Each state acts only when the unit differs; `enabled` follows `is-enabled`, init scripts included.
     #[test]
-    fn each_state_acts_only_when_the_unit_differs() {
-        for (active, state, action) in [
-            ("inactive", "started", Some("start")),
-            ("active", "stopped", Some("stop")),
-            ("deactivating", "stopped", Some("stop")),
-            ("inactive", "stopped", None),
-            ("activating", "started", None),
-            ("inactive", "restarted", Some("start")),
-            ("failed", "reloaded", Some("start")),
-        ] {
-            let fake = Fake::new(&format!(
-                r#"[ "$1" = show ] && printf 'LoadState=loaded\nActiveState={active}\n'"#
-            ));
-            let answer = fake.answer(json!({"name": "u", "state": state})).unwrap();
-            assert_eq!(answer["changed"], action.is_some(), "{active} {state}");
-            let mut calls = vec!["show u".to_string()];
-            calls.extend(action.map(|action| format!("{action} u")));
-            assert_eq!(fake.calls(), calls, "{active} {state}");
+    fn each_state_acts_only_when_the_unit_differs_and_enabled_follows_is_enabled() {
+        {
+            for (active, state, action) in [
+                ("inactive", "started", Some("start")),
+                ("active", "stopped", Some("stop")),
+                ("deactivating", "stopped", Some("stop")),
+                ("inactive", "stopped", None),
+                ("activating", "started", None),
+                ("inactive", "restarted", Some("start")),
+                ("failed", "reloaded", Some("start")),
+            ] {
+                let fake = Fake::new(&format!(
+                    r#"[ "$1" = show ] && printf 'LoadState=loaded\nActiveState={active}\n'"#
+                ));
+                let answer = fake.answer(json!({"name": "u", "state": state})).unwrap();
+                assert_eq!(answer["changed"], action.is_some(), "{active} {state}");
+                let mut calls = vec!["show u".to_string()];
+                calls.extend(action.map(|action| format!("{action} u")));
+                assert_eq!(fake.calls(), calls, "{active} {state}");
+            }
         }
-    }
-
-    /// `enabled` against what `is-enabled -l` says, and the failure of the action.
-    #[test]
-    fn enabled_follows_is_enabled_like_the_module() {
-        for (said, rc, wanted, action) in [
-            ("enabled", 0, false, Some("disable")),
-            ("static", 0, true, None),
-            ("enabled-runtime", 0, true, Some("enable")),
-            ("indirect", 0, true, Some("enable")),
-            ("alias", 0, true, Some("enable")),
-            ("disabled", 1, true, Some("enable")),
-            ("disabled", 1, false, None),
-        ] {
-            let fake = Fake::new(&format!(
-                r#"case "$1" in show) cat show ;; is-enabled) echo {said}; exit {rc} ;; esac"#
-            ));
-            let answer = fake
-                .answer(json!({"name": "u", "enabled": wanted}))
-                .unwrap();
-            assert_eq!(answer["changed"], action.is_some(), "{said} {wanted}");
-            assert_eq!(answer["enabled"], wanted, "{said} {wanted}");
-            let mut calls = vec!["show u".to_string(), "is-enabled u -l".to_string()];
-            calls.extend(action.map(|action| format!("{action} u")));
-            assert_eq!(fake.calls(), calls, "{said} {wanted}");
-        }
-        let fake = Fake::new(
-            r#"case "$1" in
+        {
+            for (said, rc, wanted, action) in [
+                ("enabled", 0, false, Some("disable")),
+                ("static", 0, true, None),
+                ("enabled-runtime", 0, true, Some("enable")),
+                ("indirect", 0, true, Some("enable")),
+                ("alias", 0, true, Some("enable")),
+                ("disabled", 1, true, Some("enable")),
+                ("disabled", 1, false, None),
+            ] {
+                let fake = Fake::new(&format!(
+                    r#"case "$1" in show) cat show ;; is-enabled) echo {said}; exit {rc} ;; esac"#
+                ));
+                let answer = fake
+                    .answer(json!({"name": "u", "enabled": wanted}))
+                    .unwrap();
+                assert_eq!(answer["changed"], action.is_some(), "{said} {wanted}");
+                assert_eq!(answer["enabled"], wanted, "{said} {wanted}");
+                let mut calls = vec!["show u".to_string(), "is-enabled u -l".to_string()];
+                calls.extend(action.map(|action| format!("{action} u")));
+                assert_eq!(fake.calls(), calls, "{said} {wanted}");
+            }
+            let fake = Fake::new(
+                r#"case "$1" in
   show) cat show ;;
   is-enabled) echo disabled; exit 1 ;;
   enable) echo out; echo err >&2; exit 1 ;;
 esac"#,
-        );
-        let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
-        assert_eq!(answer["failed"], true);
-        assert_eq!(answer["msg"], "Unable to enable service u: out\nerr\n");
-        assert!(answer.get("changed").is_none(), "fail_json has no changed");
+            );
+            let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
+            assert_eq!(answer["failed"], true);
+            assert_eq!(answer["msg"], "Unable to enable service u: out\nerr\n");
+            assert!(answer.get("changed").is_none(), "fail_json has no changed");
+        }
+        {
+            let fake = Fake::new(
+                r#"case "$1" in show) cat show ;; is-enabled) echo masked-ish; exit 1 ;; esac"#,
+            );
+            let etc = fake.etc();
+            fs::write(format!("{etc}/init.d/u"), "").unwrap();
+            let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
+            assert_eq!(answer["changed"], true, "no start link: enabled false");
+            fs::create_dir_all(format!("{etc}/rc0.d")).unwrap();
+            fs::create_dir_all(format!("{etc}/rc2.d")).unwrap();
+            fs::write(format!("{etc}/rc2.d/S01u"), "").unwrap();
+            let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
+            assert_eq!(answer["changed"], false, "a start link: enabled");
+            assert!(!sysv_is_enabled(&etc, "v"));
+            fs::write(format!("{etc}/rc2.d/S1v"), "").unwrap();
+            assert!(!sysv_is_enabled(&etc, "v"), "S? is not S??");
+        }
     }
 
-    /// An init script with start links counts as enabled where `is-enabled` exits 1 without
-    /// saying `disabled`, as `sysv_is_enabled` reads the runlevel directories.
+    /// A load error, a failed command and a systemctl that cannot start fail like the module.
     #[test]
-    fn an_init_script_with_start_links_is_enabled() {
-        let fake = Fake::new(
-            r#"case "$1" in show) cat show ;; is-enabled) echo masked-ish; exit 1 ;; esac"#,
-        );
-        let etc = fake.etc();
-        fs::write(format!("{etc}/init.d/u"), "").unwrap();
-        let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
-        assert_eq!(answer["changed"], true, "no start link: enabled false");
-        fs::create_dir_all(format!("{etc}/rc0.d")).unwrap();
-        fs::create_dir_all(format!("{etc}/rc2.d")).unwrap();
-        fs::write(format!("{etc}/rc2.d/S01u"), "").unwrap();
-        let answer = fake.answer(json!({"name": "u", "enabled": true})).unwrap();
-        assert_eq!(answer["changed"], false, "a start link: enabled");
-        assert!(!sysv_is_enabled(&etc, "v"));
-        fs::write(format!("{etc}/rc2.d/S1v"), "").unwrap();
-        assert!(!sysv_is_enabled(&etc, "v"), "S? is not S??");
-    }
-
-    /// A unit that fails to load, and is not masked, fails with the module's message.
-    #[test]
-    fn a_load_error_fails_like_the_module() {
-        let fake = Fake::new(
-            r#"printf 'LoadState=bad-setting\nLoadError=org.freedesktop.systemd1.BadUnitSetting "Unit u.service has a bad unit file setting."\n'"#,
-        );
-        let answer = fake
-            .answer(json!({"name": "u", "state": "started"}))
-            .unwrap();
-        assert_eq!(
-            answer["msg"],
-            "Error loading unit file 'u': org.freedesktop.systemd1.BadUnitSetting \"Unit \
+    fn a_failure_is_named_and_fails_like_the_module() {
+        {
+            let fake = Fake::new(
+                r#"printf 'LoadState=bad-setting\nLoadError=org.freedesktop.systemd1.BadUnitSetting "Unit u.service has a bad unit file setting."\n'"#,
+            );
+            let answer = fake
+                .answer(json!({"name": "u", "state": "started"}))
+                .unwrap();
+            assert_eq!(
+                answer["msg"],
+                "Error loading unit file 'u': org.freedesktop.systemd1.BadUnitSetting \"Unit \
              u.service has a bad unit file setting.\""
-        );
-        assert_eq!(fake.calls(), ["show u"]);
-    }
-
-    /// Every case the native leaves to the module is handed back before `systemctl` runs at
-    /// all, and those found by `show` before anything changes.
-    ///
-    /// What would make this red: `masked` answered (the module masks; the native would start a
-    /// masked unit); a scope, a flag or a spelling the module reads differently taken as given.
-    #[test]
-    fn what_the_native_leaves_to_the_module_is_handed_back_first() {
-        for refused in [
-            json!({"name": "u", "masked": true}),
-            json!({"name": "u", "masked": false, "state": "started"}),
-            json!({"name": "u", "state": "started", "scope": "user"}),
-            json!({"name": "u", "state": "started", "scope": "nope"}),
-            json!({"daemon_reexec": true}),
-            json!({"daemon-reexec": true, "daemon_reload": true}),
-            json!({"name": "u", "state": "started", "force": true}),
-            json!({"name": "u", "state": "started", "no_block": true}),
-            json!({"name": "u*", "state": "started"}),
-            json!({"name": "u?", "state": "started"}),
-            json!({"name": "u[1]", "state": "started"}),
-            json!({"name": "u'x", "state": "started"}),
-            json!({"name": "$HOME", "state": "started"}),
-            json!({"name": "~u", "state": "started"}),
-            json!({"name": "/etc/init.d/u", "state": "started"}),
-            json!({"name": "", "state": "started"}),
-            json!({"name": "u", "state": "running"}),
-            json!({"name": "u", "enabled": "yes"}),
-            json!({"name": "u", "daemon_reload": "yes"}),
-            json!({"name": 1, "state": "started"}),
-            json!({"name": "u", "service": "u", "state": "started"}),
-            json!({"name": "u", "state": "started", "other": 1}),
-            json!({"state": "started"}),
-        ] {
-            let fake = Fake::new(CRON);
-            assert!(
-                matches!(
-                    fake.answer(refused.clone()),
-                    Err(Exit::Stop(Stop::HandBack(_)))
-                ),
-                "{refused}"
             );
-            assert!(fake.calls().is_empty(), "{refused}");
+            assert_eq!(fake.calls(), ["show u"]);
         }
-        for (body, init_script) in [
-            ("exit 1", false),
-            ("echo 'Failed to parse bus message' >&2; exit 1", false),
-            (
-                r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#,
-                true,
-            ),
-        ] {
-            let fake = Fake::new(body);
-            if init_script {
-                fs::write(format!("{}/init.d/u", fake.etc()), "").unwrap();
-            }
-            assert!(
-                matches!(
-                    fake.answer(json!({"name": "u", "state": "started"})),
-                    Err(Exit::Stop(Stop::HandBack(_)))
-                ),
-                "{body}"
+        {
+            assert_eq!(
+                clean_args(&["/usr/bin/systemctl", "list-unit-files", "u@*"]),
+                "/usr/bin/systemctl list-unit-files 'u@*'"
             );
-            assert_eq!(fake.calls(), ["show u"], "{body}");
+            assert_eq!(
+                clean_args(&["systemctl", "is-enabled", "passwd.service", "-l"]),
+                "systemctl is-enabled passwd.service '********'"
+            );
+            assert_eq!(
+                clean_args(&["--password=x", "a b", "it's", ""]),
+                "'--password=********' 'a b' 'it'\"'\"'s' ''"
+            );
+            assert_eq!(
+                clean_args(&["/opt/\u{e9}/systemctl"]),
+                "'/opt/\u{e9}/systemctl'"
+            );
         }
-    }
-
-    /// The same cases after a `daemon-reload`, which cannot be handed back: answered the way the
-    /// module answers them.
-    #[test]
-    fn after_a_reload_the_module_s_other_branches_are_followed() {
-        let fake = Fake::new(
-            r#"case "$1" in
-  show) echo 'Id=u@1.service'; echo 'Failed to parse bus message' >&2; exit 1 ;;
-  list-unit-files) echo 'u@.service enabled' ;;
-  is-active) echo inactive ;;
-esac"#,
-        );
-        let answer = fake
-            .answer(json!({"name": "u@1", "state": "started", "daemon_reload": true}))
-            .unwrap();
-        assert_eq!(
-            answer["status"],
-            json!({"Id": "u@1.service", "ActiveState": "inactive"})
-        );
-        assert_eq!(answer["changed"], true);
-        assert_eq!(
-            fake.calls(),
-            [
-                "daemon-reload",
-                "show u@1",
-                "list-unit-files u@*",
-                "is-active u@1",
-                "start u@1"
-            ]
-        );
-
-        let fake = Fake::new(
-            r#"case "$1" in
-  show) exit 1 ;;
-  is-enabled) echo bogus ;;
-  list-unit-files) exit 1 ;;
-  '') echo listed; printf 'broken\034 \n' >&2; exit 3 ;;
-esac"#,
-        );
-        let answer = fake
-            .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
-            .unwrap();
-        let systemctl = format!("{}/bin/systemctl", fake.0);
-        assert_eq!(
-            Value::Object(answer),
-            json!({
-                // `bytes.rstrip()` keeps the `\x1c` `str.strip()` would take.
-                "failed": true, "msg": "broken\u{1c}", "cmd": systemctl, "rc": 3,
-                "stdout": "listed\n", "stderr": "broken\u{1c} \n",
-                "invocation": invocation(SPEC, &args(
-                    json!({"name": "u", "state": "started", "daemon_reload": true})
-                )),
-            })
-        );
-
-        let fake =
-            Fake::new(r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#);
-        fs::write(format!("{}/init.d/u", fake.etc()), "").unwrap();
-        let answer = fake
-            .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
-            .unwrap();
-        assert_eq!(
-            answer["warnings"],
-            json!([
-                "The service (u) is actually an init script but the system is managed by systemd"
-            ])
-        );
-        assert_eq!(fake.calls(), ["daemon-reload", "show u", "start u"]);
-
-        let fake = Fake::new(r#"[ "$1" = show ] && echo LoadState=loaded"#);
-        let answer = fake
-            .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
-            .unwrap();
-        assert_eq!(answer["msg"], "Service is in unknown state");
-        assert_eq!(answer["status"], json!({"LoadState": "loaded"}));
-
-        let fake = Fake::new("echo nope >&2; exit 4");
-        let answer = fake.answer(json!({"daemon_reload": true})).unwrap();
-        assert_eq!(answer["msg"], "failure 4 during daemon-reload: nope\n");
-    }
-
-    /// The module's environment decides: offline or chroot hands back before anything runs,
-    /// and `XDG_RUNTIME_DIR` reaches `systemctl` when the module has to set it.
-    #[test]
-    fn the_module_s_environment_is_the_native_s() {
-        let fake = Fake::new(r#"echo "xdg=$XDG_RUNTIME_DIR" >> calls; cat show"#);
-        for (key, value) in [("SYSTEMD_OFFLINE", "1"), ("debian_chroot", "x")] {
-            let mut context = fake.context();
-            context.environment.insert(key.into(), value.into());
-            assert!(matches!(
-                answer(
-                    &args(json!({"name": "u", "state": "started"})),
-                    &context,
-                    unbounded(),
-                    &fake.etc()
-                ),
-                Err(Exit::Stop(Stop::HandBack(_)))
-            ));
-        }
-        assert!(fake.calls().is_empty());
-        let mut context = fake.context();
-        context
-            .environment
-            .insert("XDG_RUNTIME_DIR".into(), "/run/user/4242".into());
-        answer(
-            &args(json!({"name": "u", "state": "started"})),
-            &context,
-            unbounded(),
-            &fake.etc(),
-        )
-        .unwrap();
-        assert_eq!(fake.calls(), ["show u", "xdg=/run/user/4242"]);
-    }
-
-    /// A task with only a `name` reads the unit and answers its status, and an empty one answers
-    /// nothing: the module's `required_one_of` counts the defaults it has just set.
-    ///
-    /// What would make this red: the old "nothing asked" hand-back; any command but `show`.
-    #[test]
-    fn a_status_only_task_reads_the_unit() {
-        let fake = Fake::new(CRON);
-        let answer = fake.answer(json!({"name": "cron"})).unwrap();
-        assert_eq!(answer["changed"], false);
-        assert_eq!(answer["name"], "cron");
-        assert!(answer.get("state").is_none() && answer.get("enabled").is_none());
-        assert_eq!(
-            answer["status"],
-            Value::Object(parse_systemctl_show(SHOW_CRON))
-        );
-        assert_eq!(fake.calls(), ["show cron"]);
-
-        let fake = Fake::new(CRON);
-        let answer = fake.answer(json!({})).unwrap();
-        assert_eq!(
-            Value::Object(answer),
-            json!({"changed": false, "name": null, "status": {},
-                   "invocation": invocation(SPEC, &Map::new())})
-        );
-        assert!(fake.calls().is_empty());
-    }
-
-    /// The aliases answer like the canonical names, and `invocation` carries both spellings.
-    ///
-    /// What would make this red: an alias read as unknown (a hand-back), or dropped from
-    /// `module_args`, or the canonical key left at its default.
-    #[test]
-    fn the_aliases_answer_and_are_kept_in_the_invocation() {
-        for alias in ["unit", "service"] {
-            let fake = Fake::new(CRON);
-            let task = format!(r#"{{"{alias}": "cron", "enabled": true}}"#);
-            let answer = fake.answer(serde_json::from_str(&task).unwrap()).unwrap();
-            let module_args = &answer["invocation"]["module_args"];
-            assert_eq!(module_args[alias], "cron");
-            assert_eq!(module_args["name"], "cron");
-            assert_eq!(answer["name"], "cron");
-            assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
-        }
-        let fake = Fake::new("");
-        let answer = fake.answer(json!({"daemon-reload": true})).unwrap();
-        let module_args = &answer["invocation"]["module_args"];
-        assert_eq!(module_args["daemon-reload"], true);
-        assert_eq!(module_args["daemon_reload"], true);
-        assert_eq!(fake.calls(), ["daemon-reload"]);
-    }
-
-    /// `XDG_RUNTIME_DIR` is set only when `os.getenv` finds none; an empty one stays.
-    #[test]
-    fn xdg_runtime_dir_is_added_only_when_missing() {
-        assert_eq!(xdg_default(|_| None, 42), Some("/run/user/42".into()));
-        assert_eq!(xdg_default(|_| Some(String::new()), 42), None);
-        assert_eq!(xdg_default(|_| Some("/run/user/7".into()), 42), None);
-    }
-
-    /// A `systemctl` that cannot be started after the reload changed the host fails the task as
-    /// `run_command` does when `Popen` raises, instead of handing a half-done task back.
-    ///
-    /// What would make this red: the hand-back kept after an effect, which runs the reload
-    /// again under Python; a wrong `rc`, `cmd`, missing `stdout`/`stderr`, or no `exception`,
-    /// whose summary the reference's callback prints as an `[ERROR]` line at any verbosity.
-    #[test]
-    fn a_systemctl_that_cannot_start_after_a_change_fails_like_the_module() {
-        let fake = Fake::new(r#"[ "$1" = daemon-reload ] && rm -f "$0""#);
-        let task = json!({"name": "u", "state": "started", "daemon_reload": true});
-        let mut answer = fake.answer(task.clone()).unwrap();
-        let systemctl = format!("{}/bin/systemctl", fake.0);
-        // `exception` as the module sends it (measured, tracebacks off). The chained `OSError`
-        // text comes from this libc, so it is checked for its errno and file only.
-        let mut exception = answer
-            .remove("exception")
-            .expect("the module sends an exception");
-        let cause = exception["event"]["chain"]["event"]["msg"].take();
-        assert_eq!(
-            cause,
-            format!("[Errno 2] No such file or directory: b'{systemctl}'")
-        );
-        assert_eq!(
-            exception,
-            json!({"__ansible_type": "ErrorSummary", "event": {
+        {
+            let fake = Fake::new(r#"[ "$1" = daemon-reload ] && rm -f "$0""#);
+            let task = json!({"name": "u", "state": "started", "daemon_reload": true});
+            let mut answer = fake.answer(task.clone()).unwrap();
+            let systemctl = format!("{}/bin/systemctl", fake.0);
+            // `exception` as the module sends it (measured, tracebacks off). The chained `OSError`
+            // text comes from this libc, so it is checked for its errno and file only.
+            let mut exception = answer
+                .remove("exception")
+                .expect("the module sends an exception");
+            let cause = exception["event"]["chain"]["event"]["msg"].take();
+            assert_eq!(
+                cause,
+                format!("[Errno 2] No such file or directory: b'{systemctl}'")
+            );
+            assert_eq!(
+                exception,
+                json!({"__ansible_type": "ErrorSummary", "event": {
                 "__ansible_type": "Event", "msg": "Error executing command.",
                 "chain": {"__ansible_type": "EventChain", "msg_reason": "<<< caused by >>>",
                     "traceback_reason":
                         "The above exception was the direct cause of the following error:",
                     "follow": true, "event": {"__ansible_type": "Event", "msg": null}}}})
-        );
-        assert_eq!(
-            Value::Object(answer),
-            json!({
-                "failed": true, "msg": "Error executing command.", "rc": 2,
-                "cmd": format!("{systemctl} show u"), "stdout": "", "stderr": "",
-                "invocation": invocation(SPEC, &args(task)),
-            })
-        );
-        assert_eq!(fake.calls(), ["daemon-reload"]);
+            );
+            assert_eq!(
+                Value::Object(answer),
+                json!({
+                    "failed": true, "msg": "Error executing command.", "rc": 2,
+                    "cmd": format!("{systemctl} show u"), "stdout": "", "stderr": "",
+                    "invocation": invocation(SPEC, &args(task)),
+                })
+            );
+            assert_eq!(fake.calls(), ["daemon-reload"]);
+        }
     }
 
-    /// `_clean_args`: `shlex.quote` on each word, and the word after a `pass...` one masked.
+    /// What the native leaves to the module is handed back first; after a reload the module's branches are followed.
     #[test]
-    fn a_failed_command_is_named_like_the_module_names_it() {
-        assert_eq!(
-            clean_args(&["/usr/bin/systemctl", "list-unit-files", "u@*"]),
-            "/usr/bin/systemctl list-unit-files 'u@*'"
-        );
-        assert_eq!(
-            clean_args(&["systemctl", "is-enabled", "passwd.service", "-l"]),
-            "systemctl is-enabled passwd.service '********'"
-        );
-        assert_eq!(
-            clean_args(&["--password=x", "a b", "it's", ""]),
-            "'--password=********' 'a b' 'it'\"'\"'s' ''"
-        );
-        assert_eq!(
-            clean_args(&["/opt/\u{e9}/systemctl"]),
-            "'/opt/\u{e9}/systemctl'"
-        );
+    fn what_is_left_to_the_module_is_handed_back_and_followed_after_a_reload() {
+        {
+            for refused in [
+                json!({"name": "u", "masked": true}),
+                json!({"name": "u", "masked": false, "state": "started"}),
+                json!({"name": "u", "state": "started", "scope": "user"}),
+                json!({"name": "u", "state": "started", "scope": "nope"}),
+                json!({"daemon_reexec": true}),
+                json!({"daemon-reexec": true, "daemon_reload": true}),
+                json!({"name": "u", "state": "started", "force": true}),
+                json!({"name": "u", "state": "started", "no_block": true}),
+                json!({"name": "u*", "state": "started"}),
+                json!({"name": "u?", "state": "started"}),
+                json!({"name": "u[1]", "state": "started"}),
+                json!({"name": "u'x", "state": "started"}),
+                json!({"name": "$HOME", "state": "started"}),
+                json!({"name": "~u", "state": "started"}),
+                json!({"name": "/etc/init.d/u", "state": "started"}),
+                json!({"name": "", "state": "started"}),
+                json!({"name": "u", "state": "running"}),
+                json!({"name": "u", "enabled": "yes"}),
+                json!({"name": "u", "daemon_reload": "yes"}),
+                json!({"name": 1, "state": "started"}),
+                json!({"name": "u", "service": "u", "state": "started"}),
+                json!({"name": "u", "state": "started", "other": 1}),
+                json!({"state": "started"}),
+            ] {
+                let fake = Fake::new(CRON);
+                assert!(
+                    matches!(
+                        fake.answer(refused.clone()),
+                        Err(Exit::Stop(Stop::HandBack(_)))
+                    ),
+                    "{refused}"
+                );
+                assert!(fake.calls().is_empty(), "{refused}");
+            }
+            for (body, init_script) in [
+                ("exit 1", false),
+                ("echo 'Failed to parse bus message' >&2; exit 1", false),
+                (
+                    r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#,
+                    true,
+                ),
+            ] {
+                let fake = Fake::new(body);
+                if init_script {
+                    fs::write(format!("{}/init.d/u", fake.etc()), "").unwrap();
+                }
+                assert!(
+                    matches!(
+                        fake.answer(json!({"name": "u", "state": "started"})),
+                        Err(Exit::Stop(Stop::HandBack(_)))
+                    ),
+                    "{body}"
+                );
+                assert_eq!(fake.calls(), ["show u"], "{body}");
+            }
+        }
+        {
+            let fake = Fake::new(
+                r#"case "$1" in
+  show) echo 'Id=u@1.service'; echo 'Failed to parse bus message' >&2; exit 1 ;;
+  list-unit-files) echo 'u@.service enabled' ;;
+  is-active) echo inactive ;;
+esac"#,
+            );
+            let answer = fake
+                .answer(json!({"name": "u@1", "state": "started", "daemon_reload": true}))
+                .unwrap();
+            assert_eq!(
+                answer["status"],
+                json!({"Id": "u@1.service", "ActiveState": "inactive"})
+            );
+            assert_eq!(answer["changed"], true);
+            assert_eq!(
+                fake.calls(),
+                [
+                    "daemon-reload",
+                    "show u@1",
+                    "list-unit-files u@*",
+                    "is-active u@1",
+                    "start u@1"
+                ]
+            );
+
+            let fake = Fake::new(
+                r#"case "$1" in
+  show) exit 1 ;;
+  is-enabled) echo bogus ;;
+  list-unit-files) exit 1 ;;
+  '') echo listed; printf 'broken\034 \n' >&2; exit 3 ;;
+esac"#,
+            );
+            let answer = fake
+                .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
+                .unwrap();
+            let systemctl = format!("{}/bin/systemctl", fake.0);
+            assert_eq!(
+                Value::Object(answer),
+                json!({
+                    // `bytes.rstrip()` keeps the `\x1c` `str.strip()` would take.
+                    "failed": true, "msg": "broken\u{1c}", "cmd": systemctl, "rc": 3,
+                    "stdout": "listed\n", "stderr": "broken\u{1c} \n",
+                    "invocation": invocation(SPEC, &args(
+                        json!({"name": "u", "state": "started", "daemon_reload": true})
+                    )),
+                })
+            );
+
+            let fake = Fake::new(
+                r#"[ "$1" = show ] && printf 'LoadState=not-found\nActiveState=inactive\n'"#,
+            );
+            fs::write(format!("{}/init.d/u", fake.etc()), "").unwrap();
+            let answer = fake
+                .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
+                .unwrap();
+            assert_eq!(
+                answer["warnings"],
+                json!([
+                    "The service (u) is actually an init script but the system is managed by systemd"
+                ])
+            );
+            assert_eq!(fake.calls(), ["daemon-reload", "show u", "start u"]);
+
+            let fake = Fake::new(r#"[ "$1" = show ] && echo LoadState=loaded"#);
+            let answer = fake
+                .answer(json!({"name": "u", "state": "started", "daemon_reload": true}))
+                .unwrap();
+            assert_eq!(answer["msg"], "Service is in unknown state");
+            assert_eq!(answer["status"], json!({"LoadState": "loaded"}));
+
+            let fake = Fake::new("echo nope >&2; exit 4");
+            let answer = fake.answer(json!({"daemon_reload": true})).unwrap();
+            assert_eq!(answer["msg"], "failure 4 during daemon-reload: nope\n");
+        }
+    }
+
+    /// The environment is the native's, a status-only task reads the unit, aliases are kept in the invocation.
+    #[test]
+    fn the_environment_status_and_aliases_follow_the_module() {
+        {
+            let fake = Fake::new(r#"echo "xdg=$XDG_RUNTIME_DIR" >> calls; cat show"#);
+            for (key, value) in [("SYSTEMD_OFFLINE", "1"), ("debian_chroot", "x")] {
+                let mut context = fake.context();
+                context.environment.insert(key.into(), value.into());
+                assert!(matches!(
+                    answer(
+                        &args(json!({"name": "u", "state": "started"})),
+                        &context,
+                        unbounded(),
+                        &fake.etc()
+                    ),
+                    Err(Exit::Stop(Stop::HandBack(_)))
+                ));
+            }
+            assert!(fake.calls().is_empty());
+            let mut context = fake.context();
+            context
+                .environment
+                .insert("XDG_RUNTIME_DIR".into(), "/run/user/4242".into());
+            answer(
+                &args(json!({"name": "u", "state": "started"})),
+                &context,
+                unbounded(),
+                &fake.etc(),
+            )
+            .unwrap();
+            assert_eq!(fake.calls(), ["show u", "xdg=/run/user/4242"]);
+        }
+        {
+            assert_eq!(xdg_default(|_| None, 42), Some("/run/user/42".into()));
+            assert_eq!(xdg_default(|_| Some(String::new()), 42), None);
+            assert_eq!(xdg_default(|_| Some("/run/user/7".into()), 42), None);
+        }
+        {
+            let fake = Fake::new(CRON);
+            let answer = fake.answer(json!({"name": "cron"})).unwrap();
+            assert_eq!(answer["changed"], false);
+            assert_eq!(answer["name"], "cron");
+            assert!(answer.get("state").is_none() && answer.get("enabled").is_none());
+            assert_eq!(
+                answer["status"],
+                Value::Object(parse_systemctl_show(SHOW_CRON))
+            );
+            assert_eq!(fake.calls(), ["show cron"]);
+
+            let fake = Fake::new(CRON);
+            let answer = fake.answer(json!({})).unwrap();
+            assert_eq!(
+                Value::Object(answer),
+                json!({"changed": false, "name": null, "status": {},
+                   "invocation": invocation(SPEC, &Map::new())})
+            );
+            assert!(fake.calls().is_empty());
+        }
+        {
+            for alias in ["unit", "service"] {
+                let fake = Fake::new(CRON);
+                let task = format!(r#"{{"{alias}": "cron", "enabled": true}}"#);
+                let answer = fake.answer(serde_json::from_str(&task).unwrap()).unwrap();
+                let module_args = &answer["invocation"]["module_args"];
+                assert_eq!(module_args[alias], "cron");
+                assert_eq!(module_args["name"], "cron");
+                assert_eq!(answer["name"], "cron");
+                assert_eq!(fake.calls(), ["show cron", "is-enabled cron -l"]);
+            }
+            let fake = Fake::new("");
+            let answer = fake.answer(json!({"daemon-reload": true})).unwrap();
+            let module_args = &answer["invocation"]["module_args"];
+            assert_eq!(module_args["daemon-reload"], true);
+            assert_eq!(module_args["daemon_reload"], true);
+            assert_eq!(fake.calls(), ["daemon-reload"]);
+        }
     }
 
     /// A `systemctl` that hangs (a D-Bus that does not answer) ends at the task's `timeout`, and

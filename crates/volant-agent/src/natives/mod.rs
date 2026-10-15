@@ -228,10 +228,6 @@ mod tests {
     use super::*;
 
     /// The protocol's list of candidates and the agent's table name the same modules.
-    ///
-    /// What would make this red: a native added here and not to the candidates, which the
-    /// controller would never send it; or a candidate with no file, which leaves nothing to
-    /// enable when its golden is ready.
     #[test]
     fn every_candidate_has_a_native_and_every_native_is_a_candidate() {
         for name in NATIVE_CANDIDATES {
@@ -244,11 +240,8 @@ mod tests {
         }
     }
 
-    /// The modules page says which natives run from the protocol's list; this agent's table is
-    /// the truth.
-    ///
-    /// What would make this red: a native enabled here and not named on the page, or the page
-    /// naming one this agent does not run.
+    /// The modules page says which natives run from the protocol's list; this agent's table is the
+    /// truth.
     #[test]
     #[cfg(unix)]
     fn the_modules_page_names_the_natives_this_agent_runs() {
@@ -268,13 +261,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     pub(super) type Probe = (&'static str, &'static str, Option<String>);
 
-    /// A hand-back reason reaches the profile and its JSON file, which get shared: it names the
-    /// argument and why the native leaves it, never the value, a file's content or a command's
-    /// output, any of which can be a secret. One row per hand-back site that once quoted one.
-    ///
-    /// What would make this red: a reason that quotes a `regexp`, a `validate` program, a mode,
-    /// a state, an account, an id, a unit or package name the task gave, an apt source's URI,
-    /// suite, component, type, option value or line, a unit line, or a `PATH` entry.
+    /// A hand-back reason names the argument and why the native leaves it, never the value.
     #[test]
     #[cfg(target_os = "linux")]
     fn a_hand_back_reason_never_quotes_an_argument_value() {

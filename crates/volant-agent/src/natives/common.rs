@@ -947,82 +947,78 @@ mod tests {
     use super::super::setup::unbounded;
     use super::*;
 
-    /// `stat`'s shape against the reference: `dest` given, `path` filled from it, both kept, and
-    /// every other argument at its default, `null` ones included.
-    ///
-    /// What would make this red: the alias dropped from the map, or the canonical name left
-    /// unset, both of which the golden sees as a different `invocation`; a `null` default left
-    /// out, which the reference prints; or the canonical name winning over an alias given with
-    /// it, which is the reverse of what `_handle_aliases` does.
+    /// The invocation resolves aliases and defaults, hands back unknown arguments, and prints OS errors like Python.
     #[test]
-    fn the_invocation_resolves_aliases_and_fills_defaults_like_the_reference() {
-        const SPEC: &[ArgSpec] = &[
-            ArgSpec {
+    fn the_invocation_and_errors_read_like_the_reference() {
+        {
+            const SPEC: &[ArgSpec] = &[
+                ArgSpec {
+                    name: "path",
+                    aliases: &["dest", "name"],
+                    default: || Value::Null,
+                },
+                ArgSpec {
+                    name: "follow",
+                    aliases: &[],
+                    default: || Value::Bool(false),
+                },
+                ArgSpec {
+                    name: "checksum_algorithm",
+                    aliases: &["checksum"],
+                    default: || json!("sha1"),
+                },
+                ArgSpec {
+                    name: "get_mime",
+                    aliases: &[],
+                    default: || Value::Null,
+                },
+            ];
+            use crate::testing::args;
+            assert_eq!(
+                invocation(SPEC, &args(json!({"dest": "/etc/hostname"}))),
+                json!({"module_args": {
+                    "dest": "/etc/hostname",
+                    "path": "/etc/hostname",
+                    "follow": false,
+                    "checksum_algorithm": "sha1",
+                    "get_mime": null,
+                }})
+            );
+            assert_eq!(
+                invocation(
+                    SPEC,
+                    &args(json!({"path": "/a", "dest": "/b", "name": "/c"}))
+                )["module_args"]["path"],
+                "/c",
+                "the last alias given wins, over the canonical name too"
+            );
+        }
+        {
+            const SPEC: &[ArgSpec] = &[ArgSpec {
                 name: "path",
-                aliases: &["dest", "name"],
+                aliases: &["dest"],
                 default: || Value::Null,
-            },
-            ArgSpec {
-                name: "follow",
-                aliases: &[],
-                default: || Value::Bool(false),
-            },
-            ArgSpec {
-                name: "checksum_algorithm",
-                aliases: &["checksum"],
-                default: || json!("sha1"),
-            },
-            ArgSpec {
-                name: "get_mime",
-                aliases: &[],
-                default: || Value::Null,
-            },
-        ];
-        use crate::testing::args;
-        assert_eq!(
-            invocation(SPEC, &args(json!({"dest": "/etc/hostname"}))),
-            json!({"module_args": {
-                "dest": "/etc/hostname",
-                "path": "/etc/hostname",
-                "follow": false,
-                "checksum_algorithm": "sha1",
-                "get_mime": null,
-            }})
-        );
-        assert_eq!(
-            invocation(
-                SPEC,
-                &args(json!({"path": "/a", "dest": "/b", "name": "/c"}))
-            )["module_args"]["path"],
-            "/c",
-            "the last alias given wins, over the canonical name too"
-        );
+            }];
+            use crate::testing::args;
+            assert_eq!(check_names(SPEC, &args(json!({"dest": "/a"}))), Ok(()));
+            assert!(check_names(SPEC, &args(json!({"path": "/a", "dest": "/a"}))).is_err());
+            assert!(check_names(SPEC, &args(json!({"path": "/a", "bogus": 1}))).is_err());
+        }
+        {
+            let denied = io::Error::from_raw_os_error(libc::EACCES);
+            assert_eq!(
+                os_error(&denied, "/x'y"),
+                "[Errno 13] Permission denied: b\"/x'y\""
+            );
+            assert_eq!(
+                os_error(&denied, "/é\n"),
+                "[Errno 13] Permission denied: b'/\\xc3\\xa9\\n'"
+            );
+        }
     }
 
-    /// Unknown arguments and an option under two names go to the Python module.
-    ///
-    /// What would make this red: either check dropped, after which a native answers a task the
-    /// reference refuses or warns about.
-    #[test]
-    fn an_unknown_argument_or_a_doubled_option_is_handed_back() {
-        const SPEC: &[ArgSpec] = &[ArgSpec {
-            name: "path",
-            aliases: &["dest"],
-            default: || Value::Null,
-        }];
-        use crate::testing::args;
-        assert_eq!(check_names(SPEC, &args(json!({"dest": "/a"}))), Ok(()));
-        assert!(check_names(SPEC, &args(json!({"path": "/a", "dest": "/a"}))).is_err());
-        assert!(check_names(SPEC, &args(json!({"path": "/a", "bogus": 1}))).is_err());
-    }
-
-    /// `parse_mode` against `AnsibleModule._symbolic_mode_to_octal` of ansible-core 2.19.12,
-    /// whose answers for these modes, run under umask 022, are the expected values here.
-    ///
-    /// What would make this red: `X` read from the mode before the clause rather than the running
-    /// one (`u=rw-x+X` gives 0o700), `=` leaving the setuid or setgid bit of its class, the
-    /// umask applied to a mode that names its users, a Python-only integer form (`0o755`) read as
-    /// something, or `0x755` accepted.
+    /// `parse_mode` against `AnsibleModule._symbolic_mode_to_octal` of ansible-core 2.19.12, whose
+    /// answers for these modes, run under umask 022, are the expected values here.
     #[test]
     #[cfg(target_os = "linux")]
     fn a_mode_is_read_as_the_reference_reads_it() {
@@ -1082,114 +1078,75 @@ mod tests {
         }
     }
 
-    /// Accounts and groups from `/etc/passwd` and `/etc/group`, and a name nobody has answered
-    /// by `getent` as absent rather than unknown.
-    ///
-    /// What would make this red: a uid read as a name, or a name `/etc/passwd` lacks taken as
-    /// missing without asking the name service (the `getent` step skipped would still pass this
-    /// one; `the_owner_unknown_to_the_host_fails_like_the_reference` in `file` needs it).
+    /// Accounts are found by name and id, and through `getent` when only the name service knows them.
     #[test]
     #[cfg(target_os = "linux")]
-    fn accounts_are_found_by_name_and_by_id() {
-        let clock = unbounded();
-        assert_eq!(lookup_user("0", clock).unwrap().unwrap().name, "root");
-        assert_eq!(lookup_user("root", clock).unwrap().unwrap().uid, 0);
-        assert_eq!(lookup_group("0", clock).unwrap().unwrap().name, "root");
-        assert_eq!(lookup_group("root", clock).unwrap().unwrap().gid, 0);
-        assert!(lookup_user("volant-no-such-user", clock).unwrap().is_none());
-        assert!(matches!(
-            owner_account("1234", clock),
-            Ok(Account::Id(1234))
-        ));
-        assert!(matches!(
-            owner_account("volant-no-such-user", clock),
-            Ok(Account::Unknown(_))
-        ));
-        assert!(
-            owner_account("+12", clock).is_err(),
-            "Python reads +12 as a number"
-        );
-    }
-
-    /// A fake `getent` leaves `PATH` as it found it once its guard is dropped, so a test runner
-    /// that shares the process does not hand the fake to every test after it.
-    ///
-    /// What would make this red: the guard dropped without putting `PATH` back.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_fake_getent_puts_path_back() {
-        let scratch = golden::Scratch::new("getent-path");
-        let before = std::env::var_os("PATH");
-        let during = {
-            let _path = golden::fake_getent(&scratch, "exit 2");
-            std::env::var_os("PATH")
-        };
-        assert_ne!(during, before, "the fake was not put on PATH");
-        assert_eq!(std::env::var_os("PATH"), before);
-    }
-
-    /// An account only the name service knows, as on an LDAP or sssd host: a fake `getent` first
-    /// on `PATH` answers for `volant-ldapuser` (uid 4242), whom `/etc/passwd` does not hold.
-    ///
-    /// What would make this red: the `getent` step dropped, or its exit 0 read as anything but
-    /// the entry; `file` would then fail `chown failed: failed to look up user volant-ldapuser`
-    /// where the reference chowns, and `add_path_info` would print the uid for the owner.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn an_account_only_the_name_service_knows_is_found_through_getent() {
-        let scratch = golden::Scratch::new("getent");
-        let _path = golden::fake_getent(
-            &scratch,
-            r#"case "$1 $2" in
+    fn accounts_are_found_by_name_id_and_name_service() {
+        {
+            let clock = unbounded();
+            assert_eq!(lookup_user("0", clock).unwrap().unwrap().name, "root");
+            assert_eq!(lookup_user("root", clock).unwrap().unwrap().uid, 0);
+            assert_eq!(lookup_group("0", clock).unwrap().unwrap().name, "root");
+            assert_eq!(lookup_group("root", clock).unwrap().unwrap().gid, 0);
+            assert!(lookup_user("volant-no-such-user", clock).unwrap().is_none());
+            assert!(matches!(
+                owner_account("1234", clock),
+                Ok(Account::Id(1234))
+            ));
+            assert!(matches!(
+                owner_account("volant-no-such-user", clock),
+                Ok(Account::Unknown(_))
+            ));
+            assert!(
+                owner_account("+12", clock).is_err(),
+                "Python reads +12 as a number"
+            );
+        }
+        {
+            let scratch = golden::Scratch::new("getent-path");
+            let before = std::env::var_os("PATH");
+            let during = {
+                let _path = golden::fake_getent(&scratch, "exit 2");
+                std::env::var_os("PATH")
+            };
+            assert_ne!(during, before, "the fake was not put on PATH");
+            assert_eq!(std::env::var_os("PATH"), before);
+        }
+        {
+            let scratch = golden::Scratch::new("getent");
+            let _path = golden::fake_getent(
+                &scratch,
+                r#"case "$1 $2" in
   "passwd volant-ldapuser"|"passwd 4242") echo "volant-ldapuser:x:4242:4242::/:/bin/sh" ;;
   "group volant-ldapgroup"|"group 4243") echo "volant-ldapgroup:x:4243:" ;;
   *) exit 2 ;;
 esac"#,
-        );
-        let clock = unbounded();
-        assert!(matches!(
-            owner_account("volant-ldapuser", clock),
-            Ok(Account::Id(4242))
-        ));
-        assert_eq!(
-            lookup_user("4242", clock).unwrap().unwrap().name,
-            "volant-ldapuser"
-        );
-        assert!(matches!(
-            group_account("volant-ldapgroup", clock),
-            Ok(Account::Id(4243))
-        ));
-        assert_eq!(
-            lookup_group("4243", clock).unwrap().unwrap().name,
-            "volant-ldapgroup"
-        );
-        assert!(matches!(
-            owner_account("volant-nobody", clock),
-            Ok(Account::Unknown(_))
-        ));
-    }
-
-    /// Python's `str()` of an `OSError` raised on a bytes path, glibc's wording.
-    ///
-    /// What would make this red: the quote not switched for a path holding `'`, or a byte
-    /// outside ASCII printed as a character rather than `\xNN`.
-    #[test]
-    fn an_os_error_reads_as_python_prints_it() {
-        let denied = io::Error::from_raw_os_error(libc::EACCES);
-        assert_eq!(
-            os_error(&denied, "/x'y"),
-            "[Errno 13] Permission denied: b\"/x'y\""
-        );
-        assert_eq!(
-            os_error(&denied, "/é\n"),
-            "[Errno 13] Permission denied: b'/\\xc3\\xa9\\n'"
-        );
+            );
+            let clock = unbounded();
+            assert!(matches!(
+                owner_account("volant-ldapuser", clock),
+                Ok(Account::Id(4242))
+            ));
+            assert_eq!(
+                lookup_user("4242", clock).unwrap().unwrap().name,
+                "volant-ldapuser"
+            );
+            assert!(matches!(
+                group_account("volant-ldapgroup", clock),
+                Ok(Account::Id(4243))
+            ));
+            assert_eq!(
+                lookup_group("4243", clock).unwrap().unwrap().name,
+                "volant-ldapgroup"
+            );
+            assert!(matches!(
+                owner_account("volant-nobody", clock),
+                Ok(Account::Unknown(_))
+            ));
+        }
     }
 
     /// Owner, then group, then mode, and the first failure stops the rest.
-    ///
-    /// What would make this red: the mode applied before the group (the file would be 0600 after
-    /// the group's failure), or a group lookup failure reported as anything but the reference's.
     #[test]
     #[cfg(target_os = "linux")]
     fn attributes_are_set_in_order_and_stop_at_the_first_failure() {

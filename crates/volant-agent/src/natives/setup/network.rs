@@ -429,227 +429,189 @@ esac
         BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())])
     }
 
-    /// The guest above, field by field as the reference builds them.
-    ///
-    /// What would make this red: the gateway, interface or source read from other words of the
-    /// route; the broadcast, netmask, network, prefix, MAC, MTU or type of the default address
-    /// taken from anywhere but its device; the alias not the label; a loopback address listed;
-    /// the secondary's label missing from `interfaces` or its colon kept.
+    /// Routes, broadcast, a missing route, dropped reads, a hung `ip` and busybox follow the reference.
     #[test]
     #[cfg(target_os = "linux")]
-    fn the_default_routes_and_addresses_are_the_reference_s() {
-        let fake = FakeRoot::new("network");
-        sysfs(&fake);
-        install_ip(&fake, IP);
-        let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
-        let mut names = facts["interfaces"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|name| name.as_str().unwrap().to_string())
-            .collect::<Vec<_>>();
-        names.sort();
-        assert_eq!(names, ["eth0", "eth0_1", "lo"]);
-        assert_eq!(
-            facts["default_ipv4"],
-            json!({
-                "gateway": "192.0.2.1",
-                "interface": "eth0",
-                "address": "192.0.2.10",
-                "broadcast": "",
-                "netmask": "255.255.255.0",
-                "network": "192.0.2.0",
-                "prefix": "24",
-                "macaddress": "52:54:00:12:34:56",
-                "mtu": 1500,
-                "type": "ether",
-                "alias": "eth0",
-            })
-        );
-        assert_eq!(
-            facts["default_ipv6"],
-            json!({
-                "gateway": "fe80::1",
-                "interface": "eth0",
-                "address": "2001:db8::10",
-                "prefix": "64",
-                "scope": "global",
-                "macaddress": "52:54:00:12:34:56",
-                "mtu": 1500,
-                "type": "ether",
-            })
-        );
-        assert_eq!(
-            facts["all_ipv4_addresses"],
-            json!(["192.0.2.10", "192.0.2.11"])
-        );
-        assert_eq!(
-            facts["all_ipv6_addresses"],
-            json!(["2001:db8::10", "fe80::5054:ff:fe12:3456"])
-        );
-    }
-
-    /// The broadcast is read only when `brd` directly follows the address, as the reference
-    /// reads it; `ip` prints `metric` first on a DHCP address, so the reference's broadcast is
-    /// empty there, and here too. Without `metric` it is read.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn the_broadcast_is_read_where_the_reference_reads_it() {
-        let fake = FakeRoot::new("network-brd");
-        sysfs(&fake);
-        install_ip(&fake, &IP.replace(" metric 100 brd", " brd"));
-        let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
-        assert_eq!(facts["default_ipv4"]["broadcast"], "192.0.2.255");
-    }
-
-    /// No `ip` along `PATH` or in the `sbin` directories: no network key at all, as the
-    /// reference leaves them, even though `/sys/class/net` is there to read.
-    ///
-    /// What would make this red: the native falling back on `/proc/net/route` or `/sys` to
-    /// answer what the reference does not.
-    #[test]
-    fn without_ip_there_is_no_network_fact() {
-        let fake = FakeRoot::new("network-no-ip");
-        sysfs(&fake);
-        fake.mkdir("/sbin").mkdir("/usr/sbin");
-        assert_eq!(
-            collect(&fake.root(), &env(), unbounded()).unwrap(),
-            Map::new()
-        );
-    }
-
-    /// No route: `ip` prints nothing on stdout and the reference keeps an empty dict. A route
-    /// without a source address leaves the default address unenriched.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_missing_route_is_an_empty_dict() {
-        let fake = FakeRoot::new("network-no-route");
-        sysfs(&fake);
-        let script = IP
+    fn the_network_facts_follow_the_reference_on_linux() {
+        {
+            let fake = FakeRoot::new("network");
+            sysfs(&fake);
+            install_ip(&fake, IP);
+            let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
+            let mut names = facts["interfaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| name.as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(names, ["eth0", "eth0_1", "lo"]);
+            assert_eq!(
+                facts["default_ipv4"],
+                json!({
+                    "gateway": "192.0.2.1",
+                    "interface": "eth0",
+                    "address": "192.0.2.10",
+                    "broadcast": "",
+                    "netmask": "255.255.255.0",
+                    "network": "192.0.2.0",
+                    "prefix": "24",
+                    "macaddress": "52:54:00:12:34:56",
+                    "mtu": 1500,
+                    "type": "ether",
+                    "alias": "eth0",
+                })
+            );
+            assert_eq!(
+                facts["default_ipv6"],
+                json!({
+                    "gateway": "fe80::1",
+                    "interface": "eth0",
+                    "address": "2001:db8::10",
+                    "prefix": "64",
+                    "scope": "global",
+                    "macaddress": "52:54:00:12:34:56",
+                    "mtu": 1500,
+                    "type": "ether",
+                })
+            );
+            assert_eq!(
+                facts["all_ipv4_addresses"],
+                json!(["192.0.2.10", "192.0.2.11"])
+            );
+            assert_eq!(
+                facts["all_ipv6_addresses"],
+                json!(["2001:db8::10", "fe80::5054:ff:fe12:3456"])
+            );
+        }
+        {
+            let fake = FakeRoot::new("network-brd");
+            sysfs(&fake);
+            install_ip(&fake, &IP.replace(" metric 100 brd", " brd"));
+            let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
+            assert_eq!(facts["default_ipv4"]["broadcast"], "192.0.2.255");
+        }
+        {
+            let fake = FakeRoot::new("network-no-route");
+            sysfs(&fake);
+            let script = IP
             .replace(
                 r#"echo "2404:6800:400a:800::1012 from :: via fe80::1 dev eth0 proto ra src 2001:db8::10 metric 100 pref medium""#,
                 "echo 'RTNETLINK answers: Network is unreachable' >&2; exit 2",
             )
             .replace(" src 192.0.2.10 uid 1000", " uid 1000");
-        install_ip(&fake, &script);
-        let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
-        assert_eq!(facts["default_ipv6"], json!({}));
-        assert_eq!(
-            facts["default_ipv4"],
-            json!({"gateway": "192.0.2.1", "interface": "eth0"})
-        );
+            install_ip(&fake, &script);
+            let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
+            assert_eq!(facts["default_ipv6"], json!({}));
+            assert_eq!(
+                facts["default_ipv4"],
+                json!({"gateway": "192.0.2.1", "interface": "eth0"})
+            );
+        }
+        {
+            let fake = FakeRoot::new("network-raise");
+            sysfs(&fake);
+            install_ip(&fake, IP);
+            // On `lo`, which carries no default address: the read alone raises.
+            fake.write("/sys/class/net/lo/mtu", "jumbo\n");
+            assert_eq!(
+                collect(&fake.root(), &env(), unbounded()).unwrap(),
+                Map::new()
+            );
+
+            let fake = FakeRoot::new("network-no-mac");
+            sysfs(&fake);
+            install_ip(&fake, IP);
+            std::fs::remove_file(fake.0.join("sys/class/net/eth0/address")).unwrap();
+            std::fs::remove_file(fake.0.join("sys/class/net/lo/address")).unwrap();
+            assert_eq!(
+                collect(&fake.root(), &env(), unbounded()).unwrap(),
+                Map::new()
+            );
+
+            let fake = FakeRoot::new("network-no-exec");
+            sysfs(&fake);
+            install_ip(&fake, "#!/nonexistent/sh\n");
+            assert!(collect(&fake.root(), &env(), unbounded()).is_err());
+        }
+        {
+            let fake = FakeRoot::new("network-hung");
+            sysfs(&fake);
+            install_ip(&fake, "#!/bin/sh\nsleep 30\n");
+            let started = std::time::Instant::now();
+            let clock = Clock {
+                deadline: Some(started + std::time::Duration::from_secs(1)),
+                cancelled: &|| false,
+            };
+            let stop = collect(&fake.root(), &env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+            let asked = std::cell::Cell::new(0);
+            let cancelled = || {
+                asked.set(asked.get() + 1);
+                asked.get() > 5
+            };
+            let started = std::time::Instant::now();
+            let clock = Clock {
+                deadline: None,
+                cancelled: &cancelled,
+            };
+            let stop = collect(&fake.root(), &env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        }
+        {
+            let fake = FakeRoot::new("network-busybox");
+            sysfs(&fake);
+            let script = IP
+                .replace("\"addr show primary dev eth0\")", "\"addr show dev eth0\")")
+                .replace("\"addr show primary dev lo\")", "\"addr show dev lo\")");
+            install_ip(&fake, &script);
+            let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
+            assert_eq!(facts["default_ipv4"]["mtu"], 1500);
+        }
     }
 
-    /// What the reference's reads raise on, the whole collector dropped: an MTU that is not a
-    /// number, a default address on a device before any MAC address was read. A command found
-    /// and not startable fails the module, so the native hands back.
+    /// Without `ip` there is no network fact; device types and the slash split follow the reference.
     #[test]
-    #[cfg(target_os = "linux")]
-    fn a_read_the_reference_raises_on_drops_the_collector() {
-        let fake = FakeRoot::new("network-raise");
-        sysfs(&fake);
-        install_ip(&fake, IP);
-        // On `lo`, which carries no default address: the read alone raises.
-        fake.write("/sys/class/net/lo/mtu", "jumbo\n");
-        assert_eq!(
-            collect(&fake.root(), &env(), unbounded()).unwrap(),
-            Map::new()
-        );
-
-        let fake = FakeRoot::new("network-no-mac");
-        sysfs(&fake);
-        install_ip(&fake, IP);
-        std::fs::remove_file(fake.0.join("sys/class/net/eth0/address")).unwrap();
-        std::fs::remove_file(fake.0.join("sys/class/net/lo/address")).unwrap();
-        assert_eq!(
-            collect(&fake.root(), &env(), unbounded()).unwrap(),
-            Map::new()
-        );
-
-        let fake = FakeRoot::new("network-no-exec");
-        sysfs(&fake);
-        install_ip(&fake, "#!/nonexistent/sh\n");
-        assert!(collect(&fake.root(), &env(), unbounded()).is_err());
-    }
-
-    /// A hung `ip` ends at the task's deadline, or at its cancel, which only the calling thread
-    /// asks while the commands run on theirs.
-    ///
-    /// What would make this red: the commands started outside the executor, or the cancel never
-    /// polled while they run, which leaves the task waiting thirty seconds.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_hung_ip_ends_at_the_timeout_or_the_cancel() {
-        let fake = FakeRoot::new("network-hung");
-        sysfs(&fake);
-        install_ip(&fake, "#!/bin/sh\nsleep 30\n");
-        let started = std::time::Instant::now();
-        let clock = Clock {
-            deadline: Some(started + std::time::Duration::from_secs(1)),
-            cancelled: &|| false,
-        };
-        let stop = collect(&fake.root(), &env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-
-        let asked = std::cell::Cell::new(0);
-        let cancelled = || {
-            asked.set(asked.get() + 1);
-            asked.get() > 5
-        };
-        let started = std::time::Instant::now();
-        let clock = Clock {
-            deadline: None,
-            cancelled: &cancelled,
-        };
-        let stop = collect(&fake.root(), &env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-    }
-
-    /// A busybox `ip` refuses `primary`: the reference asks again without it.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn busybox_ip_is_asked_without_primary() {
-        let fake = FakeRoot::new("network-busybox");
-        sysfs(&fake);
-        let script = IP
-            .replace("\"addr show primary dev eth0\")", "\"addr show dev eth0\")")
-            .replace("\"addr show primary dev lo\")", "\"addr show dev lo\")");
-        install_ip(&fake, &script);
-        let facts = collect(&fake.root(), &env(), unbounded()).unwrap();
-        assert_eq!(facts["default_ipv4"]["mtu"], 1500);
-    }
-
-    #[test]
-    fn device_types_follow_the_reference_s_table() {
-        let fake = FakeRoot::new("network-types");
-        fake.write("/sys/class/net/br0/type", "1\n")
-            .mkdir("/sys/class/net/br0/bridge")
-            .write("/sys/class/net/wg0/type", "65534\n")
-            .write("/sys/class/net/x0/type", "7\n")
-            .mkdir("/sys/class/net/none");
-        let mut state = State {
-            names: Vec::new(),
-            default_ipv4: Map::new(),
-            default_ipv6: Map::new(),
-            all_ipv4: Vec::new(),
-            all_ipv6: Vec::new(),
-            macaddress: None,
-        };
-        let kind = |state: &mut State, name| state.device(&fake.root(), name).unwrap().kind;
-        assert_eq!(kind(&mut state, "br0").as_deref(), Some("bridge"));
-        assert_eq!(kind(&mut state, "wg0").as_deref(), Some("tunnel"));
-        assert_eq!(kind(&mut state, "x0").as_deref(), Some("unknown"));
-        assert_eq!(kind(&mut state, "none"), None);
-        fake.mkdir("/sys/class/net/bond0/bonding");
-        assert!(state.device(&fake.root(), "bond0").is_none(), "no mode");
-    }
-
-    #[test]
-    fn python_split_on_a_slash_needs_exactly_two_parts() {
-        assert_eq!(two("10.0.0.1/8"), Some(("10.0.0.1", "8")));
-        assert_eq!(two("10.0.0.1"), None);
-        assert_eq!(two("a/b/c"), None);
+    fn the_network_helpers_follow_the_reference() {
+        {
+            let fake = FakeRoot::new("network-no-ip");
+            sysfs(&fake);
+            fake.mkdir("/sbin").mkdir("/usr/sbin");
+            assert_eq!(
+                collect(&fake.root(), &env(), unbounded()).unwrap(),
+                Map::new()
+            );
+        }
+        {
+            let fake = FakeRoot::new("network-types");
+            fake.write("/sys/class/net/br0/type", "1\n")
+                .mkdir("/sys/class/net/br0/bridge")
+                .write("/sys/class/net/wg0/type", "65534\n")
+                .write("/sys/class/net/x0/type", "7\n")
+                .mkdir("/sys/class/net/none");
+            let mut state = State {
+                names: Vec::new(),
+                default_ipv4: Map::new(),
+                default_ipv6: Map::new(),
+                all_ipv4: Vec::new(),
+                all_ipv6: Vec::new(),
+                macaddress: None,
+            };
+            let kind = |state: &mut State, name| state.device(&fake.root(), name).unwrap().kind;
+            assert_eq!(kind(&mut state, "br0").as_deref(), Some("bridge"));
+            assert_eq!(kind(&mut state, "wg0").as_deref(), Some("tunnel"));
+            assert_eq!(kind(&mut state, "x0").as_deref(), Some("unknown"));
+            assert_eq!(kind(&mut state, "none"), None);
+            fake.mkdir("/sys/class/net/bond0/bonding");
+            assert!(state.device(&fake.root(), "bond0").is_none(), "no mode");
+        }
+        {
+            assert_eq!(two("10.0.0.1/8"), Some(("10.0.0.1", "8")));
+            assert_eq!(two("10.0.0.1"), None);
+            assert_eq!(two("a/b/c"), None);
+        }
     }
 }

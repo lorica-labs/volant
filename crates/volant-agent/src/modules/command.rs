@@ -462,19 +462,11 @@ fn program_name(cmd: &Value) -> String {
 mod tests {
     use super::*;
     use crate::testing::{args, done, scratch};
+    use rstest::rstest;
     use serde_json::json;
 
     /// `stdin_add_newline` decides whether the value written to the child ends in a newline, and
-    /// its default is to add one. Measured on ansible-core 2.19.12 with `od -c`: the newline is
-    /// appended without looking at what the value already ends with, so `"ab\n"` reaches the
-    /// child as four bytes under the default and three with the argument off.
-    ///
-    /// What would make this red: the argument accepted and dropped, which is what this release
-    /// did -- every command reading standard input got one byte less than the reference gave it,
-    /// and a reader waiting for a line never saw one. Or the value read with `Value::as_bool`,
-    /// which sees a YAML boolean and nothing else: `"false"` then falls back to the default and
-    /// writes the byte the task asked it not to, measured at 2 bytes against the reference's 2
-    /// and this release's 3.
+    /// its default is to add one.
     #[test]
     fn stdin_add_newline_decides_the_last_byte_written() {
         let bytes = |stdin: Value, add: Option<Value>| {
@@ -498,35 +490,146 @@ mod tests {
         assert_eq!(bytes(json!("ab"), Some(json!("yes"))), "3");
     }
 
-    /// An `argv` on the shell path runs the list itself, which is what the reference does with
-    /// it: `shell:` written as a mapping carrying `argv` and no command line prints its output
-    /// there, and reports the list as the task's `cmd`.
-    ///
-    /// What would make this red: the empty-command guard reading the free-form line while an
-    /// `argv` sits next to it, which failed the task with "no command given" against a reference
-    /// that ran it. A `shell` with neither still has nothing to run, and still says so.
-    #[test]
-    fn an_argv_runs_on_the_shell_path_and_nothing_still_fails() {
-        let r = done(execute(
-            &args(json!({"argv": ["echo", "hi"]})),
-            true,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            r.0.get("stdout").and_then(Value::as_str).map(str::trim),
-            Some("hi"),
-            "the list never ran: {:?}",
-            r.0
-        );
-        assert_eq!(r.0["cmd"], json!(["echo", "hi"]));
-        let empty = done(execute(
-            &args(json!({"_raw_params": "  "})),
-            true,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(empty.0["msg"], json!("no command given"));
+    /// `creates` and `removes` resolve under `chdir`, expand globs per directory component, keep
+    /// the pattern as written in the message, and an empty `creates` is no guard.
+    #[rstest]
+    #[case::relative_creates(
+        &["marker"],
+        json!({"_raw_params": "echo never", "chdir": "$DIR", "creates": "marker"}),
+        false,
+        "marker"
+    )]
+    #[case::relative_removes(
+        &["cache"],
+        json!({"_raw_params": "echo ran", "chdir": "$DIR", "removes": "cache"}),
+        true,
+        "ran"
+    )]
+    #[case::empty_creates(
+        &[],
+        json!({"_raw_params": "echo ran", "chdir": "$DIR", "creates": ""}),
+        true,
+        "ran"
+    )]
+    #[case::glob_in_a_directory_component(
+        &["sub/marker"],
+        json!({"_raw_params": "echo never", "chdir": "$DIR", "creates": "s*/marker"}),
+        false,
+        "s*/marker"
+    )]
+    #[case::absolute_glob_ignores_chdir(
+        &["x-1"],
+        json!({"_raw_params": "echo never", "chdir": "$ELSE", "creates": "$DIR/x-*"}),
+        false,
+        "$DIR/x-*"
+    )]
+    fn a_guard_decides_whether_the_command_runs(
+        #[case] fixtures: &[&str],
+        #[case] params: Value,
+        #[case] ran: bool,
+        #[case] text: &str,
+    ) {
+        let dir_guard = scratch();
+        let else_guard = scratch();
+        let dir = dir_guard.path().to_str().unwrap();
+        for file in fixtures {
+            let path = dir_guard.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"").unwrap();
+        }
+        let fill = |s: &str| {
+            s.replace("$DIR", dir)
+                .replace("$ELSE", else_guard.path().to_str().unwrap())
+        };
+        let params: Value = serde_json::from_str(&fill(&params.to_string())).unwrap();
+        let r = done(execute(&args(params), false, &Context::default(), &|| {
+            false
+        }));
+        let text = fill(text);
+        if ran {
+            assert!(r.changed(), "a guard skipped what it should not: {:?}", r.0);
+            assert_eq!(r.0["stdout"], text.as_str());
+        } else {
+            assert!(!r.changed(), "{:?}", r.0);
+            assert_eq!(
+                r.0["msg"],
+                format!("Did not run command since '{text}' exists")
+            );
+            assert_eq!(r.0["stdout"], format!("skipped, since {text} exists"));
+        }
+    }
+
+    /// A command that cannot run fails the task in the reference's shape: its `rc` and message
+    /// where it has them, before any guard is read when the `chdir` is the problem.
+    #[rstest]
+    #[case::non_zero_rc(
+        json!({"_raw_params": "false"}), Some(json!(1)), Some("non-zero return code")
+    )]
+    #[case::missing_program(
+        json!({"_raw_params": "volant-no-such-program"}), Some(json!(2)),
+        Some("[Errno 2] No such file or directory")
+    )]
+    #[case::missing_chdir(
+        json!({"_raw_params": "echo never", "chdir": "/definitely/not/here"}), Some(json!(2)),
+        Some("[Errno 2] No such file or directory: b'/definitely/not/here'")
+    )]
+    #[case::missing_chdir_before_a_guard(
+        json!({"_raw_params": "rm -rf cache", "chdir": "/definitely/not/here", "removes": "cache"}),
+        Some(json!(2)), Some("[Errno 2] No such file or directory: b'/definitely/not/here'")
+    )]
+    #[case::chdir_that_is_a_file(
+        json!({"_raw_params": "rm -rf cache", "chdir": "$FILE", "removes": "cache"}), None, None
+    )]
+    #[case::empty_command(json!({"_raw_params": "   "}), None, Some("no command given"))]
+    #[case::killed_by_a_signal(
+        json!({"_raw_params": "sh -c 'kill -TERM $$'"}), Some(json!(-15)), None
+    )]
+    fn a_command_that_cannot_run_fails_in_the_reference_shape(
+        #[case] params: Value,
+        #[case] rc: Option<Value>,
+        #[case] msg: Option<&str>,
+    ) {
+        let dir_guard = scratch();
+        let file = dir_guard.path().join("config.yml");
+        std::fs::write(&file, "").unwrap();
+        let params: Value =
+            serde_json::from_str(&params.to_string().replace("$FILE", file.to_str().unwrap()))
+                .unwrap();
+        let r = done(execute(&args(params), false, &Context::default(), &|| {
+            false
+        }));
+        assert!(r.failed(), "{:?}", r.0);
+        if let Some(rc) = rc {
+            assert_eq!(r.0["rc"], rc, "{:?}", r.0);
+        }
+        if let Some(msg) = msg {
+            assert!(r.0["msg"].as_str().unwrap().starts_with(msg), "{:?}", r.0);
+        }
+    }
+
+    /// Each form runs the way the reference runs it: the shell form through `sh`, `argv`
+    /// and `cmd` directly, an `argv` on the shell path as the list, and a fed standard input.
+    #[rstest]
+    #[case::shell_form(json!({"_raw_params": "echo $((6 * 7))"}), true, "42", json!("echo $((6 * 7))"))]
+    #[case::argv(
+        json!({"argv": ["printf", "%s-%s", "a", "b"]}), false, "a-b", json!(["printf", "%s-%s", "a", "b"])
+    )]
+    #[case::cmd(json!({"cmd": "echo cmd-form"}), false, "cmd-form", json!(["echo", "cmd-form"]))]
+    #[case::argv_on_the_shell_path(json!({"argv": ["echo", "hi"]}), true, "hi", json!(["echo", "hi"]))]
+    #[case::stdin_is_fed(
+        json!({"_raw_params": "cat", "stdin": "from stdin"}), false, "from stdin", json!(["cat"])
+    )]
+    fn a_form_runs_the_way_the_reference_runs_it(
+        #[case] params: Value,
+        #[case] shell: bool,
+        #[case] stdout: &str,
+        #[case] cmd: Value,
+    ) {
+        let r = done(execute(&args(params), shell, &Context::default(), &|| {
+            false
+        }));
+        assert_eq!(r.0["stdout"], stdout, "{:?}", r.0);
+        assert_eq!(r.0["cmd"], cmd);
     }
 
     #[test]
@@ -548,373 +651,77 @@ mod tests {
         assert!(r.0["delta"].as_str().unwrap().starts_with("0:00:0"));
     }
 
+    /// A guard that skips reports `ok` with the reference's keys, key for key, and no `skipped`.
     #[test]
-    fn non_zero_rc_is_a_failure_with_the_ansible_message() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "false"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], 1);
-        assert_eq!(r.0["msg"], "non-zero return code");
-        assert!(r.failed());
+    fn a_skipped_guard_reports_the_reference_shape() {
+        {
+            let r = done(execute(
+                &args(json!({"_raw_params": "true", "creates": "/"})),
+                false,
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(
+                Value::Object(r.0),
+                json!({
+                    "changed": false, "cmd": ["true"], "delta": null, "end": null,
+                    "msg": "Did not run command since '/' exists", "rc": 0, "start": null,
+                    "stderr": "", "stderr_lines": [], "stdout": "skipped, since / exists",
+                    "stdout_lines": ["skipped, since / exists"],
+                })
+            );
+        }
+        {
+            let r = done(execute(
+                &args(json!({"_raw_params": "true", "removes": "/definitely/not/here"})),
+                false,
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(
+                Value::Object(r.0),
+                json!({
+                    "changed": false, "cmd": ["true"], "delta": null, "end": null,
+                    "msg": "Did not run command since '/definitely/not/here' does not exist",
+                    "rc": 0, "start": null, "stderr": "", "stderr_lines": [],
+                    "stdout": "skipped, since /definitely/not/here does not exist",
+                    "stdout_lines": ["skipped, since /definitely/not/here does not exist"],
+                })
+            );
+        }
     }
 
+    /// 4 MiB of standard input does not deadlock the write, and `chdir` sets the working directory.
     #[test]
-    fn shell_form_goes_through_sh() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "echo $((6 * 7))"})),
-            true,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["stdout"], "42");
-        assert_eq!(r.0["cmd"], "echo $((6 * 7))");
-    }
-
-    #[test]
-    fn argv_and_cmd_forms_are_accepted() {
-        let r = done(execute(
-            &args(json!({"argv": ["printf", "%s-%s", "a", "b"]})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["stdout"], "a-b");
-        let r = done(execute(
-            &args(json!({"cmd": "echo cmd-form"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["stdout"], "cmd-form");
-    }
-
-    /// The whole result, key for key, against what ansible-core 2.19.12's `command` returned for
-    /// `{cmd: "true", creates: /etc/hostname}` on a host where the file exists, `invocation`
-    /// and the interpreter-discovery `ansible_facts` and `warnings` left out. The task is `ok`,
-    /// not `skipped`: the module never sets `skipped` for a guard, and `start`, `end` and
-    /// `delta` stay null because nothing ran.
-    ///
-    /// What would make this red: any key added or missing, `skipped: true` first among them,
-    /// which turns `when: r is skipped` the other way.
-    #[test]
-    fn creates_does_not_run_and_reports_ok_when_the_path_exists() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "true", "creates": "/"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            Value::Object(r.0),
-            json!({
-                "changed": false, "cmd": ["true"], "delta": null, "end": null,
-                "msg": "Did not run command since '/' exists", "rc": 0, "start": null,
-                "stderr": "", "stderr_lines": [], "stdout": "skipped, since / exists",
-                "stdout_lines": ["skipped, since / exists"],
-            })
-        );
-    }
-
-    /// The same measurement, for `removes: /nonexistent-vc`: the same shape and no `skipped`.
-    #[test]
-    fn removes_does_not_run_and_reports_ok_when_the_path_is_absent() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "true", "removes": "/definitely/not/here"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            Value::Object(r.0),
-            json!({
-                "changed": false, "cmd": ["true"], "delta": null, "end": null,
-                "msg": "Did not run command since '/definitely/not/here' does not exist",
-                "rc": 0, "start": null, "stderr": "", "stderr_lines": [],
-                "stdout": "skipped, since /definitely/not/here does not exist",
-                "stdout_lines": ["skipped, since /definitely/not/here does not exist"],
-            })
-        );
-    }
-
-    /// Measurement (o): a relative `creates` resolves under `chdir`, and the message keeps the
-    /// path exactly as the playbook wrote it, not prefixed by the `chdir` that resolved it.
-    ///
-    /// What would make this red: `Path::new(path).exists()` reading `marker` from the agent's
-    /// own directory instead of from `chdir`, which finds nothing there and lets the command run.
-    #[test]
-    fn a_relative_creates_resolves_under_chdir() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("marker"), b"").unwrap();
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo never",
-                "chdir": dir.to_str().unwrap(),
-                "creates": "marker",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["msg"], "Did not run command since 'marker' exists");
-        assert_eq!(r.0["stdout"], "skipped, since marker exists");
-        assert!(!r.changed());
-    }
-
-    /// Measurement (o) for the other guard: `removes` resolves under `chdir` too, so a cleanup
-    /// whose target is there runs instead of being skipped.
-    ///
-    /// What would make this red: reading `cache` from the agent's own directory, where it does
-    /// not exist, so `!matches_any` holds and the cleanup is skipped with the play still green.
-    #[test]
-    fn a_relative_removes_resolves_under_chdir() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("cache"), b"").unwrap();
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo ran",
-                "chdir": dir.to_str().unwrap(),
-                "removes": "cache",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(
-            r.changed(),
-            "the cleanup did not run although 'cache' is there"
-        );
-        assert_eq!(r.0["stdout"], "ran");
-    }
-
-    /// A `chdir` that cannot be entered fails the task, the way the reference's own
-    /// `os.chdir` does before it ever looks at a guard.
-    ///
-    /// What would make this red: evaluating `removes` first. Nothing matches under a base that
-    /// cannot exist, so `!matches_any` holds, the task is skipped with `rc: 0` and a play that
-    /// never ran its cleanup stays green.
-    #[test]
-    fn a_missing_chdir_fails_before_the_guards() {
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "rm -rf cache",
-                "chdir": "/definitely/not/here",
-                "removes": "cache",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(r.failed(), "a bad chdir was read as a guard decision");
-        assert_eq!(r.0["rc"], 2);
-        assert_eq!(
-            r.0["msg"],
-            "[Errno 2] No such file or directory: b'/definitely/not/here'"
-        );
-    }
-
-    /// A `chdir` that names a regular file fails the task too. `chdir` wants a directory, and
-    /// the reference's `os.chdir` raises `NotADirectoryError` on anything else.
-    ///
-    /// What would make this red: testing only that the path exists. A path typo that lands on a
-    /// file passes `metadata`, the guards then walk `file/cache`, nothing matches, and a cleanup
-    /// that never ran reports `rc: 0` - the same green skip the test above forbids, through the
-    /// other door.
-    #[test]
-    fn a_chdir_that_is_not_a_directory_fails_before_the_guards() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("config.yml");
-        std::fs::write(&file, "").unwrap();
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "rm -rf cache",
-                "chdir": file.to_str().unwrap(),
-                "removes": "cache",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(r.failed(), "a file as chdir was read as a guard decision");
-        // The `rc` and `msg` a bad `chdir` reports are a separate, measured divergence from the
-        // reference, which answers `rc: null` and `Unable to change directory before execution.`
-        // for both a missing directory and a file. This test is about which branch runs, not
-        // about what it says; see `architecture.md`.
-    }
-
-    /// An empty `creates` applies no guard at all, matching the reference's own `if creates:`.
-    ///
-    /// What would make this red: an empty pattern splitting into no components and ending the
-    /// walk on the base's own existence, which is true for every `chdir` that exists — so
-    /// `creates: "{{ marker | default('') }}"` with `marker` undefined would skip the task.
-    #[test]
-    fn an_empty_creates_applies_no_guard() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo ran",
-                "chdir": dir.to_str().unwrap(),
-                "creates": "",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(r.changed(), "an empty creates was read as a guard");
-        assert_eq!(r.0["stdout"], "ran");
-    }
-
-    /// Measurement (p): a glob in `creates` expands inside a directory component too, still
-    /// resolved under `chdir`, and the message still quotes the pattern rather than the match.
-    ///
-    /// What would make this red: matching a component pattern against the whole remaining path
-    /// instead of one directory entry at a time, which never reaches `sub/marker` through `s*`.
-    #[test]
-    fn a_glob_creates_resolves_under_chdir() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("sub").join("marker"), b"").unwrap();
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo never",
-                "chdir": dir.to_str().unwrap(),
-                "creates": "s*/marker",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["msg"], "Did not run command since 's*/marker' exists");
-        assert_eq!(r.0["stdout"], "skipped, since s*/marker exists");
-        assert!(!r.changed());
-    }
-
-    /// Measurement (m): an absolute glob is expanded regardless of `chdir`, and the message
-    /// quotes the absolute pattern, not the file that matched it. The `chdir` here is a real
-    /// but unrelated directory, because a `chdir` that cannot be entered fails the task before
-    /// either guard is read.
-    ///
-    /// What would make this red: joining the pattern onto `chdir` before walking it, which
-    /// sends an absolute `creates` somewhere it cannot match and runs a command that should
-    /// have been skipped.
-    #[test]
-    fn an_absolute_glob_creates_ignores_chdir() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("x-1"), b"").unwrap();
-        let elsewhere_guard = scratch();
-        let elsewhere = elsewhere_guard.path().to_path_buf();
-        std::fs::create_dir_all(&elsewhere).unwrap();
-        let pattern = format!("{}/x-*", dir.display());
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo never",
-                "chdir": elsewhere.to_str().unwrap(),
-                "creates": pattern,
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(
-            r.0["msg"],
-            format!("Did not run command since '{pattern}' exists")
-        );
-        assert!(!r.changed());
-    }
-
-    #[test]
-    fn chdir_changes_the_working_directory() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("marker"), b"").unwrap();
-        let r = done(execute(
-            &args(json!({"_raw_params": "ls", "chdir": dir.to_str().unwrap()})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["stdout"], "marker");
-    }
-
-    #[test]
-    fn stdin_is_fed_to_the_program() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "cat", "stdin": "from stdin"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["stdout"], "from stdin");
-    }
-
-    /// 4 MiB through `cat`: far past any pipe buffer, so a write that waited for the output to be
-    /// read would block.
-    #[test]
-    fn large_stdin_does_not_deadlock() {
-        let payload: String = "abcdefghijklmnopqrstuvwxyz0123456789\n"
-            .chars()
-            .cycle()
-            .take(4 * 1_048_576)
-            .collect();
-        let r = done(execute(
-            &args(json!({"_raw_params": "cat", "stdin": payload})),
-            true,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], 0);
-        assert_eq!(r.0["stdout"], payload);
-    }
-
-    #[test]
-    fn a_missing_program_reports_errno_2() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "volant-no-such-program"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], 2);
-        assert!(
-            r.0["msg"]
-                .as_str()
-                .unwrap()
-                .starts_with("[Errno 2] No such file or directory")
-        );
-        assert!(r.failed());
-    }
-
-    #[test]
-    fn a_missing_chdir_reports_the_directory_not_the_program() {
-        let r = done(execute(
-            &args(json!({
-                "_raw_params": "echo never",
-                "chdir": "/definitely/not/here",
-            })),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], 2);
-        assert_eq!(
-            r.0["msg"],
-            "[Errno 2] No such file or directory: b'/definitely/not/here'"
-        );
-        assert!(r.failed());
+    fn a_large_stdin_does_not_deadlock_and_chdir_sets_the_directory() {
+        {
+            let payload: String = "abcdefghijklmnopqrstuvwxyz0123456789\n"
+                .chars()
+                .cycle()
+                .take(4 * 1_048_576)
+                .collect();
+            let r = done(execute(
+                &args(json!({"_raw_params": "cat", "stdin": payload})),
+                true,
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(r.0["rc"], 0);
+            assert_eq!(r.0["stdout"], payload);
+        }
+        {
+            let dir_guard = scratch();
+            let dir = dir_guard.path().to_path_buf();
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("marker"), b"").unwrap();
+            let r = done(execute(
+                &args(json!({"_raw_params": "ls", "chdir": dir.to_str().unwrap()})),
+                false,
+                &Context::default(),
+                &|| false,
+            ));
+            assert_eq!(r.0["stdout"], "marker");
+        }
     }
 
     #[test]
@@ -928,18 +735,6 @@ mod tests {
         );
         assert!(matches!(run, Run::Cancelled));
         assert!(started.elapsed().as_secs() < 5);
-    }
-
-    #[test]
-    fn empty_command_is_an_error() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "   "})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert!(r.failed());
-        assert_eq!(r.0["msg"], "no command given");
     }
 
     #[test]
@@ -999,25 +794,8 @@ mod tests {
         );
     }
 
-    /// The cancellation predicate consumes what it reports: in the agent it is a `try_recv` on
-    /// the control channel, so the `Cancel` is popped and the answer is `true` exactly once. Here
-    /// the shell exits at once and leaves a descendant holding the pipes, so the process wait is
-    /// over before anything is cancelled and the flag is first seen by a *reader*, which is the
-    /// path the other cancellation tests never take. The predicate waits out the process so the
-    /// reader is the one that asks, and answers `true` a single time.
-    ///
-    /// What would make this red: asking the predicate again below the first `true` -- the second
-    /// reader would then be told the task is fine and wait for a pipe nobody will close, so the
-    /// run never comes back and the bounded `recv_timeout` fails instead of the `matches!`. The
-    /// bound is this test's own deadline: `execute` runs on a thread precisely so a regression
-    /// that never returns is a failure here rather than a hang the harness has to cut off.
-    ///
-    /// How it can stop proving anything, so a pass on a loaded machine is not over-read: the gate
-    /// below assumes the shell is reaped before it opens. If a machine ever took longer than that
-    /// to spawn and reap `exit 0`, the wait loop would take the first `true` and this would
-    /// duplicate `cancellation_kills_the_program` rather than exercise the reader path. It
-    /// degrades to proving less; it cannot go red for that reason. The measured reap is about
-    /// 3 ms against a gate of 300, so the degradation needs a hundredfold regression.
+    /// The cancellation predicate consumes what it reports: in the agent it is a `try_recv` on the
+    /// control channel, so the `Cancel` is popped and the answer is `true` exactly once.
     #[test]
     fn a_cancellation_seen_by_one_reader_is_seen_by_the_rest() {
         let (tx, rx) = mpsc::channel();
@@ -1037,17 +815,5 @@ mod tests {
             Ok(true),
             "the run did not end cancelled: a reader lost the cancellation"
         );
-    }
-
-    #[test]
-    fn a_program_killed_by_a_signal_reports_the_negative_signal_number() {
-        let r = done(execute(
-            &args(json!({"_raw_params": "sh -c 'kill -TERM $$'"})),
-            false,
-            &Context::default(),
-            &|| false,
-        ));
-        assert_eq!(r.0["rc"], -15);
-        assert!(r.failed());
     }
 }

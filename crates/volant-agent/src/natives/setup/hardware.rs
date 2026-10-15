@@ -310,167 +310,147 @@ mod tests {
         collect_with(&fake.root(), "x86_64", Some(4))
     }
 
-    /// Four vCPUs as `target` shows them: one socket, four cores, one thread each. The same four
-    /// as four one-core sockets, as a hypervisor may present them. Two sockets of two
-    /// hyperthreaded cores.
-    ///
-    /// What would make this red: `processor_vcpus` counted from `siblings` (1 on the four
-    /// sockets, 4 on the hyperthreaded pair of sockets, where the reference says 4 and 8), the
-    /// socket count taken from the processor count, or `processor_nproc` from the processor
-    /// lines rather than the scheduler.
+    /// Processors, quirks, dropped reads and memory follow the reference's rules.
     #[test]
-    fn processors_are_counted_by_the_reference_s_rules() {
-        let target: Vec<String> = (0..4).map(|n| block(n, 0, 4, n, 4)).collect();
-        let facts = cpuinfo("cpu-target", &target);
-        assert_eq!(counts(&facts), json!([1, 4, 1, 4, 4]));
-        assert_eq!(
-            facts["processor"],
-            json!([
-                "0",
-                "GenuineIntel",
-                "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
-                "1",
-                "GenuineIntel",
-                "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
-                "2",
-                "GenuineIntel",
-                "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
-                "3",
-                "GenuineIntel",
-                "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
-            ])
-        );
-        assert_eq!(
-            facts["flags"],
-            json!(["fpu", "vme", "de", "pse", "tsc", "msr", "pae"])
-        );
+    fn processors_memory_and_quirks_follow_the_reference() {
+        {
+            let target: Vec<String> = (0..4).map(|n| block(n, 0, 4, n, 4)).collect();
+            let facts = cpuinfo("cpu-target", &target);
+            assert_eq!(counts(&facts), json!([1, 4, 1, 4, 4]));
+            assert_eq!(
+                facts["processor"],
+                json!([
+                    "0",
+                    "GenuineIntel",
+                    "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
+                    "1",
+                    "GenuineIntel",
+                    "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
+                    "2",
+                    "GenuineIntel",
+                    "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
+                    "3",
+                    "GenuineIntel",
+                    "Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz",
+                ])
+            );
+            assert_eq!(
+                facts["flags"],
+                json!(["fpu", "vme", "de", "pse", "tsc", "msr", "pae"])
+            );
 
-        let sockets: Vec<String> = (0..4).map(|n| block(n, n, 1, 0, 1)).collect();
-        assert_eq!(
-            counts(&cpuinfo("cpu-sockets", &sockets)),
-            json!([4, 1, 1, 4, 4])
-        );
+            let sockets: Vec<String> = (0..4).map(|n| block(n, n, 1, 0, 1)).collect();
+            assert_eq!(
+                counts(&cpuinfo("cpu-sockets", &sockets)),
+                json!([4, 1, 1, 4, 4])
+            );
 
-        let hyperthreaded: Vec<String> =
-            (0..8).map(|n| block(n, n / 4, 4, (n / 2) % 2, 2)).collect();
-        assert_eq!(
-            counts(&cpuinfo("cpu-ht", &hyperthreaded)),
-            json!([2, 2, 2, 8, 4])
-        );
-    }
+            let hyperthreaded: Vec<String> =
+                (0..8).map(|n| block(n, n / 4, 4, (n / 2) % 2, 2)).collect();
+            assert_eq!(
+                counts(&cpuinfo("cpu-ht", &hyperthreaded)),
+                json!([2, 2, 2, 8, 4])
+            );
+        }
+        {
+            let fake = FakeRoot::new("cpu-quirks");
+            let root = fake.root();
+            // No `physical id`: `cpu cores` goes to the integer key; `siblings` 1 over 2 cores
+            // rounds half to even, to 0.
+            fake.write(
+                "/proc/cpuinfo",
+                "processor : 0\ncpu cores : 2\ncore id : 0\nsiblings : 1\n",
+            );
+            let facts = collect_with(&root, "x86_64", Some(1));
+            assert_eq!(counts(&facts), json!([1, 2, 0, 0, 1]));
 
-    /// The reference's quirks, kept: a core id looked up among the sockets, `cpu cores` read
-    /// before any `physical id` filed under the integer 0, half rounded to even, ARM counted by
-    /// its `processor` lines, s390x from its own fields, Xen paravirt without `vme` counted flat.
-    #[test]
-    fn the_reference_s_quirks_are_kept() {
-        let fake = FakeRoot::new("cpu-quirks");
-        let root = fake.root();
-        // No `physical id`: `cpu cores` goes to the integer key; `siblings` 1 over 2 cores
-        // rounds half to even, to 0.
-        fake.write(
-            "/proc/cpuinfo",
-            "processor : 0\ncpu cores : 2\ncore id : 0\nsiblings : 1\n",
-        );
-        let facts = collect_with(&root, "x86_64", Some(1));
-        assert_eq!(counts(&facts), json!([1, 2, 0, 0, 1]));
+            // ARM: `processor` and `Processor` both listed, only `processor` lines counted.
+            fake.write(
+                "/proc/cpuinfo",
+                "Processor : ARMv7\nprocessor : 0\nprocessor : 1\nFeatures : half thumb\n",
+            );
+            let facts = collect_with(&root, "armv7l", Some(2));
+            assert_eq!(facts["processor"], json!(["ARMv7", "0", "1"]));
+            assert_eq!(counts(&facts), json!([2, 1, 1, 2, 2]));
+            assert!(!facts.contains_key("flags"));
 
-        // ARM: `processor` and `Processor` both listed, only `processor` lines counted.
-        fake.write(
-            "/proc/cpuinfo",
-            "Processor : ARMv7\nprocessor : 0\nprocessor : 1\nFeatures : half thumb\n",
-        );
-        let facts = collect_with(&root, "armv7l", Some(2));
-        assert_eq!(facts["processor"], json!(["ARMv7", "0", "1"]));
-        assert_eq!(counts(&facts), json!([2, 1, 1, 2, 2]));
-        assert!(!facts.contains_key("flags"));
+            fake.write(
+                "/proc/cpuinfo",
+                "vendor_id : IBM/S390\n# processors : 4\nmax thread id : 1\n",
+            );
+            let facts = collect_with(&root, "s390x", Some(4));
+            assert_eq!(counts(&facts), json!([1, 2, 2, 4, 4]));
+            fake.write("/proc/cpuinfo", "vendor_id : IBM/S390\n# processors : 4\n");
+            assert_eq!(
+                collect_with(&root, "s390x", Some(4)),
+                Map::new(),
+                "no max thread id: the division raises"
+            );
 
-        fake.write(
-            "/proc/cpuinfo",
-            "vendor_id : IBM/S390\n# processors : 4\nmax thread id : 1\n",
-        );
-        let facts = collect_with(&root, "s390x", Some(4));
-        assert_eq!(counts(&facts), json!([1, 2, 2, 4, 4]));
-        fake.write("/proc/cpuinfo", "vendor_id : IBM/S390\n# processors : 4\n");
-        assert_eq!(
-            collect_with(&root, "s390x", Some(4)),
-            Map::new(),
-            "no max thread id: the division raises"
-        );
-
-        fake.mkdir("/proc/xen").write(
-            "/proc/cpuinfo",
-            "processor : 0\nvendor_id : x\nmodel name : y\nflags : fpu de\n\
+            fake.mkdir("/proc/xen").write(
+                "/proc/cpuinfo",
+                "processor : 0\nvendor_id : x\nmodel name : y\nflags : fpu de\n\
              processor : 1\nvendor_id : x\nmodel name : y\nflags : fpu de\n",
-        );
-        let facts = collect_with(&root, "x86_64", Some(2));
-        assert_eq!(counts(&facts), json!([2, 2, 1, 2, 2]));
-    }
-
-    /// Anything the reference's reads would raise on drops every hardware fact, memory
-    /// included; an unreadable file only leaves its own facts out.
-    #[test]
-    fn a_read_the_reference_raises_on_drops_the_collector() {
-        let fake = FakeRoot::new("cpu-raise");
-        let root = fake.root();
-        fake.write("/proc/meminfo", "MemTotal: 2048 kB\n");
-        assert_eq!(
-            collect_with(&root, "x86_64", Some(1))["memtotal_mb"],
-            2,
-            "no cpuinfo: memory still written"
-        );
-        assert!(!collect_with(&root, "x86_64", Some(1)).contains_key("processor_nproc"));
-        fake.write("/proc/cpuinfo", "processor : 0\ncpu cores : many\n");
-        assert_eq!(collect_with(&root, "x86_64", Some(1)), Map::new());
-        fake.write("/proc/cpuinfo", "processor : 0\n");
-        assert_eq!(
-            collect_with(&root, "x86_64", None),
-            Map::new(),
-            "no affinity"
-        );
-        fake.write("/proc/meminfo", "MemTotal: lots kB\n");
-        assert_eq!(collect_with(&root, "x86_64", Some(1)), Map::new());
-    }
-
-    /// Memory in MiB, floored; the dict's missing members as `null`.
-    #[test]
-    fn memory_is_read_in_mebibytes() {
-        let fake = FakeRoot::new("memory");
-        fake.write(
+            );
+            let facts = collect_with(&root, "x86_64", Some(2));
+            assert_eq!(counts(&facts), json!([2, 2, 1, 2, 2]));
+        }
+        {
+            let fake = FakeRoot::new("cpu-raise");
+            let root = fake.root();
+            fake.write("/proc/meminfo", "MemTotal: 2048 kB\n");
+            assert_eq!(
+                collect_with(&root, "x86_64", Some(1))["memtotal_mb"],
+                2,
+                "no cpuinfo: memory still written"
+            );
+            assert!(!collect_with(&root, "x86_64", Some(1)).contains_key("processor_nproc"));
+            fake.write("/proc/cpuinfo", "processor : 0\ncpu cores : many\n");
+            assert_eq!(collect_with(&root, "x86_64", Some(1)), Map::new());
+            fake.write("/proc/cpuinfo", "processor : 0\n");
+            assert_eq!(
+                collect_with(&root, "x86_64", None),
+                Map::new(),
+                "no affinity"
+            );
+            fake.write("/proc/meminfo", "MemTotal: lots kB\n");
+            assert_eq!(collect_with(&root, "x86_64", Some(1)), Map::new());
+        }
+        {
+            let fake = FakeRoot::new("memory");
+            fake.write(
             "/proc/meminfo",
             "MemTotal:        4015200 kB\nMemFree:          812344 kB\nMemAvailable:    3100000 kB\n\
              Buffers:          102400 kB\nCached:          2048000 kB\nSwapCached:            0 kB\n\
              SwapTotal:       2097148 kB\nSwapFree:        2097148 kB\n",
         );
-        let facts = memory(&fake.root()).unwrap();
-        assert_eq!(facts["memtotal_mb"], 3921);
-        assert_eq!(facts["memfree_mb"], 793);
-        assert_eq!(facts["swaptotal_mb"], 2047);
-        assert_eq!(facts["swapfree_mb"], 2047);
-        assert_eq!(
-            facts["memory_mb"],
-            json!({
-                "real": {"total": 3921, "used": 3128, "free": 793},
-                "nocache": {"free": 2893, "used": 1028},
-                "swap": {"total": 2047, "free": 2047, "used": 0, "cached": 0},
-            })
-        );
-        fake.write("/proc/meminfo", "MemTotal: 1024 kB\n");
-        assert_eq!(
-            memory(&fake.root()).unwrap()["memory_mb"],
-            json!({
-                "real": {"total": 1, "used": null, "free": null},
-                "nocache": {"free": null, "used": null},
-                "swap": {"total": null, "free": null, "used": null, "cached": null},
-            })
-        );
+            let facts = memory(&fake.root()).unwrap();
+            assert_eq!(facts["memtotal_mb"], 3921);
+            assert_eq!(facts["memfree_mb"], 793);
+            assert_eq!(facts["swaptotal_mb"], 2047);
+            assert_eq!(facts["swapfree_mb"], 2047);
+            assert_eq!(
+                facts["memory_mb"],
+                json!({
+                    "real": {"total": 3921, "used": 3128, "free": 793},
+                    "nocache": {"free": 2893, "used": 1028},
+                    "swap": {"total": 2047, "free": 2047, "used": 0, "cached": 0},
+                })
+            );
+            fake.write("/proc/meminfo", "MemTotal: 1024 kB\n");
+            assert_eq!(
+                memory(&fake.root()).unwrap()["memory_mb"],
+                json!({
+                    "real": {"total": 1, "used": null, "free": null},
+                    "nocache": {"free": null, "used": null},
+                    "swap": {"total": null, "free": null, "used": null, "cached": null},
+                })
+            );
+        }
     }
 
-    /// A kernel that refuses a mask narrower than 4096 processors is asked again with a wider
-    /// one, and every set bit is counted, the high ones included.
-    ///
-    /// What would make this red: the mask kept at one `cpu_set_t`, which drops every hardware
-    /// key on such a host where the reference reports them; or any other error retried.
+    /// A kernel that refuses a mask narrower than 4096 processors is asked again with a wider one,
+    /// and every set bit is counted, the high ones included.
     #[test]
     fn the_affinity_mask_grows_until_the_kernel_takes_it() {
         const BITS: usize = libc::c_ulong::BITS as usize;

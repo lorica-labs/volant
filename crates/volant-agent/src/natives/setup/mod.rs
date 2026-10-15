@@ -1256,376 +1256,357 @@ BUG_REPORT_URL="https://bugs.debian.org/"
         fake
     }
 
-    /// Every key the native can produce is in `NATIVE_FACT_KEYS`, and every key of the list is
-    /// produced on a host that has all of their sources.
-    ///
-    /// What would make this red: a key added to a collector and not to the list, which the
-    /// controller would then never trust the native for; or a key in the list the native never
-    /// writes, which a play would find missing.
+    /// A host with every source gets exactly the listed keys and the reference's invocation.
     #[test]
     #[cfg(target_os = "linux")]
-    fn on_a_host_with_every_source_the_native_writes_exactly_the_listed_keys() {
-        let fake = debian_root("keys");
-        let root = fake.root();
-        let probe = probe();
-        let host = fake.host(&root, &probe);
-        let lsb = LsbRelease::run(host.root, &host.env, unbounded()).unwrap();
-        let collected = [
-            distribution::collect(&host, &lsb).unwrap(),
-            apparmor::collect(&host),
-            caps::collect(&host).unwrap(),
-            cmdline::collect(&host),
-            date_time::collect(&host).unwrap(),
-            dns::collect(&host),
-            env::collect(&host),
-            fips::collect(&host),
-            local::collect(&host, Some(DEFAULT_FACT_PATH)).unwrap(),
-            lsb::collect(&host, &lsb).unwrap(),
-            pkg_mgr::collect(&host).unwrap(),
-            platform::collect_with(
-                &host,
-                &platform::Uname {
-                    system: "Linux".into(),
-                    node: "probe-hostname".into(),
-                    release: "6.1.0-18-amd64".into(),
-                    version: "#1 SMP PREEMPT_DYNAMIC Debian 6.1.76-1".into(),
-                    machine: "x86_64".into(),
-                },
+    fn a_host_with_every_source_is_answered_in_full() {
+        {
+            let fake = debian_root("keys");
+            let root = fake.root();
+            let probe = probe();
+            let host = fake.host(&root, &probe);
+            let lsb = LsbRelease::run(host.root, &host.env, unbounded()).unwrap();
+            let collected = [
+                distribution::collect(&host, &lsb).unwrap(),
+                apparmor::collect(&host),
+                caps::collect(&host).unwrap(),
+                cmdline::collect(&host),
+                date_time::collect(&host).unwrap(),
+                dns::collect(&host),
+                env::collect(&host),
+                fips::collect(&host),
+                local::collect(&host, Some(DEFAULT_FACT_PATH)).unwrap(),
+                lsb::collect(&host, &lsb).unwrap(),
+                pkg_mgr::collect(&host).unwrap(),
+                platform::collect_with(
+                    &host,
+                    &platform::Uname {
+                        system: "Linux".into(),
+                        node: "probe-hostname".into(),
+                        release: "6.1.0-18-amd64".into(),
+                        version: "#1 SMP PREEMPT_DYNAMIC Debian 6.1.76-1".into(),
+                        machine: "x86_64".into(),
+                    },
+                )
+                .unwrap(),
+                python::collect(&host),
+                selinux::collect(&host).unwrap(),
+                service_mgr::collect(&host).unwrap(),
+                ssh_pub_keys::collect(&host).unwrap(),
+                user::collect(&host).unwrap(),
+                hardware::collect(host.root, "x86_64"),
+                network::collect(host.root, &host.env, unbounded()).unwrap(),
+            ];
+            let mut keys: Vec<String> = collected
+                .into_iter()
+                .flatten()
+                .map(|(name, _)| format!("ansible_{name}"))
+                .chain(["gather_subset".to_string(), "module_setup".to_string()])
+                .collect();
+            keys.sort();
+            assert_eq!(keys, NATIVE_FACT_KEYS);
+        }
+        {
+            let fake = debian_root("answer");
+            fake.write(
+                "/etc/hosts",
+                &format!("127.0.1.1 {}\n", platform::uname().node),
             )
-            .unwrap(),
-            python::collect(&host),
-            selinux::collect(&host).unwrap(),
-            service_mgr::collect(&host).unwrap(),
-            ssh_pub_keys::collect(&host).unwrap(),
-            user::collect(&host).unwrap(),
-            hardware::collect(host.root, "x86_64"),
-            network::collect(host.root, &host.env, unbounded()).unwrap(),
-        ];
-        let mut keys: Vec<String> = collected
-            .into_iter()
-            .flatten()
-            .map(|(name, _)| format!("ansible_{name}"))
-            .chain(["gather_subset".to_string(), "module_setup".to_string()])
-            .collect();
-        keys.sort();
-        assert_eq!(keys, NATIVE_FACT_KEYS);
-    }
-
-    /// The subsets the native answers, measured against ansible-core 2.19.12's own resolution,
-    /// and the ones it hands back.
-    ///
-    /// What would make this red: `!all` read as nothing at all, a negated `min` collector not
-    /// taken off, a required collector not put back (`!platform` alone still runs `platform`,
-    /// because `service_mgr` needs it), a string not split on commas the way `type='list'`
-    /// splits it, a named collector the native does not run answered without its facts, or
-    /// `hardware` and `network` run where the reference leaves them out.
-    #[test]
-    fn only_a_subset_the_native_collects_is_answered() {
-        let runs = |value: Value| {
-            let (_, collectors) = gather_subset(Some(&value)).unwrap();
-            (
-                collectors.contains("hardware"),
-                collectors.contains("network"),
-            )
-        };
-        assert_eq!(runs(json!(["all"])), (true, true));
-        assert_eq!(runs(json!(["min"])), (false, false));
-        assert_eq!(runs(json!(["!all", "network"])), (false, true));
-        assert_eq!(runs(json!(["all", "!hardware"])), (false, true));
-        assert_eq!(runs(json!(["!hardware"])), (false, false), "min only");
-        assert_eq!(runs(json!("!all,processor_count")), (true, false));
-        assert_eq!(
-            runs(json!(["all", "!network", "default_ipv4"])),
-            (true, true)
-        );
-        assert_eq!(runs(json!(["all", "!virtual", "!ohai"])), (true, true));
-        assert_eq!(
-            gather_subset(None).unwrap().0,
-            vec!["all"],
-            "absent is all, as the fact and invocation say"
-        );
-        for not_answered in [
-            json!(["virtual"]),
-            json!(["min", "ohai"]),
-            json!(["mounts"]),
-            json!(["!all", "devices"]),
-            json!(["dmi"]),
-            json!(["all", "is_chroot"]),
-            json!(["!all", "!min", "network"]),
-        ] {
-            assert!(
-                gather_subset(Some(&not_answered)).is_err(),
-                "{not_answered}"
+            .write(
+                "/usr/bin/lsb_release",
+                "#!/bin/sh\necho \"Distributor ID:\t$LOGNAME\"\n",
             );
-        }
-        for min in [
-            json!(["min"]),
-            json!(["!all"]),
-            json!(["!hardware"]),
-            json!(["!platform"]),
-            json!(["!distribution"]),
-            json!(["!all", "dns"]),
-            json!(["!dns", "dns"]),
-            json!(["!all", "!nothing"]),
-            json!(["!machine_id"]),
-            json!("!all,min"),
-        ] {
-            assert!(gather_subset(Some(&min)).is_ok(), "{min}");
-        }
-        assert_eq!(
-            gather_subset(Some(&json!("!all,min"))).unwrap().0,
-            vec!["!all", "min"]
-        );
-        for not_min in [
-            json!(["!all", "!min"]),
-            json!(["!min", "min"]),
-            json!(["!service_mgr", "!platform"]),
-            json!(["!dns"]),
-            json!(["!min", "dns"]),
-            json!("min, !hardware"),
-            json!([1]),
-            json!(null),
-            json!([]),
-        ] {
-            assert!(gather_subset(Some(&not_min)).is_err(), "{not_min}");
-        }
-    }
-
-    /// The arguments the native takes, and the ones it leaves to the module.
-    ///
-    /// What would make this red: a filter the module would convert answered as given, an
-    /// argument the reference refuses answered, or a fact path the module would expand or glob
-    /// read as given.
-    #[test]
-    fn arguments_outside_the_native_are_handed_back() {
-        use crate::testing::args;
-        let ok = request(&args(
-            json!({"gather_subset": ["min"], "filter": [], "gather_timeout": 5}),
-        ))
-        .unwrap();
-        assert_eq!(ok.fact_path.as_deref(), Some(DEFAULT_FACT_PATH));
-        assert_eq!(
-            request(&args(json!({"gather_subset": ["min"], "fact_path": null})))
-                .unwrap()
-                .fact_path,
-            None
-        );
-        assert_eq!(
-            request(&args(json!({"gather_subset": ["min"], "filter": "a,b"})))
-                .unwrap()
-                .filter,
-            ["a", "b"],
-            "split on commas, as type='list' splits a string"
-        );
-        for refused in [
-            json!({"gather_subset": ["min"], "filter": [1]}),
-            json!({"gather_subset": ["min"], "filter": 5}),
-            json!({"gather_subset": ["min"], "filter": {"a": 1}}),
-            json!({"gather_subset": ["min"], "gather_timeout": "10"}),
-            json!({"gather_subset": ["min"], "fact_path": "~/facts"}),
-            json!({"gather_subset": ["min"], "fact_path": "facts"}),
-            json!({"gather_subset": ["min"], "fact_path": "/etc/$X"}),
-            json!({"gather_subset": ["min"], "no_such": 1}),
-            json!({"gather_subset": ["min"], "_ansible_check_mode": true}),
-        ] {
-            assert!(request(&args(refused.clone())).is_err(), "{refused}");
-        }
-    }
-
-    /// The module's answer around the facts: `ansible_facts`, and an `invocation` whose
-    /// `gather_subset` is the list the reference made of a string.
-    ///
-    /// `lsb_release` runs beside the probe in the agent's environment; the interpreter here
-    /// starts with another one, so the answer must come from a second run in the module's.
-    ///
-    /// What would make this red: the string left as given in `module_args`, which the reference
-    /// never prints; a default missing from `module_args`; or the early `lsb_release` kept when
-    /// the module's environment differs from the one it ran in; or `hardware` and `network`
-    /// collected when the subset leaves them out, or left out when it names them.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn the_answer_carries_the_facts_and_the_reference_s_invocation() {
-        let fake = debian_root("answer");
-        fake.write(
-            "/etc/hosts",
-            &format!("127.0.1.1 {}\n", platform::uname().node),
-        )
-        .write(
-            "/usr/bin/lsb_release",
-            "#!/bin/sh\necho \"Distributor ID:\t$LOGNAME\"\n",
-        );
-        std::fs::set_permissions(
-            fake.0.join("usr/bin/lsb_release"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-        let agent = BTreeMap::from([("LOGNAME".to_string(), "the-agent-s-own".to_string())]);
-        let root = fake.root();
-        let interpreter = python::tests::fake_interpreter(&fake, &probe());
-        let context = Context {
-            interpreter: Some(interpreter),
-            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
-            ..Context::default()
-        };
-        let args = json!({"gather_subset": "!all"})
-            .as_object()
-            .unwrap()
-            .clone();
-        let result = answer(&args, &root, &context, Some(agent.clone()), unbounded()).unwrap();
-        assert_eq!(
-            result["invocation"],
-            json!({"module_args": {
-                "gather_subset": ["!all"],
-                "gather_timeout": 10,
-                "filter": [],
-                "fact_path": "/etc/ansible/facts.d",
-            }})
-        );
-        assert_eq!(result["ansible_facts"]["gather_subset"], json!(["!all"]));
-        assert_eq!(result["ansible_facts"]["module_setup"], json!(true));
-        assert_eq!(
-            result["ansible_facts"]["ansible_distribution"],
-            json!("Debian")
-        );
-        assert_eq!(
-            result["ansible_facts"]["ansible_lsb"]["id"],
-            json!("user"),
-            "the module's LOGNAME, not the agent's"
-        );
-        for key in ["ansible_processor", "ansible_interfaces"] {
-            assert!(
-                !result["ansible_facts"]
-                    .as_object()
-                    .unwrap()
-                    .contains_key(key),
-                "{key} collected for !all"
-            );
-        }
-
-        let args = json!({"gather_subset": ["!all", "hardware", "network"]})
-            .as_object()
-            .unwrap()
-            .clone();
-        let facts =
-            &answer(&args, &root, &context, Some(agent), unbounded()).unwrap()["ansible_facts"];
-        assert_eq!(facts["ansible_processor_vcpus"], json!(1));
-        assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
-
-        // The `package` plugin's own gather, and the processor count read through a filter
-        // that leaves out the architecture it is counted by.
-        for (args, facts) in [
-            (
-                json!({"gather_subset": "!all", "filter": "ansible_pkg_mgr"}),
-                json!({"ansible_pkg_mgr": "apt"}),
-            ),
-            (
-                json!({"gather_subset": ["!all"], "filter": ["service_mgr", "gather_subset"]}),
-                json!({"ansible_service_mgr": "systemd", "gather_subset": ["!all"]}),
-            ),
-            (
-                json!({"gather_subset": ["!all", "hardware"], "filter": ["processor_vcpus"]}),
-                json!({"ansible_processor_vcpus": 1}),
-            ),
-        ] {
-            let result = answer(
-                args.as_object().unwrap(),
-                &root,
-                &context,
-                agent_env(),
-                unbounded(),
+            std::fs::set_permissions(
+                fake.0.join("usr/bin/lsb_release"),
+                std::fs::Permissions::from_mode(0o755),
             )
             .unwrap();
-            assert_eq!(result["ansible_facts"], facts, "{args}");
-            let converted = match &args["filter"] {
-                Value::String(one) => json!([one]),
-                list => list.clone(),
-            };
-            assert_eq!(result["invocation"]["module_args"]["filter"], converted);
-        }
-    }
-
-    /// `filter` as ansible-core 2.19.12 applies it. Each pattern was run through the reference's
-    /// own `AnsibleFactCollector._filter` (Python 3.13.15) over these names, one pattern at a
-    /// time and then three together; the lists are what it kept, in its order.
-    ///
-    /// What would make this red: the `ansible_` retry left out (`pkg_mgr`, `eth[!0]`) or made
-    /// for a pattern that starts with `ansible_`, `facter` or `ohai`; a match that is not over
-    /// the whole name, or not case-sensitive; a bracket set read otherwise than
-    /// `fnmatch.translate` reads it (negation, a leading `]`, an unclosed `[`, a reversed range,
-    /// a hyphen at either end); or an empty pattern not keeping everything.
-    #[test]
-    fn a_filter_keeps_what_the_reference_keeps() {
-        let names = [
-            "ansible_pkg_mgr",
-            "ansible_service_mgr",
-            "ansible_memtotal_mb",
-            "ansible_eth0",
-            "ansible_eth1",
-            "ansible_eth3",
-            "ansible_eth-",
-            "gather_subset",
-            "module_setup",
-            "ansible_distribution_version",
-            "facter_x",
-            "ansible_]x",
-            "ansible_[x",
-            "ansible_!x",
-            "Ansible_pkg_mgr",
-        ];
-        let group: Map<String, Value> = names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| ((*name).to_string(), json!(i)))
-            .collect();
-        let kept = |filter: &[&str]| -> Vec<String> {
-            let filter: Vec<String> = filter.iter().map(|p| (*p).to_string()).collect();
-            let mut facts = Map::new();
-            filtered(group.clone(), &filter, &mut facts);
-            facts.keys().cloned().collect()
-        };
-        let cases: &[(&str, &[&str])] = &[
-            ("ansible_pkg_mgr", &["ansible_pkg_mgr"]),
-            ("pkg_mgr", &["ansible_pkg_mgr"]),
-            ("*_mb", &["ansible_memtotal_mb"]),
-            ("ansible_eth[0-2]", &["ansible_eth0", "ansible_eth1"]),
-            ("eth[!0]", &["ansible_eth1", "ansible_eth3", "ansible_eth-"]),
-            ("[a]nsible_pkg*", &["ansible_pkg_mgr"]),
-            ("gather_subset", &["gather_subset"]),
-            ("distribution?version", &["ansible_distribution_version"]),
-            ("[z-a]*", &[]),
-            ("ansible_[!]x", &[]),
-            ("ansible_[]]x", &["ansible_]x"]),
-            ("ansible_[", &[]),
-            ("*[x", &["ansible_[x"]),
-            ("facter*", &["facter_x"]),
-            ("ohai*", &[]),
-            ("ansible_eth[1-]", &["ansible_eth1", "ansible_eth-"]),
-            ("ansible_eth[-1]", &["ansible_eth1", "ansible_eth-"]),
-            ("ansible_eth[!]", &[]),
-            ("ansible_eth[a-c-e3]", &["ansible_eth3", "ansible_eth-"]),
-            ("ANSIBLE_*", &[]),
-            ("*[0-9]", &["ansible_eth0", "ansible_eth1", "ansible_eth3"]),
-        ];
-        for (pattern, expected) in cases {
-            assert_eq!(kept(&[pattern]), *expected, "{pattern}");
-        }
-        for everything in [&[""][..], &["*"], &[]] {
-            assert_eq!(kept(everything), names, "{everything:?}");
-        }
-        assert_eq!(
-            kept(&["*_mb", "pkg_mgr", "ansible_pkg*"]),
-            ["ansible_memtotal_mb", "ansible_pkg_mgr"]
-        );
-    }
-
-    /// A task environment that changes the locale or the time zone hands back: the module would
-    /// apply it before its locale check and its clock, and the native reads neither.
-    #[test]
-    fn a_task_locale_or_time_zone_hands_back() {
-        let fake = FakeRoot::new("task-env");
-        for key in ["LANG", "LC_ALL", "LC_TIME", "LANGUAGE", "TZ"] {
+            let agent = BTreeMap::from([("LOGNAME".to_string(), "the-agent-s-own".to_string())]);
+            let root = fake.root();
+            let interpreter = python::tests::fake_interpreter(&fake, &probe());
             let context = Context {
-                environment: BTreeMap::from([(key.to_string(), "C".to_string())]),
+                interpreter: Some(interpreter),
+                environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+                ..Context::default()
+            };
+            let args = json!({"gather_subset": "!all"})
+                .as_object()
+                .unwrap()
+                .clone();
+            let result = answer(&args, &root, &context, Some(agent.clone()), unbounded()).unwrap();
+            assert_eq!(
+                result["invocation"],
+                json!({"module_args": {
+                    "gather_subset": ["!all"],
+                    "gather_timeout": 10,
+                    "filter": [],
+                    "fact_path": "/etc/ansible/facts.d",
+                }})
+            );
+            assert_eq!(result["ansible_facts"]["gather_subset"], json!(["!all"]));
+            assert_eq!(result["ansible_facts"]["module_setup"], json!(true));
+            assert_eq!(
+                result["ansible_facts"]["ansible_distribution"],
+                json!("Debian")
+            );
+            assert_eq!(
+                result["ansible_facts"]["ansible_lsb"]["id"],
+                json!("user"),
+                "the module's LOGNAME, not the agent's"
+            );
+            for key in ["ansible_processor", "ansible_interfaces"] {
+                assert!(
+                    !result["ansible_facts"]
+                        .as_object()
+                        .unwrap()
+                        .contains_key(key),
+                    "{key} collected for !all"
+                );
+            }
+
+            let args = json!({"gather_subset": ["!all", "hardware", "network"]})
+                .as_object()
+                .unwrap()
+                .clone();
+            let facts =
+                &answer(&args, &root, &context, Some(agent), unbounded()).unwrap()["ansible_facts"];
+            assert_eq!(facts["ansible_processor_vcpus"], json!(1));
+            assert_eq!(facts["ansible_default_ipv4"]["interface"], json!("eth0"));
+
+            // The `package` plugin's own gather, and the processor count read through a filter
+            // that leaves out the architecture it is counted by.
+            for (args, facts) in [
+                (
+                    json!({"gather_subset": "!all", "filter": "ansible_pkg_mgr"}),
+                    json!({"ansible_pkg_mgr": "apt"}),
+                ),
+                (
+                    json!({"gather_subset": ["!all"], "filter": ["service_mgr", "gather_subset"]}),
+                    json!({"ansible_service_mgr": "systemd", "gather_subset": ["!all"]}),
+                ),
+                (
+                    json!({"gather_subset": ["!all", "hardware"], "filter": ["processor_vcpus"]}),
+                    json!({"ansible_processor_vcpus": 1}),
+                ),
+            ] {
+                let result = answer(
+                    args.as_object().unwrap(),
+                    &root,
+                    &context,
+                    agent_env(),
+                    unbounded(),
+                )
+                .unwrap();
+                assert_eq!(result["ansible_facts"], facts, "{args}");
+                let converted = match &args["filter"] {
+                    Value::String(one) => json!([one]),
+                    list => list.clone(),
+                };
+                assert_eq!(result["invocation"]["module_args"]["filter"], converted);
+            }
+        }
+    }
+
+    /// Only a subset is answered; arguments, locale, time zone or another distribution hand back.
+    #[test]
+    fn the_native_answers_a_subset_and_hands_back_the_rest() {
+        {
+            let runs = |value: Value| {
+                let (_, collectors) = gather_subset(Some(&value)).unwrap();
+                (
+                    collectors.contains("hardware"),
+                    collectors.contains("network"),
+                )
+            };
+            assert_eq!(runs(json!(["all"])), (true, true));
+            assert_eq!(runs(json!(["min"])), (false, false));
+            assert_eq!(runs(json!(["!all", "network"])), (false, true));
+            assert_eq!(runs(json!(["all", "!hardware"])), (false, true));
+            assert_eq!(runs(json!(["!hardware"])), (false, false), "min only");
+            assert_eq!(runs(json!("!all,processor_count")), (true, false));
+            assert_eq!(
+                runs(json!(["all", "!network", "default_ipv4"])),
+                (true, true)
+            );
+            assert_eq!(runs(json!(["all", "!virtual", "!ohai"])), (true, true));
+            assert_eq!(
+                gather_subset(None).unwrap().0,
+                vec!["all"],
+                "absent is all, as the fact and invocation say"
+            );
+            for not_answered in [
+                json!(["virtual"]),
+                json!(["min", "ohai"]),
+                json!(["mounts"]),
+                json!(["!all", "devices"]),
+                json!(["dmi"]),
+                json!(["all", "is_chroot"]),
+                json!(["!all", "!min", "network"]),
+            ] {
+                assert!(
+                    gather_subset(Some(&not_answered)).is_err(),
+                    "{not_answered}"
+                );
+            }
+            for min in [
+                json!(["min"]),
+                json!(["!all"]),
+                json!(["!hardware"]),
+                json!(["!platform"]),
+                json!(["!distribution"]),
+                json!(["!all", "dns"]),
+                json!(["!dns", "dns"]),
+                json!(["!all", "!nothing"]),
+                json!(["!machine_id"]),
+                json!("!all,min"),
+            ] {
+                assert!(gather_subset(Some(&min)).is_ok(), "{min}");
+            }
+            assert_eq!(
+                gather_subset(Some(&json!("!all,min"))).unwrap().0,
+                vec!["!all", "min"]
+            );
+            for not_min in [
+                json!(["!all", "!min"]),
+                json!(["!min", "min"]),
+                json!(["!service_mgr", "!platform"]),
+                json!(["!dns"]),
+                json!(["!min", "dns"]),
+                json!("min, !hardware"),
+                json!([1]),
+                json!(null),
+                json!([]),
+            ] {
+                assert!(gather_subset(Some(&not_min)).is_err(), "{not_min}");
+            }
+        }
+        {
+            use crate::testing::args;
+            let ok = request(&args(
+                json!({"gather_subset": ["min"], "filter": [], "gather_timeout": 5}),
+            ))
+            .unwrap();
+            assert_eq!(ok.fact_path.as_deref(), Some(DEFAULT_FACT_PATH));
+            assert_eq!(
+                request(&args(json!({"gather_subset": ["min"], "fact_path": null})))
+                    .unwrap()
+                    .fact_path,
+                None
+            );
+            assert_eq!(
+                request(&args(json!({"gather_subset": ["min"], "filter": "a,b"})))
+                    .unwrap()
+                    .filter,
+                ["a", "b"],
+                "split on commas, as type='list' splits a string"
+            );
+            for refused in [
+                json!({"gather_subset": ["min"], "filter": [1]}),
+                json!({"gather_subset": ["min"], "filter": 5}),
+                json!({"gather_subset": ["min"], "filter": {"a": 1}}),
+                json!({"gather_subset": ["min"], "gather_timeout": "10"}),
+                json!({"gather_subset": ["min"], "fact_path": "~/facts"}),
+                json!({"gather_subset": ["min"], "fact_path": "facts"}),
+                json!({"gather_subset": ["min"], "fact_path": "/etc/$X"}),
+                json!({"gather_subset": ["min"], "no_such": 1}),
+                json!({"gather_subset": ["min"], "_ansible_check_mode": true}),
+            ] {
+                assert!(request(&args(refused.clone())).is_err(), "{refused}");
+            }
+        }
+        {
+            let names = [
+                "ansible_pkg_mgr",
+                "ansible_service_mgr",
+                "ansible_memtotal_mb",
+                "ansible_eth0",
+                "ansible_eth1",
+                "ansible_eth3",
+                "ansible_eth-",
+                "gather_subset",
+                "module_setup",
+                "ansible_distribution_version",
+                "facter_x",
+                "ansible_]x",
+                "ansible_[x",
+                "ansible_!x",
+                "Ansible_pkg_mgr",
+            ];
+            let group: Map<String, Value> = names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| ((*name).to_string(), json!(i)))
+                .collect();
+            let kept = |filter: &[&str]| -> Vec<String> {
+                let filter: Vec<String> = filter.iter().map(|p| (*p).to_string()).collect();
+                let mut facts = Map::new();
+                filtered(group.clone(), &filter, &mut facts);
+                facts.keys().cloned().collect()
+            };
+            let cases: &[(&str, &[&str])] = &[
+                ("ansible_pkg_mgr", &["ansible_pkg_mgr"]),
+                ("pkg_mgr", &["ansible_pkg_mgr"]),
+                ("*_mb", &["ansible_memtotal_mb"]),
+                ("ansible_eth[0-2]", &["ansible_eth0", "ansible_eth1"]),
+                ("eth[!0]", &["ansible_eth1", "ansible_eth3", "ansible_eth-"]),
+                ("[a]nsible_pkg*", &["ansible_pkg_mgr"]),
+                ("gather_subset", &["gather_subset"]),
+                ("distribution?version", &["ansible_distribution_version"]),
+                ("[z-a]*", &[]),
+                ("ansible_[!]x", &[]),
+                ("ansible_[]]x", &["ansible_]x"]),
+                ("ansible_[", &[]),
+                ("*[x", &["ansible_[x"]),
+                ("facter*", &["facter_x"]),
+                ("ohai*", &[]),
+                ("ansible_eth[1-]", &["ansible_eth1", "ansible_eth-"]),
+                ("ansible_eth[-1]", &["ansible_eth1", "ansible_eth-"]),
+                ("ansible_eth[!]", &[]),
+                ("ansible_eth[a-c-e3]", &["ansible_eth3", "ansible_eth-"]),
+                ("ANSIBLE_*", &[]),
+                ("*[0-9]", &["ansible_eth0", "ansible_eth1", "ansible_eth3"]),
+            ];
+            for (pattern, expected) in cases {
+                assert_eq!(kept(&[pattern]), *expected, "{pattern}");
+            }
+            for everything in [&[""][..], &["*"], &[]] {
+                assert_eq!(kept(everything), names, "{everything:?}");
+            }
+            assert_eq!(
+                kept(&["*_mb", "pkg_mgr", "ansible_pkg*"]),
+                ["ansible_memtotal_mb", "ansible_pkg_mgr"]
+            );
+        }
+        {
+            let fake = FakeRoot::new("task-env");
+            for key in ["LANG", "LC_ALL", "LC_TIME", "LANGUAGE", "TZ"] {
+                let context = Context {
+                    environment: BTreeMap::from([(key.to_string(), "C".to_string())]),
+                    ..Context::default()
+                };
+                let request = Request {
+                    gather_subset: vec!["min".into()],
+                    hardware: false,
+                    network: false,
+                    fact_path: None,
+                    filter: Vec::new(),
+                };
+                let Err(Stop::HandBack(reason)) =
+                    collect(&request, &fake.root(), &context, agent_env(), unbounded())
+                else {
+                    panic!("{key} is answered");
+                };
+                assert!(reason.contains(key), "{reason}");
+            }
+        }
+        {
+            let fake = FakeRoot::new("gate-first");
+            let mark = fake.0.join("probed");
+            fake.write("/etc/os-release", "ID=fedora\nVERSION_ID=40\n")
+                .script("/usr/bin/fake-python", &format!("touch {}", mark.display()));
+            let context = Context {
+                interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
+                environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
                 ..Context::default()
             };
             let request = Request {
@@ -1638,189 +1619,135 @@ BUG_REPORT_URL="https://bugs.debian.org/"
             let Err(Stop::HandBack(reason)) =
                 collect(&request, &fake.root(), &context, agent_env(), unbounded())
             else {
-                panic!("{key} is answered");
+                panic!("fedora is answered");
             };
-            assert!(reason.contains(key), "{reason}");
+            assert!(reason.contains("fedora"), "{reason}");
+            assert!(!mark.exists(), "the interpreter ran");
         }
     }
 
-    /// Outside Debian and Ubuntu the native hands back before it starts anything: the interpreter
-    /// here leaves a mark if it runs.
-    ///
-    /// What would make this red: the distribution checked after the probe, which makes every
-    /// hand-back on another distribution cost an interpreter start and `lsb_release`.
-    #[test]
-    fn another_distribution_hands_back_before_the_interpreter_starts() {
-        let fake = FakeRoot::new("gate-first");
-        let mark = fake.0.join("probed");
-        fake.write("/etc/os-release", "ID=fedora\nVERSION_ID=40\n")
-            .script("/usr/bin/fake-python", &format!("touch {}", mark.display()));
-        let context = Context {
-            interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
-            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
-            ..Context::default()
-        };
-        let request = Request {
-            gather_subset: vec!["min".into()],
-            hardware: false,
-            network: false,
-            fact_path: None,
-            filter: Vec::new(),
-        };
-        let Err(Stop::HandBack(reason)) =
-            collect(&request, &fake.root(), &context, agent_env(), unbounded())
-        else {
-            panic!("fedora is answered");
-        };
-        assert!(reason.contains("fedora"), "{reason}");
-        assert!(!mark.exists(), "the interpreter ran");
-    }
-
-    /// The interpreter and `lsb_release` both hang here. The task's `timeout` ends them as it
-    /// ends a Python module, and a cancel ends them as it ends a command, both well before the
-    /// thirty seconds they would take.
-    ///
-    /// What would make this red: a command run outside the executor, or the early `lsb_release`
-    /// left running, which keeps the task waiting for it after the probe has stopped.
+    /// A hung command, `lsb_release` or `ip` ends at the timeout, the cancel or a failed probe.
     #[test]
     #[cfg(target_os = "linux")]
-    fn a_hung_command_ends_at_the_timeout_or_the_cancel() {
-        let fake = debian_root("hung");
-        fake.script("/usr/bin/fake-python", "sleep 30")
-            .script("/usr/bin/lsb_release", "sleep 30");
-        let context = Context {
-            interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
-            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
-            timeout: Some(std::time::Duration::from_secs(1)),
-            ..Context::default()
-        };
-        let request = Request {
-            gather_subset: vec!["min".into()],
-            hardware: false,
-            network: false,
-            fact_path: None,
-            filter: Vec::new(),
-        };
-        let started = Instant::now();
-        let clock = Clock {
-            deadline: Some(started + std::time::Duration::from_secs(1)),
-            cancelled: &|| false,
-        };
-        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    fn a_hung_command_ends_at_the_timeout_the_cancel_or_a_failed_probe() {
+        {
+            let fake = debian_root("hung");
+            fake.script("/usr/bin/fake-python", "sleep 30")
+                .script("/usr/bin/lsb_release", "sleep 30");
+            let context = Context {
+                interpreter: Some(fake.0.join("usr/bin/fake-python").display().to_string()),
+                environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+                timeout: Some(std::time::Duration::from_secs(1)),
+                ..Context::default()
+            };
+            let request = Request {
+                gather_subset: vec!["min".into()],
+                hardware: false,
+                network: false,
+                fact_path: None,
+                filter: Vec::new(),
+            };
+            let started = Instant::now();
+            let clock = Clock {
+                deadline: Some(started + std::time::Duration::from_secs(1)),
+                cancelled: &|| false,
+            };
+            let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
 
-        let asked = std::cell::Cell::new(0);
-        let cancelled = || {
-            asked.set(asked.get() + 1);
-            asked.get() > 5
-        };
-        let started = Instant::now();
-        let clock = Clock {
-            deadline: None,
-            cancelled: &cancelled,
-        };
-        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+            let asked = std::cell::Cell::new(0);
+            let cancelled = || {
+                asked.set(asked.get() + 1);
+                asked.get() > 5
+            };
+            let started = Instant::now();
+            let clock = Clock {
+                deadline: None,
+                cancelled: &cancelled,
+            };
+            let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        }
+        {
+            let fake = debian_root("hung-lsb");
+            let interpreter = python::tests::fake_interpreter(&fake, &probe());
+            fake.script("/usr/bin/lsb_release", "sleep 30");
+            let context = Context {
+                interpreter: Some(interpreter),
+                environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+                ..Context::default()
+            };
+            let request = Request {
+                gather_subset: vec!["min".into()],
+                hardware: false,
+                network: false,
+                fact_path: None,
+                filter: Vec::new(),
+            };
+            let asked = std::cell::Cell::new(0);
+            let cancelled = || {
+                asked.set(asked.get() + 1);
+                asked.get() > 5
+            };
+            let started = Instant::now();
+            let clock = Clock {
+                deadline: None,
+                cancelled: &cancelled,
+            };
+            let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+            let started = Instant::now();
+            let clock = Clock {
+                deadline: Some(started + std::time::Duration::from_secs(1)),
+                cancelled: &|| false,
+            };
+            let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        }
+        {
+            let fake = debian_root("hung-ip");
+            let interpreter = python::tests::fake_interpreter(&fake, &probe());
+            network::tests::install_ip(&fake, "#!/bin/sh\nsleep 30\n");
+            let mut context = Context {
+                interpreter: Some(interpreter),
+                environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+                ..Context::default()
+            };
+            let request = Request {
+                gather_subset: vec!["min".into()],
+                hardware: false,
+                network: true,
+                fact_path: None,
+                filter: Vec::new(),
+            };
+            let started = Instant::now();
+            // Answers only once the probe and `lsb_release` are long done, so that the cancel
+            // reaches the wait for `ip` and nothing before it.
+            let cancelled = || started.elapsed() > std::time::Duration::from_secs(1);
+            let clock = Clock {
+                deadline: None,
+                cancelled: &cancelled,
+            };
+            let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
+            assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+
+            context.interpreter = Some("/nonexistent/python3".into());
+            let started = Instant::now();
+            let stop =
+                collect(&request, &fake.root(), &context, agent_env(), unbounded()).unwrap_err();
+            assert!(matches!(stop, Stop::HandBack(_)), "{stop:?}");
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        }
     }
 
-    /// The interpreter answers at once and only the early `lsb_release` hangs: the task's cancel
-    /// and its timeout still end the wait for it.
-    ///
-    /// What would make this red: the early run halted only when the probe fails, which leaves a
-    /// cancelled task waiting on a hung `lsb_release` for as long as it hangs.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_hung_early_lsb_release_ends_at_the_cancel_or_the_timeout() {
-        let fake = debian_root("hung-lsb");
-        let interpreter = python::tests::fake_interpreter(&fake, &probe());
-        fake.script("/usr/bin/lsb_release", "sleep 30");
-        let context = Context {
-            interpreter: Some(interpreter),
-            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
-            ..Context::default()
-        };
-        let request = Request {
-            gather_subset: vec!["min".into()],
-            hardware: false,
-            network: false,
-            fact_path: None,
-            filter: Vec::new(),
-        };
-        let asked = std::cell::Cell::new(0);
-        let cancelled = || {
-            asked.set(asked.get() + 1);
-            asked.get() > 5
-        };
-        let started = Instant::now();
-        let clock = Clock {
-            deadline: None,
-            cancelled: &cancelled,
-        };
-        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-
-        let started = Instant::now();
-        let clock = Clock {
-            deadline: Some(started + std::time::Duration::from_secs(1)),
-            cancelled: &|| false,
-        };
-        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::TimedOut), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-    }
-
-    /// The interpreter and `lsb_release` answer at once and only the early `ip` hangs: the task's
-    /// cancel still ends the wait for it once the probe has answered, and a probe that fails
-    /// ends it without any cancel.
-    ///
-    /// What would make this red: the early network run waited for without polling the cancel,
-    /// which leaves a cancelled task waiting on a hung `ip` for as long as it hangs; or not
-    /// halted when the probe fails.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn a_hung_early_ip_ends_at_the_cancel_or_a_failed_probe() {
-        let fake = debian_root("hung-ip");
-        let interpreter = python::tests::fake_interpreter(&fake, &probe());
-        network::tests::install_ip(&fake, "#!/bin/sh\nsleep 30\n");
-        let mut context = Context {
-            interpreter: Some(interpreter),
-            environment: BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
-            ..Context::default()
-        };
-        let request = Request {
-            gather_subset: vec!["min".into()],
-            hardware: false,
-            network: true,
-            fact_path: None,
-            filter: Vec::new(),
-        };
-        let started = Instant::now();
-        // Answers only once the probe and `lsb_release` are long done, so that the cancel
-        // reaches the wait for `ip` and nothing before it.
-        let cancelled = || started.elapsed() > std::time::Duration::from_secs(1);
-        let clock = Clock {
-            deadline: None,
-            cancelled: &cancelled,
-        };
-        let stop = collect(&request, &fake.root(), &context, agent_env(), clock).unwrap_err();
-        assert!(matches!(stop, Stop::Cancelled), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-
-        context.interpreter = Some("/nonexistent/python3".into());
-        let started = Instant::now();
-        let stop = collect(&request, &fake.root(), &context, agent_env(), unbounded()).unwrap_err();
-        assert!(matches!(stop, Stop::HandBack(_)), "{stop:?}");
-        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
-    }
-
-    /// A `PYTHONPATH` in the task's `environment` that brings an old `distro` makes the native
-    /// hand back, as the module started under that environment would import it.
-    ///
-    /// What would make this red: the probe run in the agent's environment only, which finds no
-    /// `distro` and answers with 1.9's version rules.
+    /// A `PYTHONPATH` in the task's `environment` that brings an old `distro` makes the native hand
+    /// back, as the module started under that environment would import it.
     #[test]
     #[cfg(target_os = "linux")]
     fn a_task_pythonpath_with_an_old_distro_hands_back() {

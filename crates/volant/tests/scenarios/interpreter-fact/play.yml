@@ -1,0 +1,22 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - raw: "true"
+      register: line
+    - debug:
+        msg: "raw: {{ line.ansible_facts is defined }} {{ discovered_interpreter_python is defined }}"
+
+    - command: "true"
+      register: first
+      when: inventory_hostname != 'h1'
+    - debug:
+        msg: "{{ 'skipped' if first is skipped else (first.ansible_facts | list | join(',')) ~ ' ' ~ (first.warnings | default([]) | length) }}"
+
+    - command: "true"
+      loop: [1, 2]
+      register: second
+    - debug:
+        msg: "{{ second.results[0].ansible_facts is defined }} {{ second.results[1].ansible_facts is defined }} {{ second.warnings | default([]) | length }}"
+
+    - debug:
+        msg: "{{ (discovered_interpreter_python | length > 0) }} {{ ansible_facts | list | join(',') }}"

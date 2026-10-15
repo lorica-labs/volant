@@ -624,6 +624,20 @@ impl VarStore {
         removed
     }
 
+    /// Whether `host` is the `localhost` the reference conjures because the inventory has none.
+    pub fn is_implicit_localhost(&self, host: &str) -> bool {
+        !self.inventory_vars.contains_key(host) && is_localhost(host)
+    }
+
+    /// Whether every one of `hosts` already holds `key` among the facts a module returned.
+    pub fn all_gathered(&self, hosts: &[String], key: &str) -> bool {
+        hosts.iter().all(|host| {
+            self.gathered
+                .get(host)
+                .is_some_and(|facts| facts.contains_key(key))
+        })
+    }
+
     /// The names of `host`'s merged view that came from a managed host: the `set_fact` layer's
     /// untrusted names, and every gathered one that no layer above it overrides. A play variable
     /// that shadows a gathered name answers with the author's value, and a template in it renders.
@@ -847,7 +861,7 @@ impl VarStore {
         // and a role `defaults/` naming `ansible_connection` both lose to it and the play runs
         // `changed: [localhost]`, while a `host_vars/localhost` file, the play's `vars:` and an
         // extra var each beat it and send the play over ssh.
-        if !self.inventory_vars.contains_key(host) && is_localhost(host) {
+        if self.is_implicit_localhost(host) {
             vars.insert(
                 "ansible_connection".into(),
                 Value::String("local".to_string()),

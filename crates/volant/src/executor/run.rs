@@ -1482,6 +1482,48 @@ pub(super) fn requested_interpreter<V: crate::vars::HostSettings + ?Sized>(
         .map(str::to_string)
 }
 
+/// The fact the reference adds to the first result that discovered a host's interpreter.
+pub(super) const DISCOVERED_INTERPRETER: &str = "discovered_interpreter_python";
+
+/// What the warning on screen ends with; the copy a task registers stops before it.
+pub(super) const DISCOVERY_HELP: &str = "See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.";
+
+/// Whether the reference discovers the interpreter this task's module runs under: every module
+/// sent to a host but `raw`, which hands its line to the shell, once nobody named an interpreter.
+pub(super) fn discovers_interpreter<V: crate::vars::HostSettings + ?Sized>(
+    module: &str,
+    vars: &V,
+) -> bool {
+    short_name(module) != "raw" && requested_interpreter(vars).is_none()
+}
+
+/// Whether the host asked for discovery without the warning, `auto_silent` or
+/// `auto_legacy_silent`.
+pub(super) fn silent_discovery<V: crate::vars::HostSettings + ?Sized>(vars: &V) -> bool {
+    crate::vars::host_setting(vars, "ansible_python_interpreter")
+        .and_then(Value::as_str)
+        .is_some_and(|asked| matches!(asked.trim(), "auto_silent" | "auto_legacy_silent"))
+}
+
+/// Puts the discovered interpreter in the result's `ansible_facts`, where the reference returns
+/// it and where [`record_facts`] makes it the host's own fact.
+pub(super) fn stamp_discovery(result: &mut TaskResult, interpreter: &str) {
+    let facts = result
+        .0
+        .entry("ansible_facts")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(facts) = facts {
+        facts.insert(DISCOVERED_INTERPRETER.into(), json!(interpreter));
+    }
+}
+
+/// The warning for an interpreter found rather than named, as a task registers it.
+pub(super) fn discovery_warning(host: &str, interpreter: &str) -> String {
+    format!(
+        "Host '{host}' is using the discovered Python interpreter at '{interpreter}', but future installation of another Python interpreter could cause a different interpreter to be discovered."
+    )
+}
+
 /// The Python interpreter a host runs a module under, or the failure its tasks report instead.
 ///
 /// `ansible_python_interpreter` is the playbook's own choice and is used exactly as written,

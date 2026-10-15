@@ -1,0 +1,2 @@
+# The first module result on a host that discovered its interpreter carries the fact and the warning.
+args: [-i, inv.ini, play.yml]

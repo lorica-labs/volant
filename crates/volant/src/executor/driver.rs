@@ -30,11 +30,12 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter, fact_targets,
-    failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal, record_facts,
+    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Relinker, any_retried,
+    chosen_interpreter, discovers_interpreter, discovery_warning, fact_targets, failed_task_value,
+    finish, judge_attempt, notify, python_for, raw_params_refusal, record_facts,
     record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
-    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
-    unresolved_notify, wait_or_stop,
+    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, silent_discovery,
+    stamp_discovery, step_tasks, take_warnings, unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -622,6 +623,9 @@ pub(super) async fn drive_host(
         // for every batch this release runs today, a Python module being refused before the
         // first connection.
         let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
+        // The steps of the batch whose host picks its interpreter itself, each with whether the
+        // reference warns about the choice. Those results carry the discovered interpreter.
+        let mut discovering: HashMap<usize, bool> = HashMap::new();
         // How long each step of the batch took to render, for the profile.
         let mut prepare_micros: HashMap<usize, u64> = HashMap::new();
         // The escalation every task of the batch shares. A batch is one message to one agent,
@@ -1325,6 +1329,12 @@ pub(super) async fn drive_host(
                         let asked = requested_interpreter(target_vars);
                         payloads.insert(pos, (module, asked));
                     }
+                    // A task refused for its raw parameters fails before it is sent anywhere.
+                    if raw_params_refusal(task).is_none()
+                        && discovers_interpreter(&task.module, target_vars)
+                    {
+                        discovering.insert(pos, !silent_discovery(target_vars));
+                    }
                     batch.push((pos, items));
                     // Where this host goes after a step a `rescue` would catch depends on how that
                     // step ends, so the batch stops here: moving `pos` now would step over that
@@ -1807,6 +1817,9 @@ pub(super) async fn drive_host(
             // without a result for it and advancing past a step with no `TaskDone` behind it
             // stalls every barrier behind it.
             let mut undecided_reported = false;
+            let found = links
+                .get(&key)
+                .and_then(|link| link.interpreters().first().cloned());
             for (bi, (index, items)) in batch.iter().enumerate() {
                 let task = &c.steps[*index].task;
                 let mut results = Vec::new();
@@ -1835,7 +1848,35 @@ pub(super) async fn drive_host(
                     options.abort.raise(reason);
                     break 'run;
                 }
-                let warnings = take_warnings(&mut results);
+                let live = driver.progress.borrow().live_hosts.clone();
+                let targets = fact_targets(task, &name, &live);
+                let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
+                    (true, Some(to)) => std::slice::from_ref(to),
+                    _ => &targets[..],
+                };
+                let discovered = match (discovering.get(index), &found) {
+                    (Some(&warns), Some(path))
+                        if {
+                            let vars = store.lock().expect("vars lock");
+                            // The reference gives the implicit `localhost` the controller's own
+                            // Python as its interpreter, so nothing is discovered there.
+                            !vars.is_implicit_localhost(batch_delegate.as_deref().unwrap_or(&name))
+                                && !vars.all_gathered(fact_hosts, DISCOVERED_INTERPRETER)
+                        } =>
+                    {
+                        // The first result that reached the host: a skipped item ran nothing.
+                        results
+                            .iter_mut()
+                            .zip(items)
+                            .find(|(_, item)| item.skipped.is_none())
+                            .map(|((_, result), _)| {
+                                stamp_discovery(result, path);
+                                warns
+                            })
+                    }
+                    _ => None,
+                };
+                let mut warnings = take_warnings(&mut results);
                 for message in &warnings {
                     let _ = tx
                         .send(Event::Warning {
@@ -1846,8 +1887,21 @@ pub(super) async fn drive_host(
                         })
                         .await;
                 }
-                let live = driver.progress.borrow().live_hosts.clone();
-                let targets = fact_targets(task, &name, &live);
+                // Not censored by `no_log`: measured on ansible-core 2.19.12, the line names the
+                // host and the path and nothing the task returned, and it shows on a hidden task.
+                // Registered without the pointer to the documentation the line ends with.
+                if let (Some(true), Some(path)) = (discovered, &found) {
+                    let text = discovery_warning(batch_delegate.as_deref().unwrap_or(&name), path);
+                    let _ = tx
+                        .send(Event::Warning {
+                            host: name.clone(),
+                            index: *index,
+                            message: format!("{text} {DISCOVERY_HELP}"),
+                            censored: false,
+                        })
+                        .await;
+                    warnings.push(text);
+                }
                 let removed = {
                     // One lock for both: a reader between them would see a host that had
                     // registered a result without holding the facts that came in it.
@@ -1858,10 +1912,6 @@ pub(super) async fn drive_host(
                     // the trust each of them earned. Under `delegate_facts` they are the
                     // delegate's, as on the controller-side path; the registered result stays
                     // with the host the task was written for.
-                    let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
-                        (true, Some(to)) => std::slice::from_ref(to),
-                        _ => &targets[..],
-                    };
                     record_facts(&mut vars, fact_hosts, &results)
                 };
                 // A name, never a value, so there is nothing in it for `no_log` to hide.

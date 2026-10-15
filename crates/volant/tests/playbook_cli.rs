@@ -2917,6 +2917,43 @@ fn the_delay_is_waited_between_two_attempts() {
     );
 }
 
+/// A `no_log` task's error block keeps its prefixes and censors the rest, for a `fail` message, a
+/// failed command and an unreachable host, at every verbosity (the reference leaks the first).
+#[rstest]
+fn a_no_log_failure_s_error_block_never_shows_the_secret(
+    #[values("", "-v", "-vvv")] verbosity: &str,
+) {
+    let inventory = fixture("nolog/secret-failure.ini");
+    let book = fixture("nolog/secret-failure.yml");
+    // The secret arrives as an extra var, so the source excerpt under each block cannot show it.
+    let mut args = vec![
+        "playbook",
+        "-i",
+        &inventory,
+        "-e",
+        "password=s3cr3t-pw",
+        &book,
+    ];
+    if !verbosity.is_empty() {
+        args.push(verbosity);
+    }
+    let out = volant_within(&args, DEFAULT_DEADLINE);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stdout.contains("s3cr3t-pw") && !stderr.contains("s3cr3t-pw"),
+        "{verbosity}: the secret reached the terminal:\n{stdout}\n{stderr}"
+    );
+    for block in [
+        "[ERROR]: Task failed: Action failed: <error censored due to no log>",
+        "[ERROR]: Task failed: Module failed: <error censored due to no log>",
+        "[ERROR]: Task failed: Failed to connect to the host via ssh: <error censored due to no log>",
+    ] {
+        assert!(stdout.contains(block), "{verbosity}: {block}\n{stdout}");
+    }
+    assert_eq!(out.status.code(), Some(4), "{stdout}\n{stderr}");
+}
+
 /// Every line of a `no_log` task is censored at verbosity 0, `-v` and `-vvv`, and the registered
 /// value is not (ansible-core 2.19.12).
 #[test]

@@ -3229,139 +3229,125 @@ mod tests {
         );
     }
 
-    /// A `set_fact` renders its keys and refuses a rendered name that cannot name a variable, in
-    /// the words ansible-core 2.19.12 uses for each case measured; a name built from a managed
-    /// host's value is data.
-    ///
-    /// What would make this red: the keys left unrendered (`k_{{ n }}` set as written), the name
-    /// check dropped or loosened (`bad-name`, `1` or `not` accepted), `if` refused, the
-    /// type named wrongly, the empty case accepted, or a name read from a host left trusted.
+    /// A set_fact renders its keys and checks the names; a key that renders anew keeps its value data.
     #[tokio::test]
-    async fn a_set_fact_renders_its_keys_and_checks_the_names() {
-        let host = || {
-            let mut v = hvars(json!({"n": "dyn"}));
-            v.insert_untrusted("h".into(), json!("from_host"));
-            v
-        };
-        let r = local_with("set_fact", json!({"k_{{ n }}": 1, "if": 2}), host()).await;
-        assert_eq!(
-            r.0["ansible_facts"],
-            json!({"k_dyn": 1, "if": 2}),
-            "{:?}",
-            r.0
-        );
-        for (key, msg) in [
-            (
-                "{{ 'bad-name' }}",
-                "Task failed: Invalid variable name 'bad-name'.",
-            ),
-            ("bad-lit", "Task failed: Invalid variable name 'bad-lit'."),
-            ("{{ '' }}", "Task failed: Invalid variable name ''."),
-            (
-                "{{ 1 }}",
-                "Task failed: Invalid variable name '1' of type 'int'.",
-            ),
-            (
-                "{{ 1.5 }}",
-                "Task failed: Invalid variable name '1.5' of type 'float'.",
-            ),
-            (
-                "{{ [1] }}",
-                "Task failed: Invalid variable name of type 'list'.",
-            ),
-            (
-                "{{ True }}",
-                "Task failed: Invalid variable name 'True' of type 'bool'.",
-            ),
-            (
-                "{{ None }}",
-                "Task failed: Invalid variable name 'None' of type 'NoneType'.",
-            ),
-            ("not", "Task failed: Invalid variable name 'not'."),
-            ("None", "Task failed: Invalid variable name 'None'."),
-        ] {
-            let r = local_with("set_fact", json!({ key: 1 }), host()).await;
-            assert!(r.failed(), "{key}: {:?}", r.0);
-            assert_eq!(r.0["msg"], json!(msg), "{key}");
+    async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
+        {
+            let host = || {
+                let mut v = hvars(json!({"n": "dyn"}));
+                v.insert_untrusted("h".into(), json!("from_host"));
+                v
+            };
+            let r = local_with("set_fact", json!({"k_{{ n }}": 1, "if": 2}), host()).await;
+            assert_eq!(
+                r.0["ansible_facts"],
+                json!({"k_dyn": 1, "if": 2}),
+                "{:?}",
+                r.0
+            );
+            for (key, msg) in [
+                (
+                    "{{ 'bad-name' }}",
+                    "Task failed: Invalid variable name 'bad-name'.",
+                ),
+                ("bad-lit", "Task failed: Invalid variable name 'bad-lit'."),
+                ("{{ '' }}", "Task failed: Invalid variable name ''."),
+                (
+                    "{{ 1 }}",
+                    "Task failed: Invalid variable name '1' of type 'int'.",
+                ),
+                (
+                    "{{ 1.5 }}",
+                    "Task failed: Invalid variable name '1.5' of type 'float'.",
+                ),
+                (
+                    "{{ [1] }}",
+                    "Task failed: Invalid variable name of type 'list'.",
+                ),
+                (
+                    "{{ True }}",
+                    "Task failed: Invalid variable name 'True' of type 'bool'.",
+                ),
+                (
+                    "{{ None }}",
+                    "Task failed: Invalid variable name 'None' of type 'NoneType'.",
+                ),
+                ("not", "Task failed: Invalid variable name 'not'."),
+                ("None", "Task failed: Invalid variable name 'None'."),
+            ] {
+                let r = local_with("set_fact", json!({ key: 1 }), host()).await;
+                assert!(r.failed(), "{key}: {:?}", r.0);
+                assert_eq!(r.0["msg"], json!(msg), "{key}");
+            }
+            let r = local_with("set_fact", json!({"cacheable": true}), host()).await;
+            assert_eq!(
+                r.0["msg"],
+                json!(
+                    "No key/value pairs provided, at least one is required for this action to succeed"
+                )
+            );
+            let r = local_with("set_fact", json!({"{{ nosuch }}": 1}), host()).await;
+            assert!(msg(&r).starts_with("Task failed: "), "{:?}", r.0);
+
+            let templar = Templar::new(PathBuf::from("."));
+            let mut t = task("set_fact");
+            t.args = vars(json!({"k_{{ h }}": 1, "plain": 2}));
+            let item = Item {
+                args: t.args.clone(),
+                vars: host(),
+                ..local_item(json!({}))
+            };
+            let data = set_fact_data(&t, &item, &templar);
+            assert_eq!(data, BTreeSet::from(["k_from_host".to_string()]));
         }
-        let r = local_with("set_fact", json!({"cacheable": true}), host()).await;
-        assert_eq!(
-            r.0["msg"],
-            json!(
-                "No key/value pairs provided, at least one is required for this action to succeed"
-            )
-        );
-        let r = local_with("set_fact", json!({"{{ nosuch }}": 1}), host()).await;
-        assert!(msg(&r).starts_with("Task failed: "), "{:?}", r.0);
-
-        let templar = Templar::new(PathBuf::from("."));
-        let mut t = task("set_fact");
-        t.args = vars(json!({"k_{{ h }}": 1, "plain": 2}));
-        let item = Item {
-            args: t.args.clone(),
-            vars: host(),
-            ..local_item(json!({}))
-        };
-        let data = set_fact_data(&t, &item, &templar);
-        assert_eq!(data, BTreeSet::from(["k_from_host".to_string()]));
-    }
-
-    /// A `set_fact` key that renders to another name each time it is rendered keeps the value
-    /// under it data: the names are rendered once per item and every reader gets that render.
-    /// Measured on ansible-core 2.19.12, a key built from `random` runs; here a `pipe` lookup
-    /// counting its own runs stands in for it.
-    ///
-    /// What would make this red: a reader rendering the keys again, which gets `t_2` where the
-    /// module wrote `t_1`, matches nothing, and writes the managed host's value as trusted - text
-    /// the controller would then render - besides running the lookup once per reader.
-    #[cfg(unix)]
-    #[test]
-    fn a_set_fact_key_that_renders_anew_keeps_its_value_data() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).unwrap();
-        let counter = dir.join("runs");
-        let templar = Templar::new(PathBuf::from("."));
-        let key = format!(
-            "t_{{{{ lookup('pipe', 'echo x >> {c}; wc -l < {c}') | trim }}}}",
-            c = counter.display()
-        );
-        let mut t = task("set_fact");
-        t.args = vars(json!({ key.clone(): "{{ ro.stdout }}" }));
-        let item = Item {
-            args: vars(json!({ key.clone(): "{{ lookup('pipe', 'id') }}" })),
-            args_untrusted: BTreeSet::from([key.clone()]),
-            ..local_item(json!({}))
-        };
-        let names = set_fact_names(&item, &templar).expect("the key renders");
-        assert_eq!(names[0].0, "t_1");
-        assert!(names[0].2, "the value came from a managed host");
-        assert_eq!(set_fact_names(&item, &templar).unwrap()[0].0, "t_1");
-        let facts = json!({"t_1": "{{ lookup('pipe', 'id') }}"});
-        let result = TaskResult(vars(json!({"ansible_facts": facts, "changed": false})));
-        let mut store = one_host_store();
-        record_local_facts(
-            &mut store,
-            &t,
-            std::slice::from_ref(&item),
-            &["h1".to_string()],
-            &[(None, result.clone())],
-            &templar,
-        );
-        assert!(
-            store
-                .untrusted_of("h1", &crate::vars::Scope::default())
-                .contains("t_1")
-        );
-        let mut judged = t.clone();
-        judged.failed_when = vec!["false".into()];
-        let vars = condition_vars(&judged, &item, &result, &templar);
-        assert!(vars.untrusted.contains("t_1"));
-        assert_eq!(
-            std::fs::read_to_string(&counter).unwrap().lines().count(),
-            1,
-            "the key's lookup ran once"
-        );
+        #[cfg(unix)]
+        {
+            let dir_guard = scratch();
+            let dir = dir_guard.path().to_path_buf();
+            std::fs::create_dir_all(&dir).unwrap();
+            let counter = dir.join("runs");
+            let templar = Templar::new(PathBuf::from("."));
+            let key = format!(
+                "t_{{{{ lookup('pipe', 'echo x >> {c}; wc -l < {c}') | trim }}}}",
+                c = counter.display()
+            );
+            let mut t = task("set_fact");
+            t.args = vars(json!({ key.clone(): "{{ ro.stdout }}" }));
+            let item = Item {
+                args: vars(json!({ key.clone(): "{{ lookup('pipe', 'id') }}" })),
+                args_untrusted: BTreeSet::from([key.clone()]),
+                ..local_item(json!({}))
+            };
+            let names = set_fact_names(&item, &templar).expect("the key renders");
+            assert_eq!(names[0].0, "t_1");
+            assert!(names[0].2, "the value came from a managed host");
+            assert_eq!(set_fact_names(&item, &templar).unwrap()[0].0, "t_1");
+            let facts = json!({"t_1": "{{ lookup('pipe', 'id') }}"});
+            let result = TaskResult(vars(json!({"ansible_facts": facts, "changed": false})));
+            let mut store = one_host_store();
+            record_local_facts(
+                &mut store,
+                &t,
+                std::slice::from_ref(&item),
+                &["h1".to_string()],
+                &[(None, result.clone())],
+                &templar,
+            );
+            assert!(
+                store
+                    .untrusted_of("h1", &crate::vars::Scope::default())
+                    .contains("t_1")
+            );
+            let mut judged = t.clone();
+            judged.failed_when = vec!["false".into()];
+            let vars = condition_vars(&judged, &item, &result, &templar);
+            assert!(vars.untrusted.contains("t_1"));
+            assert_eq!(
+                std::fs::read_to_string(&counter).unwrap().lines().count(),
+                1,
+                "the key's lookup ran once"
+            );
+        }
     }
 
     /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an
@@ -4317,82 +4303,72 @@ mod tests {
         assert_eq!(held.puts(), 0, "{:?}", held.sent);
     }
 
-    /// The union goes up as a `put_blob` announcing its decoded length, then one frame holding
-    /// its deflated form, in that order.
-    ///
-    /// What would make this red: the frame written before its `put_blob` (the agent would take
-    /// it for a message); the length of the deflated form announced (the agent would refuse
-    /// the frame as longer than the blob); the zip sent raw.
+    /// A union goes up deflated, a small file raw, and a blob the agent does not keep fails with one sentence.
     #[tokio::test]
-    async fn the_union_goes_up_deflated_in_the_frame_after_its_put_blob() {
-        let zip = b"PK\x03\x04 a stored zip ".repeat(1000);
-        let hash = blake3::hash(&zip).to_hex().to_string();
-        let b64 = volant_protocol::encoding::b64_encode(&zip);
-        let mut agent = FakeAgent::answering(vec![state(&hash, false), state(&hash, true)]);
-        ensure_blob(&mut agent, "h1", &hash, &b64, &mut Vec::new())
+    async fn a_blob_goes_up_in_the_form_its_size_calls_for() {
+        {
+            let zip = b"PK\x03\x04 a stored zip ".repeat(1000);
+            let hash = blake3::hash(&zip).to_hex().to_string();
+            let b64 = volant_protocol::encoding::b64_encode(&zip);
+            let mut agent = FakeAgent::answering(vec![state(&hash, false), state(&hash, true)]);
+            ensure_blob(&mut agent, "h1", &hash, &b64, &mut Vec::new())
+                .await
+                .expect("the agent stored it");
+            assert_eq!(
+                agent.sent,
+                [
+                    ToAgent::HasBlob { hash: hash.clone() },
+                    ToAgent::PutBlob {
+                        hash: hash.clone(),
+                        len: zip.len() as u64,
+                        encoding: volant_protocol::BlobEncoding::Deflate,
+                        staged: false,
+                    },
+                ]
+            );
+            assert_eq!(agent.frames.len(), 1);
+            let (after, bytes) = &agent.frames[0];
+            assert_eq!(*after, 2, "the frame follows its put_blob");
+            assert!(bytes.len() < zip.len() / 10, "{} bytes", bytes.len());
+            assert_eq!(
+                volant_protocol::encoding::inflate(bytes, zip.len()).unwrap(),
+                zip
+            );
+        }
+        {
+            let bytes = [7u8; 100];
+            let blob = crate::action_plugins::files::blob_of("small", &bytes).expect("it fits");
+            let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
+            stage_files(
+                &mut agent,
+                "h1",
+                &[("src".into(), blob.clone())],
+                &mut Vec::new(),
+            )
             .await
             .expect("the agent stored it");
-        assert_eq!(
-            agent.sent,
-            [
-                ToAgent::HasBlob { hash: hash.clone() },
-                ToAgent::PutBlob {
-                    hash: hash.clone(),
-                    len: zip.len() as u64,
-                    encoding: volant_protocol::BlobEncoding::Deflate,
-                    staged: false,
-                },
-            ]
-        );
-        assert_eq!(agent.frames.len(), 1);
-        let (after, bytes) = &agent.frames[0];
-        assert_eq!(*after, 2, "the frame follows its put_blob");
-        assert!(bytes.len() < zip.len() / 10, "{} bytes", bytes.len());
-        assert_eq!(
-            volant_protocol::encoding::inflate(bytes, zip.len()).unwrap(),
-            zip
-        );
-    }
-
-    /// A staged file of 100 bytes goes up raw, in the frame after its `put_blob`.
-    #[tokio::test]
-    async fn a_small_staged_file_goes_up_raw_after_its_put_blob() {
-        let bytes = [7u8; 100];
-        let blob = crate::action_plugins::files::blob_of("small", &bytes).expect("it fits");
-        let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
-        stage_files(
-            &mut agent,
-            "h1",
-            &[("src".into(), blob.clone())],
-            &mut Vec::new(),
-        )
-        .await
-        .expect("the agent stored it");
-        assert_eq!(
-            agent.sent,
-            [ToAgent::PutBlob {
-                hash: blob.hash.clone(),
-                len: 100,
-                encoding: volant_protocol::BlobEncoding::Raw,
-                staged: true,
-            }]
-        );
-        assert_eq!(agent.frames, [(1, bytes.to_vec())]);
-    }
-
-    /// An agent that answers `present: false` after the blob went up fails the batch with the
-    /// sentence it has always failed with.
-    #[tokio::test]
-    async fn a_blob_the_agent_does_not_keep_fails_with_the_same_sentence() {
-        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
-        let err = ensure_blob(&mut agent, "h1", "ab", "UEsDBA==", &mut Vec::new())
-            .await
-            .expect_err("the agent refused it");
-        assert_eq!(
-            err,
-            "the agent refused the module payload ab; it holds no payload to run this task from"
-        );
-        assert_eq!(agent.frames, [(2, b"PK\x03\x04".to_vec())]);
+            assert_eq!(
+                agent.sent,
+                [ToAgent::PutBlob {
+                    hash: blob.hash.clone(),
+                    len: 100,
+                    encoding: volant_protocol::BlobEncoding::Raw,
+                    staged: true,
+                }]
+            );
+            assert_eq!(agent.frames, [(1, bytes.to_vec())]);
+        }
+        {
+            let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", false)]);
+            let err = ensure_blob(&mut agent, "h1", "ab", "UEsDBA==", &mut Vec::new())
+                .await
+                .expect_err("the agent refused it");
+            assert_eq!(
+                err,
+                "the agent refused the module payload ab; it holds no payload to run this task from"
+            );
+            assert_eq!(agent.frames, [(2, b"PK\x03\x04".to_vec())]);
+        }
     }
 
     /// A payload the agent refuses fails the batch, and the next batch of that host does not
@@ -4475,60 +4451,52 @@ mod tests {
         );
     }
 
-    /// The module runs where the link goes, so its interpreter is read off that host: the
-    /// delegate's variables when the task is delegated.
-    ///
-    /// What would make this red: the delegating host's map read instead, which is what the
-    /// expression looks like it could be simplified to. A task `delegate_to: build-host`, where
-    /// `build-host` carries its own `ansible_python_interpreter`, would then run its module on
-    /// `build-host` under the delegating host's Python - rc 127 if that path is not there, and
-    /// silently the wrong Python if it is.
+    /// The interpreter is the host's, read under the reference's name; discovery modes and blanks name nobody.
     #[test]
-    fn the_interpreter_comes_from_the_host_the_module_runs_on() {
-        let mut item = bare_item();
-        item.vars = hvars(json!({"ansible_python_interpreter": "/usr/bin/python3"}));
-        let items = [item];
-        assert_eq!(
-            requested_interpreter(running_host_vars(None, &items)),
-            Some("/usr/bin/python3".to_string())
-        );
-        let delegate = (
-            "build-host".to_string(),
-            hvars(json!({"ansible_python_interpreter": "/opt/py311/bin/python"})),
-        );
-        assert_eq!(
-            requested_interpreter(running_host_vars(Some(&delegate), &items)),
-            Some("/opt/py311/bin/python".to_string())
-        );
-    }
-
-    /// The four discovery modes are not interpreters, and neither is a blank value.
-    ///
-    /// What would make this red: `auto_silent` sent as a path. It is the usual way an inventory
-    /// silences the discovery warning, and `auto` is ansible-core's own default, so a group that
-    /// sets one would have every Python task on every host in it fail at rc 127 naming
-    /// `auto_silent` as a file, where the reference discovers an interpreter and runs. A blank
-    /// value is the same shape - `"{{ py_override | default('') }}"` asked for nothing - and is
-    /// filtered the way a blank `ansible_remote_tmp` already is.
-    #[test]
-    fn the_discovery_modes_and_a_blank_value_mean_nobody_named_one() {
-        for mode in ["auto", "auto_legacy", "auto_silent", "auto_legacy_silent"] {
+    fn the_interpreter_comes_from_the_host_and_is_read_under_the_reference_name() {
+        {
+            let mut item = bare_item();
+            item.vars = hvars(json!({"ansible_python_interpreter": "/usr/bin/python3"}));
+            let items = [item];
             assert_eq!(
-                requested_interpreter(&vars(json!({ "ansible_python_interpreter": mode }))),
-                None,
-                "{mode} is a discovery mode, not a path"
+                requested_interpreter(running_host_vars(None, &items)),
+                Some("/usr/bin/python3".to_string())
+            );
+            let delegate = (
+                "build-host".to_string(),
+                hvars(json!({"ansible_python_interpreter": "/opt/py311/bin/python"})),
+            );
+            assert_eq!(
+                requested_interpreter(running_host_vars(Some(&delegate), &items)),
+                Some("/opt/py311/bin/python".to_string())
             );
         }
-        assert_eq!(
-            requested_interpreter(&vars(json!({"ansible_python_interpreter": "   "}))),
-            None
-        );
-        assert_eq!(
-            requested_interpreter(&vars(
-                json!({"ansible_python_interpreter": " /usr/bin/python3 "})
-            )),
-            Some("/usr/bin/python3".to_string())
-        );
+        {
+            for mode in ["auto", "auto_legacy", "auto_silent", "auto_legacy_silent"] {
+                assert_eq!(
+                    requested_interpreter(&vars(json!({ "ansible_python_interpreter": mode }))),
+                    None,
+                    "{mode} is a discovery mode, not a path"
+                );
+            }
+            assert_eq!(
+                requested_interpreter(&vars(json!({"ansible_python_interpreter": "   "}))),
+                None
+            );
+            assert_eq!(
+                requested_interpreter(&vars(
+                    json!({"ansible_python_interpreter": " /usr/bin/python3 "})
+                )),
+                Some("/usr/bin/python3".to_string())
+            );
+        }
+        {
+            assert_eq!(requested_interpreter(&vars(json!({}))), None);
+            assert_eq!(
+                requested_interpreter(&vars(json!({"ansible_python_interpreter": "/opt/py"}))),
+                Some("/opt/py".to_string())
+            );
+        }
     }
 
     /// A batch the agent reports cancelled when this side never asked is an error, not a stop:
@@ -4604,40 +4572,163 @@ mod tests {
         );
     }
 
-    /// A failed module's `exception` is the sentence the reference registers, whatever the module
-    /// sent, and a result that neither failed nor sent one has none.
-    ///
-    /// Measured on ansible-core 2.19.12, `connection: local`: `copy` with a `validate` naming a
-    /// program that is not there sends an error summary (`fail_json` given the `OSError`), a
-    /// `lineinfile` on a missing file sends no `exception` at all, and a `command: false` fails
-    /// too; each one registers `exception: "(traceback unavailable)"`, a `str`, and a `stat` that
-    /// succeeds registers no `exception`. Volant registered the first as the module's serialized
-    /// `{"__ansible_type": "ErrorSummary", ...}` and the other two without the key.
-    ///
-    /// What would make this red: the normalisation in `run_agent_batch` removed, which leaves the
-    /// serialized summary in the first result and nothing in the second; or an `exception` put on
-    /// a result that succeeded.
+    /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
     #[tokio::test]
-    async fn a_failed_module_registers_the_error_summary_the_reference_does() {
-        let summary = json!({
-            "__ansible_type": "ErrorSummary",
-            "event": {"msg": "Error executing command."}
-        });
-        let answers = [
-            json!({"failed": true, "msg": "Error executing command.", "exception": summary}),
-            json!({"failed": true, "msg": "Destination /x does not exist !", "rc": 257}),
-            json!({"changed": false, "stat": {"exists": true}, "exception": ""}),
-        ];
-        for (answer, want) in answers.into_iter().zip([
-            Some("(traceback unavailable)"),
-            Some("(traceback unavailable)"),
-            None,
-        ]) {
+    async fn a_batch_result_is_mapped_the_way_the_reference_reports_it() {
+        {
+            let summary = json!({
+                "__ansible_type": "ErrorSummary",
+                "event": {"msg": "Error executing command."}
+            });
+            let answers = [
+                json!({"failed": true, "msg": "Error executing command.", "exception": summary}),
+                json!({"failed": true, "msg": "Destination /x does not exist !", "rc": 257}),
+                json!({"changed": false, "stat": {"exists": true}, "exception": ""}),
+            ];
+            for (answer, want) in answers.into_iter().zip([
+                Some("(traceback unavailable)"),
+                Some("(traceback unavailable)"),
+                None,
+            ]) {
+                let mut stop = watch::channel(false).1;
+                let mut stop_broken = false;
+                let mut logs = Vec::new();
+                let mut agent = FakeAgent::answering(one_result(4, answer.clone()).to_vec());
+                let tasks = vec![protocol_task(&task("copy"), &bare_item(), None)];
+                let (received, _) = run_agent_batch(
+                    &mut agent,
+                    "h1",
+                    4,
+                    tasks,
+                    None,
+                    &[],
+                    &mut stop,
+                    &mut stop_broken,
+                    &mut logs,
+                )
+                .await;
+                let result = received[0].clone().expect("a result").0;
+                assert_eq!(
+                    result.get("exception").and_then(Value::as_str),
+                    want,
+                    "{answer} gave {result:?}"
+                );
+                if want.is_none() {
+                    assert!(!result.contains_key("exception"), "{result:?}");
+                }
+            }
+        }
+        {
+            let ran = volant_protocol::Ran {
+                path: volant_protocol::ExecPath::Native,
+                reason: None,
+                micros: u64::MAX,
+                fork_micros: None,
+                import_micros: None,
+                module_micros: None,
+            };
+            let answer = |index| FromAgent::TaskResult {
+                batch: 4,
+                index,
+                result: TaskResult(vars(json!({"changed": false}))),
+                ran: Some(ran.clone()),
+            };
+            let mut agent = FakeAgent::answering(vec![
+                answer(0),
+                answer(1),
+                FromAgent::BatchDone {
+                    batch: 4,
+                    outcome: BatchOutcome::Completed,
+                },
+            ]);
+            let tasks = vec![
+                protocol_task(&task("stat"), &bare_item(), None),
+                protocol_task(&task("stat"), &bare_item(), None),
+            ];
+            let (received, _) = run_agent_batch(
+                &mut agent,
+                "h1",
+                4,
+                tasks,
+                None,
+                &[],
+                &mut watch::channel(false).1,
+                &mut false,
+                &mut Vec::new(),
+            )
+            .await;
+            assert!(received.iter().all(Option::is_some));
+            assert_eq!(agent.ledger.ran.len(), 2);
+            assert_eq!(agent.ledger.wire_micros, 0);
+        }
+        {
+            let ran = volant_protocol::Ran {
+                path: volant_protocol::ExecPath::Fallback,
+                reason: Some("validate".into()),
+                micros: 40,
+                fork_micros: None,
+                import_micros: None,
+                module_micros: None,
+            };
+            let mut agent = FakeAgent::answering(vec![
+                FromAgent::TaskResult {
+                    batch: 4,
+                    index: 1,
+                    result: TaskResult(vars(json!({"changed": false}))),
+                    ran: Some(ran.clone()),
+                },
+                FromAgent::TaskResult {
+                    batch: 4,
+                    index: 0,
+                    result: TaskResult(vars(json!({"changed": false}))),
+                    ran: None,
+                },
+                FromAgent::BatchDone {
+                    batch: 4,
+                    outcome: BatchOutcome::Completed,
+                },
+            ]);
+            let tasks = vec![
+                protocol_task(&task("command"), &bare_item(), None),
+                protocol_task(&task("stat"), &bare_item(), None),
+            ];
+            let (received, _) = run_agent_batch(
+                &mut agent,
+                "h1",
+                4,
+                tasks,
+                None,
+                &[],
+                &mut watch::channel(false).1,
+                &mut false,
+                &mut Vec::new(),
+            )
+            .await;
+            assert!(received.iter().all(Option::is_some));
+            assert_eq!(
+                agent.ledger.ran,
+                [
+                    (1, "stat".to_string(), Some(ran)),
+                    (0, "command".to_string(), None)
+                ]
+            );
+        }
+        {
             let mut stop = watch::channel(false).1;
             let mut stop_broken = false;
             let mut logs = Vec::new();
-            let mut agent = FakeAgent::answering(one_result(4, answer.clone()).to_vec());
-            let tasks = vec![protocol_task(&task("copy"), &bare_item(), None)];
+            let mut agent = FakeAgent::answering(
+                one_result(
+                    4,
+                    json!({
+                        "stdout": "a\nb\r\nc\rd\u{2028}e\x0bf\x1cg\u{85}h\u{2029}i\n",
+                        "stderr": "",
+                        "rc": 0
+                    }),
+                )
+                .to_vec(),
+            );
+            let tasks = vec![protocol_task(&task("pip"), &bare_item(), None)];
             let (received, _) = run_agent_batch(
                 &mut agent,
                 "h1",
@@ -4652,181 +4743,25 @@ mod tests {
             .await;
             let result = received[0].clone().expect("a result").0;
             assert_eq!(
-                result.get("exception").and_then(Value::as_str),
-                want,
-                "{answer} gave {result:?}"
+                result["stdout_lines"],
+                json!(["a", "b", "c", "d", "e", "f", "g", "h", "i"])
             );
-            if want.is_none() {
-                assert!(!result.contains_key("exception"), "{result:?}");
+            assert_eq!(result["stderr_lines"], json!([]));
+
+            let mut kept = TaskResult(vars(
+                json!({"stdout": "one", "stdout_lines": ["kept"], "stderr": 3}),
+            ));
+            add_output_lines(&mut kept);
+            assert_eq!(kept.0["stdout_lines"], json!(["kept"]));
+            assert!(!kept.0.contains_key("stderr_lines"), "{:?}", kept.0);
+
+            // `data.get('stdout') or ''`: a value Python reads as false gives an empty list.
+            for falsy in [json!(null), json!(false), json!(0)] {
+                let mut empty = TaskResult(vars(json!({"stdout": falsy, "stderr": falsy})));
+                add_output_lines(&mut empty);
+                assert_eq!(empty.0["stdout_lines"], json!([]), "{falsy}");
+                assert_eq!(empty.0["stderr_lines"], json!([]), "{falsy}");
             }
-        }
-    }
-
-    /// The agent's times are the host's words: two tasks reporting `u64::MAX` cannot overflow
-    /// the sum the wire time is taken from.
-    ///
-    /// What would make this red: a plain `+=`, which panics in a debug build.
-    #[tokio::test]
-    async fn a_host_s_times_cannot_overflow_the_wire_time() {
-        let ran = volant_protocol::Ran {
-            path: volant_protocol::ExecPath::Native,
-            reason: None,
-            micros: u64::MAX,
-            fork_micros: None,
-            import_micros: None,
-            module_micros: None,
-        };
-        let answer = |index| FromAgent::TaskResult {
-            batch: 4,
-            index,
-            result: TaskResult(vars(json!({"changed": false}))),
-            ran: Some(ran.clone()),
-        };
-        let mut agent = FakeAgent::answering(vec![
-            answer(0),
-            answer(1),
-            FromAgent::BatchDone {
-                batch: 4,
-                outcome: BatchOutcome::Completed,
-            },
-        ]);
-        let tasks = vec![
-            protocol_task(&task("stat"), &bare_item(), None),
-            protocol_task(&task("stat"), &bare_item(), None),
-        ];
-        let (received, _) = run_agent_batch(
-            &mut agent,
-            "h1",
-            4,
-            tasks,
-            None,
-            &[],
-            &mut watch::channel(false).1,
-            &mut false,
-            &mut Vec::new(),
-        )
-        .await;
-        assert!(received.iter().all(Option::is_some));
-        assert_eq!(agent.ledger.ran.len(), 2);
-        assert_eq!(agent.ledger.wire_micros, 0);
-    }
-
-    /// What the agent says about how it ran each task is kept with the module that was asked
-    /// for, by the task's position in the batch, for the driver to file in the profile.
-    ///
-    /// What would make this red: `ran` dropped where the result is read, or filed under another
-    /// task's module.
-    #[tokio::test]
-    async fn a_batch_keeps_how_the_agent_ran_each_task() {
-        let ran = volant_protocol::Ran {
-            path: volant_protocol::ExecPath::Fallback,
-            reason: Some("validate".into()),
-            micros: 40,
-            fork_micros: None,
-            import_micros: None,
-            module_micros: None,
-        };
-        let mut agent = FakeAgent::answering(vec![
-            FromAgent::TaskResult {
-                batch: 4,
-                index: 1,
-                result: TaskResult(vars(json!({"changed": false}))),
-                ran: Some(ran.clone()),
-            },
-            FromAgent::TaskResult {
-                batch: 4,
-                index: 0,
-                result: TaskResult(vars(json!({"changed": false}))),
-                ran: None,
-            },
-            FromAgent::BatchDone {
-                batch: 4,
-                outcome: BatchOutcome::Completed,
-            },
-        ]);
-        let tasks = vec![
-            protocol_task(&task("command"), &bare_item(), None),
-            protocol_task(&task("stat"), &bare_item(), None),
-        ];
-        let (received, _) = run_agent_batch(
-            &mut agent,
-            "h1",
-            4,
-            tasks,
-            None,
-            &[],
-            &mut watch::channel(false).1,
-            &mut false,
-            &mut Vec::new(),
-        )
-        .await;
-        assert!(received.iter().all(Option::is_some));
-        assert_eq!(
-            agent.ledger.ran,
-            [
-                (1, "stat".to_string(), Some(ran)),
-                (0, "command".to_string(), None)
-            ]
-        );
-    }
-
-    /// A result carrying `stdout` or `stderr` comes back with the `_lines` of each, split the way
-    /// Python's `str.splitlines()` splits, whatever module produced it. The reference's
-    /// `_execute_module` adds them to every module result that lacks them, so a Python module's
-    /// `register` reads `r.stderr_lines` there; the agent adds them for `command` and `raw` only.
-    ///
-    /// What would make this red: the addition in `run_agent_batch` removed, which leaves
-    /// `failed_when: "'error' in r.stderr_lines"` on a `pip` task reading an undefined name; or
-    /// a list the module wrote itself replaced, or one built from a value that is not a string.
-    #[tokio::test]
-    async fn a_module_result_gains_the_lines_of_its_output() {
-        let mut stop = watch::channel(false).1;
-        let mut stop_broken = false;
-        let mut logs = Vec::new();
-        let mut agent = FakeAgent::answering(
-            one_result(
-                4,
-                json!({
-                    "stdout": "a\nb\r\nc\rd\u{2028}e\x0bf\x1cg\u{85}h\u{2029}i\n",
-                    "stderr": "",
-                    "rc": 0
-                }),
-            )
-            .to_vec(),
-        );
-        let tasks = vec![protocol_task(&task("pip"), &bare_item(), None)];
-        let (received, _) = run_agent_batch(
-            &mut agent,
-            "h1",
-            4,
-            tasks,
-            None,
-            &[],
-            &mut stop,
-            &mut stop_broken,
-            &mut logs,
-        )
-        .await;
-        let result = received[0].clone().expect("a result").0;
-        assert_eq!(
-            result["stdout_lines"],
-            json!(["a", "b", "c", "d", "e", "f", "g", "h", "i"])
-        );
-        assert_eq!(result["stderr_lines"], json!([]));
-
-        let mut kept = TaskResult(vars(
-            json!({"stdout": "one", "stdout_lines": ["kept"], "stderr": 3}),
-        ));
-        add_output_lines(&mut kept);
-        assert_eq!(kept.0["stdout_lines"], json!(["kept"]));
-        assert!(!kept.0.contains_key("stderr_lines"), "{:?}", kept.0);
-
-        // `data.get('stdout') or ''`: a value Python reads as false gives an empty list.
-        for falsy in [json!(null), json!(false), json!(0)] {
-            let mut empty = TaskResult(vars(json!({"stdout": falsy, "stderr": falsy})));
-            add_output_lines(&mut empty);
-            assert_eq!(empty.0["stdout_lines"], json!([]), "{falsy}");
-            assert_eq!(empty.0["stderr_lines"], json!([]), "{falsy}");
         }
     }
 
@@ -5145,460 +5080,276 @@ mod tests {
         result.0.get("msg").and_then(Value::as_str).unwrap_or("")
     }
 
-    /// The order the package manager is picked in, and the reference's sentences when it
-    /// cannot be, measured on ansible-core 2.19.12 (`use: nosuchmgr` fails with the first sentence)
-    /// and read off its `plugins/action/package.py`.
-    ///
-    /// What would make this red: a name no module of the union carries sent anyway - a
-    /// collection's manager, or a value a host put in its facts - or `ansible_package_use`
-    /// passed over for the facts, or a `setup` failure or a missing fact reported in words of
-    /// this engine's own, which a playbook testing the reference's `msg` would not recognise.
+    /// A dnf task asks setup then runs its backend, or fails in the reference's words without dnf.
     #[tokio::test]
-    async fn the_package_manager_is_picked_in_the_reference_s_order_and_words() {
-        use crate::action_plugins::Kind;
-        let mut stop = watch::channel(false).1;
-        for (args, running, name) in [
-            (
-                json!({"name": "bash", "use": "nosuchmgr"}),
-                json!({}),
-                "nosuchmgr",
-            ),
-            (
-                json!({"name": "bash"}),
-                json!({"ansible_facts": {"pkg_mgr": "pacman"}}),
-                "pacman",
-            ),
-        ] {
-            let mut agent = FakeAgent::answering(Vec::new());
-            let (ran, _) = plugin_item(
-                Kind::Package,
-                args,
-                running,
-                &mut agent,
-                &python3(),
-                &mut stop,
-            )
-            .await;
-            let result = ran.expect("the item finished");
-            assert!(result.failed(), "{result:?}");
-            assert_eq!(
-                msg(&result),
-                format!("Could not find a matching action for the \"{name}\" package manager.")
-            );
-            assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
-        }
-
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"changed": false})).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({"ansible_package_use": "dnf", "ansible_facts": {"pkg_mgr": "apt"}}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        assert!(!ran.expect("the item finished").failed());
-        let sent = batches_sent(&agent);
-        assert_eq!(sent.len(), 1, "{:?}", agent.sent);
-        assert_eq!(sent[0][0].module, "dnf", "the variable beats the facts");
-
-        let setup_failed = json!({
-            "failed": true,
-            "msg": "boom",
-            "ansible_facts": {"ansible_pkg_mgr": "apt"},
-        });
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, setup_failed).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(
-            msg(&result),
-            "Failed to fetch ansible_pkg_mgr to determine the package action backend: boom"
-        );
-        assert!(
-            !result.0.contains_key("ansible_facts"),
-            "a filtered setup is never kept, failed or not: {result:?}"
-        );
-        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
-
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"ansible_facts": {}, "changed": false})).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert_eq!(
-            msg(&result),
-            "Could not detect a package manager. Try using the \"use\" option."
-        );
-        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
-    }
-
-    /// Without gathered facts and without `use_backend`, a `dnf` task asks `setup` for
-    /// `ansible_pkg_mgr` alone, then runs `dnf` for `dnf`, `dnf4`, `yum` and `yum4` and `dnf5`
-    /// for `dnf5`, and its result carries the answer as `ansible_facts.pkg_mgr`, which enters the
-    /// host's facts as the host's own words. Measured on ansible-core 2.19.12 on a host that runs
-    /// `apt`: the `setup` goes out filtered and `gather_subset: ["!all"]`; the rest is read off
-    /// its `plugins/action/dnf.py`, since no host measured runs `dnf`.
-    ///
-    /// What would make this red: `dnf` still refused, or sent as a module of its own before the
-    /// question is asked; `yum` or a `4` name sent as a module the union does not hold; the
-    /// answer dropped from the result, where the reference keeps it - unlike `package`, whose
-    /// `setup` leaves nothing; or the fact recorded as trusted, which lets a host's answer be
-    /// rendered as a template.
-    #[tokio::test]
-    async fn a_dnf_task_asks_setup_then_runs_the_backend_it_names() {
-        use crate::action_plugins::Kind;
-        let mut stop = watch::channel(false).1;
-        for (answer, module) in [
-            ("dnf", "dnf"),
-            ("dnf4", "dnf"),
-            ("yum", "dnf"),
-            ("yum4", "dnf"),
-            ("dnf5", "dnf5"),
-        ] {
-            let mut agent = FakeAgent::answering(
-                [
-                    vec![state("ab", true)],
-                    one_result(
-                        1,
-                        json!({"ansible_facts": {"ansible_pkg_mgr": answer}, "changed": false}),
-                    )
-                    .to_vec(),
-                    one_result(2, json!({"changed": false, "results": []})).to_vec(),
-                ]
-                .concat(),
-            );
-            let (ran, _) = plugin_item(
-                Kind::Dnf,
-                json!({"name": "bash"}),
-                json!({}),
-                &mut agent,
-                &python3(),
-                &mut stop,
-            )
-            .await;
-            let sent = batches_sent(&agent);
-            let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
-            assert_eq!(modules, ["setup", module], "{answer}: {:?}", agent.sent);
-            assert_eq!(
-                Value::Object(sent[0][0].args.clone()),
-                json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
-            );
-            assert_eq!(
-                Value::Object(sent[1][0].args.clone()),
-                json!({"name": "bash"})
-            );
-            assert_eq!(
-                sent[1][0].payload.as_ref().map(|p| p.module_fqn.as_str()),
-                Some(format!("ansible.modules.{module}").as_str())
-            );
-            let result = ran.expect("the item finished");
-            assert_eq!(
-                Value::Object(result.0.clone()),
-                json!({"ansible_facts": {"pkg_mgr": answer}, "changed": false, "results": []}),
-                "{answer}"
-            );
-            let mut store = one_host_store();
-            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
-            let scope = crate::vars::Scope::default();
-            assert_eq!(
-                store.for_host("h1", &scope)["ansible_facts"]["pkg_mgr"],
-                json!(answer)
-            );
-            assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
-        }
-
-        // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
-        // rather than the facts, and installs with what it answers.
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(
-                    1,
-                    json!({"ansible_facts": {"ansible_pkg_mgr": "dnf"}, "changed": false}),
+    async fn a_dnf_task_runs_the_backend_it_names_or_fails_in_the_reference_s_words() {
+        {
+            use crate::action_plugins::Kind;
+            let mut stop = watch::channel(false).1;
+            for (answer, module) in [
+                ("dnf", "dnf"),
+                ("dnf4", "dnf"),
+                ("yum", "dnf"),
+                ("yum4", "dnf"),
+                ("dnf5", "dnf5"),
+            ] {
+                let mut agent = FakeAgent::answering(
+                    [
+                        vec![state("ab", true)],
+                        one_result(
+                            1,
+                            json!({"ansible_facts": {"ansible_pkg_mgr": answer}, "changed": false}),
+                        )
+                        .to_vec(),
+                        one_result(2, json!({"changed": false, "results": []})).to_vec(),
+                    ]
+                    .concat(),
+                );
+                let (ran, _) = plugin_item(
+                    Kind::Dnf,
+                    json!({"name": "bash"}),
+                    json!({}),
+                    &mut agent,
+                    &python3(),
+                    &mut stop,
                 )
-                .to_vec(),
-                one_result(2, json!({"changed": true})).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Dnf,
-            json!({"name": "bash", "use_backend": ""}),
-            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let modules: Vec<&str> = batches_sent(&agent)
-            .iter()
-            .map(|b| b[0].module.as_str())
-            .collect();
-        assert_eq!(modules, ["setup", "dnf"], "{:?}", agent.sent);
-        assert_eq!(
-            Value::Object(batches_sent(&agent)[1][0].args.clone()),
-            json!({"name": "bash"})
-        );
-        assert_eq!(
-            Value::Object(ran.expect("the item finished").0),
-            json!({"ansible_facts": {"pkg_mgr": "dnf"}, "changed": true})
-        );
+                .await;
+                let sent = batches_sent(&agent);
+                let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+                assert_eq!(modules, ["setup", module], "{answer}: {:?}", agent.sent);
+                assert_eq!(
+                    Value::Object(sent[0][0].args.clone()),
+                    json!({"filter": ["ansible_pkg_mgr"], "gather_subset": ["!all"]})
+                );
+                assert_eq!(
+                    Value::Object(sent[1][0].args.clone()),
+                    json!({"name": "bash"})
+                );
+                assert_eq!(
+                    sent[1][0].payload.as_ref().map(|p| p.module_fqn.as_str()),
+                    Some(format!("ansible.modules.{module}").as_str())
+                );
+                let result = ran.expect("the item finished");
+                assert_eq!(
+                    Value::Object(result.0.clone()),
+                    json!({"ansible_facts": {"pkg_mgr": answer}, "changed": false, "results": []}),
+                    "{answer}"
+                );
+                let mut store = one_host_store();
+                record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+                let scope = crate::vars::Scope::default();
+                assert_eq!(
+                    store.for_host("h1", &scope)["ansible_facts"]["pkg_mgr"],
+                    json!(answer)
+                );
+                assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
+            }
 
-        // Gathered facts that name a backend ask nothing, and the result carries nothing more
-        // than the module's; `use_backend` wins over the facts and never reaches the module
-        // (measured: `Running ansible.legacy.dnf5 as the backend for the dnf action plugin`).
-        for (args, running, module) in [
-            (
-                json!({"name": "bash"}),
-                json!({"ansible_facts": {"pkg_mgr": "dnf5"}}),
-                "dnf5",
-            ),
-            (
-                json!({"name": "bash", "use_backend": "dnf5"}),
-                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
-                "dnf5",
-            ),
-            (json!({"name": "bash", "use": "dnf4"}), json!({}), "dnf"),
-        ] {
-            let mut agent = FakeAgent::answering(
-                [
-                    vec![state("ab", true)],
-                    one_result(1, json!({"changed": false})).to_vec(),
-                ]
-                .concat(),
-            );
-            let (ran, _) =
-                plugin_item(Kind::Dnf, args, running, &mut agent, &python3(), &mut stop).await;
-            let sent = batches_sent(&agent);
-            assert_eq!(sent.len(), 1, "{:?}", agent.sent);
-            assert_eq!(sent[0][0].module, module);
-            assert_eq!(
-                Value::Object(sent[0][0].args.clone()),
-                json!({"name": "bash"})
-            );
-            assert_eq!(
-                Value::Object(ran.expect("the item finished").0),
-                json!({"changed": false})
-            );
-        }
-    }
-
-    /// A host whose `setup` names no `dnf` fails the task with the reference's two sentences, and
-    /// the `pkg_mgr` its result carries stays out of the host's facts. Measured on ansible-core
-    /// 2.19.12 on a host that runs `apt`: `AnsiballZ_setup.py` answers `apt`, the task fails with
-    /// a `msg` that is a list of two sentences - the stray `}` is in the reference's source - and
-    /// `ansible_facts.pkg_mgr` is undefined at the next task.
-    ///
-    /// What would make this red: a sentence of this engine's own, or one string where the
-    /// reference has two; `apt` sent after all; the failed result's facts recorded, which the
-    /// reference never does for a failed task; `use` and `use_backend` both taken; a
-    /// `use_backend` naming no backend failed without asking the host; or a failed `setup`
-    /// reported as the two sentences, which drops its cause.
-    #[tokio::test]
-    async fn a_dnf_task_on_a_host_without_dnf_fails_in_the_reference_s_words() {
-        use crate::action_plugins::Kind;
-        let undetected = json!([
-            "Could not detect which major revision of dnf is in use, which is required to determine module backend.",
-            "You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})",
-        ]);
-        let mut stop = watch::channel(false).1;
-        // A `use_backend` naming no backend asks the host too, as the reference does: its test
-        // of `VALID_BACKENDS` that runs the `setup` is not under the `auto`/`yum` one.
-        for args in [
-            json!({"name": "bash"}),
-            json!({"name": "bash", "use_backend": "apt"}),
-        ] {
+            // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
+            // rather than the facts, and installs with what it answers.
             let mut agent = FakeAgent::answering(
                 [
                     vec![state("ab", true)],
                     one_result(
                         1,
-                        json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                        json!({"ansible_facts": {"ansible_pkg_mgr": "dnf"}, "changed": false}),
                     )
                     .to_vec(),
+                    one_result(2, json!({"changed": true})).to_vec(),
                 ]
                 .concat(),
             );
             let (ran, _) = plugin_item(
                 Kind::Dnf,
-                args.clone(),
-                json!({}),
+                json!({"name": "bash", "use_backend": ""}),
+                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
                 &mut agent,
                 &python3(),
                 &mut stop,
             )
             .await;
-            let result = ran.expect("the item finished");
-            assert!(result.failed(), "{result:?}");
-            assert_eq!(result.0["msg"], undetected);
             let modules: Vec<&str> = batches_sent(&agent)
                 .iter()
                 .map(|b| b[0].module.as_str())
                 .collect();
-            assert_eq!(modules, ["setup"], "{args}: {:?}", agent.sent);
-            // The reference puts the answer in the result before it fails, so it is
-            // registered...
-            assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
-            // ...and not kept as a fact, because the task failed.
-            let mut store = one_host_store();
-            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
-            let host = store.for_host("h1", &crate::vars::Scope::default());
-            assert!(
-                host.get("ansible_facts")
-                    .and_then(|f| f.get("pkg_mgr"))
-                    .is_none(),
-                "{host:?}"
+            assert_eq!(modules, ["setup", "dnf"], "{:?}", agent.sent);
+            assert_eq!(
+                Value::Object(batches_sent(&agent)[1][0].args.clone()),
+                json!({"name": "bash"})
             );
+            assert_eq!(
+                Value::Object(ran.expect("the item finished").0),
+                json!({"ansible_facts": {"pkg_mgr": "dnf"}, "changed": true})
+            );
+
+            // Gathered facts that name a backend ask nothing, and the result carries nothing more
+            // than the module's; `use_backend` wins over the facts and never reaches the module
+            // (measured: `Running ansible.legacy.dnf5 as the backend for the dnf action plugin`).
+            for (args, running, module) in [
+                (
+                    json!({"name": "bash"}),
+                    json!({"ansible_facts": {"pkg_mgr": "dnf5"}}),
+                    "dnf5",
+                ),
+                (
+                    json!({"name": "bash", "use_backend": "dnf5"}),
+                    json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+                    "dnf5",
+                ),
+                (json!({"name": "bash", "use": "dnf4"}), json!({}), "dnf"),
+            ] {
+                let mut agent = FakeAgent::answering(
+                    [
+                        vec![state("ab", true)],
+                        one_result(1, json!({"changed": false})).to_vec(),
+                    ]
+                    .concat(),
+                );
+                let (ran, _) =
+                    plugin_item(Kind::Dnf, args, running, &mut agent, &python3(), &mut stop).await;
+                let sent = batches_sent(&agent);
+                assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+                assert_eq!(sent[0][0].module, module);
+                assert_eq!(
+                    Value::Object(sent[0][0].args.clone()),
+                    json!({"name": "bash"})
+                );
+                assert_eq!(
+                    Value::Object(ran.expect("the item finished").0),
+                    json!({"changed": false})
+                );
+            }
         }
-
-        let mut agent = FakeAgent::answering(Vec::new());
-        let (ran, _) = plugin_item(
-            Kind::Dnf,
-            json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(
-            result.0["msg"],
-            json!("parameters are mutually exclusive: ('use', 'use_backend')")
-        );
-        assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
-
-        // A `setup` that failed fails the task with its cause under the reference's sentence,
-        // read off `plugins/action/dnf.py`, and without the facts it carried.
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(
-                    1,
-                    json!({"failed": true, "msg": "boom", "ansible_facts": {"ansible_pkg_mgr": "dnf"}}),
+        {
+            use crate::action_plugins::Kind;
+            let undetected = json!([
+                "Could not detect which major revision of dnf is in use, which is required to determine module backend.",
+                "You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})",
+            ]);
+            let mut stop = watch::channel(false).1;
+            // A `use_backend` naming no backend asks the host too, as the reference does: its test
+            // of `VALID_BACKENDS` that runs the `setup` is not under the `auto`/`yum` one.
+            for args in [
+                json!({"name": "bash"}),
+                json!({"name": "bash", "use_backend": "apt"}),
+            ] {
+                let mut agent = FakeAgent::answering(
+                    [
+                        vec![state("ab", true)],
+                        one_result(
+                            1,
+                            json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                        )
+                        .to_vec(),
+                    ]
+                    .concat(),
+                );
+                let (ran, _) = plugin_item(
+                    Kind::Dnf,
+                    args.clone(),
+                    json!({}),
+                    &mut agent,
+                    &python3(),
+                    &mut stop,
                 )
-                .to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Dnf,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(
-            result.0["msg"],
-            json!("Failed to fetch ansible_pkg_mgr to determine the dnf action backend: boom")
-        );
-        assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
-        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
-    }
+                .await;
+                let result = ran.expect("the item finished");
+                assert!(result.failed(), "{result:?}");
+                assert_eq!(result.0["msg"], undetected);
+                let modules: Vec<&str> = batches_sent(&agent)
+                    .iter()
+                    .map(|b| b[0].module.as_str())
+                    .collect();
+                assert_eq!(modules, ["setup"], "{args}: {:?}", agent.sent);
+                // The reference puts the answer in the result before it fails, so it is
+                // registered...
+                assert_eq!(result.0["ansible_facts"], json!({"pkg_mgr": "apt"}));
+                // ...and not kept as a fact, because the task failed.
+                let mut store = one_host_store();
+                record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+                let host = store.for_host("h1", &crate::vars::Scope::default());
+                assert!(
+                    host.get("ansible_facts")
+                        .and_then(|f| f.get("pkg_mgr"))
+                        .is_none(),
+                    "{host:?}"
+                );
+            }
 
-    /// `service` runs the init system the host names, drops what `systemd` does not take with the
-    /// reference's warning, and falls back to `service` for a name no module carries: each measured
-    /// on ansible-core 2.19.12.
-    ///
-    /// What would make this red: `sleep` sent to `systemd`, the warning lost or worded otherwise,
-    /// `use:` read without lowering it, or an unknown name failing where the reference runs
-    /// `service`.
-    #[tokio::test]
-    async fn a_service_task_runs_the_init_system_the_host_names() {
-        use crate::action_plugins::Kind;
-        let mut stop = watch::channel(false).1;
-        // Measured without facts and with `sleep:` given: `AnsiballZ_setup.py`, then `Running
-        // ansible.legacy.systemd` and the warning.
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(
-                    1,
-                    json!({"ansible_facts": {"ansible_service_mgr": "systemd"}, "changed": false}),
-                )
-                .to_vec(),
-                one_result(2, json!({"changed": false})).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, warnings) = plugin_item(
-            Kind::Service,
-            json!({"name": "cron", "state": "started", "sleep": 2, "use": "auto"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        assert!(!ran.expect("the item finished").failed());
-        let sent = batches_sent(&agent);
-        let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
-        assert_eq!(modules, ["setup", "systemd"], "{:?}", agent.sent);
-        assert_eq!(
-            Value::Object(sent[0][0].args.clone()),
-            json!({"filter": ["ansible_service_mgr"], "gather_subset": ["!all"]})
-        );
-        assert_eq!(
-            Value::Object(sent[1][0].args.clone()),
-            json!({"name": "cron", "state": "started"})
-        );
-        assert_eq!(
-            warnings,
-            ["Ignoring \"sleep\" as it is not used in \"systemd\""]
-        );
+            let mut agent = FakeAgent::answering(Vec::new());
+            let (ran, _) = plugin_item(
+                Kind::Dnf,
+                json!({"name": "bash", "use": "dnf", "use_backend": "dnf5"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                result.0["msg"],
+                json!("parameters are mutually exclusive: ('use', 'use_backend')")
+            );
+            assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
 
-        // An unknown name runs `service`, as measured; a `use:` in capitals is lowered, as the
-        // reference's plugin does. No `setup` either way.
-        for (asked, module) in [("nosuchmgr", "service"), ("SystemD", "systemd")] {
+            // A `setup` that failed fails the task with its cause under the reference's sentence,
+            // read off `plugins/action/dnf.py`, and without the facts it carried.
             let mut agent = FakeAgent::answering(
                 [
                     vec![state("ab", true)],
-                    one_result(1, json!({"changed": false})).to_vec(),
+                    one_result(
+                        1,
+                        json!({"failed": true, "msg": "boom", "ansible_facts": {"ansible_pkg_mgr": "dnf"}}),
+                    )
+                    .to_vec(),
                 ]
                 .concat(),
             );
             let (ran, _) = plugin_item(
+                Kind::Dnf,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                result.0["msg"],
+                json!("Failed to fetch ansible_pkg_mgr to determine the dnf action backend: boom")
+            );
+            assert!(!result.0.contains_key("ansible_facts"), "{result:?}");
+            assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+        }
+    }
+
+    /// A service task, a lost link, a failed module and the files a sub-task stages.
+    #[tokio::test]
+    async fn a_plugin_item_ends_the_way_its_module_and_link_do() {
+        {
+            use crate::action_plugins::Kind;
+            let mut stop = watch::channel(false).1;
+            // Measured without facts and with `sleep:` given: `AnsiballZ_setup.py`, then `Running
+            // ansible.legacy.systemd` and the warning.
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_service_mgr": "systemd"}, "changed": false}),
+                    )
+                    .to_vec(),
+                    one_result(2, json!({"changed": false})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, warnings) = plugin_item(
                 Kind::Service,
-                json!({"name": "cron", "use": asked}),
+                json!({"name": "cron", "state": "started", "sleep": 2, "use": "auto"}),
                 json!({}),
                 &mut agent,
                 &python3(),
@@ -5607,282 +5358,259 @@ mod tests {
             .await;
             assert!(!ran.expect("the item finished").failed());
             let sent = batches_sent(&agent);
-            assert_eq!(sent.len(), 1, "{:?}", agent.sent);
-            assert_eq!(sent[0][0].module, module);
+            let modules: Vec<&str> = sent.iter().map(|b| b[0].module.as_str()).collect();
+            assert_eq!(modules, ["setup", "systemd"], "{:?}", agent.sent);
             assert_eq!(
                 Value::Object(sent[0][0].args.clone()),
-                json!({"name": "cron"})
+                json!({"filter": ["ansible_service_mgr"], "gather_subset": ["!all"]})
             );
+            assert_eq!(
+                Value::Object(sent[1][0].args.clone()),
+                json!({"name": "cron", "state": "started"})
+            );
+            assert_eq!(
+                warnings,
+                ["Ignoring \"sleep\" as it is not used in \"systemd\""]
+            );
+
+            // An unknown name runs `service`, as measured; a `use:` in capitals is lowered, as the
+            // reference's plugin does. No `setup` either way.
+            for (asked, module) in [("nosuchmgr", "service"), ("SystemD", "systemd")] {
+                let mut agent = FakeAgent::answering(
+                    [
+                        vec![state("ab", true)],
+                        one_result(1, json!({"changed": false})).to_vec(),
+                    ]
+                    .concat(),
+                );
+                let (ran, _) = plugin_item(
+                    Kind::Service,
+                    json!({"name": "cron", "use": asked}),
+                    json!({}),
+                    &mut agent,
+                    &python3(),
+                    &mut stop,
+                )
+                .await;
+                assert!(!ran.expect("the item finished").failed());
+                let sent = batches_sent(&agent);
+                assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+                assert_eq!(sent[0][0].module, module);
+                assert_eq!(
+                    Value::Object(sent[0][0].args.clone()),
+                    json!({"name": "cron"})
+                );
+            }
+        }
+        {
+            use crate::action_plugins::Kind;
+            let setup = || {
+                one_result(
+                    1,
+                    json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
+                )
+                .to_vec()
+            };
+            let mut stop = watch::channel(false).1;
+
+            // The agent goes away once the `setup` is in.
+            let mut agent = FakeAgent::answering([vec![state("ab", true)], setup()].concat());
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            assert!(matches!(ran, Err(Err(_))), "{ran:?}");
+            assert_eq!(batches_sent(&agent).len(), 2, "{:?}", agent.sent);
+
+            // Interrupted while the `setup` runs: the agent is asked to stop it, and nothing follows.
+            let (stop_tx, mut stopping) = watch::channel(false);
+            let mut agent = FakeAgent::answering(vec![state("ab", true)]);
+            agent.hangs_when_empty = true;
+            stop_tx.send(true).expect("the receiver is alive");
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stopping,
+            )
+            .await;
+            assert!(
+                matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
+                "{ran:?}"
+            );
+            let modules: Vec<&str> = batches_sent(&agent)
+                .iter()
+                .map(|b| b[0].module.as_str())
+                .collect();
+            assert_eq!(modules, ["setup"]);
+            assert!(
+                agent
+                    .sent
+                    .iter()
+                    .any(|m| matches!(m, ToAgent::Cancel { .. })),
+                "{:?}",
+                agent.sent
+            );
+
+            // No interpreter: the item fails, per task and rescuable, and nothing is sent.
+            let mut agent = FakeAgent::answering(Vec::new());
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                json!({"name": "bash"}),
+                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+                &mut agent,
+                &[],
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("a task failure, not the host's end");
+            assert!(msg(&result).contains("no python interpreter"), "{result:?}");
+            assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+
+            // The batch ended cleanly with no result in it.
+            let mut agent = FakeAgent::answering(vec![
+                state("ab", true),
+                FromAgent::BatchDone {
+                    batch: 1,
+                    outcome: BatchOutcome::Completed,
+                },
+            ]);
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                json!({"name": "bash"}),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item reports");
+            assert!(result.failed(), "{result:?}");
+            assert!(msg(&result).contains("'setup'"), "{result:?}");
+        }
+        {
+            use crate::action_plugins::Kind;
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(vec![
+                state("ab", true),
+                FromAgent::TaskResult {
+                    batch: 1,
+                    index: 0,
+                    result: TaskResult(vars(json!({"failed": true, "msg": "No package matching"}))),
+                    ran: None,
+                },
+                FromAgent::BatchDone {
+                    batch: 1,
+                    outcome: BatchOutcome::Failed { at: 0 },
+                },
+            ]);
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                json!({"name": "nosuchpackage"}),
+                json!({"ansible_facts": {"pkg_mgr": "apt"}}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(msg(&result), "No package matching");
+        }
+        {
+            let sub = crate::action_plugins::Sub {
+                module: "copy",
+                args: Map::new(),
+                files: vec![(
+                    "src".to_string(),
+                    crate::action_plugins::FileBlob {
+                        hash: "cd".into(),
+                        b64: "eA==".into(),
+                    },
+                )],
+            };
+            let union = union_of("ab", &["copy"]);
+            let built = sub_task(
+                &task("copy"),
+                &bare_item(),
+                &sub,
+                Some(&union),
+                &python3(),
+                None,
+            )
+            .expect("a sub-task with files travels");
+            assert_eq!(built.module, "copy");
+            assert_eq!(
+                built.files,
+                [StagedFile {
+                    arg: "src".into(),
+                    blob: "cd".into(),
+                }]
+            );
+            assert!(!built.force_python);
+            // A plugin's sub-task follows the run's switch like a task the playbook wrote.
+            let mut off = union.clone();
+            off.natives.enabled = false;
+            let built = sub_task(
+                &task("copy"),
+                &bare_item(),
+                &sub,
+                Some(&off),
+                &python3(),
+                None,
+            )
+            .expect("a sub-task with files travels");
+            assert!(built.force_python, "{built:?}");
+            let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
+                .expect_err("a module the union lacks is never sent as native");
+            assert!(msg(&failure).contains("python payload"), "{failure:?}");
         }
     }
 
-    /// What ends a plugin's item other than its own result: the link lost between the `setup` and
-    /// the module, an interruption during the `setup`, a host with no interpreter, a result the
-    /// agent never sent.
-    ///
-    /// What would make this red: a lost link or an interruption turned into a result, which the
-    /// driver would record and report for a task that never ran its module; the module sent after
-    /// all; or a batch that ended with no result read as a finished item, which reports `ok` for
-    /// a sub-task nobody saw end.
-    #[tokio::test]
-    async fn a_plugin_item_ends_the_way_its_link_does() {
-        use crate::action_plugins::Kind;
-        let setup = || {
-            one_result(
-                1,
-                json!({"ansible_facts": {"ansible_pkg_mgr": "apt"}, "changed": false}),
-            )
-            .to_vec()
-        };
-        let mut stop = watch::channel(false).1;
-
-        // The agent goes away once the `setup` is in.
-        let mut agent = FakeAgent::answering([vec![state("ab", true)], setup()].concat());
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        assert!(matches!(ran, Err(Err(_))), "{ran:?}");
-        assert_eq!(batches_sent(&agent).len(), 2, "{:?}", agent.sent);
-
-        // Interrupted while the `setup` runs: the agent is asked to stop it, and nothing follows.
-        let (stop_tx, mut stopping) = watch::channel(false);
-        let mut agent = FakeAgent::answering(vec![state("ab", true)]);
-        agent.hangs_when_empty = true;
-        stop_tx.send(true).expect("the receiver is alive");
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stopping,
-        )
-        .await;
-        assert!(
-            matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
-            "{ran:?}"
-        );
-        let modules: Vec<&str> = batches_sent(&agent)
-            .iter()
-            .map(|b| b[0].module.as_str())
-            .collect();
-        assert_eq!(modules, ["setup"]);
-        assert!(
-            agent
-                .sent
-                .iter()
-                .any(|m| matches!(m, ToAgent::Cancel { .. })),
-            "{:?}",
-            agent.sent
-        );
-
-        // No interpreter: the item fails, per task and rescuable, and nothing is sent.
-        let mut agent = FakeAgent::answering(Vec::new());
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
-            &mut agent,
-            &[],
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("a task failure, not the host's end");
-        assert!(msg(&result).contains("no python interpreter"), "{result:?}");
-        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
-
-        // The batch ended cleanly with no result in it.
-        let mut agent = FakeAgent::answering(vec![
-            state("ab", true),
-            FromAgent::BatchDone {
-                batch: 1,
-                outcome: BatchOutcome::Completed,
-            },
-        ]);
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "bash"}),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item reports");
-        assert!(result.failed(), "{result:?}");
-        assert!(msg(&result).contains("'setup'"), "{result:?}");
-    }
-
-    /// A module that failed ends its item with that failure and not the task's batch, so the
-    /// items of a loop behind it still run and `report_task` judges the task from all of them.
-    ///
-    /// What would make this red: `BatchOutcome::Failed` read as the end of the batch, which stops
-    /// a three-item loop at its second item where the reference runs all three.
-    #[tokio::test]
-    async fn a_failed_module_is_its_item_s_result_and_the_loop_goes_on() {
-        use crate::action_plugins::Kind;
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(vec![
-            state("ab", true),
-            FromAgent::TaskResult {
-                batch: 1,
-                index: 0,
-                result: TaskResult(vars(json!({"failed": true, "msg": "No package matching"}))),
-                ran: None,
-            },
-            FromAgent::BatchDone {
-                batch: 1,
-                outcome: BatchOutcome::Failed { at: 0 },
-            },
-        ]);
-        let (ran, _) = plugin_item(
-            Kind::Package,
-            json!({"name": "nosuchpackage"}),
-            json!({"ansible_facts": {"pkg_mgr": "apt"}}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(msg(&result), "No package matching");
-    }
-
-    /// A sub-task that stages a file names it on the wire, under its argument and by its hash
-    /// alone, and a module the union lacks is never sent as native.
-    ///
-    /// What would make this red: the sub-task sent without its file, which runs `copy` against a
-    /// source that is not there - or, worse, against whatever the argument names on the host.
+    /// The playbook interpreter wins, an explicit one is used as given, and a missing one says so.
     #[test]
-    fn a_sub_task_names_the_files_it_stages() {
-        let sub = crate::action_plugins::Sub {
-            module: "copy",
-            args: Map::new(),
-            files: vec![(
-                "src".to_string(),
-                crate::action_plugins::FileBlob {
-                    hash: "cd".into(),
-                    b64: "eA==".into(),
-                },
-            )],
-        };
-        let union = union_of("ab", &["copy"]);
-        let built = sub_task(
-            &task("copy"),
-            &bare_item(),
-            &sub,
-            Some(&union),
-            &python3(),
-            None,
-        )
-        .expect("a sub-task with files travels");
-        assert_eq!(built.module, "copy");
-        assert_eq!(
-            built.files,
-            [StagedFile {
-                arg: "src".into(),
-                blob: "cd".into(),
-            }]
-        );
-        assert!(!built.force_python);
-        // A plugin's sub-task follows the run's switch like a task the playbook wrote.
-        let mut off = union.clone();
-        off.natives.enabled = false;
-        let built = sub_task(
-            &task("copy"),
-            &bare_item(),
-            &sub,
-            Some(&off),
-            &python3(),
-            None,
-        )
-        .expect("a sub-task with files travels");
-        assert!(built.force_python, "{built:?}");
-        let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
-            .expect_err("a module the union lacks is never sent as native");
-        assert!(msg(&failure).contains("python payload"), "{failure:?}");
-    }
-
-    /// What the playbook asked for is read under the name the reference uses, off the map of
-    /// the host the module will run on.
-    ///
-    /// What would make this red: another key, which silently ignores every
-    /// `ansible_python_interpreter` a playbook sets and runs modules under the agent's first
-    /// candidate instead.
-    #[test]
-    fn the_asked_for_interpreter_is_read_under_the_reference_name() {
-        assert_eq!(requested_interpreter(&vars(json!({}))), None);
-        assert_eq!(
-            requested_interpreter(&vars(json!({"ansible_python_interpreter": "/opt/py"}))),
-            Some("/opt/py".to_string())
-        );
-    }
-
-    /// The interpreter a Python task runs under: the playbook's own choice when it made one,
-    /// and otherwise the best of what the agent found on the host.
-    ///
-    /// What would make this red: the reported list preferred over the variable, which runs a
-    /// module under an interpreter the playbook explicitly did not ask for.
-    #[test]
-    fn the_playbook_interpreter_wins_over_what_the_agent_found() {
-        let found = [
-            "/usr/bin/python3.12".to_string(),
-            "/usr/bin/python3".to_string(),
-        ];
-        assert_eq!(
-            chosen_interpreter(None, &found).expect("the best of the two"),
-            "/usr/bin/python3.12"
-        );
-        assert_eq!(
-            chosen_interpreter(Some("/usr/bin/python3"), &found)
-                .expect("what the playbook asked for"),
-            "/usr/bin/python3"
-        );
-    }
-
-    /// An interpreter the playbook named is used as given, found by the agent or not.
-    ///
-    /// What would make this red: the reported list read as an allow-list. It is the
-    /// **auto-discovery** list - eight names looked for on `PATH` - so a real interpreter
-    /// somewhere it never looks, `/opt/python3.12/bin/python`, is not in it and would be refused
-    /// although the reference runs it happily. The measured rc 127 and
-    /// `The module interpreter ... was not found.` belong to an interpreter that is not there at
-    /// all, which is a thing only the host can find out, by trying to start it.
-    #[test]
-    fn an_explicit_interpreter_is_used_as_given() {
-        assert_eq!(
-            chosen_interpreter(
-                Some("/opt/python3.12/bin/python"),
-                &["/usr/bin/python3".to_string()]
-            )
-            .expect("the playbook named it, so it travels"),
-            "/opt/python3.12/bin/python"
-        );
-    }
-
-    /// A host whose agent reported no interpreter fails its Python tasks saying that the agent
-    /// reported none.
-    ///
-    /// What would make this red: a sentence claiming the host has no Python. An agent older than
-    /// the interpreter list reports none exactly as a host with none does - the controller
-    /// uploads the agent it shipped with, so the two are the same bytes on the wire - and an
-    /// operator sent to look at the host's Python would find it there and be none the wiser.
-    #[test]
-    fn a_host_whose_agent_reported_no_interpreter_says_so_that_way() {
-        let failure = chosen_interpreter(None, &[]).expect_err("nothing to run a module under");
-        let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
-        assert!(
-            msg.contains("the agent on this host reported no python"),
-            "{msg}"
-        );
-        assert!(failure.failed(), "{failure:?}");
+    fn the_playbook_interpreter_wins_and_a_missing_one_says_so() {
+        {
+            let found = [
+                "/usr/bin/python3.12".to_string(),
+                "/usr/bin/python3".to_string(),
+            ];
+            assert_eq!(
+                chosen_interpreter(None, &found).expect("the best of the two"),
+                "/usr/bin/python3.12"
+            );
+            assert_eq!(
+                chosen_interpreter(Some("/usr/bin/python3"), &found)
+                    .expect("what the playbook asked for"),
+                "/usr/bin/python3"
+            );
+        }
+        {
+            assert_eq!(
+                chosen_interpreter(
+                    Some("/opt/python3.12/bin/python"),
+                    &["/usr/bin/python3".to_string()]
+                )
+                .expect("the playbook named it, so it travels"),
+                "/opt/python3.12/bin/python"
+            );
+        }
+        {
+            let failure = chosen_interpreter(None, &[]).expect_err("nothing to run a module under");
+            let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
+            assert!(
+                msg.contains("the agent on this host reported no python"),
+                "{msg}"
+            );
+            assert!(failure.failed(), "{failure:?}");
+        }
     }
 
     /// The two halves of a payload meet here or the step does not travel.
@@ -6011,76 +5739,62 @@ mod tests {
         }
     }
 
-    /// A batch holding one Python task among native ones gets the blob before any of it goes
-    /// out, and gets it once.
-    ///
-    /// What would make this red: the pre-flight asking only when every task of the batch carries
-    /// a payload - a batch is a run of tasks with the same connection, not the same module, so
-    /// one Python task among natives is the ordinary case and the one that would go out with
-    /// nothing on the host.
+    /// A batch gets its blob first, never goes out unconfirmed, and asks nothing when it carries no payload.
     #[tokio::test]
-    async fn a_batch_carrying_a_payload_gets_the_blob_before_it_goes_out() {
-        let mut logs = Vec::new();
-        let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", true)]);
-        let tasks = vec![
-            protocol_task(&task("command"), &bare_item(), None),
-            protocol_task(
+    async fn a_batch_goes_out_only_with_the_blob_its_payload_needs() {
+        {
+            let mut logs = Vec::new();
+            let mut agent = FakeAgent::answering(vec![state("ab", false), state("ab", true)]);
+            let tasks = vec![
+                protocol_task(&task("command"), &bare_item(), None),
+                protocol_task(
+                    &task("ping"),
+                    &bare_item(),
+                    Some((&module_payload("ab"), "/usr/bin/python3")),
+                ),
+            ];
+            blob_preflight(
+                &mut agent,
+                "h1",
+                &tasks,
+                Some(&union_named("ab")),
+                &[],
+                &mut logs,
+            )
+            .await
+            .expect("the blob went first");
+            assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+        }
+        {
+            let mut logs = Vec::new();
+            let mut agent = FakeAgent::answering(Vec::new());
+            let tasks = vec![protocol_task(
                 &task("ping"),
                 &bare_item(),
                 Some((&module_payload("ab"), "/usr/bin/python3")),
-            ),
-        ];
-        blob_preflight(
-            &mut agent,
-            "h1",
-            &tasks,
-            Some(&union_named("ab")),
-            &[],
-            &mut logs,
-        )
-        .await
-        .expect("the blob went first");
-        assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
-    }
-
-    /// A batch naming a payload the link never confirmed does not go out at all.
-    ///
-    /// What would make this red: the confirmation dropped from the pre-flight, which sends the
-    /// batch and lets the agent fail on a payload it was never given - a failure the operator
-    /// reads as the module's own.
-    #[tokio::test]
-    async fn a_batch_whose_payload_the_link_never_confirmed_never_goes_out() {
-        let mut logs = Vec::new();
-        let mut agent = FakeAgent::answering(Vec::new());
-        let tasks = vec![protocol_task(
-            &task("ping"),
-            &bare_item(),
-            Some((&module_payload("ab"), "/usr/bin/python3")),
-        )];
-        let err = blob_preflight(&mut agent, "h1", &tasks, None, &[], &mut logs)
+            )];
+            let err = blob_preflight(&mut agent, "h1", &tasks, None, &[], &mut logs)
+                .await
+                .expect_err("no link confirmed this payload");
+            assert!(err.contains("ab"), "{err}");
+            assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+        }
+        {
+            let mut logs = Vec::new();
+            let mut agent = FakeAgent::answering(Vec::new());
+            let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
+            blob_preflight(
+                &mut agent,
+                "h1",
+                &tasks,
+                Some(&union_named("ab")),
+                &[],
+                &mut logs,
+            )
             .await
-            .expect_err("no link confirmed this payload");
-        assert!(err.contains("ab"), "{err}");
-        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
-    }
-
-    /// A batch of native tasks asks the agent nothing about blobs, whatever the run has built.
-    #[tokio::test]
-    async fn a_batch_without_a_payload_asks_the_agent_nothing() {
-        let mut logs = Vec::new();
-        let mut agent = FakeAgent::answering(Vec::new());
-        let tasks = vec![protocol_task(&task("command"), &bare_item(), None)];
-        blob_preflight(
-            &mut agent,
-            "h1",
-            &tasks,
-            Some(&union_named("ab")),
-            &[],
-            &mut logs,
-        )
-        .await
-        .expect("nothing to ask for");
-        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+            .expect("nothing to ask for");
+            assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+        }
     }
 
     /// A task whose payload names a blob this link never confirmed is a controller bug, and it
@@ -6154,73 +5868,107 @@ mod tests {
         assert!(agent.sent.is_empty(), "{:?}", agent.sent);
     }
 
-    /// A link lost while a file is staged says it was the file, not a module payload.
-    ///
-    /// What would make this red: the staging error left in the words of the payload exchange,
-    /// which sends an operator looking for a module payload that was never involved.
+    /// A link lost while staging, and a file the agent cannot store, fail the item and name the file.
     #[tokio::test]
-    async fn a_link_lost_while_staging_names_the_file() {
-        let blob = hello_blob();
-        let mut agent = FakeAgent::answering(Vec::new());
-        let err = stage_files(&mut agent, "h1", &[("src".into(), blob)], &mut Vec::new())
-            .await
-            .expect_err("the agent stopped");
-        assert!(
-            err.starts_with("staging the file for 'src': ") && !err.contains("module payload"),
-            "{err}"
-        );
-    }
-
-    /// A file the agent refuses to store fails the item with the agent's reason, and nothing the
-    /// plugin would add to a module's result: the module never ran, as the reference's action
-    /// fails on a transfer that raised, before any `diff` or `checksum` is put under a result.
-    ///
-    /// What would make this red: the storing error handed to the plugin as the `copy` sub-task's
-    /// result, which `Copy::finish` dresses with `diff: []` and the local checksum.
-    #[tokio::test]
-    async fn a_file_the_agent_cannot_store_fails_the_item_undressed() {
-        use crate::action_plugins::Kind;
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![
-                    FromAgent::Log {
-                        level: volant_protocol::LogLevel::Error,
-                        message: "no space left".into(),
-                    },
-                    state(&blob.hash, false),
-                ],
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Copy,
-            copy_args("/tmp/v/full"),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item finished");
-        assert!(result.failed(), "{result:?}");
-        assert!(
-            msg(&result).starts_with("the agent could not store the file for 'src'"),
-            "{result:?}"
-        );
-        assert!(
-            !result.0.contains_key("diff") && !result.0.contains_key("checksum"),
-            "{result:?}"
-        );
-        assert_eq!(
-            batches_sent(&agent).len(),
-            1,
-            "only the stat ran: {:?}",
-            agent.sent
-        );
+    async fn a_file_that_cannot_be_staged_fails_its_item_and_names_the_file() {
+        {
+            let blob = hello_blob();
+            let mut agent = FakeAgent::answering(Vec::new());
+            let err = stage_files(&mut agent, "h1", &[("src".into(), blob)], &mut Vec::new())
+                .await
+                .expect_err("the agent stopped");
+            assert!(
+                err.starts_with("staging the file for 'src': ") && !err.contains("module payload"),
+                "{err}"
+            );
+        }
+        {
+            use crate::action_plugins::Kind;
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![
+                        FromAgent::Log {
+                            level: volant_protocol::LogLevel::Error,
+                            message: "no space left".into(),
+                        },
+                        state(&blob.hash, false),
+                    ],
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Copy,
+                copy_args("/tmp/v/full"),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert!(
+                msg(&result).starts_with("the agent could not store the file for 'src'"),
+                "{result:?}"
+            );
+            assert!(
+                !result.0.contains_key("diff") && !result.0.contains_key("checksum"),
+                "{result:?}"
+            );
+            assert_eq!(
+                batches_sent(&agent).len(),
+                1,
+                "only the stat ran: {:?}",
+                agent.sent
+            );
+        }
+        {
+            use crate::action_plugins::Kind;
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![
+                        FromAgent::Log {
+                            level: volant_protocol::LogLevel::Error,
+                            message: format!(
+                                "storing payload {}: No space left on device (os error 28)",
+                                blob.hash
+                            ),
+                        },
+                        state(&blob.hash, false),
+                    ],
+                ]
+                .concat(),
+            );
+            let (ran, _) = plugin_item(
+                Kind::Copy,
+                copy_args("/tmp/v/full"),
+                json!({}),
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("a task failure, not the host's end");
+            assert!(result.failed(), "{result:?}");
+            assert!(
+                msg(&result).contains("'src'")
+                    && msg(&result).contains("No space left on device (os error 28)"),
+                "{result:?}"
+            );
+            let modules: Vec<&str> = batches_sent(&agent)
+                .iter()
+                .map(|b| b[0].module.as_str())
+                .collect();
+            assert_eq!(modules, ["stat"], "no copy without its file");
+        }
     }
 
     /// A batch with no task in it is not sent: there is nothing for the agent to answer, and the
@@ -6440,90 +6188,74 @@ mod tests {
             .collect()
     }
 
-    /// `k3s_server`'s `Copy k3s.yaml to second file`: a `remote_src` copy with `retries: 3` and
-    /// no `until`, which succeeds the first time. Measured on ansible-core 2.19.12, the same
-    /// shape on `localhost`: `attempts=1`, and no retry line.
-    ///
-    /// What would make this red: the retry loop left out of the plugin path, which gives a
-    /// result with no `attempts`; or a passing attempt retried, which sends the copy again.
+    /// A retried copy that succeeds runs once; one that fails replays its sequence and stages its file again.
     #[tokio::test]
-    async fn a_retried_copy_that_succeeds_runs_once_and_says_so() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"changed": true})).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, lefts) = copy_attempts(
-            &retried_copy(3),
-            json!({"src": "/etc/rancher/k3s/k3s.yaml", "dest": "/etc/rancher/k3s/k3s-copy.yaml", "mode": "0600", "remote_src": true}),
-            &mut agent,
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert!(!result.failed(), "{result:?}");
-        assert_eq!(result.0["attempts"], json!(1));
-        assert_eq!(lefts, Vec::<u32>::new());
-        assert_eq!(modules_sent(&agent), ["copy"]);
-    }
-
-    /// A `copy` into a directory that does not exist, under `retries: 2`: each attempt replays
-    /// the whole sequence, `stat` then `copy`, and stages the source again, because the agent
-    /// consumed the file the first attempt staged. Measured on ansible-core 2.19.12, the same
-    /// task on `localhost`: `FAILED - RETRYING ... (2 retries left)`, then `(1 retries left)`,
-    /// then `fatal` with `"attempts": 2` - after **three** runs, the first and two retries, as
-    /// `task_executor.py` runs them.
-    ///
-    /// What would make this red: the plugin kept across attempts, which resumes after its last
-    /// sub-task instead of starting again; the staged file reused from the first attempt, which
-    /// sends a `copy` naming a blob the agent no longer holds; one run fewer than the reference;
-    /// or the retry counts wrong.
-    #[tokio::test]
-    async fn a_retried_copy_replays_its_whole_sequence_and_stages_its_file_again() {
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let missing = json!({"failed": true, "msg": "Destination directory /tmp/volant-nosuch does not exist"});
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(2, missing.clone()).to_vec(),
-                one_result(3, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(4, missing.clone()).to_vec(),
-                one_result(5, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(6, missing).to_vec(),
-            ]
-            .concat(),
-        );
-        let (ran, lefts) = copy_attempts(
-            &retried_copy(2),
-            copy_args("/tmp/volant-nosuch/hello.txt"),
-            &mut agent,
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(result.0["attempts"], json!(2));
-        assert_eq!(lefts, [2, 1], "`(2 retries left)` then `(1 retries left)`");
-        assert_eq!(
-            modules_sent(&agent),
-            ["stat", "copy", "stat", "copy", "stat", "copy"]
-        );
-        let staged = agent
-            .sent
-            .iter()
-            .filter(
-                |m| matches!(m, ToAgent::PutBlob { hash, staged: true, .. } if *hash == blob.hash),
+    async fn a_retried_copy_runs_once_or_replays_its_whole_sequence() {
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"changed": true})).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, lefts) = copy_attempts(
+                &retried_copy(3),
+                json!({"src": "/etc/rancher/k3s/k3s.yaml", "dest": "/etc/rancher/k3s/k3s-copy.yaml", "mode": "0600", "remote_src": true}),
+                &mut agent,
+                &mut stop,
             )
-            .count();
-        assert_eq!(staged, 3, "{:?}", agent.sent);
+            .await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert!(!result.failed(), "{result:?}");
+            assert_eq!(result.0["attempts"], json!(1));
+            assert_eq!(lefts, Vec::<u32>::new());
+            assert_eq!(modules_sent(&agent), ["copy"]);
+        }
+        {
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let missing = json!({"failed": true, "msg": "Destination directory /tmp/volant-nosuch does not exist"});
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(2, missing.clone()).to_vec(),
+                    one_result(3, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(4, missing.clone()).to_vec(),
+                    one_result(5, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(6, missing).to_vec(),
+                ]
+                .concat(),
+            );
+            let (ran, lefts) = copy_attempts(
+                &retried_copy(2),
+                copy_args("/tmp/volant-nosuch/hello.txt"),
+                &mut agent,
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(result.0["attempts"], json!(2));
+            assert_eq!(lefts, [2, 1], "`(2 retries left)` then `(1 retries left)`");
+            assert_eq!(
+                modules_sent(&agent),
+                ["stat", "copy", "stat", "copy", "stat", "copy"]
+            );
+            let staged = agent
+                .sent
+                .iter()
+                .filter(
+                    |m| matches!(m, ToAgent::PutBlob { hash, staged: true, .. } if *hash == blob.hash),
+                )
+                .count();
+            assert_eq!(staged, 3, "{:?}", agent.sent);
+        }
     }
 
     /// The attempt rule on its own, for `retries: 2` and a run that keeps failing: a retry after
@@ -6654,247 +6386,201 @@ mod tests {
         );
     }
 
-    /// A `delay` Python's clock cannot hold fails the item where the reference's `time.sleep`
-    /// raises, never panicking the controller, and a wait of the longest `Duration` still ends
-    /// on the run's stop.
-    ///
-    /// What would make this red: `Duration::from_secs_f64` on `1e20`, which panics; the plan
-    /// carrying no failure for it; or a sum of that wait with the present instant, which panics.
+    /// Enormous, negative and unsleepable delays and deadlines never panic.
     #[tokio::test]
-    async fn an_enormous_delay_does_not_panic() {
-        let templar = Templar::new(PathBuf::from("."));
-        let mut t = task("command");
-        t.retries = Some(json!(1));
-        t.delay = Some(json!(1e20));
-        let retry = retry_plan(&t, Some(&bare_item()), &templar)
-            .unwrap()
-            .expect("a retry plan");
-        assert_eq!(retry.delay, Duration::MAX);
-        let failed = retry.sleep_failure().expect("the sleep fails");
-        assert_eq!(msg(&failed), PYTIME_OUT_OF_RANGE);
-        let (tx, mut stop) = watch::channel(false);
-        tx.send(true).expect("the run stops");
-        assert_eq!(wait_or_stop(retry.delay, &mut stop, &mut false).await, None);
-    }
-
-    /// The plugin path ends an item at a `delay` the reference's sleep refuses, after the retry
-    /// line, as the other two paths do.
-    ///
-    /// What would make this red: the check left out of `run_plugin_attempts`, which waits the
-    /// longest `Duration` there is.
-    #[tokio::test]
-    async fn a_plugin_s_unsleepable_delay_fails_the_item() {
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
-            ]
-            .concat(),
-        );
-        let mut t = retried_copy(1);
-        t.delay = Some(json!(1e20));
-        let (ran, lefts) = tokio::time::timeout(
-            Duration::from_secs(10),
-            copy_attempts(&t, copy_args("/tmp/v/sleepless"), &mut agent, &mut stop),
-        )
-        .await
-        .expect("the item ended rather than waited");
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert_eq!(msg(&result), PYTIME_OUT_OF_RANGE);
-        assert_eq!(result.0["changed"], json!(false));
-        assert_eq!(lefts, [1]);
-    }
-
-    /// An item deadline past what an `Instant` holds is no deadline, not a panic. The driver
-    /// refuses such a `timeout` before the item starts; this is the plugin loop on its own.
-    ///
-    /// What would make this red: the deadline summed with the present instant unchecked.
-    #[tokio::test]
-    async fn an_item_deadline_that_overflows_is_no_deadline() {
-        let mut stop = watch::channel(false).1;
-        let mut t = task("copy");
-        t.timeout = Some(u64::MAX);
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-            ]
-            .concat(),
-        );
-        let _ = copy_attempts(&t, copy_args("/tmp/v/far"), &mut agent, &mut stop).await;
-        assert_eq!(modules_sent(&agent)[0], "stat");
-    }
-
-    /// A negative `delay` waits one second, as `task_executor.py` has it (`if delay < 0: delay =
-    /// 1`), and zero waits nothing.
-    ///
-    /// What would make this red: a negative delay clamped to zero, which retries a flapping
-    /// service in a tight loop where the reference paces it.
-    #[test]
-    fn a_negative_delay_waits_one_second() {
-        let templar = Templar::new(PathBuf::from("."));
-        let mut t = task("command");
-        t.retries = Some(json!(1));
-        for (delay, want) in [(-3, 1), (0, 0), (2, 2)] {
-            t.delay = Some(json!(delay));
+    async fn a_delay_at_the_edge_of_the_clock_never_panics() {
+        {
+            let templar = Templar::new(PathBuf::from("."));
+            let mut t = task("command");
+            t.retries = Some(json!(1));
+            t.delay = Some(json!(1e20));
             let retry = retry_plan(&t, Some(&bare_item()), &templar)
                 .unwrap()
                 .expect("a retry plan");
-            assert_eq!(retry.delay, Duration::from_secs(want), "delay: {delay}");
+            assert_eq!(retry.delay, Duration::MAX);
+            let failed = retry.sleep_failure().expect("the sleep fails");
+            assert_eq!(msg(&failed), PYTIME_OUT_OF_RANGE);
+            let (tx, mut stop) = watch::channel(false);
+            tx.send(true).expect("the run stops");
+            assert_eq!(wait_or_stop(retry.delay, &mut stop, &mut false).await, None);
+        }
+        {
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
+                ]
+                .concat(),
+            );
+            let mut t = retried_copy(1);
+            t.delay = Some(json!(1e20));
+            let (ran, lefts) = tokio::time::timeout(
+                Duration::from_secs(10),
+                copy_attempts(&t, copy_args("/tmp/v/sleepless"), &mut agent, &mut stop),
+            )
+            .await
+            .expect("the item ended rather than waited");
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert_eq!(msg(&result), PYTIME_OUT_OF_RANGE);
+            assert_eq!(result.0["changed"], json!(false));
+            assert_eq!(lefts, [1]);
+        }
+        {
+            let mut stop = watch::channel(false).1;
+            let mut t = task("copy");
+            t.timeout = Some(u64::MAX);
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                ]
+                .concat(),
+            );
+            let _ = copy_attempts(&t, copy_args("/tmp/v/far"), &mut agent, &mut stop).await;
+            assert_eq!(modules_sent(&agent)[0], "stat");
+        }
+        {
+            let templar = Templar::new(PathBuf::from("."));
+            let mut t = task("command");
+            t.retries = Some(json!(1));
+            for (delay, want) in [(-3, 1), (0, 0), (2, 2)] {
+                t.delay = Some(json!(delay));
+                let retry = retry_plan(&t, Some(&bare_item()), &templar)
+                    .unwrap()
+                    .expect("a retry plan");
+                assert_eq!(retry.delay, Duration::from_secs(want), "delay: {delay}");
+            }
         }
     }
 
-    /// The plugin path follows both rules: `changed_when` reads `attempts`, and a sub-task that
-    /// timed out is the item's result as it stands, with nothing after it sent.
-    ///
-    /// What would make this red: the plugin handed the timed-out `stat` as if it had answered,
-    /// which dresses the timeout as a `copy` failure and retries it; or `attempts` set after the
-    /// conditions on this path, which the shared `judge_attempt` is there to prevent.
+    /// A plugin's retries follow the same rules, its transfer runs on the item's time, until reads its last result.
     #[tokio::test]
-    async fn a_plugin_s_retries_follow_the_same_two_rules() {
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
-                one_result(3, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(4, json!({"changed": false})).to_vec(),
-            ]
-            .concat(),
-        );
-        let mut t = retried_copy(3);
-        t.register = Some("r".into());
-        t.changed_when = vec!["r.attempts > 1".into()];
-        let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/attempts"), &mut agent, &mut stop).await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert!(!result.failed(), "{result:?}");
-        assert_eq!(result.0["changed"], json!(true), "{result:?}");
-        assert_eq!(result.0["attempts"], json!(2));
+    async fn a_plugin_s_retries_run_on_the_item_s_time_and_until_reads_the_last_result() {
+        {
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(2, json!({"failed": true, "msg": "no"})).to_vec(),
+                    one_result(3, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(4, json!({"changed": false})).to_vec(),
+                ]
+                .concat(),
+            );
+            let mut t = retried_copy(3);
+            t.register = Some("r".into());
+            t.changed_when = vec!["r.attempts > 1".into()];
+            let (ran, _) =
+                copy_attempts(&t, copy_args("/tmp/v/attempts"), &mut agent, &mut stop).await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert!(!result.failed(), "{result:?}");
+            assert_eq!(result.0["changed"], json!(true), "{result:?}");
+            assert_eq!(result.0["attempts"], json!(2));
 
-        let timed_out = Value::Object(TaskResult::timed_out(1).0);
-        let mut agent = FakeAgent::answering(
-            [vec![state("ab", true)], one_result(1, timed_out).to_vec()].concat(),
-        );
-        let (ran, lefts) = copy_attempts(
-            &retried_copy(3),
-            copy_args("/tmp/v/slow"),
-            &mut agent,
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
-        assert_eq!(result.0["timedout"], json!({"period": 1}));
-        assert!(!result.0.contains_key("attempts"), "{result:?}");
-        assert_eq!(lefts, Vec::<u32>::new());
-        assert_eq!(modules_sent(&agent), ["stat"]);
-    }
+            let timed_out = Value::Object(TaskResult::timed_out(1).0);
+            let mut agent = FakeAgent::answering(
+                [vec![state("ab", true)], one_result(1, timed_out).to_vec()].concat(),
+            );
+            let (ran, lefts) = copy_attempts(
+                &retried_copy(3),
+                copy_args("/tmp/v/slow"),
+                &mut agent,
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
+            assert_eq!(result.0["timedout"], json!({"period": 1}));
+            assert!(!result.0.contains_key("attempts"), "{result:?}");
+            assert_eq!(lefts, Vec::<u32>::new());
+            assert_eq!(modules_sent(&agent), ["stat"]);
+        }
+        {
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let answers = || {
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                ]
+                .concat()
+            };
+            let mut t = task("copy");
+            t.timeout = Some(1);
+            let mut agent = FakeAgent::answering(
+                [
+                    answers(),
+                    one_result(2, json!({"stat": {"exists": true}})).to_vec(),
+                ]
+                .concat(),
+            );
+            agent.transfer_takes = Duration::from_millis(1100);
+            let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
+            // The second `stat` takes the staged file, which the agent removes after it.
+            assert_eq!(modules_sent(&agent), ["stat", "stat"]);
+            let swept = &batches_sent(&agent)[1][0];
+            assert_eq!(
+                swept.files,
+                [StagedFile {
+                    arg: "path".into(),
+                    blob: blob.hash.clone()
+                }]
+            );
 
-    /// A plugin's file transfer runs on the item's `timeout`. A transfer that outlives it leaves
-    /// the module unsent, the staged file taken off the host by a `stat` that stages it, and the
-    /// item timed out, the way the reference's alarm ends the action wherever it stands; one that
-    /// leaves time gives the module what is left after it, not what was left before. The fake's
-    /// transfer sleeps past the deadline rather than racing it, and the test reads what was
-    /// sent, not how long it took.
-    ///
-    /// What would make this red: the module sent after a transfer that used up the item's time,
-    /// which replaces `dest` and then reports the timeout (`["stat", "copy"]`); the staged file
-    /// left on the host (`["stat"]`); or the module's timeout computed before the transfer (3).
-    #[tokio::test]
-    async fn a_plugin_s_transfer_runs_on_the_item_s_time() {
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let answers = || {
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-            ]
-            .concat()
-        };
-        let mut t = task("copy");
-        t.timeout = Some(1);
-        let mut agent = FakeAgent::answering(
-            [
-                answers(),
-                one_result(2, json!({"stat": {"exists": true}})).to_vec(),
-            ]
-            .concat(),
-        );
-        agent.transfer_takes = Duration::from_millis(1100);
-        let (ran, _) = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert_eq!(msg(&result), "Task failed: Timed out after 1 second(s).");
-        // The second `stat` takes the staged file, which the agent removes after it.
-        assert_eq!(modules_sent(&agent), ["stat", "stat"]);
-        let swept = &batches_sent(&agent)[1][0];
-        assert_eq!(
-            swept.files,
-            [StagedFile {
-                arg: "path".into(),
-                blob: blob.hash.clone()
-            }]
-        );
-
-        t.timeout = Some(3);
-        let mut agent = FakeAgent::answering(
-            [
-                answers(),
-                one_result(2, json!({"changed": true, "dest": "/tmp/v/late"})).to_vec(),
-            ]
-            .concat(),
-        );
-        agent.transfer_takes = Duration::from_millis(1100);
-        let _ = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
-        assert_eq!(modules_sent(&agent), ["stat", "copy"]);
-        let given = agent.sent.iter().find_map(|m| match m {
-            ToAgent::RunBatch { tasks, .. } if tasks[0].module == "copy" => tasks[0].timeout,
-            _ => None,
-        });
-        assert!(given.is_some_and(|t| t < 3), "{given:?}");
-    }
-
-    /// `until` reads the result the whole sequence ended with, judged by the task's conditions,
-    /// and never a sub-task's on the way: here the `stat` of each attempt says `changed` and the
-    /// first `copy` does not.
-    ///
-    /// What would make this red: `until` evaluated against the first sub-task's result, which
-    /// stops after one attempt; or against the raw result before `changed_when`, which would
-    /// have to be tested by the rule a module's retry follows and would drift from it.
-    #[tokio::test]
-    async fn until_reads_the_result_a_plugin_s_sequence_ended_with() {
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(2, json!({"changed": false})).to_vec(),
-                one_result(3, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
-                vec![state(&blob.hash, true)],
-                one_result(4, json!({"changed": true})).to_vec(),
-            ]
-            .concat(),
-        );
-        let mut t = retried_copy(3);
-        t.register = Some("r".into());
-        t.until = vec!["r.changed".into()];
-        let (ran, lefts) =
-            copy_attempts(&t, copy_args("/tmp/v/until"), &mut agent, &mut stop).await;
-        let result = ran.expect("the item ran").expect("nothing stopped it");
-        assert!(!result.failed(), "{result:?}");
-        assert_eq!(result.0["attempts"], json!(2));
-        assert_eq!(lefts, [3]);
+            t.timeout = Some(3);
+            let mut agent = FakeAgent::answering(
+                [
+                    answers(),
+                    one_result(2, json!({"changed": true, "dest": "/tmp/v/late"})).to_vec(),
+                ]
+                .concat(),
+            );
+            agent.transfer_takes = Duration::from_millis(1100);
+            let _ = copy_attempts(&t, copy_args("/tmp/v/late"), &mut agent, &mut stop).await;
+            assert_eq!(modules_sent(&agent), ["stat", "copy"]);
+            let given = agent.sent.iter().find_map(|m| match m {
+                ToAgent::RunBatch { tasks, .. } if tasks[0].module == "copy" => tasks[0].timeout,
+                _ => None,
+            });
+            assert!(given.is_some_and(|t| t < 3), "{given:?}");
+        }
+        {
+            let blob = hello_blob();
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(1, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(2, json!({"changed": false})).to_vec(),
+                    one_result(3, json!({"changed": true, "stat": {"exists": false}})).to_vec(),
+                    vec![state(&blob.hash, true)],
+                    one_result(4, json!({"changed": true})).to_vec(),
+                ]
+                .concat(),
+            );
+            let mut t = retried_copy(3);
+            t.register = Some("r".into());
+            t.until = vec!["r.changed".into()];
+            let (ran, lefts) =
+                copy_attempts(&t, copy_args("/tmp/v/until"), &mut agent, &mut stop).await;
+            let result = ran.expect("the item ran").expect("nothing stopped it");
+            assert!(!result.failed(), "{result:?}");
+            assert_eq!(result.0["attempts"], json!(2));
+            assert_eq!(lefts, [3]);
+        }
     }
 
     /// A stop raised while one attempt ends is honoured before the next begins, even with no
@@ -6928,91 +6614,34 @@ mod tests {
         assert_eq!(modules_sent(&agent.agent), ["copy"]);
     }
 
-    /// A file the agent cannot store fails the item with the agent's own reason, and the host is
-    /// not ended: its next task still runs.
-    ///
-    /// What would make this red: the refusal read as the link lost, which calls a host
-    /// unreachable whose disk is full, or the `copy` sent anyway without its `src`.
-    #[tokio::test]
-    async fn a_file_the_agent_cannot_store_fails_the_item_not_the_host() {
-        use crate::action_plugins::Kind;
-        let blob = hello_blob();
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(1, json!({"stat": {"exists": false}})).to_vec(),
-                vec![
-                    FromAgent::Log {
-                        level: volant_protocol::LogLevel::Error,
-                        message: format!(
-                            "storing payload {}: No space left on device (os error 28)",
-                            blob.hash
-                        ),
-                    },
-                    state(&blob.hash, false),
-                ],
-            ]
-            .concat(),
-        );
-        let (ran, _) = plugin_item(
-            Kind::Copy,
-            copy_args("/tmp/v/full"),
-            json!({}),
-            &mut agent,
-            &python3(),
-            &mut stop,
-        )
-        .await;
-        let result = ran.expect("a task failure, not the host's end");
-        assert!(result.failed(), "{result:?}");
-        assert!(
-            msg(&result).contains("'src'")
-                && msg(&result).contains("No space left on device (os error 28)"),
-            "{result:?}"
-        );
-        let modules: Vec<&str> = batches_sent(&agent)
-            .iter()
-            .map(|b| b[0].module.as_str())
-            .collect();
-        assert_eq!(modules, ["stat"], "no copy without its file");
-    }
-
-    /// The payload travels with every item of the task that carries it, and with nothing else.
+    /// A python task carries its payload to the agent, one payload for every interpreter.
     #[test]
-    fn a_python_task_carries_its_payload_to_the_agent() {
-        let item = bare_item();
-        let module = module_payload("ab");
-        let built = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
-        assert_eq!(built.payload, Some(payload("ab", "/usr/bin/python3")));
-        assert_eq!(protocol_task(&task("command"), &item, None).payload, None);
-    }
-
-    /// The module's half of a payload is the same on every host; the interpreter is not, and it
-    /// is added where it is chosen.
-    ///
-    /// What would make this red: an interpreter carried along with the module's half, which is a
-    /// payload that can be built before the host has said what it has - and a payload sent with
-    /// an empty or stale interpreter runs the module under something other than what was chosen,
-    /// which is the failure this whole path exists to avoid.
-    #[test]
-    fn one_module_payload_serves_every_interpreter_it_is_sent_under() {
-        let item = bare_item();
-        let module = module_payload("ab");
-        let here = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
-        let there = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3.12")));
-        assert_eq!(
-            here.payload.as_ref().map(|p| p.interpreter.as_str()),
-            Some("/usr/bin/python3")
-        );
-        assert_eq!(
-            there.payload.as_ref().map(|p| p.interpreter.as_str()),
-            Some("/usr/bin/python3.12")
-        );
-        assert_eq!(
-            here.payload.map(|p| p.module_fqn),
-            there.payload.map(|p| p.module_fqn)
-        );
+    fn a_python_task_carries_one_payload_for_every_interpreter() {
+        {
+            let item = bare_item();
+            let module = module_payload("ab");
+            let built = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
+            assert_eq!(built.payload, Some(payload("ab", "/usr/bin/python3")));
+            assert_eq!(protocol_task(&task("command"), &item, None).payload, None);
+        }
+        {
+            let item = bare_item();
+            let module = module_payload("ab");
+            let here = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3")));
+            let there = protocol_task(&task("ping"), &item, Some((&module, "/usr/bin/python3.12")));
+            assert_eq!(
+                here.payload.as_ref().map(|p| p.interpreter.as_str()),
+                Some("/usr/bin/python3")
+            );
+            assert_eq!(
+                there.payload.as_ref().map(|p| p.interpreter.as_str()),
+                Some("/usr/bin/python3.12")
+            );
+            assert_eq!(
+                here.payload.map(|p| p.module_fqn),
+                there.payload.map(|p| p.module_fqn)
+            );
+        }
     }
 
     fn bare_item() -> Item {
@@ -7227,77 +6856,60 @@ mod tests {
         assert_eq!(warning_text(&repeated), "outer: inner");
     }
 
-    /// Everything a Python module returns is untrusted, exactly like a native module's result.
-    ///
-    /// What would make this red: the result entered through `set_fact`, which would let a
-    /// managed host put a template in a value and have the controller render it - the hole the
-    /// trust model closed in 1.4c, reopened by a new entry point. There is no backstop under a
-    /// missed site: the rule that every `set_fact` is data was dropped when the taint took over.
+    /// A python module result enters untrusted, and a template it returns is never rendered.
     #[test]
-    fn a_python_module_result_enters_untrusted() {
-        let mut store = one_host_store();
-        registered(&mut store, json!({"changed": false}));
-        assert!(
-            store
-                .untrusted_of("h1", &crate::vars::Scope::default())
-                .contains("probe")
-        );
-    }
-
-    /// A module that returns a template does not get it rendered. The marker file is the proof.
-    ///
-    /// Unix only: the lookup it runs is a `touch`, and on a Windows checkout the temporary path
-    /// it is given comes back mangled, which drops the marker somewhere else and fails the
-    /// control below. The mechanism is the same on both, and this is the platform the tests run
-    /// on.
-    ///
-    /// What would make this red: the registered value rendered on the way in, which turns any
-    /// managed host into a command execution on the controller. The second half is what keeps
-    /// the first from passing for the wrong reason: the same text written by an author-side
-    /// source does run the lookup, so the marker's absence above is the taint and not a
-    /// `lookup` that does nothing here.
-    #[cfg(unix)]
-    #[test]
-    fn a_template_returned_by_a_python_module_is_never_rendered() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        let templar = Templar::new(PathBuf::from("."));
-        let render = |store: &mut VarStore| {
-            let vars = HostVars {
-                map: store.for_host("h1", &crate::vars::Scope::default()),
-                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
-                untrusted_hosts: store.untrusted_hosts(),
-                ..HostVars::default()
+    fn a_python_module_result_is_untrusted_and_never_rendered() {
+        {
+            let mut store = one_host_store();
+            registered(&mut store, json!({"changed": false}));
+            assert!(
+                store
+                    .untrusted_of("h1", &crate::vars::Scope::default())
+                    .contains("probe")
+            );
+        }
+        #[cfg(unix)]
+        {
+            let dir_guard = scratch();
+            let dir = dir_guard.path().to_path_buf();
+            std::fs::create_dir_all(&dir).expect("a scratch directory");
+            let templar = Templar::new(PathBuf::from("."));
+            let render = |store: &mut VarStore| {
+                let vars = HostVars {
+                    map: store.for_host("h1", &crate::vars::Scope::default()),
+                    untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
+                    untrusted_hosts: store.untrusted_hosts(),
+                    ..HostVars::default()
+                };
+                templar.render("{{ probe.msg }}", crate::template::Vars::from(&vars))
             };
-            templar.render("{{ probe.msg }}", crate::template::Vars::from(&vars))
-        };
 
-        let marker = dir.join("untrusted-marker");
-        let _ = std::fs::remove_file(&marker);
-        let mut store = one_host_store();
-        let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
-        registered(&mut store, json!({ "msg": text }));
-        // Asserted, not discarded: a `record_registered` that wrote nothing would leave
-        // `probe.msg` undefined, the render would fail, and the marker would be absent for a
-        // reason that has nothing to do with the taint. The value has to arrive, and arrive
-        // verbatim.
-        assert_eq!(
-            render(&mut store).expect("the value renders as the text it is"),
-            text
-        );
-        assert!(!marker.exists(), "a module's own output was rendered");
+            let marker = dir.join("untrusted-marker");
+            let _ = std::fs::remove_file(&marker);
+            let mut store = one_host_store();
+            let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
+            registered(&mut store, json!({ "msg": text }));
+            // Asserted, not discarded: a `record_registered` that wrote nothing would leave
+            // `probe.msg` undefined, the render would fail, and the marker would be absent for a
+            // reason that has nothing to do with the taint. The value has to arrive, and arrive
+            // verbatim.
+            assert_eq!(
+                render(&mut store).expect("the value renders as the text it is"),
+                text
+            );
+            assert!(!marker.exists(), "a module's own output was rendered");
 
-        let author = dir.join("author-marker");
-        let _ = std::fs::remove_file(&author);
-        let mut store = one_host_store();
-        store.set_fact(
-            "h1",
-            "probe",
-            json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())}),
-        );
-        render(&mut store).expect("an author-side template renders");
-        assert!(author.exists(), "the lookup itself does nothing here");
+            let author = dir.join("author-marker");
+            let _ = std::fs::remove_file(&author);
+            let mut store = one_host_store();
+            store.set_fact(
+                "h1",
+                "probe",
+                json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())}),
+            );
+            render(&mut store).expect("an author-side template renders");
+            assert!(author.exists(), "the lookup itself does nothing here");
+        }
     }
 
     /// Gathered facts are untrusted, and they land under `ansible_facts` as well as flat.
@@ -7386,198 +6998,168 @@ mod tests {
         );
     }
 
-    /// A failed task keeps none of the facts its host's results carry, whatever module ran there
-    /// (a controller-side `set_fact` writes its own as it runs, and is not judged here): the
-    /// reference records facts only in the branch of its strategy that a task that is neither
-    /// failed, unreachable nor skipped takes, `ignore_errors` or not. Measured on ansible-core
-    /// 2.19.12 with a `dnf` task that failed carrying `ansible_facts: {pkg_mgr: apt}`: the fact is
-    /// undefined at the next task. A loop is judged whole, as the reference judges it: one failed
-    /// item fails the task, so the facts of the items that did not fail go too.
-    ///
-    /// What would make this red: `record_facts` reading a failed result's facts, which lets a
-    /// task that failed change what the next task reads; or reading `failed` before
-    /// `failed_when` decided, which drops the facts of a result the playbook forgave.
+    /// A failed task keeps no facts, a fact cannot move the next connection, a template in a fact never renders.
     #[test]
-    fn a_failed_task_keeps_none_of_its_facts() {
-        let scope = crate::vars::Scope::default();
-        let fact = |value: Value| TaskResult(vars(value));
-        let mut store = one_host_store();
-        record_facts(
-            &mut store,
-            &["h1".to_string()],
-            &[(
-                None,
-                fact(json!({"failed": true, "msg": "boom", "ansible_facts": {"kept": 1}})),
-            )],
-        );
-        record_facts(
-            &mut store,
-            &["h1".to_string()],
-            &[
-                (
-                    Some(json!(1)),
-                    fact(json!({"changed": false, "ansible_facts": {"looped": 1}})),
-                ),
-                (Some(json!(2)), fact(json!({"failed": true, "rc": 1}))),
-            ],
-        );
-        let host = store.for_host("h1", &scope);
-        assert!(!host.contains_key("kept"), "{host:?}");
-        assert!(!host.contains_key("looped"), "{host:?}");
-        // A non-zero `rc` that `failed_when: false` forgave: `failed` is what decides.
-        record_facts(
-            &mut store,
-            &["h1".to_string()],
-            &[(
-                None,
-                fact(json!({"rc": 2, "failed": false, "ansible_facts": {"forgiven": 1}})),
-            )],
-        );
-        assert_eq!(store.for_host("h1", &scope)["forgiven"], json!(1));
-    }
-
-    /// A managed host cannot choose where its own next task connects, as whom, or under which
-    /// interpreter. Gathered facts rank over the inventory, where `ansible_host` lives, so a
-    /// module answering `ansible_facts: {ansible_host: <elsewhere>}` would otherwise move the
-    /// connection. ansible-core 2.19.12's `clean_facts()` strips those names from the flat
-    /// variables with `[WARNING]: Removed restricted key from module data: <name>`; measured with
-    /// a module returning this set, the reference kept `ansible_ssh_host_key_rsa_public`,
-    /// `ansible_ssh_foo_bridge`, `ansible_local` and `plain`, dropped `_ansible_hidden` and the
-    /// nested `_ansible_inner` without a word, and warned once for each of the others.
-    ///
-    /// What would make this red: facts merged without the restricted names taken out, so the
-    /// transport built for the host's next task reads the host's own answer.
-    #[test]
-    fn a_fact_cannot_move_the_hosts_next_connection() {
-        let inventory = crate::inventory::Inventory::parse_ini(
-            "h1 ansible_host=192.0.2.10 ansible_python_interpreter=/usr/bin/python3\n",
-        )
-        .expect("an inventory");
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
-        let result = TaskResult(vars(json!({
-            "ansible_facts": {
-                "ansible_host": "203.0.113.9",
-                "ansible_connection": "local",
-                "ansible_user": "intruder",
-                "ansible_python_interpreter": "/tmp/evil/python",
-                "ansible_foo_interpreter": "x",
-                "ansible_become_password": "x",
-                "ansible_become_anything": "x",
-                "ansible_ssh_extra_args": "-oProxyCommand=x",
-                "ansible_remote_tmp": "/home/deploy/x",
-                "ansible_ssh_host_key_rsa_public": "KEY",
-                "ansible_ssh_foo_bridge": "br",
-                "ansible_local": {"a": 1},
-                "ansible_local_thing": "x",
-                "ansible_winrm_x": "x",
-                "ansible_paramiko_ssh_x": "x",
-                "ansible_psrp_x": "x",
-                "ansible_network_os": "x",
-                "ansible_rsync_path": "x",
-                "ansible_playbook_python": "x",
-                "add_host": "x",
-                "add_group": "x",
-                "_ansible_hidden": "x",
-                "nested": {"_ansible_inner": 1, "kept": 2},
-                "plain": 1,
-            },
-            "changed": false,
-        })));
-        let warned = record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
-        let v = store.for_host("h1", &crate::vars::Scope::default());
-        let defaults = ConnectionDefaults {
-            remote_user: None,
-            private_key: None,
-            host_key_checking: true,
-            remote_tmp: "~/.ansible/tmp".to_string(),
-            connect_timeout: Duration::from_secs(10),
-            r#become: false,
-            become_user: "root".to_string(),
-            become_method: "sudo".to_string(),
-            become_password: None,
-        };
-        let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
-            panic!("a fact turned the host's connection local");
-        };
-        assert_eq!(target.address, "192.0.2.10");
-        assert_eq!(target.user, None);
-        assert!(target.extra_args.is_empty(), "{:?}", target.extra_args);
-        // Where the escalated agent is looked for: a host that picks it plants its own.
-        assert_eq!(target.remote_tmp, defaults.remote_tmp);
-        assert_eq!(
-            requested_interpreter(&v).as_deref(),
-            Some("/usr/bin/python3")
-        );
-        assert!(!v.contains_key("ansible_become_password"));
-        assert_eq!(v["ansible_ssh_host_key_rsa_public"], json!("KEY"));
-        assert_eq!(v["ansible_ssh_foo_bridge"], json!("br"));
-        assert_eq!(v["ansible_local"], json!({"a": 1}));
-        assert_eq!(v["plain"], json!(1));
-        assert!(!v.contains_key("_ansible_hidden"));
-        assert_eq!(v["nested"], json!({"kept": 2}));
-        assert_eq!(
-            warned,
-            [
-                "add_group",
-                "add_host",
-                "ansible_become_anything",
-                "ansible_become_password",
-                "ansible_connection",
-                "ansible_foo_interpreter",
-                "ansible_host",
-                "ansible_local_thing",
-                "ansible_network_os",
-                "ansible_paramiko_ssh_x",
-                "ansible_playbook_python",
-                "ansible_psrp_x",
-                "ansible_python_interpreter",
-                "ansible_remote_tmp",
-                "ansible_rsync_path",
-                "ansible_ssh_extra_args",
-                "ansible_user",
-                "ansible_winrm_x",
-            ]
-        );
-        // The reference leaves the namespace alone, and nothing reads a connection from it.
-        assert_eq!(v["ansible_facts"]["host"], json!("203.0.113.9"));
-    }
-
-    /// A template inside a gathered fact is text, the way one inside a `register` already is.
-    ///
-    /// Unix only, for the reason the test above it gives: the lookup is a `touch`.
-    ///
-    /// What would make this red: the harvest writing through `set_fact`. `untrusted_of` above
-    /// names the mechanism; this names what the mechanism is for, and there is nothing under a
-    /// missed site since the unconditional "a `set_fact` is data" rule was dropped.
-    #[cfg(unix)]
-    #[test]
-    fn a_template_in_a_gathered_fact_is_never_rendered() {
-        let dir_guard = scratch();
-        let dir = dir_guard.path().to_path_buf();
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        let marker = dir.join("gathered-marker");
-        let _ = std::fs::remove_file(&marker);
-        let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
-        let mut store = one_host_store();
-        let result = TaskResult(vars(json!({ "ansible_facts": { "hostname": text } })));
-        record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
-        let templar = Templar::new(PathBuf::from("."));
-        let vars = HostVars {
-            map: store.for_host("h1", &crate::vars::Scope::default()),
-            untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
-            untrusted_hosts: store.untrusted_hosts(),
-            ..HostVars::default()
-        };
-        assert_eq!(
-            templar
-                .render(
-                    "{{ ansible_facts.hostname }}",
-                    crate::template::Vars::from(&vars)
-                )
-                .expect("the value renders as the text it is"),
-            text
-        );
-        assert!(!marker.exists(), "a gathered fact was rendered");
+    fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
+        {
+            let scope = crate::vars::Scope::default();
+            let fact = |value: Value| TaskResult(vars(value));
+            let mut store = one_host_store();
+            record_facts(
+                &mut store,
+                &["h1".to_string()],
+                &[(
+                    None,
+                    fact(json!({"failed": true, "msg": "boom", "ansible_facts": {"kept": 1}})),
+                )],
+            );
+            record_facts(
+                &mut store,
+                &["h1".to_string()],
+                &[
+                    (
+                        Some(json!(1)),
+                        fact(json!({"changed": false, "ansible_facts": {"looped": 1}})),
+                    ),
+                    (Some(json!(2)), fact(json!({"failed": true, "rc": 1}))),
+                ],
+            );
+            let host = store.for_host("h1", &scope);
+            assert!(!host.contains_key("kept"), "{host:?}");
+            assert!(!host.contains_key("looped"), "{host:?}");
+            // A non-zero `rc` that `failed_when: false` forgave: `failed` is what decides.
+            record_facts(
+                &mut store,
+                &["h1".to_string()],
+                &[(
+                    None,
+                    fact(json!({"rc": 2, "failed": false, "ansible_facts": {"forgiven": 1}})),
+                )],
+            );
+            assert_eq!(store.for_host("h1", &scope)["forgiven"], json!(1));
+        }
+        {
+            let inventory = crate::inventory::Inventory::parse_ini(
+                "h1 ansible_host=192.0.2.10 ansible_python_interpreter=/usr/bin/python3\n",
+            )
+            .expect("an inventory");
+            let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+            let result = TaskResult(vars(json!({
+                "ansible_facts": {
+                    "ansible_host": "203.0.113.9",
+                    "ansible_connection": "local",
+                    "ansible_user": "intruder",
+                    "ansible_python_interpreter": "/tmp/evil/python",
+                    "ansible_foo_interpreter": "x",
+                    "ansible_become_password": "x",
+                    "ansible_become_anything": "x",
+                    "ansible_ssh_extra_args": "-oProxyCommand=x",
+                    "ansible_remote_tmp": "/home/deploy/x",
+                    "ansible_ssh_host_key_rsa_public": "KEY",
+                    "ansible_ssh_foo_bridge": "br",
+                    "ansible_local": {"a": 1},
+                    "ansible_local_thing": "x",
+                    "ansible_winrm_x": "x",
+                    "ansible_paramiko_ssh_x": "x",
+                    "ansible_psrp_x": "x",
+                    "ansible_network_os": "x",
+                    "ansible_rsync_path": "x",
+                    "ansible_playbook_python": "x",
+                    "add_host": "x",
+                    "add_group": "x",
+                    "_ansible_hidden": "x",
+                    "nested": {"_ansible_inner": 1, "kept": 2},
+                    "plain": 1,
+                },
+                "changed": false,
+            })));
+            let warned = record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let v = store.for_host("h1", &crate::vars::Scope::default());
+            let defaults = ConnectionDefaults {
+                remote_user: None,
+                private_key: None,
+                host_key_checking: true,
+                remote_tmp: "~/.ansible/tmp".to_string(),
+                connect_timeout: Duration::from_secs(10),
+                r#become: false,
+                become_user: "root".to_string(),
+                become_method: "sudo".to_string(),
+                become_password: None,
+            };
+            let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
+                panic!("a fact turned the host's connection local");
+            };
+            assert_eq!(target.address, "192.0.2.10");
+            assert_eq!(target.user, None);
+            assert!(target.extra_args.is_empty(), "{:?}", target.extra_args);
+            // Where the escalated agent is looked for: a host that picks it plants its own.
+            assert_eq!(target.remote_tmp, defaults.remote_tmp);
+            assert_eq!(
+                requested_interpreter(&v).as_deref(),
+                Some("/usr/bin/python3")
+            );
+            assert!(!v.contains_key("ansible_become_password"));
+            assert_eq!(v["ansible_ssh_host_key_rsa_public"], json!("KEY"));
+            assert_eq!(v["ansible_ssh_foo_bridge"], json!("br"));
+            assert_eq!(v["ansible_local"], json!({"a": 1}));
+            assert_eq!(v["plain"], json!(1));
+            assert!(!v.contains_key("_ansible_hidden"));
+            assert_eq!(v["nested"], json!({"kept": 2}));
+            assert_eq!(
+                warned,
+                [
+                    "add_group",
+                    "add_host",
+                    "ansible_become_anything",
+                    "ansible_become_password",
+                    "ansible_connection",
+                    "ansible_foo_interpreter",
+                    "ansible_host",
+                    "ansible_local_thing",
+                    "ansible_network_os",
+                    "ansible_paramiko_ssh_x",
+                    "ansible_playbook_python",
+                    "ansible_psrp_x",
+                    "ansible_python_interpreter",
+                    "ansible_remote_tmp",
+                    "ansible_rsync_path",
+                    "ansible_ssh_extra_args",
+                    "ansible_user",
+                    "ansible_winrm_x",
+                ]
+            );
+            // The reference leaves the namespace alone, and nothing reads a connection from it.
+            assert_eq!(v["ansible_facts"]["host"], json!("203.0.113.9"));
+        }
+        #[cfg(unix)]
+        {
+            let dir_guard = scratch();
+            let dir = dir_guard.path().to_path_buf();
+            std::fs::create_dir_all(&dir).expect("a scratch directory");
+            let marker = dir.join("gathered-marker");
+            let _ = std::fs::remove_file(&marker);
+            let text = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
+            let mut store = one_host_store();
+            let result = TaskResult(vars(json!({ "ansible_facts": { "hostname": text } })));
+            record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
+            let templar = Templar::new(PathBuf::from("."));
+            let vars = HostVars {
+                map: store.for_host("h1", &crate::vars::Scope::default()),
+                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
+                untrusted_hosts: store.untrusted_hosts(),
+                ..HostVars::default()
+            };
+            assert_eq!(
+                templar
+                    .render(
+                        "{{ ansible_facts.hostname }}",
+                        crate::template::Vars::from(&vars)
+                    )
+                    .expect("the value renders as the text it is"),
+                text
+            );
+            assert!(!marker.exists(), "a gathered fact was rendered");
+        }
     }
 
     /// `AgentLink`'s `stop_batch` is a one-line forward to `cancel`, and `AgentChannel` is
@@ -7852,293 +7434,270 @@ mod tests {
         ran
     }
 
-    /// The whole sequence measured on ansible-core 2.19.12 with `reboot: {}` on a real host:
-    /// `setup` of the `min` subset, the boot id, `find` for `shutdown`, `/sbin/shutdown -r 0
-    /// "Reboot initiated by Ansible"` under which the link goes down, then fresh links until the
-    /// boot id changes - through two that did not come up and one that still read the old boot
-    /// id - and `whoami`. The result is the reference's `{"changed": true, "elapsed": <s>,
-    /// "rebooted": true}`.
-    ///
-    /// What would make this red: the link lost under `shutdown` taken for the host lost, which
-    /// reports it unreachable; a failed connection taken for the end; the old boot id taken for
-    /// a new boot, which stops one link early; the boot id read again on the link that was open
-    /// before the reboot rather than on a fresh one; or `whoami` never run.
+    /// A reboot waits through dead links for a new boot id, times out by name, or fails at once when refused.
     #[tokio::test]
-    async fn a_reboot_waits_through_dead_links_for_a_new_boot_id() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(vec![
-            Try::Down("ssh: connect to host target port 22: No route to host"),
-            Try::Down("Timeout (12s) waiting for privilege escalation prompt"),
-            Try::Up(FakeAgent::answering(
-                raw_answer(5, 0, "old-boot-id\n").to_vec(),
-            )),
-            Try::Up(FakeAgent::answering(
+    async fn a_reboot_waits_for_a_new_boot_id_or_fails_by_name() {
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = before_the_reboot(None);
+            let mut relink = Scripted::new(vec![
+                Try::Down("ssh: connect to host target port 22: No route to host"),
+                Try::Down("Timeout (12s) waiting for privilege escalation prompt"),
+                Try::Up(FakeAgent::answering(
+                    raw_answer(5, 0, "old-boot-id\n").to_vec(),
+                )),
+                Try::Up(FakeAgent::answering(
+                    [
+                        raw_answer(6, 0, "new-boot-id\n").to_vec(),
+                        raw_answer(7, 0, "root\n").to_vec(),
+                    ]
+                    .concat(),
+                )),
+            ]);
+            let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+                .await
+                .expect("the item ran to its end");
+            assert_eq!(
+                Value::Object(result.0),
+                json!({"changed": true, "elapsed": 0, "rebooted": true})
+            );
+            assert_eq!(
+                relink.attempts, 4,
+                "two down, one on the old boot, one back"
+            );
+            let links: Vec<&FakeAgent> = relink.retired.iter().chain([&agent]).collect();
+            assert_eq!(
+                sent_lines(&links),
                 [
-                    raw_answer(6, 0, "new-boot-id\n").to_vec(),
-                    raw_answer(7, 0, "root\n").to_vec(),
+                    vec![
+                        "setup",
+                        "cat /proc/sys/kernel/random/boot_id",
+                        "find",
+                        "/sbin/shutdown -r 0 \"Reboot initiated by Ansible\"",
+                    ],
+                    vec!["cat /proc/sys/kernel/random/boot_id"],
+                    vec!["cat /proc/sys/kernel/random/boot_id", "whoami"],
+                ]
+            );
+            let first = batches_sent(links[0]);
+            assert_eq!(
+                Value::Object(first[0][0].args.clone()),
+                json!({"gather_subset": ["min"]})
+            );
+            assert_eq!(
+                Value::Object(first[2][0].args.clone()),
+                json!({"paths": ["/sbin", "/bin", "/usr/sbin", "/usr/bin", "/usr/local/sbin"],
+                    "patterns": ["shutdown"], "file_type": "any"})
+            );
+            assert!(
+                first[1][0].payload.is_none() && first[3][0].payload.is_none(),
+                "the commands are the agent's own `raw`"
+            );
+        }
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = before_the_reboot(None);
+            let mut relink = Scripted::new(Vec::new());
+            relink.after =
+                Some(|| FakeAgent::answering(raw_answer(9, 0, "old-boot-id\n").to_vec()));
+            let result = reboot_item(
+                json!({"reboot_timeout": 1}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
+            .await
+            .expect("the item ran to its end");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                msg(&result),
+                "Timed out waiting for last boot time check (timeout=1)"
+            );
+            assert_eq!(result.0["rebooted"], json!(true));
+            assert!(relink.attempts > 1, "{}", relink.attempts);
+        }
+        {
+            let mut stop = watch::channel(false).1;
+            let refused = one_result(
+                4,
+                json!({"rc": 1, "stdout": "", "stderr": "Failed to set wall message, ignoring: Interactive authentication required.\n", "changed": true}),
+            )
+            .to_vec();
+            let mut agent = before_the_reboot(Some(refused));
+            let mut relink = Scripted::new(Vec::new());
+            let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+                .await
+                .expect("the item ran to its end");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                msg(&result),
+                "Reboot command failed. Error was: ', Failed to set wall message, ignoring: Interactive authentication required.'"
+            );
+            assert_eq!(result.0["rebooted"], json!(false));
+            assert_eq!(relink.attempts, 0);
+        }
+    }
+
+    /// A shutdown nowhere to be found names the paths, and a local connection is never rebooted.
+    #[tokio::test]
+    async fn a_reboot_that_cannot_start_says_why() {
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(
+                [
+                    vec![state("ab", true)],
+                    one_result(
+                        1,
+                        json!({"ansible_facts": {"ansible_distribution": "Ubuntu",
+                            "ansible_distribution_version": "24.04", "ansible_os_family": "Debian"}}),
+                    )
+                    .to_vec(),
+                    raw_answer(2, 0, "old-boot-id\n").to_vec(),
+                    one_result(3, json!({"files": [], "matched": 0})).to_vec(),
                 ]
                 .concat(),
-            )),
-        ]);
-        let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+            );
+            let mut relink = Scripted::new(Vec::new());
+            let result = reboot_item(
+                json!({"search_paths": ["/opt/bin", "/usr/local/bin"]}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
             .await
             .expect("the item ran to its end");
-        assert_eq!(
-            Value::Object(result.0),
-            json!({"changed": true, "elapsed": 0, "rebooted": true})
-        );
-        assert_eq!(
-            relink.attempts, 4,
-            "two down, one on the old boot, one back"
-        );
-        let links: Vec<&FakeAgent> = relink.retired.iter().chain([&agent]).collect();
-        assert_eq!(
-            sent_lines(&links),
-            [
-                vec![
-                    "setup",
-                    "cat /proc/sys/kernel/random/boot_id",
-                    "find",
-                    "/sbin/shutdown -r 0 \"Reboot initiated by Ansible\"",
-                ],
-                vec!["cat /proc/sys/kernel/random/boot_id"],
-                vec!["cat /proc/sys/kernel/random/boot_id", "whoami"],
-            ]
-        );
-        let first = batches_sent(links[0]);
-        assert_eq!(
-            Value::Object(first[0][0].args.clone()),
-            json!({"gather_subset": ["min"]})
-        );
-        assert_eq!(
-            Value::Object(first[2][0].args.clone()),
-            json!({"paths": ["/sbin", "/bin", "/usr/sbin", "/usr/bin", "/usr/local/sbin"],
-                "patterns": ["shutdown"], "file_type": "any"})
-        );
-        assert!(
-            first[1][0].payload.is_none() && first[3][0].payload.is_none(),
-            "the commands are the agent's own `raw`"
-        );
+            assert_eq!(
+                msg(&result),
+                "Unable to find command \"shutdown\" in search paths: ['/opt/bin', '/usr/local/bin']"
+            );
+            assert_eq!(batches_sent(&agent).len(), 3, "no shutdown sent");
+        }
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = FakeAgent::answering(Vec::new());
+            let mut relink = Scripted::new(Vec::new());
+            let result = reboot_item(json!({}), &mut agent, &mut relink, true, &mut stop)
+                .await
+                .expect("the item ran to its end");
+            assert_eq!(
+                Value::Object(result.0),
+                json!({"changed": false, "elapsed": 0, "failed": true,
+                    "msg": "Running reboot with local connection would reboot the control node.",
+                    "rebooted": false})
+            );
+            assert!(agent.sent.is_empty(), "{:?}", agent.sent);
+        }
     }
 
-    /// A host whose boot id never changes fails the task once `reboot_timeout` has run out, in
-    /// the reference's words (`reboot.py`, `do_until_success_or_timeout`), with `rebooted: true`.
-    ///
-    /// What would make this red: the wait never ending - `volant_within` is not needed, the
-    /// test's own clock is one second - or ending on the first unchanged answer, or failing
-    /// with a sentence of its own.
+    /// An interruption ends the pause between tries, a try that hangs, and the wait behind an abandoned probe.
     #[tokio::test]
-    async fn a_boot_id_that_never_changes_times_out_by_name() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(Vec::new());
-        relink.after = Some(|| FakeAgent::answering(raw_answer(9, 0, "old-boot-id\n").to_vec()));
-        let result = reboot_item(
-            json!({"reboot_timeout": 1}),
-            &mut agent,
-            &mut relink,
-            false,
-            &mut stop,
-        )
-        .await
-        .expect("the item ran to its end");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(
-            msg(&result),
-            "Timed out waiting for last boot time check (timeout=1)"
-        );
-        assert_eq!(result.0["rebooted"], json!(true));
-        assert!(relink.attempts > 1, "{}", relink.attempts);
+    async fn an_interruption_ends_a_wait_at_once() {
+        {
+            let (tx, mut stop) = watch::channel(false);
+            let mut agent = before_the_reboot(None);
+            let mut relink = Scripted::new(vec![Try::Down("No route to host")]);
+            relink.stop = Some(tx);
+            relink.pause = Duration::from_secs(60);
+            let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
+            assert!(
+                matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
+                "{ended:?}"
+            );
+            assert_eq!(relink.attempts, 1);
+        }
+        {
+            let (tx, mut stop) = watch::channel(false);
+            let mut agent = before_the_reboot(None);
+            let mut relink = Scripted::new(vec![Try::Hangs]);
+            relink.stop = Some(tx);
+            let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
+            assert!(
+                matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
+                "{ended:?}"
+            );
+            assert_eq!(relink.attempts, 1);
+        }
+        {
+            let (raise, mut stop) = watch::channel(false);
+            let mut agent = before_the_reboot(None);
+            let probing = FakeAgent::busy(vec![None], false);
+            let mut relink = Scripted::new(vec![Try::Up(probing), Try::Hangs]);
+            relink.stop = Some(raise);
+            relink.stop_on = 2;
+            let ran = reboot_item_under(
+                Some(2),
+                json!({}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
+            .await;
+            assert!(
+                matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
+                "{ran:?}"
+            );
+            assert_eq!(relink.attempts, 2);
+        }
     }
 
-    /// A `shutdown` that answers and fails is the task's failure at once, with the reference's
-    /// sentence, and no reconnection is tried: nothing is going to reboot.
-    ///
-    /// What would make this red: the answer ignored because the link is expected to die, which
-    /// waits out the whole `reboot_timeout` - ten minutes by default - for a reboot that was
-    /// refused.
+    /// The connect timeout reaches the connection and becomes ssh's ConnectTimeout.
     #[tokio::test]
-    async fn a_refused_shutdown_fails_at_once() {
-        let mut stop = watch::channel(false).1;
-        let refused = one_result(
-            4,
-            json!({"rc": 1, "stdout": "", "stderr": "Failed to set wall message, ignoring: Interactive authentication required.\n", "changed": true}),
-        )
-        .to_vec();
-        let mut agent = before_the_reboot(Some(refused));
-        let mut relink = Scripted::new(Vec::new());
-        let result = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop)
+    async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
+        {
+            let mut stop = watch::channel(false).1;
+            let mut agent = before_the_reboot(None);
+            let mut relink = Scripted::new(vec![Try::Up(FakeAgent::answering(
+                [
+                    raw_answer(5, 0, "new-boot-id\n").to_vec(),
+                    raw_answer(6, 0, "root\n").to_vec(),
+                ]
+                .concat(),
+            ))]);
+            let result = reboot_item(
+                json!({"connect_timeout": 3}),
+                &mut agent,
+                &mut relink,
+                false,
+                &mut stop,
+            )
             .await
             .expect("the item ran to its end");
-        assert!(result.failed(), "{result:?}");
-        assert_eq!(
-            msg(&result),
-            "Reboot command failed. Error was: ', Failed to set wall message, ignoring: Interactive authentication required.'"
-        );
-        assert_eq!(result.0["rebooted"], json!(false));
-        assert_eq!(relink.attempts, 0);
-    }
-
-    /// No `shutdown` in the search paths fails the task naming them as Python prints a list, and
-    /// nothing is run in its place.
-    #[tokio::test]
-    async fn a_shutdown_nowhere_to_be_found_fails_naming_the_paths() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(
-            [
-                vec![state("ab", true)],
-                one_result(
-                    1,
-                    json!({"ansible_facts": {"ansible_distribution": "Ubuntu",
-                        "ansible_distribution_version": "24.04", "ansible_os_family": "Debian"}}),
-                )
-                .to_vec(),
-                raw_answer(2, 0, "old-boot-id\n").to_vec(),
-                one_result(3, json!({"files": [], "matched": 0})).to_vec(),
-            ]
-            .concat(),
-        );
-        let mut relink = Scripted::new(Vec::new());
-        let result = reboot_item(
-            json!({"search_paths": ["/opt/bin", "/usr/local/bin"]}),
-            &mut agent,
-            &mut relink,
-            false,
-            &mut stop,
-        )
-        .await
-        .expect("the item ran to its end");
-        assert_eq!(
-            msg(&result),
-            "Unable to find command \"shutdown\" in search paths: ['/opt/bin', '/usr/local/bin']"
-        );
-        assert_eq!(batches_sent(&agent).len(), 3, "no shutdown sent");
-    }
-
-    /// On the controller's own connection, `reboot` refuses before anything runs, with the
-    /// reference's result: there is only one machine it could restart.
-    ///
-    /// What would make this red: the guard gone, which runs `shutdown -r` on the machine running
-    /// the playbook.
-    #[tokio::test]
-    async fn a_local_connection_is_never_rebooted() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = FakeAgent::answering(Vec::new());
-        let mut relink = Scripted::new(Vec::new());
-        let result = reboot_item(json!({}), &mut agent, &mut relink, true, &mut stop)
-            .await
-            .expect("the item ran to its end");
-        assert_eq!(
-            Value::Object(result.0),
-            json!({"changed": false, "elapsed": 0, "failed": true,
-                "msg": "Running reboot with local connection would reboot the control node.",
-                "rebooted": false})
-        );
-        assert!(agent.sent.is_empty(), "{:?}", agent.sent);
-    }
-
-    /// An interruption during the pause between two tries ends the item at once, as one during a
-    /// retry's `delay` does, and nothing more is tried.
-    ///
-    /// What would make this red: the pause not watching the stop, which sits out the whole pause
-    /// - here a minute - before the next try notices it.
-    #[tokio::test]
-    async fn an_interruption_ends_the_pause_between_two_tries() {
-        let (tx, mut stop) = watch::channel(false);
-        let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(vec![Try::Down("No route to host")]);
-        relink.stop = Some(tx);
-        relink.pause = Duration::from_secs(60);
-        let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
-        assert!(
-            matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
-            "{ended:?}"
-        );
-        assert_eq!(relink.attempts, 1);
-    }
-
-    /// An interruption while a try hangs ends the item at once, without waiting for the try.
-    ///
-    /// What would make this red: the try not raced against the stop, which waits for it as long
-    /// as `reboot_timeout` allows - ten minutes by default.
-    #[tokio::test]
-    async fn an_interruption_ends_a_try_that_hangs() {
-        let (tx, mut stop) = watch::channel(false);
-        let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(vec![Try::Hangs]);
-        relink.stop = Some(tx);
-        let ended = reboot_item(json!({}), &mut agent, &mut relink, false, &mut stop).await;
-        assert!(
-            matches!(ended, Err(Ok(BatchOutcome::Cancelled { .. }))),
-            "{ended:?}"
-        );
-        assert_eq!(relink.attempts, 1);
-    }
-
-    /// `connect_timeout` reaches each try as the connection's own setup timeout, and nothing else
-    /// is bounded by it: the reference sets it on the connection plugin, so a slow `sudo` or a
-    /// slow probe on a connection that did come up is not cut short by it.
-    ///
-    /// What would make this red: the option read and dropped on its way to the connection.
-    #[tokio::test]
-    async fn connect_timeout_reaches_the_connection() {
-        let mut stop = watch::channel(false).1;
-        let mut agent = before_the_reboot(None);
-        let mut relink = Scripted::new(vec![Try::Up(FakeAgent::answering(
-            [
-                raw_answer(5, 0, "new-boot-id\n").to_vec(),
-                raw_answer(6, 0, "root\n").to_vec(),
-            ]
-            .concat(),
-        ))]);
-        let result = reboot_item(
-            json!({"connect_timeout": 3}),
-            &mut agent,
-            &mut relink,
-            false,
-            &mut stop,
-        )
-        .await
-        .expect("the item ran to its end");
-        assert!(!result.failed(), "{result:?}");
-        assert_eq!(relink.connect_timeouts, [Some(Duration::from_secs(3))]);
-    }
-
-    /// On ssh the timeout becomes `ConnectTimeout`, in the whole seconds ssh takes; the kept
-    /// transport, which names the link, is left alone.
-    ///
-    /// What would make this red: the fresh connection opened with the play's own timeout.
-    #[test]
-    fn a_connect_timeout_becomes_ssh_s_connecttimeout() {
-        let host = crate::inventory::Host {
-            name: "h1".to_string(),
-            vars: BTreeMap::from([("ansible_host".to_string(), json!("probe-hostname"))]),
-        };
-        let defaults = ConnectionDefaults {
-            remote_user: None,
-            private_key: None,
-            host_key_checking: true,
-            remote_tmp: "~/.ansible/tmp".to_string(),
-            connect_timeout: Duration::from_secs(10),
-            r#become: false,
-            become_user: "root".to_string(),
-            become_method: "sudo".to_string(),
-            become_password: None,
-        };
-        let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
-        let argv = |t: &Transport| match t {
-            Transport::Ssh(target) => target.ssh_argv("true").join(" "),
-            Transport::Local => panic!("an ssh transport"),
-        };
-        let fresh = with_connect_timeout(&kept, Some(Duration::from_millis(2500)));
-        assert!(
-            argv(&fresh).contains("ConnectTimeout=3"),
-            "{}",
-            argv(&fresh)
-        );
-        assert!(argv(&kept).contains("ConnectTimeout=10"), "{}", argv(&kept));
-        assert_eq!(with_connect_timeout(&kept, None), kept);
+            assert!(!result.failed(), "{result:?}");
+            assert_eq!(relink.connect_timeouts, [Some(Duration::from_secs(3))]);
+        }
+        {
+            let host = crate::inventory::Host {
+                name: "h1".to_string(),
+                vars: BTreeMap::from([("ansible_host".to_string(), json!("probe-hostname"))]),
+            };
+            let defaults = ConnectionDefaults {
+                remote_user: None,
+                private_key: None,
+                host_key_checking: true,
+                remote_tmp: "~/.ansible/tmp".to_string(),
+                connect_timeout: Duration::from_secs(10),
+                r#become: false,
+                become_user: "root".to_string(),
+                become_method: "sudo".to_string(),
+                become_password: None,
+            };
+            let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
+            let argv = |t: &Transport| match t {
+                Transport::Ssh(target) => target.ssh_argv("true").join(" "),
+                Transport::Local => panic!("an ssh transport"),
+            };
+            let fresh = with_connect_timeout(&kept, Some(Duration::from_millis(2500)));
+            assert!(
+                argv(&fresh).contains("ConnectTimeout=3"),
+                "{}",
+                argv(&fresh)
+            );
+            assert!(argv(&kept).contains("ConnectTimeout=10"), "{}", argv(&kept));
+            assert_eq!(with_connect_timeout(&kept, None), kept);
+        }
     }
 
     /// An ssh transport to `h1` sharing its connection under `dir`, with no ssh configuration
@@ -8458,36 +8017,6 @@ mod tests {
             let answered = received[0].clone().expect("a result").0;
             assert_eq!(answered["stdout"], json!("next\n"), "{confirms}");
         }
-    }
-
-    /// An interruption ends the waits an abandoned probe leaves behind it: the cancel that goes
-    /// unconfirmed, then the reconnection that replaces the busy link, which here never comes up.
-    /// The stop is raised once that reconnection has started, so it lands in that wait.
-    ///
-    /// What would make this red: the reconnection awaited without watching the stop, which waits
-    /// for as long as it takes (the item's thirty-second bound).
-    #[tokio::test]
-    async fn an_interrupt_ends_the_wait_behind_an_abandoned_probe() {
-        let (raise, mut stop) = watch::channel(false);
-        let mut agent = before_the_reboot(None);
-        let probing = FakeAgent::busy(vec![None], false);
-        let mut relink = Scripted::new(vec![Try::Up(probing), Try::Hangs]);
-        relink.stop = Some(raise);
-        relink.stop_on = 2;
-        let ran = reboot_item_under(
-            Some(2),
-            json!({}),
-            &mut agent,
-            &mut relink,
-            false,
-            &mut stop,
-        )
-        .await;
-        assert!(
-            matches!(ran, Err(Ok(BatchOutcome::Cancelled { .. }))),
-            "{ran:?}"
-        );
-        assert_eq!(relink.attempts, 2);
     }
 
     /// A `shutdown` that answered and then took the link down reports its answer: a refusal

@@ -55,11 +55,8 @@ fn parse(out: &str) -> (&'static str, Vec<String>) {
 mod tests {
     use super::*;
 
-    /// Root with every capability, an unprivileged user (measured: `Current: =` gives `['']`),
-    /// a capability list, and `capsh` missing or failing.
-    ///
-    /// What would make this red: the empty list read as `[]` for an unprivileged user, or the
-    /// facts left out when `capsh` is missing, where ansible-core 2.19 says `N/A`.
+    /// Root with every capability, an unprivileged user (measured: `Current: =` gives `['']`), a
+    /// capability list, and `capsh` missing or failing.
     #[test]
     fn capabilities_are_read_like_the_reference() {
         assert_eq!(
@@ -84,8 +81,7 @@ mod tests {
     }
 
     /// `capsh` missing, failing, then answering, under a fake root. Linux only: the native runs
-    /// nowhere else, and `capsh` is a Linux tool. On the macOS runner the stub read as an answer
-    /// without its `Current:` line; that platform never runs the collector.
+    /// nowhere else, and `capsh` is a Linux tool.
     #[test]
     #[cfg(target_os = "linux")]
     fn capsh_missing_failing_or_answering() {

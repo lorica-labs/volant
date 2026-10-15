@@ -579,18 +579,7 @@ mod tests {
         after
     }
 
-    /// Every recorded `file` case the native answers, each on the state the golden play left
-    /// before it: removal of a missing path and of a directory, a directory created, left alone,
-    /// or given a mode in octal text, as a YAML integer and in symbolic form, `dest` for `path`,
-    /// a mode on a file, and the reference's four failures (a file where a directory is asked,
-    /// `state=file` on nothing, an owner nobody has, a `chown` refused), with what each leaves on
-    /// disk.
-    ///
-    /// What would make this red: `add_path_info` without `mode` (every case with a path), the
-    /// resolved `state` missing from `invocation` (`file-chown-denied` has none in its
-    /// arguments), a mode applied before the `chown` that fails, the symbolic `o=` leaving the
-    /// other bits, `changed` for a mode already there, or a failure's `path` and `state` keys
-    /// missing.
+    /// Every recorded `file` case the native answers, each on the state the golden play left before it.
     #[test]
     fn file_answers_every_recorded_case_like_the_reference() {
         if unsafe { libc::geteuid() } == 0 {
@@ -705,13 +694,7 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// Outside the subset the task goes to the Python module, and the disk is as it was: a link
-    /// (`file-link`), `recurse` (`file-recurse`), a state the reference infers as `link`,
-    /// timestamps, `attributes`, a task `environment`, a mode Python reads as an integer
-    /// (`0o600`), `touch`, a boolean the reference would convert.
-    ///
-    /// What would make this red: any of those answered by the native, or anything created or
-    /// changed before handing back.
+    /// Outside the subset the task goes to the Python module and the disk is as it was.
     #[test]
     fn file_hands_back_before_changing_anything() {
         let scratch = Scratch::new("file-back");
@@ -760,167 +743,139 @@ mod tests {
         }
     }
 
-    /// A tree with a directory the agent cannot empty goes to the Python module whole, since
-    /// `shutil.rmtree`'s failure names the entry it stopped at, which the native cannot say.
-    ///
-    /// What would make this red: the tree removed natively, which empties what it can (`t/y`
-    /// goes) and fails with another message.
+    /// A tree the agent cannot empty is handed back whole, and a link out of it is removed, not followed.
     #[test]
-    fn a_tree_the_agent_cannot_empty_is_handed_back_whole() {
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("skipped as root: root can empty any directory");
-            return;
-        }
-        let scratch = Scratch::new("file-tree");
-        mkdir(&scratch.path("t/sub"), 0o755);
-        fs::write(scratch.path("t/sub/x"), "x").unwrap();
-        fs::write(scratch.path("t/y"), "y").unwrap();
-        chmod(&scratch.path("t/sub"), 0o500);
-        let answer = ask(&json!({"path": scratch.path("t"), "state": "absent"}));
-        let left = after(&scratch.path("t/y"));
-        chmod(&scratch.path("t/sub"), 0o755);
-        assert!(matches!(answer, NativeRun::Fallback(_)));
-        assert_eq!(left["exists"], true);
-    }
-
-    /// A tree holding what `rmtree` can fail on halfway goes to the Python module before
-    /// anything is removed: an append-only file, another account's file in a sticky directory,
-    /// and a mount point. All need `sudo -n` to set up, and the test says so and stops without
-    /// it.
-    ///
-    /// What would make this red: the attribute, sticky or mount check dropped, after which the
-    /// native removes what it can (`y` goes) and fails naming another entry than the reference
-    /// might.
-    #[test]
-    fn a_tree_rmtree_would_fail_in_is_handed_back_whole() {
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("skipped as root: the sticky case needs another account than the agent's");
-            return;
-        }
-        let sudo = |args: &[&str]| {
-            std::process::Command::new("sudo")
-                .arg("-n")
-                .args(args)
-                .status()
-                .is_ok_and(|status| status.success())
-        };
-        let scratch = Scratch::new("file-rmtree");
-        mkdir(&scratch.path("a"), 0o755);
-        fs::write(scratch.path("a/y"), "y").unwrap();
-        fs::write(scratch.path("a/log"), "log").unwrap();
-        mkdir(&scratch.path("s"), 0o755);
-        fs::write(scratch.path("s/y"), "y").unwrap();
-        mkdir(&scratch.path("m/mnt"), 0o755);
-        fs::write(scratch.path("m/y"), "y").unwrap();
-        let (log, sticky, mnt) = (
-            scratch.path("a/log"),
-            scratch.path("s/t"),
-            scratch.path("m/mnt"),
-        );
-        let clean = || {
-            sudo(&["chattr", "-a", &log]);
-            sudo(&["rm", "-rf", &sticky]);
-            sudo(&["umount", &mnt]);
-        };
-        if !sudo(&["chattr", "+a", &log])
-            || !sudo(&["mkdir", "-m", "1777", &sticky])
-            || !sudo(&["touch", &format!("{sticky}/theirs")])
-            || !sudo(&["mount", "-t", "tmpfs", "volant-test", &mnt])
+    fn a_tree_is_removed_whole_or_handed_back_whole() {
         {
-            clean();
-            eprintln!(
-                "skipped: sudo -n cannot set up an append-only file, a sticky directory and a mount"
+            if unsafe { libc::geteuid() } == 0 {
+                eprintln!("skipped as root: root can empty any directory");
+                return;
+            }
+            let scratch = Scratch::new("file-tree");
+            mkdir(&scratch.path("t/sub"), 0o755);
+            fs::write(scratch.path("t/sub/x"), "x").unwrap();
+            fs::write(scratch.path("t/y"), "y").unwrap();
+            chmod(&scratch.path("t/sub"), 0o500);
+            let answer = ask(&json!({"path": scratch.path("t"), "state": "absent"}));
+            let left = after(&scratch.path("t/y"));
+            chmod(&scratch.path("t/sub"), 0o755);
+            assert!(matches!(answer, NativeRun::Fallback(_)));
+            assert_eq!(left["exists"], true);
+        }
+        {
+            if unsafe { libc::geteuid() } == 0 {
+                eprintln!(
+                    "skipped as root: the sticky case needs another account than the agent's"
+                );
+                return;
+            }
+            let sudo = |args: &[&str]| {
+                std::process::Command::new("sudo")
+                    .arg("-n")
+                    .args(args)
+                    .status()
+                    .is_ok_and(|status| status.success())
+            };
+            let scratch = Scratch::new("file-rmtree");
+            mkdir(&scratch.path("a"), 0o755);
+            fs::write(scratch.path("a/y"), "y").unwrap();
+            fs::write(scratch.path("a/log"), "log").unwrap();
+            mkdir(&scratch.path("s"), 0o755);
+            fs::write(scratch.path("s/y"), "y").unwrap();
+            mkdir(&scratch.path("m/mnt"), 0o755);
+            fs::write(scratch.path("m/y"), "y").unwrap();
+            let (log, sticky, mnt) = (
+                scratch.path("a/log"),
+                scratch.path("s/t"),
+                scratch.path("m/mnt"),
             );
-            return;
+            let clean = || {
+                sudo(&["chattr", "-a", &log]);
+                sudo(&["rm", "-rf", &sticky]);
+                sudo(&["umount", &mnt]);
+            };
+            if !sudo(&["chattr", "+a", &log])
+                || !sudo(&["mkdir", "-m", "1777", &sticky])
+                || !sudo(&["touch", &format!("{sticky}/theirs")])
+                || !sudo(&["mount", "-t", "tmpfs", "volant-test", &mnt])
+            {
+                clean();
+                eprintln!(
+                    "skipped: sudo -n cannot set up an append-only file, a sticky directory and a mount"
+                );
+                return;
+            }
+            let answers = ["a", "s", "m"]
+                .map(|dir| ask(&json!({"path": scratch.path(dir), "state": "absent"})));
+            let left =
+                ["a/y", "s/y", "m/y"].map(|file| after(&scratch.path(file))["exists"].clone());
+            clean();
+            for (answer, case) in answers.iter().zip(["append-only", "sticky", "mount"]) {
+                assert!(matches!(answer, NativeRun::Fallback(_)), "{case}");
+            }
+            assert_eq!(left, [true, true, true].map(Value::from));
         }
-        let answers =
-            ["a", "s", "m"].map(|dir| ask(&json!({"path": scratch.path(dir), "state": "absent"})));
-        let left = ["a/y", "s/y", "m/y"].map(|file| after(&scratch.path(file))["exists"].clone());
-        clean();
-        for (answer, case) in answers.iter().zip(["append-only", "sticky", "mount"]) {
-            assert!(matches!(answer, NativeRun::Fallback(_)), "{case}");
+        {
+            let scratch = Scratch::new("file-link-out");
+            mkdir(&scratch.path("outside"), 0o755);
+            fs::write(scratch.path("outside/keep"), "keep").unwrap();
+            mkdir(&scratch.path("t/d"), 0o755);
+            fs::write(scratch.path("t/d/x"), "x").unwrap();
+            std::os::unix::fs::symlink(scratch.path("outside"), scratch.path("t/sub")).unwrap();
+            let answer = ask(&json!({"path": scratch.path("t"), "state": "absent"}));
+            assert!(matches!(answer, NativeRun::Done(_)));
+            assert_eq!(after(&scratch.path("t"))["exists"], false);
+            assert_eq!(after(&scratch.path("outside/keep"))["content"], "keep");
         }
-        assert_eq!(left, [true, true, true].map(Value::from));
     }
 
-    /// The scan before a removal looks at the cancel for each entry, so a flat directory of a
-    /// million files still ends when the controller cancels the task.
-    ///
-    /// What would make this red: the clock looked at once per directory, which lets the scan
-    /// of `flat` finish.
+    /// The scan before a removal stops at the cancel; a hung name service ends with the timeout.
     #[test]
-    fn the_scan_before_a_removal_stops_at_the_cancel() {
-        let scratch = Scratch::new("file-scan-cancel");
-        mkdir(&scratch.path("flat"), 0o755);
-        fs::write(scratch.path("flat/x"), "x").unwrap();
-        fs::write(scratch.path("flat/y"), "y").unwrap();
-        let polls = std::cell::Cell::new(0);
-        let second_poll = || {
-            polls.set(polls.get() + 1);
-            polls.get() > 1
-        };
-        let clock = Clock {
-            deadline: None,
-            cancelled: &second_poll,
-        };
-        let top = scratch.path("flat");
-        assert!(matches!(removable(&top, clock), Err(Halt::Cancelled)));
-    }
-
-    /// A link inside the tree to a directory outside it is removed as a link: the directory it
-    /// points to, and what it holds, stay.
-    ///
-    /// What would make this red: a removal that follows links, which empties `outside`.
-    #[test]
-    fn a_link_out_of_the_tree_is_removed_not_followed() {
-        let scratch = Scratch::new("file-link-out");
-        mkdir(&scratch.path("outside"), 0o755);
-        fs::write(scratch.path("outside/keep"), "keep").unwrap();
-        mkdir(&scratch.path("t/d"), 0o755);
-        fs::write(scratch.path("t/d/x"), "x").unwrap();
-        std::os::unix::fs::symlink(scratch.path("outside"), scratch.path("t/sub")).unwrap();
-        let answer = ask(&json!({"path": scratch.path("t"), "state": "absent"}));
-        assert!(matches!(answer, NativeRun::Done(_)));
-        assert_eq!(after(&scratch.path("t"))["exists"], false);
-        assert_eq!(after(&scratch.path("outside/keep"))["content"], "keep");
-    }
-
-    /// The task's `timeout` reaches a name service that hangs: a `getent` that sleeps, first on
-    /// `PATH`, for an owner `/etc/passwd` does not hold. The answer is the one the Python path
-    /// gives for a module that outlives the task, and nothing was changed.
-    ///
-    /// What would make this red: `getent` run outside `command`'s executor (the test waits for
-    /// the sleep, 600 s, and nextest ends it), or the timeout answered as anything else.
-    #[test]
-    fn a_hung_name_service_ends_with_the_timeout() {
-        let scratch = Scratch::new("file-hung");
-        let file = scratch.fixture();
-        let _path = super::super::common::golden::fake_getent(&scratch, "exec sleep 600");
-        let context = Context {
-            timeout: Some(std::time::Duration::from_secs(1)),
-            ..Context::default()
-        };
-        let args = json!({"path": file, "owner": "volant-no-such-user", "mode": "0600"});
-        let timed = args.clone();
-        let answer = within(30, move || {
-            run(timed.as_object().unwrap(), &context, &|| false)
-        });
-        let NativeRun::Done(result) = answer else {
-            panic!("no answer")
-        };
-        assert_eq!(result, volant_protocol::TaskResult::timed_out(1));
-        assert_eq!(after(&file)["mode"], "0644");
-        let cancelled = within(30, move || {
-            run(args.as_object().unwrap(), &Context::default(), &|| true)
-        });
-        assert!(matches!(cancelled, NativeRun::Cancelled));
+    fn the_scan_and_the_name_service_stop_at_the_cancel_or_timeout() {
+        {
+            let scratch = Scratch::new("file-scan-cancel");
+            mkdir(&scratch.path("flat"), 0o755);
+            fs::write(scratch.path("flat/x"), "x").unwrap();
+            fs::write(scratch.path("flat/y"), "y").unwrap();
+            let polls = std::cell::Cell::new(0);
+            let second_poll = || {
+                polls.set(polls.get() + 1);
+                polls.get() > 1
+            };
+            let clock = Clock {
+                deadline: None,
+                cancelled: &second_poll,
+            };
+            let top = scratch.path("flat");
+            assert!(matches!(removable(&top, clock), Err(Halt::Cancelled)));
+        }
+        {
+            let scratch = Scratch::new("file-hung");
+            let file = scratch.fixture();
+            let _path = super::super::common::golden::fake_getent(&scratch, "exec sleep 600");
+            let context = Context {
+                timeout: Some(std::time::Duration::from_secs(1)),
+                ..Context::default()
+            };
+            let args = json!({"path": file, "owner": "volant-no-such-user", "mode": "0600"});
+            let timed = args.clone();
+            let answer = within(30, move || {
+                run(timed.as_object().unwrap(), &context, &|| false)
+            });
+            let NativeRun::Done(result) = answer else {
+                panic!("no answer")
+            };
+            assert_eq!(result, volant_protocol::TaskResult::timed_out(1));
+            assert_eq!(after(&file)["mode"], "0644");
+            let cancelled = within(30, move || {
+                run(args.as_object().unwrap(), &Context::default(), &|| true)
+            });
+            assert!(matches!(cancelled, NativeRun::Cancelled));
+        }
     }
 
     /// `_original_basename`, as `copy` sends it: a directory named as the destination stands for
     /// the file of that name inside it, in the answer and in `invocation`.
-    ///
-    /// What would make this red: the rewrite skipped (the mode set on the directory), or
-    /// `invocation` still naming the directory as `path`.
     #[test]
     fn a_directory_given_with_a_basename_stands_for_the_file_inside() {
         let scratch = Scratch::new("file-basename");

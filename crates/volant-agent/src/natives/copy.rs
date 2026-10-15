@@ -812,25 +812,47 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
     }
 
-    /// A `validate` that splits into no program fails without quoting the command, which can
-    /// carry a secret: the reference, whose `shlex.split` raises on it, quotes none of it. The
-    /// up-front check hands such a `validate` back, so only the validation itself reaches this.
-    ///
-    /// What would make this red: the message carrying the `validate` value.
+    /// A validate naming no program is not quoted; the md5 matches the RFC.
     #[test]
-    fn a_validate_naming_no_program_is_not_quoted() {
-        let scratch = scratch("copy-no-program");
-        let src = stage(&scratch, "v\n");
-        let validate = "'secret %s";
-        let args = json!({"src": src, "dest": scratch.path("v.txt"), "validate": validate});
-        let cancelled = || false;
-        let clock = clock(&Context::default(), &cancelled);
-        let params = module_args(SPEC, args.as_object().unwrap());
-        let request = request(&params, clock).ok().unwrap();
-        let Err(Stop::Fail(fail)) = validate_src(&request, validate, clock) else {
-            panic!("the validation did not fail");
-        };
-        assert_eq!(fail["msg"], "validate names no program");
+    fn validate_is_not_quoted_and_md5_matches_the_rfc() {
+        {
+            let scratch = scratch("copy-no-program");
+            let src = stage(&scratch, "v\n");
+            let validate = "'secret %s";
+            let args = json!({"src": src, "dest": scratch.path("v.txt"), "validate": validate});
+            let cancelled = || false;
+            let clock = clock(&Context::default(), &cancelled);
+            let params = module_args(SPEC, args.as_object().unwrap());
+            let request = request(&params, clock).ok().unwrap();
+            let Err(Stop::Fail(fail)) = validate_src(&request, validate, clock) else {
+                panic!("the validation did not fail");
+            };
+            assert_eq!(fail["msg"], "validate names no program");
+        }
+        {
+            let md5 = |text: &str| {
+                let mut md5 = Md5::new();
+                md5.update(text.as_bytes());
+                md5.hex()
+            };
+            for (text, sum) in [
+                ("", "d41d8cd98f00b204e9800998ecf8427e"),
+                ("a", "0cc175b9c0f1b6a831c399e269772661"),
+                ("abc", "900150983cd24fb0d6963f7d28e17f72"),
+                ("message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
+                (
+                    "abcdefghijklmnopqrstuvwxyz",
+                    "c3fcd3d76192e4007dfb496cca67e13b",
+                ),
+                (
+                    "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                    "57edf4a22be3c955ac49da2e2107b67a",
+                ),
+                ("one\n", "5bbf5a52328e7439ae6e719dfe712200"),
+            ] {
+                assert_eq!(md5(text), sum, "{text:?}");
+            }
+        }
     }
 
     fn ask(args: &Value) -> NativeRun {
@@ -923,16 +945,7 @@ mod tests {
         backup
     }
 
-    /// Every recorded `copy-module-*` case, played in the golden play's order on the same files,
-    /// with the arguments the action plugin sends for `content`: the text staged as `src`, its
-    /// sum as `checksum`, `_original_basename` and `follow`. What the plugin and the controller
-    /// add to the module's answer (`diff`, the sum of a failure, `stdout_lines`) is added here
-    /// too. `remote_src` must hand back with nothing changed.
-    ///
-    /// What would make this red: `validate` run after the move (`copy-module-validate-fail`
-    /// leaves no file), the source copied rather than moved (it survives, or the file is another
-    /// inode), a backup named otherwise or holding other content, a message worded otherwise, or
-    /// `remote_src` answered.
+    /// Every recorded `copy-module-*` case, played in the golden play's order on the same files.
     #[test]
     fn copy_answers_every_recorded_case_like_the_reference() {
         let scratch = scratch("copy");
@@ -1026,21 +1039,7 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// The branches the golden play does not reach, each against what ansible-core 2.19.12's
-    /// module answered with the same files and arguments (measured by running
-    /// `python -m ansible.modules.copy` on an arguments file, no action plugin): a link as `dest`
-    /// without `follow` (its target kept, which the recorded `copy-module-dest-link` does not
-    /// read) and with it (with a backup), a dangling link,
-    /// the same content with another mode, `force: false`, a directory as `dest` with and
-    /// without its slash, an unknown owner, `validate` without `%s`, a file replaced, and an
-    /// invalid mode. A failure gets the `changed: false` ansible-core's task executor adds, as
-    /// the dispatcher adds it; `invocation` is held to the reference by the recorded cases.
-    ///
-    /// What would make this red: a link written through instead of replaced, the backup of a
-    /// followed link named after the link, the same content moved anyway (the staged source
-    /// gone), `atomic_move` without its `utime` (the replaced file keeps its old time) or
-    /// without the replaced file's mode, or a failure coming before the move where the reference
-    /// fails after it (`owner-unknown`, `mode-invalid` leave the file).
+    /// The branches the golden play does not reach, each against what the reference's module answered.
     #[test]
     fn copy_matches_the_reference_on_every_other_branch() {
         let scratch = scratch("copy-branches");
@@ -1201,17 +1200,7 @@ mod tests {
         assert!(found.is_empty(), "{found:#?}");
     }
 
-    /// Every case outside the subset hands back with every file as it was, the staged source
-    /// included: options the native leaves to Python, arguments `AnsibleModule` would convert or
-    /// refuse, paths the reference reads another way, directories it would create, a
-    /// destination that is a directory, the parent a file, a task `environment`; and, on the
-    /// fixture file and on a link to it with `backup`, a `validate` Python would format, expand
-    /// or split otherwise or cannot run, inode flags or extended attributes the backup would
-    /// carry. The file systems the tests run on take user xattrs and the owner's `nodump` flag;
-    /// one that does not fails the test saying so.
-    ///
-    /// What would make this red: any of these answered, or a hand-back after the backup or the
-    /// link's replacement (the snapshot then holds a backup file, or a file where the link was).
+    /// Every case outside the subset hands back with every file as it was, the staged source included.
     #[test]
     fn copy_hands_back_before_changing_anything() {
         let scratch = scratch("copy-back");
@@ -1348,145 +1337,97 @@ mod tests {
         );
     }
 
-    /// The same device on the same mount is not a crossing; another device (a btrfs subvolume,
-    /// on its parent's mount), another mount (a bind mount, same device), or a mount the kernel
-    /// does not tell are.
-    ///
-    /// What would make this red: either comparison dropped, or an unknown mount trusted.
+    /// A rename across a device falls back, and a source on another mount is handed back.
     #[test]
-    fn a_rename_crosses_a_device_or_a_mount() {
-        assert!(!crosses((1, Some(7)), (1, Some(7))));
-        assert!(crosses((2, Some(7)), (1, Some(7))), "a subvolume");
-        assert!(crosses((1, Some(8)), (1, Some(7))), "a bind mount");
-        assert!(crosses((1, None), (1, Some(7))), "an unknown mount");
+    fn a_cross_device_rename_and_a_foreign_mount_are_handled() {
+        {
+            assert!(!crosses((1, Some(7)), (1, Some(7))));
+            assert!(crosses((2, Some(7)), (1, Some(7))), "a subvolume");
+            assert!(crosses((1, Some(8)), (1, Some(7))), "a bind mount");
+            assert!(crosses((1, None), (1, Some(7))), "an unknown mount");
+        }
+        {
+            let scratch = scratch("copy-mount");
+            let other = format!("/dev/shm/volant-copy-{}", std::process::id());
+            fs::write(&other, "far\n").expect("/dev/shm is writable, which the test needs");
+            let apart = mount_id(&other, false) != mount_id(&scratch.0, true);
+            let dest = scratch.path("n.txt");
+            write(&dest, "near\n", 0o644);
+            let answer = ask(&json!({"src": other, "dest": dest, "backup": true}));
+            let kept = fs::read_to_string(&other);
+            let _ = fs::remove_file(&other);
+            assert!(
+                apart,
+                "/dev/shm shares /var/tmp's mount here, which the test needs apart"
+            );
+            assert!(
+                matches!(answer, NativeRun::Fallback(_)),
+                "answered across mounts"
+            );
+            assert_eq!(kept.unwrap(), "far\n");
+            assert_eq!(fs::read_to_string(&dest).unwrap(), "near\n");
+            assert_eq!(
+                fs::read_dir(&scratch.0).unwrap().count(),
+                2,
+                "a backup was made"
+            );
+        }
     }
 
-    /// A staged source on another mount than the destination hands back with both untouched:
-    /// `rename` would fail with EXDEV, and the reference would copy through a file of its own.
-    /// `/dev/shm` is a tmpfs of its own on the machines this runs on; where it is not, the test
-    /// fails saying so rather than checking nothing.
-    ///
-    /// What would make this red: the mount check dropped, which renames across and fails, or
-    /// answers after the backup.
+    /// A backup stops at the cancel, and a hung validate ends with the timeout or the cancel.
     #[test]
-    fn a_source_on_another_mount_is_handed_back() {
-        let scratch = scratch("copy-mount");
-        let other = format!("/dev/shm/volant-copy-{}", std::process::id());
-        fs::write(&other, "far\n").expect("/dev/shm is writable, which the test needs");
-        let apart = mount_id(&other, false) != mount_id(&scratch.0, true);
-        let dest = scratch.path("n.txt");
-        write(&dest, "near\n", 0o644);
-        let answer = ask(&json!({"src": other, "dest": dest, "backup": true}));
-        let kept = fs::read_to_string(&other);
-        let _ = fs::remove_file(&other);
-        assert!(
-            apart,
-            "/dev/shm shares /var/tmp's mount here, which the test needs apart"
-        );
-        assert!(
-            matches!(answer, NativeRun::Fallback(_)),
-            "answered across mounts"
-        );
-        assert_eq!(kept.unwrap(), "far\n");
-        assert_eq!(fs::read_to_string(&dest).unwrap(), "near\n");
-        assert_eq!(
-            fs::read_dir(&scratch.0).unwrap().count(),
-            2,
-            "a backup was made"
-        );
-    }
-
-    /// A backup that outlives the task's deadline, or meets the controller's cancel, stops
-    /// between two blocks.
-    ///
-    /// What would make this red: the backup copied in one go, without its clock.
-    #[test]
-    fn a_backup_stops_at_the_cancel() {
-        let scratch = scratch("copy-backup-cancel");
-        let big = scratch.path("big");
-        write(&big, &"x".repeat(3 * 1024 * 1024), 0o644);
-        let cancelled = || true;
-        let clock = Clock {
-            deadline: None,
-            cancelled: &cancelled,
-        };
-        let copied = super::super::common::backup_copy(&big, &scratch.path("big~"), clock);
-        assert!(
-            matches!(copied, Err(BackupError::Stopped(Halt::Cancelled))),
-            "{copied:?}"
-        );
-    }
-
-    /// A `validate` that hangs ends with the task's `timeout`, answered as the Python path
-    /// answers it, and with the controller's cancel.
-    ///
-    /// What would make this red: `validate` run without the task's clock, which waits out the
-    /// sleep past the test's own limit.
-    #[test]
-    fn a_hung_validate_ends_with_the_timeout_or_the_cancel() {
-        let scratch = scratch("copy-hung");
-        let hang = scratch.path("hang");
-        write(&hang, "#!/bin/sh\nexec sleep 600\n", 0o755);
-        let args = json!({
-            "src": stage(&scratch, "x\n"),
-            "dest": scratch.path("n.txt"),
-            "validate": format!("{hang} %s"),
-        });
-        let timed = args.clone();
-        let answer = within(30, move || {
-            let context = Context {
-                timeout: Some(Duration::from_secs(1)),
-                ..Context::default()
+    fn a_backup_and_a_hung_validate_stop_at_the_cancel() {
+        {
+            let scratch = scratch("copy-backup-cancel");
+            let big = scratch.path("big");
+            write(&big, &"x".repeat(3 * 1024 * 1024), 0o644);
+            let cancelled = || true;
+            let clock = Clock {
+                deadline: None,
+                cancelled: &cancelled,
             };
-            match ask_in(&timed, &context) {
-                NativeRun::Done(result) => Some(result),
-                _ => None,
-            }
-        });
-        assert_eq!(answer, Some(TaskResult::timed_out(1)));
+            let copied = super::super::common::backup_copy(&big, &scratch.path("big~"), clock);
+            assert!(
+                matches!(copied, Err(BackupError::Stopped(Halt::Cancelled))),
+                "{copied:?}"
+            );
+        }
+        {
+            let scratch = scratch("copy-hung");
+            let hang = scratch.path("hang");
+            write(&hang, "#!/bin/sh\nexec sleep 600\n", 0o755);
+            let args = json!({
+                "src": stage(&scratch, "x\n"),
+                "dest": scratch.path("n.txt"),
+                "validate": format!("{hang} %s"),
+            });
+            let timed = args.clone();
+            let answer = within(30, move || {
+                let context = Context {
+                    timeout: Some(Duration::from_secs(1)),
+                    ..Context::default()
+                };
+                match ask_in(&timed, &context) {
+                    NativeRun::Done(result) => Some(result),
+                    _ => None,
+                }
+            });
+            assert_eq!(answer, Some(TaskResult::timed_out(1)));
 
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let flag = cancelled.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            flag.store(true, Ordering::Relaxed);
-        });
-        let answer = within(30, move || {
-            let cancel = move || cancelled.load(Ordering::Relaxed);
-            matches!(
-                run(args.as_object().unwrap(), &Context::default(), &cancel),
-                NativeRun::Cancelled
-            )
-        });
-        assert!(answer, "the cancel did not stop the validate");
-    }
-
-    /// RFC 1321's own test suite, and the sum the reference gave `one\n`.
-    ///
-    /// What would make this red: any constant, rotation or padding rule of the MD5 above wrong.
-    #[test]
-    fn md5_matches_the_rfc() {
-        let md5 = |text: &str| {
-            let mut md5 = Md5::new();
-            md5.update(text.as_bytes());
-            md5.hex()
-        };
-        for (text, sum) in [
-            ("", "d41d8cd98f00b204e9800998ecf8427e"),
-            ("a", "0cc175b9c0f1b6a831c399e269772661"),
-            ("abc", "900150983cd24fb0d6963f7d28e17f72"),
-            ("message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
-            (
-                "abcdefghijklmnopqrstuvwxyz",
-                "c3fcd3d76192e4007dfb496cca67e13b",
-            ),
-            (
-                "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-                "57edf4a22be3c955ac49da2e2107b67a",
-            ),
-            ("one\n", "5bbf5a52328e7439ae6e719dfe712200"),
-        ] {
-            assert_eq!(md5(text), sum, "{text:?}");
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let flag = cancelled.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                flag.store(true, Ordering::Relaxed);
+            });
+            let answer = within(30, move || {
+                let cancel = move || cancelled.load(Ordering::Relaxed);
+                matches!(
+                    run(args.as_object().unwrap(), &Context::default(), &cancel),
+                    NativeRun::Cancelled
+                )
+            });
+            assert!(answer, "the cancel did not stop the validate");
         }
     }
 }

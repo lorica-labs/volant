@@ -483,179 +483,146 @@ mod linux {
             format!("{prefix}{}", std::process::id())
         }
 
-        /// A group the host does not have is created with `groupadd -g <gid> -r <name>`, the
-        /// module's order, and answered with the module's keys.
-        ///
-        /// What would make this red: `-r` before `-g`, or the name anywhere but last; a result
-        /// without the command's `stdout`/`stderr`, or with `gid`/`system` for a group the host
-        /// still does not hold.
+        /// `groupadd` takes the module's arguments in its order; an existing group is modified only where it differs.
         #[test]
-        fn groupadd_takes_the_module_s_arguments_in_its_order() {
-            let fakes = Fakes::new("groupadd", &["groupadd"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let name = scratch_name("volantg");
-            let mut answer = ask(
-                &args(json!({"name": name, "gid": 64998, "system": true})),
-                &fakes.context,
-            )
-            .unwrap();
-            assert_eq!(
-                fakes.argv("groupadd").unwrap(),
-                ["-g", "64998", "-r", name.as_str()]
-            );
-            assert_eq!(answer["invocation"]["module_args"]["gid_min"], Value::Null);
-            answer.remove("invocation");
-            assert_eq!(
-                Value::Object(answer),
-                json!({"name": name, "state": "present", "changed": true,
-                       "stdout": "out\n", "stderr": "err\n"})
-            );
-        }
-
-        /// A group already holding the gid asked for runs nothing; another gid runs
-        /// `groupmod -g <gid> <name>`; `absent` runs `groupdel <name>`.
-        ///
-        /// What would make this red: `groupmod` run for an unchanged gid (`changed: true`), or
-        /// run with the name first; `groupdel` given anything but the name.
-        #[test]
-        fn an_existing_group_is_modified_only_where_it_differs() {
-            let fakes = Fakes::new("groupmod", &["groupmod", "groupdel"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let same = ask(&args(json!({"name": "root", "gid": 0})), &fakes.context).unwrap();
-            assert_eq!(fakes.argv("groupmod"), None);
-            assert_eq!(same["changed"], false);
-            assert_eq!(same["gid"], 0);
-            assert_eq!(same["system"], false);
-            assert!(!same.contains_key("stdout"));
-
-            let moved = ask(&args(json!({"name": "root", "gid": 5})), &fakes.context).unwrap();
-            assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
-            assert_eq!(moved["changed"], true);
-            // Read back after the command, which here changed nothing.
-            assert_eq!(moved["gid"], 0);
-
-            let gone = ask(
-                &args(json!({"name": "root", "state": "absent"})),
-                &fakes.context,
-            )
-            .unwrap();
-            assert_eq!(fakes.argv("groupdel").unwrap(), ["root"]);
-            assert_eq!(gone["changed"], true);
-            assert_eq!(gone["state"], "absent");
-        }
-
-        /// A command that fails is the module's failure: `name` and the error output as `msg`,
-        /// and nothing else: no `rc`, no `changed`, no output.
-        ///
-        /// What would make this red: a failure answered as a change, with the output as `msg`,
-        /// or with keys `group.py`'s `fail_json(name=..., msg=err)` does not give.
-        #[test]
-        fn a_failing_groupadd_is_the_module_s_failure() {
-            let fakes = Fakes::new("groupadd-fails", &["groupadd"], 9);
-            if fakes.outside(ask) {
-                return;
-            }
-            let name = scratch_name("volantf");
-            let mut answer = ask(&args(json!({"name": name})), &fakes.context).unwrap();
-            assert!(answer.remove("invocation").is_some());
-            assert_eq!(
-                Value::Object(answer),
-                json!({"failed": true, "name": name, "msg": "err\n"})
-            );
-        }
-
-        /// Every argument outside `name`, `state`, `gid` and `system` hands back before any
-        /// command runs.
-        ///
-        /// What would make this red: one of them answered, or a command run before handing back.
-        #[test]
-        fn an_argument_outside_the_subset_hands_back_before_any_command() {
-            let fakes = Fakes::new("group-subset", &["groupadd", "groupdel"], 0);
-            let name = scratch_name("volants");
-            for (key, value) in [
-                ("local", json!(true)),
-                ("non_unique", json!(true)),
-                ("force", json!(true)),
-                ("gid_min", json!(1000)),
-                ("gid_max", json!(2000)),
-            ] {
-                let mut given = args(json!({"name": name, "gid": 64997}));
-                given.insert(key.into(), value);
-                let answer = ask(&given, &fakes.context);
-                assert!(
-                    matches!(answer, Err(Stop::HandBack(_))),
-                    "{key} was answered"
-                );
-            }
-            assert_eq!(fakes.argv("groupadd"), None);
-        }
-
-        /// A group `/etc/group` does not hold and the name service knows is handed back, before
-        /// `groupadd` or `groupdel` runs.
-        ///
-        /// What would make this red: the name service not asked, which reads the group as
-        /// missing and runs `groupadd` for a group the directory already has.
-        #[test]
-        fn a_group_only_the_name_service_knows_hands_back() {
-            let fakes = Fakes::new("group-nss", &["groupadd", "groupdel"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let name = scratch_name("volantn");
-            let _path = fake_getent(
-                &fakes.scratch,
-                &format!("[ \"$2\" = {name} ] && echo '{name}:x:5000:' && exit 0; exit 2"),
-            );
-            for state in ["present", "absent"] {
-                let answer = ask(&args(json!({"name": name, "state": state})), &fakes.context);
-                assert!(
-                    matches!(answer, Err(Stop::HandBack(_))),
-                    "{state} was answered"
-                );
-            }
-            assert_eq!(fakes.argv("groupadd"), None);
-            assert_eq!(fakes.argv("groupdel"), None);
-        }
-
-        /// A host whose `nsswitch.conf` puts another source before `files` for accounts or
-        /// groups hands back before any command; `files` or `compat` first does not, nor does a
-        /// host without the file.
-        ///
-        /// What would make this red: the gate not reading `nsswitch.conf`, which lets `groupmod`
-        /// edit a file entry that `grp`, asking the directory first, does not answer with.
-        #[test]
-        fn another_name_service_before_files_hands_back() {
-            let fakes = Fakes::new("group-nsswitch", &["groupmod"], 0);
-            if fakes.outside(ask) {
-                return;
-            }
-            let conf = fakes.scratch.path("nsswitch.conf");
-            for text in [
-                "passwd: files\ngroup: sss files\n",
-                "passwd: sss files\ngroup: files\n",
-            ] {
-                std::fs::write(&conf, text).unwrap();
-                let answer = answer(
-                    &args(json!({"name": "root", "gid": 5})),
+        fn groupadd_and_groupmod_follow_the_module() {
+            {
+                let fakes = Fakes::new("groupadd", &["groupadd"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantg");
+                let mut answer = ask(
+                    &args(json!({"name": name, "gid": 64998, "system": true})),
                     &fakes.context,
-                    unbounded(),
-                    &conf,
+                )
+                .unwrap();
+                assert_eq!(
+                    fakes.argv("groupadd").unwrap(),
+                    ["-g", "64998", "-r", name.as_str()]
                 );
-                assert!(
-                    matches!(answer, Err(Stop::HandBack(_))),
-                    "{text:?} was answered"
+                assert_eq!(answer["invocation"]["module_args"]["gid_min"], Value::Null);
+                answer.remove("invocation");
+                assert_eq!(
+                    Value::Object(answer),
+                    json!({"name": name, "state": "present", "changed": true,
+                       "stdout": "out\n", "stderr": "err\n"})
                 );
             }
-            assert_eq!(fakes.argv("groupmod"), None);
-            std::fs::write(&conf, "# sss\npasswd: compat\ngroup:\tfiles systemd\n").unwrap();
-            let args = args(json!({"name": "root", "gid": 5}));
-            answer(&args, &fakes.context, unbounded(), &conf).unwrap();
-            assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
-            assert!(files_first(&fakes.scratch.path("none"), "group"));
+            {
+                let fakes = Fakes::new("groupmod", &["groupmod", "groupdel"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let same = ask(&args(json!({"name": "root", "gid": 0})), &fakes.context).unwrap();
+                assert_eq!(fakes.argv("groupmod"), None);
+                assert_eq!(same["changed"], false);
+                assert_eq!(same["gid"], 0);
+                assert_eq!(same["system"], false);
+                assert!(!same.contains_key("stdout"));
+
+                let moved = ask(&args(json!({"name": "root", "gid": 5})), &fakes.context).unwrap();
+                assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
+                assert_eq!(moved["changed"], true);
+                // Read back after the command, which here changed nothing.
+                assert_eq!(moved["gid"], 0);
+
+                let gone = ask(
+                    &args(json!({"name": "root", "state": "absent"})),
+                    &fakes.context,
+                )
+                .unwrap();
+                assert_eq!(fakes.argv("groupdel").unwrap(), ["root"]);
+                assert_eq!(gone["changed"], true);
+                assert_eq!(gone["state"], "absent");
+            }
+            {
+                let fakes = Fakes::new("groupadd-fails", &["groupadd"], 9);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantf");
+                let mut answer = ask(&args(json!({"name": name})), &fakes.context).unwrap();
+                assert!(answer.remove("invocation").is_some());
+                assert_eq!(
+                    Value::Object(answer),
+                    json!({"failed": true, "name": name, "msg": "err\n"})
+                );
+            }
+        }
+
+        /// An argument outside the subset, or a group only the name service knows, hands back first.
+        #[test]
+        fn what_is_outside_the_subset_hands_back_before_any_command() {
+            {
+                let fakes = Fakes::new("group-subset", &["groupadd", "groupdel"], 0);
+                let name = scratch_name("volants");
+                for (key, value) in [
+                    ("local", json!(true)),
+                    ("non_unique", json!(true)),
+                    ("force", json!(true)),
+                    ("gid_min", json!(1000)),
+                    ("gid_max", json!(2000)),
+                ] {
+                    let mut given = args(json!({"name": name, "gid": 64997}));
+                    given.insert(key.into(), value);
+                    let answer = ask(&given, &fakes.context);
+                    assert!(
+                        matches!(answer, Err(Stop::HandBack(_))),
+                        "{key} was answered"
+                    );
+                }
+                assert_eq!(fakes.argv("groupadd"), None);
+            }
+            {
+                let fakes = Fakes::new("group-nss", &["groupadd", "groupdel"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let name = scratch_name("volantn");
+                let _path = fake_getent(
+                    &fakes.scratch,
+                    &format!("[ \"$2\" = {name} ] && echo '{name}:x:5000:' && exit 0; exit 2"),
+                );
+                for state in ["present", "absent"] {
+                    let answer = ask(&args(json!({"name": name, "state": state})), &fakes.context);
+                    assert!(
+                        matches!(answer, Err(Stop::HandBack(_))),
+                        "{state} was answered"
+                    );
+                }
+                assert_eq!(fakes.argv("groupadd"), None);
+                assert_eq!(fakes.argv("groupdel"), None);
+            }
+            {
+                let fakes = Fakes::new("group-nsswitch", &["groupmod"], 0);
+                if fakes.outside(ask) {
+                    return;
+                }
+                let conf = fakes.scratch.path("nsswitch.conf");
+                for text in [
+                    "passwd: files\ngroup: sss files\n",
+                    "passwd: sss files\ngroup: files\n",
+                ] {
+                    std::fs::write(&conf, text).unwrap();
+                    let answer = answer(
+                        &args(json!({"name": "root", "gid": 5})),
+                        &fakes.context,
+                        unbounded(),
+                        &conf,
+                    );
+                    assert!(
+                        matches!(answer, Err(Stop::HandBack(_))),
+                        "{text:?} was answered"
+                    );
+                }
+                assert_eq!(fakes.argv("groupmod"), None);
+                std::fs::write(&conf, "# sss\npasswd: compat\ngroup:\tfiles systemd\n").unwrap();
+                let args = args(json!({"name": "root", "gid": 5}));
+                answer(&args, &fakes.context, unbounded(), &conf).unwrap();
+                assert_eq!(fakes.argv("groupmod").unwrap(), ["-g", "5", "root"]);
+                assert!(files_first(&fakes.scratch.path("none"), "group"));
+            }
         }
     }
 }

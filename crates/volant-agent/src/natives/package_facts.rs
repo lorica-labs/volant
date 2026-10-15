@@ -1505,577 +1505,518 @@ Description: time zone and daylight-saving time data
             }
         }
 
-        /// The fixture host, answered as python-apt answers it, with the invocation the
-        /// reference prints for the default arguments.
-        ///
-        /// What would make this red: the origin taken from a list that carries the package's
-        /// name at another version (`tool` would say `Ubuntu`); the section taken from the
-        /// status when a list carries the version (`hello` would say `devel`); a version no
-        /// list carries given a list's origin (`base-files`); `hold` read as not installed, or
-        /// `config-files` read as installed.
+        /// A host is answered as python-apt answers it: records, `enabled`, apt before apk, dpkg version order.
         #[test]
-        fn a_host_is_answered_as_python_apt_answers_it() {
-            let tree = Tree::new(HOST);
-            let result = tree.answer(json!({})).unwrap();
-            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
-            assert_eq!(result["ansible_facts"]["packages"], reference);
-            assert_eq!(
-                result["invocation"],
-                json!({"module_args": {"manager": ["auto"], "strategy": "first"}})
-            );
-            let result = tree
-                .answer(json!({"manager": "APT", "strategy": "first"}))
-                .unwrap();
-            assert_eq!(result["ansible_facts"]["packages"], reference);
-            assert_eq!(
-                result["invocation"],
-                json!({"module_args": {"manager": ["APT"], "strategy": "first"}}),
-                "the invocation keeps the manager as written, converted to a list"
-            );
-        }
-
-        /// Every state apt counts as installed besides `installed` itself hands back: a
-        /// half-configured package is listed by the reference, and the native does not read it.
-        ///
-        /// What would make this red: `half-configured` (or `unpacked`, `triggers-pending`, a
-        /// `reinstreq` flag) read as `installed`, or skipped as not installed.
-        #[test]
-        fn a_half_configured_package_hands_back() {
-            for state in [
-                "install ok half-configured",
-                "install ok unpacked",
-                "install ok half-installed",
-                "install ok triggers-pending",
-                "install reinstreq installed",
-            ] {
+        fn a_host_is_answered_as_the_reference_answers_it() {
+            {
+                let tree = Tree::new(HOST);
+                let result = tree.answer(json!({})).unwrap();
+                let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+                assert_eq!(result["ansible_facts"]["packages"], reference);
+                assert_eq!(
+                    result["invocation"],
+                    json!({"module_args": {"manager": ["auto"], "strategy": "first"}})
+                );
+                let result = tree
+                    .answer(json!({"manager": "APT", "strategy": "first"}))
+                    .unwrap();
+                assert_eq!(result["ansible_facts"]["packages"], reference);
+                assert_eq!(
+                    result["invocation"],
+                    json!({"module_args": {"manager": ["APT"], "strategy": "first"}}),
+                    "the invocation keeps the manager as written, converted to a list"
+                );
+            }
+            {
+                for (text, expected) in [
+                    ("0", Some(false)),
+                    ("00", Some(false)),
+                    ("-0", Some(false)),
+                    ("0x0", Some(false)),
+                    ("1", Some(true)),
+                    ("+1", Some(true)),
+                    ("0X1", Some(true)),
+                    ("-1", None),
+                    ("2", None),
+                    ("08", None),
+                    ("0x", None),
+                    ("++1", None),
+                    ("0x+1", None),
+                    ("No", Some(false)),
+                    ("FALSE", Some(false)),
+                    ("without", Some(false)),
+                    ("off", Some(false)),
+                    ("disable", Some(false)),
+                    ("yes", Some(true)),
+                    ("True", Some(true)),
+                    ("with", Some(true)),
+                    ("ON", Some(true)),
+                    ("enable", Some(true)),
+                    ("maybe", None),
+                    ("", None),
+                ] {
+                    assert_eq!(apt_bool(text), expected, "{text:?}");
+                }
+                let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+                let as_deb822 = |tree: &Tree, enabled: &str| {
+                    tree.write("/etc/apt/sources.list.d/example.list", "");
+                    tree.write(
+                        "/etc/apt/sources.list.d/example.sources",
+                        &format!(
+                            "Types: deb\nURIs: https://repo.example.org/debian\nSuites: stable\n\
+                         Components: main\nSigned-By: /usr/share/keyrings/example.gpg\n\
+                         Enabled: {enabled}\n"
+                        ),
+                    );
+                };
+                for disabled in ["false", "0", "off", "Disable", "NO"] {
+                    let tree = Tree::new(HOST);
+                    as_deb822(&tree, disabled);
+                    let given = tree.hands_back(json!({}));
+                    assert!(
+                        given.contains("is a list no configured source names"),
+                        "{disabled}: {given}"
+                    );
+                }
+                for enabled in ["yes", "1", "on"] {
+                    let tree = Tree::new(HOST);
+                    as_deb822(&tree, enabled);
+                    let result = tree.answer(json!({})).unwrap();
+                    assert_eq!(result["ansible_facts"]["packages"], reference, "{enabled}");
+                }
+                let tree = Tree::new(HOST);
+                as_deb822(&tree, "maybe");
+                assert!(tree.hands_back(json!({})).contains("is not a boolean"));
                 let tree = Tree::new(HOST);
                 tree.edit(
-                    "/var/lib/dpkg/status",
-                    "Package: hello\nStatus: install ok installed",
-                    &format!("Package: hello\nStatus: {state}"),
+                    "/etc/apt/sources.list.d/example.list",
+                    "deb [signed-by=",
+                    "deb [enabled=no signed-by=",
                 );
-                let reason = tree.hands_back(json!({}));
-                assert!(
-                    reason.starts_with("hello is ") && reason.ends_with("as installed"),
-                    "{state}: {reason}"
-                );
+                let result = tree.answer(json!({})).unwrap();
+                assert_eq!(result["ansible_facts"]["packages"], reference);
+            }
+            {
+                let tree = Tree::new(HOST);
+                tree.write("/usr/bin/apk", "");
+                assert!(tree.answer(json!({"manager": ["auto", "apt"]})).is_ok());
+            }
+            {
+                for (left, right) in [
+                    ("1.0-1", "0:1.0-1"),
+                    ("1.00-1", "1.0-1"),
+                    ("1.0", "1.0-0"),
+                    ("1.0", "1."),
+                    ("2:007", "2:7"),
+                ] {
+                    assert_eq!(canonical(left), canonical(right), "{left} {right}");
+                }
+                for (left, right) in [
+                    ("1.0", "1.0.0"),
+                    ("1.0-1", "1.0-1ubuntu1"),
+                    ("1:1.0", "1.0"),
+                    ("1.0~rc1", "1.0"),
+                ] {
+                    assert_ne!(canonical(left), canonical(right), "{left} {right}");
+                }
             }
         }
 
-        /// Hosts the native does not read hand back before answering.
-        ///
-        /// What would make this red, one line each: a list no source names read (a stale list
-        /// apt ignores); a compressed list skipped; `apk` ignored under `auto`; `APT_CONFIG`
-        /// or `Dir::State` ignored; dpkg's pending updates ignored; a foreign architecture
-        /// answered; a source whose `deb-src` twin sets another `Signed-By` answered (apt
-        /// refuses the list); python3-apt missing; a list whose version differs from the
-        /// status's in a hashed field, or in text only, or two lists disagreeing about one
-        /// version, answered.
+        /// A half-configured package, a host outside the subset and any other record or source hand back.
         #[test]
-        fn a_host_outside_the_subset_hands_back() {
-            type Case = (&'static str, Box<dyn Fn(&Tree)>);
-            let cases: Vec<Case> = vec![
-                (
-                    "is a list no configured source names",
-                    Box::new(|tree| {
-                        tree.write(
+        fn what_the_native_does_not_read_hands_back() {
+            {
+                for state in [
+                    "install ok half-configured",
+                    "install ok unpacked",
+                    "install ok half-installed",
+                    "install ok triggers-pending",
+                    "install reinstreq installed",
+                ] {
+                    let tree = Tree::new(HOST);
+                    tree.edit(
+                        "/var/lib/dpkg/status",
+                        "Package: hello\nStatus: install ok installed",
+                        &format!("Package: hello\nStatus: {state}"),
+                    );
+                    let reason = tree.hands_back(json!({}));
+                    assert!(
+                        reason.starts_with("hello is ") && reason.ends_with("as installed"),
+                        "{state}: {reason}"
+                    );
+                }
+            }
+            {
+                type Case = (&'static str, Box<dyn Fn(&Tree)>);
+                let cases: Vec<Case> = vec![
+                    (
+                        "is a list no configured source names",
+                        Box::new(|tree| {
+                            tree.write(
                             &format!("{LISTS}/old.example.org_debian_dists_stable_main_binary-amd64_Packages"),
                             "",
                         );
-                    }),
-                ),
-                (
-                    "is a compressed list",
-                    Box::new(|tree| {
-                        tree.write(
+                        }),
+                    ),
+                    (
+                        "is a compressed list",
+                        Box::new(|tree| {
+                            tree.write(
                             &format!("{LISTS}/repo.example.org_debian_dists_stable_main_binary-amd64_Packages.lz4"),
                             "",
                         );
-                    }),
-                ),
-                (
-                    "apk is found",
-                    Box::new(|tree| tree.write("/usr/bin/apk", "")),
-                ),
-                (
-                    "sets dir::state",
-                    Box::new(|tree| {
-                        tree.write(
-                            "/etc/apt/apt.conf.d/99lists",
-                            "Dir::State::Lists \"/srv/lists\";\n",
-                        );
-                    }),
-                ),
-                (
-                    "sets architecture\"",
-                    Box::new(|tree| {
-                        tree.write(
-                            "/etc/apt/apt.conf.d/99arch",
-                            "APT {\n  Architecture \"i386\";\n};\n",
-                        );
-                    }),
-                ),
-                (
-                    "for the foreign architecture i386",
-                    Box::new(|tree| {
-                        tree.edit(
-                            "/var/lib/dpkg/status",
-                            "Architecture: amd64\nVersion: 1.4-1",
-                            "Architecture: i386\nVersion: 1.4-1",
-                        );
-                    }),
-                ),
-                (
-                    "two different Signed-By or Trusted",
-                    Box::new(|tree| {
-                        tree.edit(
+                        }),
+                    ),
+                    (
+                        "apk is found",
+                        Box::new(|tree| tree.write("/usr/bin/apk", "")),
+                    ),
+                    (
+                        "sets dir::state",
+                        Box::new(|tree| {
+                            tree.write(
+                                "/etc/apt/apt.conf.d/99lists",
+                                "Dir::State::Lists \"/srv/lists\";\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "sets architecture\"",
+                        Box::new(|tree| {
+                            tree.write(
+                                "/etc/apt/apt.conf.d/99arch",
+                                "APT {\n  Architecture \"i386\";\n};\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "for the foreign architecture i386",
+                        Box::new(|tree| {
+                            tree.edit(
+                                "/var/lib/dpkg/status",
+                                "Architecture: amd64\nVersion: 1.4-1",
+                                "Architecture: i386\nVersion: 1.4-1",
+                            );
+                        }),
+                    ),
+                    (
+                        "two different Signed-By or Trusted",
+                        Box::new(|tree| {
+                            tree.edit(
                             "/etc/apt/sources.list.d/ubuntu.sources",
                             "Components: main\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
                             "Components: main",
                         );
-                    }),
-                ),
-                (
-                    "python3-apt is not installed",
-                    Box::new(|tree| {
-                        tree.edit(
-                            "/var/lib/dpkg/status",
-                            "Package: python3-apt\nStatus: install ok installed",
-                            "Package: python3-apt\nStatus: deinstall ok config-files",
-                        );
-                    }),
-                ),
-                (
-                    "with fields apt hashes that differ from the status",
-                    Box::new(|tree| {
-                        tree.edit(
-                            "/var/lib/dpkg/status",
-                            "Depends: libc6 (>= 2.34)",
-                            "Depends: libc6 (>= 2.35)",
-                        );
-                    }),
-                ),
-                (
-                    "which apt compares equal",
-                    Box::new(|tree| {
-                        tree.edit(
+                        }),
+                    ),
+                    (
+                        "python3-apt is not installed",
+                        Box::new(|tree| {
+                            tree.edit(
+                                "/var/lib/dpkg/status",
+                                "Package: python3-apt\nStatus: install ok installed",
+                                "Package: python3-apt\nStatus: deinstall ok config-files",
+                            );
+                        }),
+                    ),
+                    (
+                        "with fields apt hashes that differ from the status",
+                        Box::new(|tree| {
+                            tree.edit(
+                                "/var/lib/dpkg/status",
+                                "Depends: libc6 (>= 2.34)",
+                                "Depends: libc6 (>= 2.35)",
+                            );
+                        }),
+                    ),
+                    (
+                        "which apt compares equal",
+                        Box::new(|tree| {
+                            tree.edit(
                             &format!("{LISTS}/repo.example.org_debian_dists_stable_main_binary-amd64_Packages"),
                             "Version: 1.0-1",
                             "Version: 0:1.00-1",
                         );
-                    }),
-                ),
-                (
-                    "in sources that disagree about it",
-                    Box::new(|tree| {
-                        tree.edit(
+                        }),
+                    ),
+                    (
+                        "in sources that disagree about it",
+                        Box::new(|tree| {
+                            tree.edit(
                             &format!("{LISTS}/archive.ubuntu.com_ubuntu_dists_noble_universe_binary-amd64_Packages"),
                             "Version: 2.0-1\nSection: universe/utils\nInstalled-Size: 50\nSize: 9000",
                             "Version: 1.0-1\nSection: utils\nInstalled-Size: 48\nSize: 8800",
                         );
-                    }),
-                ),
-                (
-                    "a deb822 source paragraph has no URIs",
-                    Box::new(|tree| {
-                        tree.edit(
+                        }),
+                    ),
+                    (
+                        "a deb822 source paragraph has no URIs",
+                        Box::new(|tree| {
+                            tree.edit(
                             "/etc/apt/sources.list.d/ubuntu.sources",
                             "URIs: http://archive.ubuntu.com/ubuntu/\nSuites: noble noble-updates",
                             "Suites: noble noble-updates",
                         );
-                    }),
-                ),
-            ];
-            for (reason, break_host) in cases {
-                let tree = Tree::new(HOST);
-                tree.answer(json!({}))
-                    .expect("the fixture host is answered");
-                break_host(&tree);
-                let given = tree.hands_back(json!({}));
-                assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
-            }
-            let tree = Tree::new(HOST);
-            tree.write("/var/lib/dpkg/updates/0001", "");
-            assert!(tree.hands_back(json!({})).contains("dpkg has updates"));
-            let tree = Tree::new(HOST);
-            let given = match tree.answer_with(json!({}), &[("APT_CONFIG", "/srv/apt.conf")]) {
-                Err(Stop::HandBack(reason)) => reason,
-                other => panic!("APT_CONFIG answered: {other:?}"),
-            };
-            assert!(given.contains("APT_CONFIG"), "{given}");
-        }
-
-        /// The remaining hand-backs, one host change each, every one before anything is read
-        /// beyond the configuration: records dpkg or a list would give apt that the native does
-        /// not reproduce, and sources apt would read differently, name another way or refuse.
-        ///
-        /// What would make this red, one line each: a relative `PATH` entry resolved against
-        /// the agent's directory; an unknown `Multi-Arch`, a status without its three words, an
-        /// installed package without a version, a package installed twice, or a listed one
-        /// without a version, answered; a source file name apt skips, a component or suite
-        /// that is not a plain name, a line without a component, an incomplete line, a type
-        /// other than `deb`, an option or field that moves the lists, or a URI with user info,
-        /// answered.
-        #[test]
-        fn every_other_record_or_source_the_native_does_not_read_hands_back() {
-            let append = |tree: &Tree, path: &str, text: &str| {
-                let full = tree.0.join(path.trim_start_matches('/'));
-                let mut content = std::fs::read_to_string(&full).unwrap_or_default();
-                content.push_str(text);
-                std::fs::write(full, content).unwrap();
-            };
-            let status = "/var/lib/dpkg/status";
-            let example = "/etc/apt/sources.list.d/example.list";
-            let ubuntu = "/etc/apt/sources.list.d/ubuntu.sources";
-            let repo =
-                format!("{LISTS}/repo.example.org_debian_dists_stable_main_binary-amd64_Packages");
-            type Case<'a> = (&'static str, Box<dyn Fn(&Tree) + 'a>);
-            let cases: Vec<Case> = vec![
-                (
-                    "Multi-Arch: weird is not one apt knows",
-                    Box::new(|tree| {
-                        tree.edit(
-                            status,
-                            "Section: devel\n",
-                            "Section: devel\nMulti-Arch: weird\n",
-                        );
-                    }),
-                ),
-                (
-                    "hello has the status",
-                    Box::new(|tree| {
-                        tree.edit(
-                            status,
-                            "Package: hello\nStatus: install ok installed",
-                            "Package: hello\nStatus: installed",
-                        );
-                    }),
-                ),
-                (
-                    "hello is installed without a version or an architecture",
-                    Box::new(|tree| {
-                        tree.edit(status, "Version: 2.10-3build2", "Xersion: 2.10-3build2");
-                    }),
-                ),
-                (
-                    "hello is installed twice",
-                    Box::new(|tree| {
-                        append(
-                            tree,
-                            status,
-                            "\nPackage: hello\nStatus: install ok installed\nVersion: 9\nArchitecture: amd64\nSection: devel\n",
-                        );
-                    }),
-                ),
-                (
-                    "tool is listed without a version or an architecture",
-                    Box::new(|tree| tree.edit(&repo, "Version: 1.0-1", "Xersion: 1.0-1")),
-                ),
-                (
-                    "has a name apt may skip",
-                    Box::new(|tree| tree.write("/etc/apt/sources.list.d/my repo.list", "")),
-                ),
-                (
-                    "a component is not a plain name",
-                    Box::new(|tree| tree.edit(example, "stable main", "stable ma!n")),
-                ),
-                (
-                    "names no component",
-                    Box::new(|tree| tree.edit(example, "stable main", "stable")),
-                ),
-                (
-                    "a suite is not a plain name",
-                    Box::new(|tree| tree.edit(example, "stable main", "sta~ble main")),
-                ),
-                (
-                    "a source URI is not a plain one",
-                    Box::new(|tree| tree.edit(example, "https://repo.", "https://user@repo.")),
-                ),
-                (
-                    "a source line is incomplete",
-                    Box::new(|tree| {
-                        tree.write(
-                            "/etc/apt/sources.list",
-                            "deb http://archive.example.org/debian\n",
-                        );
-                    }),
-                ),
-                (
-                    "a source type is not deb",
-                    Box::new(|tree| {
-                        tree.write(
-                            "/etc/apt/sources.list",
-                            "deb-foo http://archive.example.org/debian stable main\n",
-                        );
-                    }),
-                ),
-                (
-                    "the source option target changes its lists",
-                    Box::new(|tree| {
-                        tree.edit(
-                            example,
-                            "deb [signed-by=",
-                            "deb [target=Packages signed-by=",
-                        );
-                    }),
-                ),
-                (
-                    "the source option arch+ changes its lists",
-                    Box::new(|tree| {
-                        tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=");
-                    }),
-                ),
-                (
-                    "the source field Snapshot changes its lists",
-                    Box::new(|tree| append(tree, ubuntu, "Snapshot: yes\n")),
-                ),
-                (
-                    "a source type is not deb",
-                    Box::new(|tree| tree.edit(ubuntu, "Types: deb\n", "Types: rpm\n")),
-                ),
-            ];
-            for (reason, break_host) in cases {
-                let tree = Tree::new(HOST);
-                break_host(&tree);
-                let given = tree.hands_back(json!({}));
-                assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
-            }
-            let tree = Tree::new(HOST);
-            let given = match tree.answer_with(json!({}), &[("PATH", "bin:/usr/bin")]) {
-                Err(Stop::HandBack(reason)) => reason,
-                other => panic!("a relative PATH answered: {other:?}"),
-            };
-            assert!(given.contains("PATH holds a relative directory"), "{given}");
-            // A `deb-src` twin with the same `Signed-By` and a `sources.list` that exists are
-            // read, and change nothing.
-            let tree = Tree::new(HOST);
-            append(
-                &tree,
-                example,
-                "deb-src [signed-by=/usr/share/keyrings/example.gpg] https://repo.example.org/debian stable main\n",
-            );
-            tree.write("/etc/apt/sources.list", "# moved to sources.list.d\n");
-            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
-            let result = tree.answer(json!({})).unwrap();
-            assert_eq!(result["ansible_facts"]["packages"], reference);
-        }
-
-        /// The entry point the agent calls: arguments outside the subset hand back with their
-        /// reason, and nothing is read.
-        #[test]
-        fn the_entry_point_hands_back_what_the_answer_hands_back() {
-            let context = Context {
-                timeout: None,
-                environment: BTreeMap::new(),
-                interpreter: None,
-                remote_tmp: "/tmp".into(),
-            };
-            let args = json!({"strategy": "all"});
-            match run(args.as_object().unwrap(), &context, &|| false) {
-                NativeRun::Fallback(reason) => assert_eq!(reason, "strategy is not first"),
-                _ => panic!("strategy all was answered"),
-            }
-        }
-
-        /// `Enabled` read as apt reads it (measured on apt 2.8.3 and 3.2.0): a deb822 source
-        /// is disabled by any of `StringToBool`'s false spellings, so its leftover lists are
-        /// stale and hand back; a value apt would read with its default hands back; a one-line
-        /// entry has no `enabled` option at all and is still read.
-        ///
-        /// What would make this red, one each: only `no` read as disabled (a disabled PPA's
-        /// leftover list then gives its origin to a status-only version); an unknown value
-        /// guessed; `[enabled=no]` read as disabled on a one-line entry (its lists then hand
-        /// back as stale).
-        #[test]
-        fn enabled_is_read_as_apt_reads_it() {
-            for (text, expected) in [
-                ("0", Some(false)),
-                ("00", Some(false)),
-                ("-0", Some(false)),
-                ("0x0", Some(false)),
-                ("1", Some(true)),
-                ("+1", Some(true)),
-                ("0X1", Some(true)),
-                ("-1", None),
-                ("2", None),
-                ("08", None),
-                ("0x", None),
-                ("++1", None),
-                ("0x+1", None),
-                ("No", Some(false)),
-                ("FALSE", Some(false)),
-                ("without", Some(false)),
-                ("off", Some(false)),
-                ("disable", Some(false)),
-                ("yes", Some(true)),
-                ("True", Some(true)),
-                ("with", Some(true)),
-                ("ON", Some(true)),
-                ("enable", Some(true)),
-                ("maybe", None),
-                ("", None),
-            ] {
-                assert_eq!(apt_bool(text), expected, "{text:?}");
-            }
-            let reference: Value = serde_json::from_str(REFERENCE).unwrap();
-            let as_deb822 = |tree: &Tree, enabled: &str| {
-                tree.write("/etc/apt/sources.list.d/example.list", "");
-                tree.write(
-                    "/etc/apt/sources.list.d/example.sources",
-                    &format!(
-                        "Types: deb\nURIs: https://repo.example.org/debian\nSuites: stable\n\
-                         Components: main\nSigned-By: /usr/share/keyrings/example.gpg\n\
-                         Enabled: {enabled}\n"
+                        }),
                     ),
-                );
-            };
-            for disabled in ["false", "0", "off", "Disable", "NO"] {
-                let tree = Tree::new(HOST);
-                as_deb822(&tree, disabled);
-                let given = tree.hands_back(json!({}));
-                assert!(
-                    given.contains("is a list no configured source names"),
-                    "{disabled}: {given}"
-                );
-            }
-            for enabled in ["yes", "1", "on"] {
-                let tree = Tree::new(HOST);
-                as_deb822(&tree, enabled);
-                let result = tree.answer(json!({})).unwrap();
-                assert_eq!(result["ansible_facts"]["packages"], reference, "{enabled}");
-            }
-            let tree = Tree::new(HOST);
-            as_deb822(&tree, "maybe");
-            assert!(tree.hands_back(json!({})).contains("is not a boolean"));
-            let tree = Tree::new(HOST);
-            tree.edit(
-                "/etc/apt/sources.list.d/example.list",
-                "deb [signed-by=",
-                "deb [enabled=no signed-by=",
-            );
-            let result = tree.answer(json!({})).unwrap();
-            assert_eq!(result["ansible_facts"]["packages"], reference);
-        }
-
-        /// `apt` named ahead of `auto` is tried first, so a host with `apk` is still answered.
-        #[test]
-        fn apt_named_is_answered_before_apk() {
-            let tree = Tree::new(HOST);
-            tree.write("/usr/bin/apk", "");
-            assert!(tree.answer(json!({"manager": ["auto", "apt"]})).is_ok());
-        }
-
-        /// The arguments the module validates, converted as `AnsibleModule` converts them, and
-        /// everything outside `apt` first handed back for the module to answer in its own words.
-        ///
-        /// What would make this red: a comma-separated string not split; a second `auto`
-        /// accepted (the module refuses it); `strategy: all`, `null`, or another manager
-        /// answered; an unknown argument ignored.
-        #[test]
-        fn the_arguments_are_read_as_the_module_reads_them() {
-            let ok = |args: Value| request(args.as_object().unwrap());
-            assert_eq!(
-                ok(json!({"manager": "auto,apt"})).unwrap(),
-                Request {
-                    manager: vec!["auto".into(), "apt".into()],
-                    apt_named: true
+                ];
+                for (reason, break_host) in cases {
+                    let tree = Tree::new(HOST);
+                    tree.answer(json!({}))
+                        .expect("the fixture host is answered");
+                    break_host(&tree);
+                    let given = tree.hands_back(json!({}));
+                    assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
                 }
-            );
-            assert_eq!(
-                ok(json!({})).unwrap(),
-                Request {
-                    manager: vec!["auto".into()],
-                    apt_named: false
-                }
-            );
-            for args in [
-                json!({"manager": ["auto", "auto"]}),
-                json!({"manager": "auto, apt"}),
-                json!({"manager": ["rpm"]}),
-                json!({"manager": []}),
-                json!({"manager": 5}),
-                json!({"manager": [5]}),
-                json!({"manager": null}),
-                json!({"strategy": "all"}),
-                json!({"strategy": null}),
-                json!({"strategy": "First"}),
-                json!({"other": 1}),
-            ] {
-                assert!(ok(args.clone()).is_err(), "{args} was accepted");
-            }
-        }
-
-        /// Versions apt compares equal although written differently.
-        #[test]
-        fn versions_compare_as_dpkg_compares_them() {
-            for (left, right) in [
-                ("1.0-1", "0:1.0-1"),
-                ("1.00-1", "1.0-1"),
-                ("1.0", "1.0-0"),
-                ("1.0", "1."),
-                ("2:007", "2:7"),
-            ] {
-                assert_eq!(canonical(left), canonical(right), "{left} {right}");
-            }
-            for (left, right) in [
-                ("1.0", "1.0.0"),
-                ("1.0-1", "1.0-1ubuntu1"),
-                ("1:1.0", "1.0"),
-                ("1.0~rc1", "1.0"),
-            ] {
-                assert_ne!(canonical(left), canonical(right), "{left} {right}");
-            }
-        }
-
-        /// The lists are read while the task's cancel and deadline are watched: a cancel gives
-        /// `Cancelled`, a deadline passed gives `TimedOut`, and the readers are told to stop.
-        ///
-        /// What would make this red: the wait not polling the cancel or the deadline (the test
-        /// then waits on a reader that only stops when told to), or `halt` not raised.
-        #[test]
-        fn a_cancel_or_the_deadline_stops_the_readers() {
-            let files = vec![(PathBuf::from("/nonexistent"), String::new())];
-            let installed = HashMap::new();
-            let slow =
-                |_: &PathBuf, _: &str, _: &HashMap<&str, Installed<'_>>, halt: &AtomicBool| {
-                    while !halt.load(Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    Ok(Vec::new())
+                let tree = Tree::new(HOST);
+                tree.write("/var/lib/dpkg/updates/0001", "");
+                assert!(tree.hands_back(json!({})).contains("dpkg has updates"));
+                let tree = Tree::new(HOST);
+                let given = match tree.answer_with(json!({}), &[("APT_CONFIG", "/srv/apt.conf")]) {
+                    Err(Stop::HandBack(reason)) => reason,
+                    other => panic!("APT_CONFIG answered: {other:?}"),
                 };
-            let yes = || true;
-            let clock = Clock {
-                deadline: None,
-                cancelled: &yes,
-            };
-            assert!(matches!(
-                scan_all(&files, &installed, clock, slow),
-                Err(Stop::Cancelled)
-            ));
-            let no = || false;
-            let clock = Clock {
-                deadline: Some(Instant::now() + Duration::from_millis(100)),
-                cancelled: &no,
-            };
-            assert!(matches!(
-                scan_all(&files, &installed, clock, slow),
-                Err(Stop::TimedOut)
-            ));
+                assert!(given.contains("APT_CONFIG"), "{given}");
+            }
+            {
+                let append = |tree: &Tree, path: &str, text: &str| {
+                    let full = tree.0.join(path.trim_start_matches('/'));
+                    let mut content = std::fs::read_to_string(&full).unwrap_or_default();
+                    content.push_str(text);
+                    std::fs::write(full, content).unwrap();
+                };
+                let status = "/var/lib/dpkg/status";
+                let example = "/etc/apt/sources.list.d/example.list";
+                let ubuntu = "/etc/apt/sources.list.d/ubuntu.sources";
+                let repo = format!(
+                    "{LISTS}/repo.example.org_debian_dists_stable_main_binary-amd64_Packages"
+                );
+                type Case<'a> = (&'static str, Box<dyn Fn(&Tree) + 'a>);
+                let cases: Vec<Case> = vec![
+                    (
+                        "Multi-Arch: weird is not one apt knows",
+                        Box::new(|tree| {
+                            tree.edit(
+                                status,
+                                "Section: devel\n",
+                                "Section: devel\nMulti-Arch: weird\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "hello has the status",
+                        Box::new(|tree| {
+                            tree.edit(
+                                status,
+                                "Package: hello\nStatus: install ok installed",
+                                "Package: hello\nStatus: installed",
+                            );
+                        }),
+                    ),
+                    (
+                        "hello is installed without a version or an architecture",
+                        Box::new(|tree| {
+                            tree.edit(status, "Version: 2.10-3build2", "Xersion: 2.10-3build2");
+                        }),
+                    ),
+                    (
+                        "hello is installed twice",
+                        Box::new(|tree| {
+                            append(
+                                tree,
+                                status,
+                                "\nPackage: hello\nStatus: install ok installed\nVersion: 9\nArchitecture: amd64\nSection: devel\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "tool is listed without a version or an architecture",
+                        Box::new(|tree| tree.edit(&repo, "Version: 1.0-1", "Xersion: 1.0-1")),
+                    ),
+                    (
+                        "has a name apt may skip",
+                        Box::new(|tree| tree.write("/etc/apt/sources.list.d/my repo.list", "")),
+                    ),
+                    (
+                        "a component is not a plain name",
+                        Box::new(|tree| tree.edit(example, "stable main", "stable ma!n")),
+                    ),
+                    (
+                        "names no component",
+                        Box::new(|tree| tree.edit(example, "stable main", "stable")),
+                    ),
+                    (
+                        "a suite is not a plain name",
+                        Box::new(|tree| tree.edit(example, "stable main", "sta~ble main")),
+                    ),
+                    (
+                        "a source URI is not a plain one",
+                        Box::new(|tree| tree.edit(example, "https://repo.", "https://user@repo.")),
+                    ),
+                    (
+                        "a source line is incomplete",
+                        Box::new(|tree| {
+                            tree.write(
+                                "/etc/apt/sources.list",
+                                "deb http://archive.example.org/debian\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "a source type is not deb",
+                        Box::new(|tree| {
+                            tree.write(
+                                "/etc/apt/sources.list",
+                                "deb-foo http://archive.example.org/debian stable main\n",
+                            );
+                        }),
+                    ),
+                    (
+                        "the source option target changes its lists",
+                        Box::new(|tree| {
+                            tree.edit(
+                                example,
+                                "deb [signed-by=",
+                                "deb [target=Packages signed-by=",
+                            );
+                        }),
+                    ),
+                    (
+                        "the source option arch+ changes its lists",
+                        Box::new(|tree| {
+                            tree.edit(example, "deb [signed-by=", "deb [arch+=i386 signed-by=");
+                        }),
+                    ),
+                    (
+                        "the source field Snapshot changes its lists",
+                        Box::new(|tree| append(tree, ubuntu, "Snapshot: yes\n")),
+                    ),
+                    (
+                        "a source type is not deb",
+                        Box::new(|tree| tree.edit(ubuntu, "Types: deb\n", "Types: rpm\n")),
+                    ),
+                ];
+                for (reason, break_host) in cases {
+                    let tree = Tree::new(HOST);
+                    break_host(&tree);
+                    let given = tree.hands_back(json!({}));
+                    assert!(given.contains(reason), "expected {reason:?}, got {given:?}");
+                }
+                let tree = Tree::new(HOST);
+                let given = match tree.answer_with(json!({}), &[("PATH", "bin:/usr/bin")]) {
+                    Err(Stop::HandBack(reason)) => reason,
+                    other => panic!("a relative PATH answered: {other:?}"),
+                };
+                assert!(given.contains("PATH holds a relative directory"), "{given}");
+                // A `deb-src` twin with the same `Signed-By` and a `sources.list` that exists are
+                // read, and change nothing.
+                let tree = Tree::new(HOST);
+                append(
+                    &tree,
+                    example,
+                    "deb-src [signed-by=/usr/share/keyrings/example.gpg] https://repo.example.org/debian stable main\n",
+                );
+                tree.write("/etc/apt/sources.list", "# moved to sources.list.d\n");
+                let reference: Value = serde_json::from_str(REFERENCE).unwrap();
+                let result = tree.answer(json!({})).unwrap();
+                assert_eq!(result["ansible_facts"]["packages"], reference);
+            }
         }
 
-        /// A reader told to stop returns at its next check rather than reading on.
+        /// The entry point hands back what the answer hands back and reads the arguments like the module.
         #[test]
-        fn a_reader_told_to_stop_reads_no_further() {
-            let tree = Tree::new(HOST);
-            let status = std::fs::read_to_string(tree.0.join("var/lib/dpkg/status")).unwrap();
-            let (_, installed) = installed(&status).unwrap();
-            let path = tree
+        fn the_entry_point_hands_back_and_reads_the_arguments() {
+            {
+                let context = Context {
+                    timeout: None,
+                    environment: BTreeMap::new(),
+                    interpreter: None,
+                    remote_tmp: "/tmp".into(),
+                };
+                let args = json!({"strategy": "all"});
+                match run(args.as_object().unwrap(), &context, &|| false) {
+                    NativeRun::Fallback(reason) => assert_eq!(reason, "strategy is not first"),
+                    _ => panic!("strategy all was answered"),
+                }
+            }
+            {
+                let ok = |args: Value| request(args.as_object().unwrap());
+                assert_eq!(
+                    ok(json!({"manager": "auto,apt"})).unwrap(),
+                    Request {
+                        manager: vec!["auto".into(), "apt".into()],
+                        apt_named: true
+                    }
+                );
+                assert_eq!(
+                    ok(json!({})).unwrap(),
+                    Request {
+                        manager: vec!["auto".into()],
+                        apt_named: false
+                    }
+                );
+                for args in [
+                    json!({"manager": ["auto", "auto"]}),
+                    json!({"manager": "auto, apt"}),
+                    json!({"manager": ["rpm"]}),
+                    json!({"manager": []}),
+                    json!({"manager": 5}),
+                    json!({"manager": [5]}),
+                    json!({"manager": null}),
+                    json!({"strategy": "all"}),
+                    json!({"strategy": null}),
+                    json!({"strategy": "First"}),
+                    json!({"other": 1}),
+                ] {
+                    assert!(ok(args.clone()).is_err(), "{args} was accepted");
+                }
+            }
+        }
+
+        /// A cancel or the deadline stops the readers, and a reader told to stop reads no further.
+        #[test]
+        fn the_readers_stop_at_the_cancel_or_the_deadline() {
+            {
+                let files = vec![(PathBuf::from("/nonexistent"), String::new())];
+                let installed = HashMap::new();
+                let slow =
+                    |_: &PathBuf, _: &str, _: &HashMap<&str, Installed<'_>>, halt: &AtomicBool| {
+                        while !halt.load(Ordering::Relaxed) {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Ok(Vec::new())
+                    };
+                let yes = || true;
+                let clock = Clock {
+                    deadline: None,
+                    cancelled: &yes,
+                };
+                assert!(matches!(
+                    scan_all(&files, &installed, clock, slow),
+                    Err(Stop::Cancelled)
+                ));
+                let no = || false;
+                let clock = Clock {
+                    deadline: Some(Instant::now() + Duration::from_millis(100)),
+                    cancelled: &no,
+                };
+                assert!(matches!(
+                    scan_all(&files, &installed, clock, slow),
+                    Err(Stop::TimedOut)
+                ));
+            }
+            {
+                let tree = Tree::new(HOST);
+                let status = std::fs::read_to_string(tree.0.join("var/lib/dpkg/status")).unwrap();
+                let (_, installed) = installed(&status).unwrap();
+                let path = tree
                 .0
                 .join("var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages");
-            let halt = AtomicBool::new(true);
-            assert!(scan(&path, "Ubuntu", &installed, &halt).unwrap().is_empty());
-            halt.store(false, Ordering::Relaxed);
-            assert_eq!(scan(&path, "Ubuntu", &installed, &halt).unwrap().len(), 6);
+                let halt = AtomicBool::new(true);
+                assert!(scan(&path, "Ubuntu", &installed, &halt).unwrap().is_empty());
+                halt.store(false, Ordering::Relaxed);
+                assert_eq!(scan(&path, "Ubuntu", &installed, &halt).unwrap().len(), 6);
+            }
         }
     }
 }

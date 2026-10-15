@@ -948,419 +948,354 @@ Architecture: amd64
         recording
     }
 
-    /// The three answers, key by key against the golden recordings with the arguments the golden
-    /// play gave: a fresh cache alone (A), packages all installed (B), with and without a cache
-    /// check, and a package that is nowhere (C). `cache_update_time` is the stamp's second, and
-    /// no `apt-mark` is spawned: every name is manual, where the module's call is a no-op.
-    ///
-    /// What would make this red: any key the reference writes missing or different, the
-    /// `invocation` included (`package` as a list, `upgrade: null`, the defaults); a
-    /// `cache_update_time` for C, which the module's `remove` never adds; `apt-mark` spawned.
+    /// The fast path answers a wanted installed package like the reference and leaves the rest to the module.
     #[test]
-    fn the_fast_path_answers_like_the_reference() {
-        let host = Host::new("answers");
-        for (name, args, marks) in [
-            (
-                "apt-update-fresh",
-                json!({"cache_valid_time": 86400, "update_cache": true}),
-                None,
-            ),
-            (
-                "apt-present-installed",
-                json!({"name": "bash", "state": "present"}),
-                None,
-            ),
-            (
-                "apt-present-list",
-                json!({"name": ["bash", "coreutils"], "state": "present"}),
-                None,
-            ),
-            (
-                "apt-present-update-fresh",
-                json!({"cache_valid_time": 86400, "name": "bash", "update_cache": true}),
-                None,
-            ),
-            (
-                "apt-absent-missing",
-                json!({"name": "volant-no-such-package", "state": "absent"}),
-                None,
-            ),
-        ] {
-            let _ = std::fs::remove_file(host.log_path());
-            let mut ours = host.done(&args);
-            let expected = recorded(name);
-            if expected.contains_key("cache_updated") {
+    fn the_fast_path_answers_installed_packages_like_the_reference() {
+        {
+            let host = Host::new("answers");
+            for (name, args, marks) in [
+                (
+                    "apt-update-fresh",
+                    json!({"cache_valid_time": 86400, "update_cache": true}),
+                    None,
+                ),
+                (
+                    "apt-present-installed",
+                    json!({"name": "bash", "state": "present"}),
+                    None,
+                ),
+                (
+                    "apt-present-list",
+                    json!({"name": ["bash", "coreutils"], "state": "present"}),
+                    None,
+                ),
+                (
+                    "apt-present-update-fresh",
+                    json!({"cache_valid_time": 86400, "name": "bash", "update_cache": true}),
+                    None,
+                ),
+                (
+                    "apt-absent-missing",
+                    json!({"name": "volant-no-such-package", "state": "absent"}),
+                    None,
+                ),
+            ] {
+                let _ = std::fs::remove_file(host.log_path());
+                let mut ours = host.done(&args);
+                let expected = recorded(name);
+                if expected.contains_key("cache_updated") {
+                    assert_eq!(
+                        ours.remove("cache_update_time"),
+                        Some(json!(STAMP_SECONDS)),
+                        "{name}"
+                    );
+                }
+                assert_eq!(Value::Object(ours), Value::Object(expected), "{name}");
                 assert_eq!(
-                    ours.remove("cache_update_time"),
-                    Some(json!(STAMP_SECONDS)),
+                    host.calls(),
+                    marks.map(str::to_string).into_iter().collect::<Vec<_>>(),
                     "{name}"
                 );
             }
-            assert_eq!(Value::Object(ours), Value::Object(expected), "{name}");
+        }
+        {
+            let host = Host::new("half");
+            let reason = host.hands_back(&json!({"name": "foo", "state": "present"}));
+            assert_eq!(reason, "a package is not installed");
+            host.hands_back(&json!({"name": ["bash", "foo"]}));
+            // Removing it is not "nothing to do" either.
+            host.hands_back(&json!({"name": "foo", "state": "absent"}));
+        }
+        {
+            let host = Host::new("deinstall");
+            for name in ["bar", "held"] {
+                host.hands_back(&json!({"name": name}));
+                host.hands_back(&json!({"name": name, "state": "absent"}));
+            }
+        }
+    }
+
+    /// A cache the module would update is left to it, and the cache time is the module's second.
+    #[test]
+    fn the_cache_check_is_read_like_the_module_reads_it() {
+        {
+            let host = Host::new("stale");
             assert_eq!(
-                host.calls(),
-                marks.map(str::to_string).into_iter().collect::<Vec<_>>(),
-                "{name}"
+                host.hands_back(&json!({"update_cache": true})),
+                "update_cache without cache_valid_time"
             );
-        }
-    }
-
-    /// Review focus: a package dpkg left half configured is not installed, whatever the first
-    /// and last words of its `Status:` say, and the module is the one to finish it.
-    ///
-    /// What would make this red: `Status:` read by its first or last word alone, or by
-    /// `installed` anywhere in it, which answers "already present" for a package that does not
-    /// work.
-    #[test]
-    fn a_half_configured_package_is_not_installed_for_the_fast_path() {
-        let host = Host::new("half");
-        let reason = host.hands_back(&json!({"name": "foo", "state": "present"}));
-        assert_eq!(reason, "a package is not installed");
-        host.hands_back(&json!({"name": ["bash", "foo"]}));
-        // Removing it is not "nothing to do" either.
-        host.hands_back(&json!({"name": "foo", "state": "absent"}));
-    }
-
-    /// A package marked for removal (`deinstall ok installed`) or on hold is left to the module,
-    /// both ways.
-    ///
-    /// What would make this red: `Status:` read by its third word only, as python-apt's
-    /// `current_state` does, which the native does not follow.
-    #[test]
-    fn a_package_not_wanted_as_installed_is_left_to_the_module() {
-        let host = Host::new("deinstall");
-        for name in ["bar", "held"] {
-            host.hands_back(&json!({"name": name}));
-            host.hands_back(&json!({"name": name, "state": "absent"}));
-        }
-    }
-
-    /// A stale cache, or `update_cache` with no `cache_valid_time`, makes the module update: the
-    /// native hands back for both, with or without packages.
-    ///
-    /// What would make this red: the cache's age checked only when `cache_valid_time` is given,
-    /// or compared the wrong way.
-    #[test]
-    fn a_cache_the_module_would_update_is_left_to_it() {
-        let host = Host::new("stale");
-        assert_eq!(
-            host.hands_back(&json!({"update_cache": true})),
-            "update_cache without cache_valid_time"
-        );
-        for args in [
-            json!({"update_cache": true, "name": "bash"}),
-            json!({"update_cache": true, "cache_valid_time": 30, "name": "bash"}),
-        ] {
-            host.hands_back(&args);
-        }
-        let a_day_later = UNIX_EPOCH + Duration::from_secs(STAMP_SECONDS + 86_401);
-        for args in [
-            json!({"update_cache": true, "cache_valid_time": 86400}),
-            json!({"cache_valid_time": 86400, "name": "volant-none", "state": "absent"}),
-        ] {
-            assert!(
-                matches!(
-                    host.answer_at(&args, &host.context(), a_day_later),
-                    NativeRun::Fallback(_)
+            for args in [
+                json!({"update_cache": true, "name": "bash"}),
+                json!({"update_cache": true, "cache_valid_time": 30, "name": "bash"}),
+            ] {
+                host.hands_back(&args);
+            }
+            let a_day_later = UNIX_EPOCH + Duration::from_secs(STAMP_SECONDS + 86_401);
+            for args in [
+                json!({"update_cache": true, "cache_valid_time": 86400}),
+                json!({"cache_valid_time": 86400, "name": "volant-none", "state": "absent"}),
+            ] {
+                assert!(
+                    matches!(
+                        host.answer_at(&args, &host.context(), a_day_later),
+                        NativeRun::Fallback(_)
+                    ),
+                    "{args}"
+                );
+            }
+            // At the edge, the module's `>=` still says fresh.
+            let edge = UNIX_EPOCH + Duration::new(STAMP_SECONDS + 86_400, 700_000_000);
+            assert!(matches!(
+                host.answer_at(
+                    &json!({"update_cache": true, "cache_valid_time": 86400}),
+                    &host.context(),
+                    edge
                 ),
-                "{args}"
-            );
+                NativeRun::Done(_)
+            ));
         }
-        // At the edge, the module's `>=` still says fresh.
-        let edge = UNIX_EPOCH + Duration::new(STAMP_SECONDS + 86_400, 700_000_000);
-        assert!(matches!(
-            host.answer_at(
-                &json!({"update_cache": true, "cache_valid_time": 86400}),
-                &host.context(),
-                edge
-            ),
-            NativeRun::Done(_)
-        ));
-    }
-
-    /// `cache_update_time` is the second of `datetime.fromtimestamp(st_mtime)`: the fraction
-    /// dropped, except when it rounds to a whole second at the microsecond.
-    ///
-    /// What would make this red: the float rounded to the nearest second (`...714` for `.7`), or
-    /// the nanoseconds truncated to microseconds before rounding (`...713` for `.9999996`).
-    #[test]
-    fn the_cache_time_is_the_module_s_second() {
-        let host = Host::new("floor");
-        let time = |host: &Host| {
-            host.done(&json!({"update_cache": true, "cache_valid_time": 86400}))
+        {
+            let host = Host::new("floor");
+            let time = |host: &Host| {
+                host.done(&json!({"update_cache": true, "cache_valid_time": 86400}))
                 ["cache_update_time"]
                 .clone()
-        };
-        assert_eq!(time(&host), json!(STAMP_SECONDS));
-        host.stamp(STAMP_SECONDS, 999_999_600);
-        assert_eq!(time(&host), json!(STAMP_SECONDS + 1));
-        host.stamp(STAMP_SECONDS, 999_999_400);
-        assert_eq!(time(&host), json!(STAMP_SECONDS));
-        // No stamp: the lists directory's time.
-        std::fs::remove_file(host.fake.0.join(STAMP.trim_start_matches('/'))).unwrap();
-        let lists = File::open(host.fake.0.join(LISTS.trim_start_matches('/'))).unwrap();
-        lists
-            .set_times(
-                FileTimes::new().set_modified(UNIX_EPOCH + Duration::new(STAMP_SECONDS - 5, 1)),
+            };
+            assert_eq!(time(&host), json!(STAMP_SECONDS));
+            host.stamp(STAMP_SECONDS, 999_999_600);
+            assert_eq!(time(&host), json!(STAMP_SECONDS + 1));
+            host.stamp(STAMP_SECONDS, 999_999_400);
+            assert_eq!(time(&host), json!(STAMP_SECONDS));
+            // No stamp: the lists directory's time.
+            std::fs::remove_file(host.fake.0.join(STAMP.trim_start_matches('/'))).unwrap();
+            let lists = File::open(host.fake.0.join(LISTS.trim_start_matches('/'))).unwrap();
+            lists
+                .set_times(
+                    FileTimes::new().set_modified(UNIX_EPOCH + Duration::new(STAMP_SECONDS - 5, 1)),
+                )
+                .unwrap();
+            assert_eq!(time(&host), json!(STAMP_SECONDS - 5));
+        }
+        {
+            // The marker, not `TZ` itself, tells the child it is one: a child that did not get `TZ`
+            // fails below rather than starting another.
+            if std::env::var_os("VOLANT_TZ_CHILD").is_none() {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "natives::apt::tests::only_a_cache_check_needs_the_same_offset_now",
+                    ])
+                    .env("TZ", "Europe/Paris")
+                    .env("VOLANT_TZ_CHILD", "1")
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "the test failed under TZ=Europe/Paris");
+                return;
+            }
+            let summer = 1_790_276_713_i64; // 2026-09-24, CEST
+            let winter = summer + 45 * 86_400; // 2026-11-08, CET
+            assert_ne!(
+                utc_offset(summer),
+                utc_offset(winter),
+                "this test needs the Europe/Paris zone in the system's tz database"
+            );
+            let host = Host::new("offset");
+            let later = UNIX_EPOCH + Duration::from_secs(winter.unsigned_abs());
+            let NativeRun::Done(result) =
+                host.answer_at(&json!({"name": "bash"}), &host.context(), later)
+            else {
+                panic!("a task without a cache check handed back");
+            };
+            assert_eq!(result.0["cache_update_time"], json!(STAMP_SECONDS));
+            assert!(matches!(
+                host.answer_at(
+                    &json!({"name": "bash", "cache_valid_time": 100_000_000}),
+                    &host.context(),
+                    later
+                ),
+                NativeRun::Fallback(_)
+            ));
+        }
+    }
+
+    /// Everything the fast path does not answer is handed back before any change.
+    #[test]
+    fn everything_else_goes_back_to_the_module_before_any_change() {
+        {
+            let host = Host::new("outside");
+            for args in [
+                json!({"name": "bash=5.2.21-2ubuntu4"}),
+                json!({"name": "bash>=5"}),
+                json!({"name": "bas*"}),
+                json!({"name": "bash:amd64"}),
+                json!({"name": " bash"}),
+                json!({"name": "Bash"}),
+                json!({"name": []}),
+                json!({"name": [1]}),
+                json!({"name": "bash", "state": "latest"}),
+                json!({"name": "bash", "state": "fixed"}),
+                json!({"name": "bash", "state": "bogus"}),
+                json!({"deb": "/tmp/x.deb"}),
+                json!({"name": "bash", "default_release": "noble"}),
+                json!({"name": "gone", "state": "absent", "purge": true}),
+                json!({"name": "bash", "autoremove": true}),
+                json!({"name": "bash", "autoclean": true}),
+                json!({"upgrade": "dist"}),
+                json!({"name": "bash", "upgrade": "no"}),
+                json!({"name": "bash", "only_upgrade": true}),
+                json!({"name": "bash", "clean": true}),
+                json!({"name": "bash", "force": "maybe"}),
+                json!({"name": "bash", "lock_timeout": "soon"}),
+                json!({"name": "bash", "lock_timeout": 1.5}),
+                json!({"name": "bash", "dpkg_options": 3}),
+                json!({"name": "bash", "purge": null}),
+                json!({"name": "bash", "no_such": 1}),
+                json!({"name": "bash", "_ansible_check_mode": true}),
+                json!({"name": "bash", "pkg": "bash"}),
+                json!({"update_cache": true, "cache_valid_time": -1}),
+                json!({"update_cache": true, "cache_valid_time": "1_000"}),
+                // Not in the status file: unknown, or virtual.
+                json!({"name": "volant-no-such-package"}),
+                json!({"name": "mail-transport-agent"}),
+                // Two architectures installed, or only a foreign one.
+                json!({"name": "libtwo"}),
+                json!({"name": "foreign"}),
+            ] {
+                host.hands_back(&args);
+            }
+            let mut context = host.context();
+            context
+                .environment
+                .insert("TZ".into(), "Europe/Paris".into());
+            assert!(matches!(
+                host.answer_at(&json!({"name": "bash"}), &context, soon()),
+                NativeRun::Fallback(_)
+            ));
+        }
+        {
+            let host = Host::new("journal");
+            host.fake
+                .write("/var/lib/dpkg/updates/0001", "Package: bash\n");
+            assert_eq!(
+                host.hands_back(&json!({"name": "bash"})),
+                "dpkg has pending updates in its journal"
+            );
+
+            let host = Host::new("no-python-apt");
+            host.fake.write(
+                STATUS,
+                &STATUS_TEXT.replace("Package: python3-apt\n", "Package: python3-apx\n"),
+            );
+            let reason = host.hands_back(&json!({"name": "bash"}));
+            assert!(reason.starts_with("python3-apt"), "{reason}");
+
+            // dpkg has python3-apt, built for 3.12, and the system python is now a 3.13.
+            let host = Host::new("other-python");
+            host.fake.write("/usr/bin/python3.13", "");
+            std::fs::remove_file(host.fake.0.join("usr/bin/python3")).unwrap();
+            std::os::unix::fs::symlink("python3.13", host.fake.0.join("usr/bin/python3")).unwrap();
+            let reason = host.hands_back(&json!({"name": "bash"}));
+            assert!(reason.starts_with("python3-apt"), "{reason}");
+            // The reference tries `/usr/bin/python` next.
+            std::os::unix::fs::symlink("python3.12", host.fake.0.join("usr/bin/python")).unwrap();
+            host.done(&json!({"name": "bash"}));
+
+            // The extension without the package around it.
+            let host = Host::new("no-apt-package");
+            std::fs::remove_file(
+                host.fake
+                    .0
+                    .join("usr/lib/python3/dist-packages/apt/__init__.py"),
             )
             .unwrap();
-        assert_eq!(time(&host), json!(STAMP_SECONDS - 5));
-    }
+            let reason = host.hands_back(&json!({"name": "bash"}));
+            assert!(reason.starts_with("python3-apt"), "{reason}");
 
-    /// Everything outside the three answers goes to the module untouched.
-    ///
-    /// What would make this red: any of these answered, each one a case where the module
-    /// installs, removes, updates, refuses, warns or reads something the native does not.
-    #[test]
-    fn everything_else_is_handed_back_before_any_change() {
-        let host = Host::new("outside");
-        for args in [
-            json!({"name": "bash=5.2.21-2ubuntu4"}),
-            json!({"name": "bash>=5"}),
-            json!({"name": "bas*"}),
-            json!({"name": "bash:amd64"}),
-            json!({"name": " bash"}),
-            json!({"name": "Bash"}),
-            json!({"name": []}),
-            json!({"name": [1]}),
-            json!({"name": "bash", "state": "latest"}),
-            json!({"name": "bash", "state": "fixed"}),
-            json!({"name": "bash", "state": "bogus"}),
-            json!({"deb": "/tmp/x.deb"}),
-            json!({"name": "bash", "default_release": "noble"}),
-            json!({"name": "gone", "state": "absent", "purge": true}),
-            json!({"name": "bash", "autoremove": true}),
-            json!({"name": "bash", "autoclean": true}),
-            json!({"upgrade": "dist"}),
-            json!({"name": "bash", "upgrade": "no"}),
-            json!({"name": "bash", "only_upgrade": true}),
-            json!({"name": "bash", "clean": true}),
-            json!({"name": "bash", "force": "maybe"}),
-            json!({"name": "bash", "lock_timeout": "soon"}),
-            json!({"name": "bash", "lock_timeout": 1.5}),
-            json!({"name": "bash", "dpkg_options": 3}),
-            json!({"name": "bash", "purge": null}),
-            json!({"name": "bash", "no_such": 1}),
-            json!({"name": "bash", "_ansible_check_mode": true}),
-            json!({"name": "bash", "pkg": "bash"}),
-            json!({"update_cache": true, "cache_valid_time": -1}),
-            json!({"update_cache": true, "cache_valid_time": "1_000"}),
-            // Not in the status file: unknown, or virtual.
-            json!({"name": "volant-no-such-package"}),
-            json!({"name": "mail-transport-agent"}),
-            // Two architectures installed, or only a foreign one.
-            json!({"name": "libtwo"}),
-            json!({"name": "foreign"}),
-        ] {
-            host.hands_back(&args);
+            let host = Host::new("no-apt-mark");
+            let mut context = host.context();
+            context.environment.insert(
+                "PATH".into(),
+                host.fake.0.join("nowhere").display().to_string(),
+            );
+            assert!(matches!(
+                host.answer_at(&json!({"name": "bash"}), &context, soon()),
+                NativeRun::Fallback(_)
+            ));
         }
-        let mut context = host.context();
-        context
-            .environment
-            .insert("TZ".into(), "Europe/Paris".into());
-        assert!(matches!(
-            host.answer_at(&json!({"name": "bash"}), &context, soon()),
-            NativeRun::Fallback(_)
-        ));
-    }
-
-    /// Host states the module reads differently from the status file alone: a dpkg journal not
-    /// yet folded in, no python-apt (the module would install it), no `apt-mark` (it would warn).
-    ///
-    /// What would make this red: any of them answered.
-    #[test]
-    fn a_host_the_status_file_does_not_describe_is_left_to_the_module() {
-        let host = Host::new("journal");
-        host.fake
-            .write("/var/lib/dpkg/updates/0001", "Package: bash\n");
-        assert_eq!(
-            host.hands_back(&json!({"name": "bash"})),
-            "dpkg has pending updates in its journal"
-        );
-
-        let host = Host::new("no-python-apt");
-        host.fake.write(
-            STATUS,
-            &STATUS_TEXT.replace("Package: python3-apt\n", "Package: python3-apx\n"),
-        );
-        let reason = host.hands_back(&json!({"name": "bash"}));
-        assert!(reason.starts_with("python3-apt"), "{reason}");
-
-        // dpkg has python3-apt, built for 3.12, and the system python is now a 3.13.
-        let host = Host::new("other-python");
-        host.fake.write("/usr/bin/python3.13", "");
-        std::fs::remove_file(host.fake.0.join("usr/bin/python3")).unwrap();
-        std::os::unix::fs::symlink("python3.13", host.fake.0.join("usr/bin/python3")).unwrap();
-        let reason = host.hands_back(&json!({"name": "bash"}));
-        assert!(reason.starts_with("python3-apt"), "{reason}");
-        // The reference tries `/usr/bin/python` next.
-        std::os::unix::fs::symlink("python3.12", host.fake.0.join("usr/bin/python")).unwrap();
-        host.done(&json!({"name": "bash"}));
-
-        // The extension without the package around it.
-        let host = Host::new("no-apt-package");
-        std::fs::remove_file(
-            host.fake
-                .0
-                .join("usr/lib/python3/dist-packages/apt/__init__.py"),
-        )
-        .unwrap();
-        let reason = host.hands_back(&json!({"name": "bash"}));
-        assert!(reason.starts_with("python3-apt"), "{reason}");
-
-        let host = Host::new("no-apt-mark");
-        let mut context = host.context();
-        context.environment.insert(
-            "PATH".into(),
-            host.fake.0.join("nowhere").display().to_string(),
-        );
-        assert!(matches!(
-            host.answer_at(&json!({"name": "bash"}), &context, soon()),
-            NativeRun::Fallback(_)
-        ));
-    }
-
-    /// Arguments as a `key=value` line or a template leaves them, strings, read the way
-    /// `AnsibleModule` converts them, and shown converted in `invocation`; an alias keeps the
-    /// value it was given beside the converted one.
-    ///
-    /// What would make this red: `"yes"` or `"86400"` refused (every `apt: update_cache=yes
-    /// cache_valid_time=86400` would go to Python), or passed through unconverted.
-    #[test]
-    fn string_arguments_are_converted_like_the_module_converts_them() {
-        let host = Host::new("strings");
-        let result = host.done(&json!({"update-cache": "Yes ", "cache_valid_time": " 86400"}));
-        let args = &result["invocation"]["module_args"];
-        assert_eq!(args["update_cache"], json!(true));
-        assert_eq!(args["update-cache"], json!("Yes "));
-        assert_eq!(args["cache_valid_time"], json!(86400));
-        let result = host.done(&json!({
-            "pkg": "bash,coreutils",
-            "state": "present",
-            "install_recommends": "no",
-            "lock_timeout": "30",
-            "default_release": "",
-            "force": 0,
-        }));
-        let args = &result["invocation"]["module_args"];
-        assert_eq!(args["package"], json!(["bash", "coreutils"]));
-        assert_eq!(args["pkg"], json!("bash,coreutils"));
-        assert_eq!(args["install_recommends"], json!(false));
-        assert_eq!(args["lock_timeout"], json!(30));
-        assert_eq!(args["force"], json!(false));
-        assert_eq!(args["default_release"], json!(""));
-        assert_eq!(args["upgrade"], Value::Null);
-    }
-
-    /// A name marked automatically installed is the module's: its `apt-mark manual` changes what
-    /// apt believes, and no golden case holds the native to doing that. Every name manual: the
-    /// answer, and no `apt-mark` spawned (the fake records every call).
-    ///
-    /// What would make this red: the auto-installed name answered (with or without the call), or
-    /// `apt-mark` spawned on the all-manual path.
-    #[test]
-    fn an_auto_installed_name_goes_to_the_module_and_manual_ones_spawn_nothing() {
-        let host = Host::new("manual");
-        let reason = host.hands_back(&json!({"name": ["bash", "libfoo"]}));
-        assert!(
-            reason.starts_with("a package is marked automatically"),
-            "{reason}"
-        );
-        host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));
-        assert_eq!(host.calls(), Vec::<String>::new());
-    }
-
-    /// With no package the module answers from its cache check alone, or, without one, from
-    /// installing nothing (the cache keys) or removing nothing (`changed` alone). `required_one_of`
-    /// never stops it: `autoremove` has its default before the check.
-    ///
-    /// What would make this red: `cache_valid_time` alone or `update_cache: false` alone handed
-    /// back, or answered with the wrong keys for `state: absent`.
-    #[test]
-    fn a_task_with_no_package_is_answered_like_the_module() {
-        let host = Host::new("no-package");
-        let three = |result: &Map<String, Value>| {
-            (
-                result.get("changed").cloned(),
-                result.get("cache_updated").cloned(),
-                result.get("cache_update_time").cloned(),
-            )
-        };
-        let expected = (
-            Some(json!(false)),
-            Some(json!(false)),
-            Some(json!(STAMP_SECONDS)),
-        );
-        for args in [
-            json!({"cache_valid_time": 86400}),
-            json!({"cache_valid_time": "86400", "update_cache": false}),
-            json!({"update_cache": false}),
-            json!({}),
-            json!({"cache_valid_time": 86400, "state": "absent"}),
-        ] {
-            assert_eq!(three(&host.done(&args)), expected, "{args}");
+        {
+            let host = Host::new("manual");
+            let reason = host.hands_back(&json!({"name": ["bash", "libfoo"]}));
+            assert!(
+                reason.starts_with("a package is marked automatically"),
+                "{reason}"
+            );
+            host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));
+            assert_eq!(host.calls(), Vec::<String>::new());
         }
-        let result = host.done(&json!({"state": "absent"}));
-        assert_eq!(three(&result), (Some(json!(false)), None, None));
-        assert_eq!(host.calls(), Vec::<String>::new());
-        let a_day_later = UNIX_EPOCH + Duration::from_secs(STAMP_SECONDS + 86_401);
-        assert!(matches!(
-            host.answer_at(
-                &json!({"cache_valid_time": 86400}),
-                &host.context(),
-                a_day_later
-            ),
-            NativeRun::Fallback(_)
-        ));
     }
 
-    /// The zone's offset between the stamp and now matters only to a cache check: a stamp from
-    /// summer time read in winter still gives `cache_update_time` for a task without one.
-    ///
-    /// Needs the `Europe/Paris` zone in the system's tz database. The test runs itself again in
-    /// a child process that has `TZ` set, which leaves this process's environment alone.
-    ///
-    /// What would make this red: `now` compared on every task, which hands this one back; or not
-    /// compared with a check, which answers an age the module measures an hour differently.
+    /// String arguments are converted like the module converts them; a task with no package is answered like it.
     #[test]
-    fn only_a_cache_check_needs_the_same_offset_now() {
-        // The marker, not `TZ` itself, tells the child it is one: a child that did not get `TZ`
-        // fails below rather than starting another.
-        if std::env::var_os("VOLANT_TZ_CHILD").is_none() {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "natives::apt::tests::only_a_cache_check_needs_the_same_offset_now",
-                ])
-                .env("TZ", "Europe/Paris")
-                .env("VOLANT_TZ_CHILD", "1")
-                .status()
-                .unwrap();
-            assert!(status.success(), "the test failed under TZ=Europe/Paris");
-            return;
+    fn arguments_are_read_like_the_module_reads_them() {
+        {
+            let host = Host::new("strings");
+            let result = host.done(&json!({"update-cache": "Yes ", "cache_valid_time": " 86400"}));
+            let args = &result["invocation"]["module_args"];
+            assert_eq!(args["update_cache"], json!(true));
+            assert_eq!(args["update-cache"], json!("Yes "));
+            assert_eq!(args["cache_valid_time"], json!(86400));
+            let result = host.done(&json!({
+                "pkg": "bash,coreutils",
+                "state": "present",
+                "install_recommends": "no",
+                "lock_timeout": "30",
+                "default_release": "",
+                "force": 0,
+            }));
+            let args = &result["invocation"]["module_args"];
+            assert_eq!(args["package"], json!(["bash", "coreutils"]));
+            assert_eq!(args["pkg"], json!("bash,coreutils"));
+            assert_eq!(args["install_recommends"], json!(false));
+            assert_eq!(args["lock_timeout"], json!(30));
+            assert_eq!(args["force"], json!(false));
+            assert_eq!(args["default_release"], json!(""));
+            assert_eq!(args["upgrade"], Value::Null);
         }
-        let summer = 1_790_276_713_i64; // 2026-09-24, CEST
-        let winter = summer + 45 * 86_400; // 2026-11-08, CET
-        assert_ne!(
-            utc_offset(summer),
-            utc_offset(winter),
-            "this test needs the Europe/Paris zone in the system's tz database"
-        );
-        let host = Host::new("offset");
-        let later = UNIX_EPOCH + Duration::from_secs(winter.unsigned_abs());
-        let NativeRun::Done(result) =
-            host.answer_at(&json!({"name": "bash"}), &host.context(), later)
-        else {
-            panic!("a task without a cache check handed back");
-        };
-        assert_eq!(result.0["cache_update_time"], json!(STAMP_SECONDS));
-        assert!(matches!(
-            host.answer_at(
-                &json!({"name": "bash", "cache_valid_time": 100_000_000}),
-                &host.context(),
-                later
-            ),
-            NativeRun::Fallback(_)
-        ));
+        {
+            let host = Host::new("no-package");
+            let three = |result: &Map<String, Value>| {
+                (
+                    result.get("changed").cloned(),
+                    result.get("cache_updated").cloned(),
+                    result.get("cache_update_time").cloned(),
+                )
+            };
+            let expected = (
+                Some(json!(false)),
+                Some(json!(false)),
+                Some(json!(STAMP_SECONDS)),
+            );
+            for args in [
+                json!({"cache_valid_time": 86400}),
+                json!({"cache_valid_time": "86400", "update_cache": false}),
+                json!({"update_cache": false}),
+                json!({}),
+                json!({"cache_valid_time": 86400, "state": "absent"}),
+            ] {
+                assert_eq!(three(&host.done(&args)), expected, "{args}");
+            }
+            let result = host.done(&json!({"state": "absent"}));
+            assert_eq!(three(&result), (Some(json!(false)), None, None));
+            assert_eq!(host.calls(), Vec::<String>::new());
+            let a_day_later = UNIX_EPOCH + Duration::from_secs(STAMP_SECONDS + 86_401);
+            assert!(matches!(
+                host.answer_at(
+                    &json!({"cache_valid_time": 86400}),
+                    &host.context(),
+                    a_day_later
+                ),
+                NativeRun::Fallback(_)
+            ));
+        }
     }
 }

@@ -91,11 +91,8 @@ mod tests {
         collect(&host, &run).map(|facts| facts["lsb"].clone())
     }
 
-    /// `lsb_release -a` as Ubuntu 24.04 prints it, the file when the command is missing or
-    /// fails, quotes stripped after `major_release` is cut.
-    ///
-    /// What would make this red: the file read when the command answered, the quotes of the
-    /// file's description kept, or the command's failure taken as its answer.
+    /// `lsb_release -a` as Ubuntu 24.04 prints it, the file when the command is missing or fails,
+    /// quotes stripped after `major_release` is cut.
     #[test]
     fn lsb_comes_from_the_command_then_the_file() {
         let fake = FakeRoot::new("lsb");

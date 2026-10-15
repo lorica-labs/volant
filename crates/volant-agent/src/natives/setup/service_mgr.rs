@@ -78,9 +78,6 @@ mod tests {
 
     /// `systemd` on a booted host, and `python3` in the container of the reference measurement,
     /// whose process 1 is the interpreter: both read off `/proc/1/comm` alone.
-    ///
-    /// What would make this red: `service_mgr` read anywhere but `/proc/1/comm` (the systemd
-    /// canary below is present in the container case, and would answer `systemd`).
     #[test]
     fn process_one_names_the_service_manager() {
         let fake = FakeRoot::new("service-mgr");

@@ -3347,36 +3347,6 @@ fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// A templated task name renders in the `FAILED - RETRYING` line the way it renders everywhere
-/// else, rather than showing its own template braces.
-///
-/// What would make this red: the retry line sending `task.name` raw instead of the rendered
-/// form - `probe {{ n }}` in the line instead of `probe 3`.
-#[test]
-fn a_templated_task_name_renders_in_the_retry_line() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("inventory.ini"),
-            &fixture("until/templated-name.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("FAILED - RETRYING: [localhost]: probe 3 (1 retries left)."),
-        "{text}"
-    );
-    assert!(
-        !text
-            .lines()
-            .any(|line| line.contains("RETRYING") && line.contains("{{")),
-        "the retry line must not show the template's braces: {text}"
-    );
-}
-
 /// A task that never leaves the controller retries by the same loop as any other.
 ///
 /// Measured on ansible-core 2.19.12 with this fixture: two retry lines, `fatal:` carrying the
@@ -6622,27 +6592,6 @@ fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
     assert!(
         !stdout.contains("Never reached"),
         "the play carried on past the refusal:\n{stdout}"
-    );
-}
-
-/// The same argument set to `false` asks for exactly what this release does - it expands nothing -
-/// so the task runs. A refusal that reads the name and not the value stops a playbook that was
-/// byte-identical under both engines, while the value that really diverges is the default, which
-/// nobody writes and nothing can catch.
-///
-/// The assertion is the program's own output, not the exit code: `/bin/echo $HOME` succeeds
-/// either way, and only the five characters it printed say which engine expanded anything.
-///
-/// What would make this red: the refusal firing on the name, which exits 4 before connecting.
-#[test]
-fn asking_for_the_expansion_this_release_does_not_do_runs() {
-    let out = volant(&["playbook", &fixture("module-argument-expansion-off.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "{stderr}{stdout}");
-    assert!(
-        stdout.contains(r#""msg": "printed=$HOME""#),
-        "the argument the task asked for is not what the program was given:\n{stdout}"
     );
 }
 

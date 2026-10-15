@@ -4680,7 +4680,6 @@ mod tests {
         );
     }
 
-    /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
     /// A host cannot set the keys the controller reads: a forged error chain naming a controller
     /// file is dropped before anything renders it, and so is a forged `_ansible_` flag.
     #[tokio::test]
@@ -4731,6 +4730,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
     #[tokio::test]
     async fn a_batch_result_is_mapped_the_way_the_reference_reports_it() {
         {

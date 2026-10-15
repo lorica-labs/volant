@@ -705,9 +705,6 @@ mod tests {
     #[case::check_mode_on_a_task(task_play("      command: echo hi\n      check_mode: true\n"), &["'check_mode' is not supported yet with 'true'"])]
     #[case::check_mode_on_a_play("- hosts: all\n  check_mode: true\n  tasks:\n    - command: echo hi\n".to_string(), &["'check_mode' is not supported yet with 'true'"])]
     #[case::check_mode_on_a_block("- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n".to_string(), &["'check_mode' is not supported yet with 'true'"])]
-    #[case::expand_argument_vars_true(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: true\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
-    #[case::expand_argument_vars_yes(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"yes\"\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
-    #[case::expand_argument_vars_one(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: 1\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
     #[case::shell_true(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: true\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::shell_false(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
@@ -746,6 +743,12 @@ mod tests {
     ))]
     #[case::raw_takes_no_such_check(task_play(
         "      raw: /bin/true\n      args:\n        expand_argument_vars: true\n"
+    ))]
+    #[case::expansion_on(task_play(
+        "      command: /bin/echo $HOME
+      args:
+        expand_argument_vars: true
+"
     ))]
     #[case::expansion_off(task_play(
         "      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"

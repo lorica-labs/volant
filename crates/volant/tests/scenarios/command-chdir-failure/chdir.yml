@@ -1,0 +1,29 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a directory that does not exist
+      command: /bin/echo $HOME hi
+      args:
+        chdir: /nonexistent-directory
+      register: missing
+      ignore_errors: true
+    - debug:
+        var: missing
+    - name: a file is not a directory
+      command:
+        argv: [/bin/echo, hi]
+      args:
+        chdir: /etc/passwd
+      register: file
+      ignore_errors: true
+    - debug:
+        var: file
+    - name: the guard is not read first
+      command: /bin/echo hi
+      args:
+        chdir: /nonexistent-directory
+        removes: cache
+      register: guarded
+      ignore_errors: true
+    - debug:
+        msg: "{{ guarded.msg }}"

@@ -1,0 +1,2 @@
+# A chdir that cannot be entered fails before anything runs, with the words as written and a null rc.
+args: [-i, inv.ini, chdir.yml]

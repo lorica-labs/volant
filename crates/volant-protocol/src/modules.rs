@@ -137,12 +137,8 @@ const fn command_args(executable: ArgStatus, expand_argument_vars: ArgStatus) ->
             name: "executable",
             status: executable,
         },
-        // Measured: it decides whether the arguments handed to the program have their shell
-        // variables expanded first - `/bin/echo $HOME` prints the home directory by default and the
-        // five characters `$HOME` when it is off. This release expands nothing, which is what `false`
-        // asks for, so on `command` only `true` is refused: refusing `false` would stop a playbook
-        // that ran the same under both engines. The default is the value that diverges, and it is
-        // the one nobody writes; the modules reference page says so, because no refusal can.
+        // Measured: on `command` it decides whether the words handed to the program have their
+        // `$VAR`, `${VAR}` and `~` expanded first, on by default; `shell` is not given it.
         ModuleArg {
             name: "expand_argument_vars",
             status: expand_argument_vars,
@@ -167,8 +163,7 @@ const fn command_args(executable: ArgStatus, expand_argument_vars: ArgStatus) ->
 }
 
 /// The list `command` answers with: `executable` is accepted and does nothing, there as here.
-const COMMAND_ARGS: [ModuleArg; 12] =
-    command_args(ArgStatus::Inert, ArgStatus::Refused(Some(true)));
+const COMMAND_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Inert, ArgStatus::Honoured);
 /// The same names, with the argument `shell` reads and `command` does not, and the argument the
 /// reference gives `command` and refuses on `shell`.
 ///
@@ -598,7 +593,7 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "---\ntitle: Modules\ndescription: Which modules Volant runs, where each one runs, and which ones are not supported yet.\n---\n\n<!-- Generated from crates/volant-protocol/src/modules.rs by `just docs-modules`. Do not edit by hand. -->\n\nVolant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.\n\nA module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads.\n\nEach argument is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`. No other argument is expanded either: Ansible runs `command: /bin/echo $HOME` with the variable already replaced, while Volant hands the program the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding, not the module.\n\n| Module | Free-form | Arguments | What it does |\n|---|---|---|---|\n",
+        "---\ntitle: Modules\ndescription: Which modules Volant runs, where each one runs, and which ones are not supported yet.\n---\n\n<!-- Generated from crates/volant-protocol/src/modules.rs by `just docs-modules`. Do not edit by hand. -->\n\nVolant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.\n\nA module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads.\n\nAnsible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`: those three are read as the playbook writes them. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.\n\n| Module | Free-form | Arguments | What it does |\n|---|---|---|---|\n",
     );
     // The internal keys carry the command line itself rather than being written in a playbook,
     // so they are in the registry and out of the page.
@@ -878,40 +873,43 @@ mod tests {
         assert!(row("shell").contains("`executable`"), "{}", row("shell"));
     }
 
-    /// `expand_argument_vars` is a `command` argument, and the two modules answer for it
-    /// differently because the reference does.
+    /// `expand_argument_vars` is read by `command` and refused by name on `shell`, as the reference does.
     #[test]
-    fn expand_argument_vars_is_refused_by_the_value_on_one_module_and_by_name_on_the_other() {
+    fn expand_argument_vars_is_read_on_command_and_refused_on_shell() {
         let status = |m: &ModuleSpec| {
             m.args
                 .iter()
                 .find(|a| a.name == "expand_argument_vars")
                 .map(|a| a.status)
         };
-        assert_eq!(status(&COMMAND), Some(ArgStatus::Refused(Some(true))));
+        assert_eq!(status(&COMMAND), Some(ArgStatus::Honoured));
         assert_eq!(status(&SHELL), Some(ArgStatus::Refused(None)));
         assert_eq!(status(&RAW), None);
         let page = documentation_table();
         assert!(
-            page.contains("- `command`: `expand_argument_vars: true`\n"),
+            page.contains(
+                "- `shell`: `expand_argument_vars`
+"
+            ),
             "{page}"
         );
-        assert!(
-            page.contains("- `shell`: `expand_argument_vars`\n"),
-            "{page}"
-        );
+        assert!(!page.contains("- `command`:"), "{page}");
     }
 
-    /// The divergence no refusal can name is the default, so the page has to name it instead.
+    /// The page says which arguments are read as written and that a `command` expands its words.
     #[test]
-    fn the_page_says_arguments_are_read_as_written() {
+    fn the_page_says_which_arguments_are_expanded() {
         let page = documentation_table();
         for phrase in [
-            "read as the playbook writes it",
+            "read as the playbook writes them",
             "expands `~` and `$VAR`",
-            "`command: /bin/echo $HOME`",
+            "`command: /bin/echo $HOME` prints the home directory",
         ] {
-            assert!(page.contains(phrase), "{phrase} is missing from:\n{page}");
+            assert!(
+                page.contains(phrase),
+                "{phrase} is missing from:
+{page}"
+            );
         }
     }
 

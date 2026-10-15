@@ -640,6 +640,83 @@ pub fn os_error(err: &io::Error, path: &str) -> String {
     format!("[Errno {errno}] {text}: {}", bytes_repr(path))
 }
 
+/// `AnsibleModule._clean_args(args)`, the `cmd` of a failed `run_command`: the word after one
+/// that starts `pass` (after up to two `-`) masked, or the part after its `=`, then each word
+/// `shlex.quote`d. `heuristic_log_sanitize` is not applied: it only rewrites `user:pass@` URLs.
+pub fn clean_args(words: &[&str]) -> String {
+    let mut clean = Vec::new();
+    let mut masked = false;
+    for word in words {
+        if masked {
+            masked = false;
+            clean.push("********".to_string());
+            continue;
+        }
+        let bare = word
+            .strip_prefix("--")
+            .or_else(|| word.strip_prefix('-'))
+            .unwrap_or(word);
+        if bare.starts_with("pass") {
+            if let Some(at) = word.find('=') {
+                clean.push(format!("{}=********", &word[..at]));
+                continue;
+            }
+            masked = true;
+        }
+        clean.push((*word).to_string());
+    }
+    clean
+        .iter()
+        .map(|word| shlex_quote(word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The `exception` `fail_json(exception=ex)` sends for the `OSError` `Popen` raised, measured on
+/// ansible-core 2.19.12 (tracebacks off, the default): an error summary whose chained event is
+/// `str(ex)`. That text is Python's `[Errno N] strerror`, with the program as bytes when `exec`
+/// failed; a failed `fork` (`EAGAIN`, `ENOMEM`) names no file. The wording comes from this libc,
+/// so the chained message is not byte for byte the host Python's for every errno.
+pub fn popen_error(errno: i32, program: &str) -> Value {
+    let text = io::Error::from_raw_os_error(errno).to_string();
+    let strerror = match strerror(errno) {
+        Some(strerror) => strerror,
+        None => text.split(" (os error").next().unwrap_or(&text),
+    };
+    let cause = if errno == libc::EAGAIN || errno == libc::ENOMEM {
+        format!("[Errno {errno}] {strerror}")
+    } else {
+        format!("[Errno {errno}] {strerror}: b'{program}'")
+    };
+    serde_json::json!({
+        "__ansible_type": "ErrorSummary",
+        "event": {
+            "__ansible_type": "Event",
+            "msg": "Error executing command.",
+            "chain": {
+                "__ansible_type": "EventChain",
+                "msg_reason": "<<< caused by >>>",
+                "traceback_reason": "The above exception was the direct cause of the following error:",
+                "follow": true,
+                "event": {"__ansible_type": "Event", "msg": cause},
+            },
+        },
+    })
+}
+
+/// `shlex.quote`.
+pub fn shlex_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\"'\"'"))
+    }
+}
+
 /// glibc's `strerror` for the errors file operations meet.
 pub fn strerror(errno: i32) -> Option<&'static str> {
     Some(match errno {

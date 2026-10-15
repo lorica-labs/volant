@@ -13,17 +13,16 @@ A module named in a file that only a dynamic `include_tasks` or `include_role` b
 
 The agent runs these on the host, without Python. The arguments column lists what each module reads.
 
-Each argument is read as the playbook writes it. Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`. No other argument is expanded either: Ansible runs `command: /bin/echo $HOME` with the variable already replaced, while Volant hands the program the five characters `$HOME`. A `shell` task prints the same thing under both engines, because there the shell does the expanding, not the module.
+Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`: those three are read as the playbook writes them. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.
 
 | Module | Free-form | Arguments | What it does |
 |---|---|---|---|
-| `command` | yes | `argv`, `chdir`, `cmd`, `creates`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a program directly, without a shell. |
+| `command` | yes | `argv`, `chdir`, `cmd`, `creates`, `expand_argument_vars`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a program directly, without a shell. |
 | `raw` | yes | `executable` | Run a command line through the remote shell, with no module machinery around it. |
 | `shell` | yes | `argv`, `chdir`, `cmd`, `creates`, `executable`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a command line through a shell, `sh` unless `executable` names another. |
 
 These arguments exist in Ansible and are not supported yet: a playbook that uses them stops before the run reaches a host.
 
-- `command`: `expand_argument_vars: true`
 - `shell`: `expand_argument_vars`
 
 ## On the controller

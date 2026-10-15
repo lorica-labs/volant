@@ -1,0 +1,2 @@
+# A command expands $VAR, ${VAR} and ~ in the words it runs, from the task environment; a shell does not.
+args: [-i, inv.ini, expand.yml]

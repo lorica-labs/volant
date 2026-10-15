@@ -15,6 +15,8 @@ use volant_protocol::modules::{COMMAND, arg_bool};
 
 use super::{Context, Module, Run, glob};
 use crate::clock;
+#[cfg(unix)]
+use crate::natives::common::{clean_args, popen_error};
 
 pub const MODULE: Module = Module {
     spec: &COMMAND,
@@ -65,7 +67,7 @@ pub(crate) fn execute(
     // its `cmd`. A `shell:` written as a mapping carrying only `argv` used to be refused here as
     // "no command given", against a reference that runs it.
     let from_argv = args.get("argv").and_then(Value::as_array);
-    let argv: Vec<String> = match from_argv {
+    let mut argv: Vec<String> = match from_argv {
         Some(list) => list
             .iter()
             .filter_map(Value::as_str)
@@ -92,6 +94,28 @@ pub(crate) fn execute(
     if argv.is_empty() {
         return Run::Done(TaskResult::failed_with("no command given"));
     }
+    // Measured on ansible-core 2.19.12: `command` expands `$VAR`, `${VAR}` and `~` in each word it
+    // runs, on by default; `shell` does not, with an `argv` or without. The task still reports the
+    // words as written, and only a failure to run reports them expanded.
+    if !uses_shell
+        && args
+            .get("expand_argument_vars")
+            .and_then(arg_bool)
+            .unwrap_or(true)
+    {
+        let var = |name: &str| {
+            ctx.environment
+                .get(name)
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+        };
+        for word in &mut argv {
+            let expanded = expand_vars(word, &var);
+            #[cfg(unix)]
+            let expanded = expand_user(&expanded, &var);
+            *word = expanded;
+        }
+    }
 
     // The reference module changes directory before it reads either guard, so a `chdir` that
     // cannot be entered fails the task here rather than being read as a guard that found
@@ -107,10 +131,10 @@ pub(crate) fn execute(
     // readable - refusing that would be the worse mistake.
     if let Some(dir) = chdir {
         match std::fs::metadata(dir) {
-            Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
+            Err(err) => return Run::Done(chdir_failure(display, dir, &err)),
             Ok(meta) if !meta.is_dir() => {
                 let err = std::io::Error::from_raw_os_error(libc::ENOTDIR);
-                return Run::Done(spawn_failure(display, chdir, &err));
+                return Run::Done(chdir_failure(display, dir, &err));
             }
             Ok(_) => {}
         }
@@ -165,6 +189,16 @@ pub(crate) fn execute(
     }
     let mut child = match command.spawn() {
         Ok(child) => child,
+        #[cfg(unix)]
+        Err(err) => {
+            return Run::Done(exec_failure(
+                &argv,
+                uses_shell && from_argv.is_none(),
+                raw,
+                &err,
+            ));
+        }
+        #[cfg(not(unix))]
         Err(err) => return Run::Done(spawn_failure(display, chdir, &err)),
     };
     // Read before the handle moves into the reaping thread below. The child was started with
@@ -446,6 +480,124 @@ fn spawn_failure(cmd: Value, chdir: Option<&str>, err: &std::io::Error) -> TaskR
     TaskResult(result)
 }
 
+/// A `chdir` that cannot be entered, as the reference reports it (measured on 2.19.12): the words as
+/// written, `rc` and the clock null, nothing run, and the errno in the `exception`.
+#[cfg(unix)]
+fn chdir_failure(cmd: Value, dir: &str, err: &std::io::Error) -> TaskResult {
+    let errno = err.raw_os_error().unwrap_or(libc::EIO);
+    let msg = "Unable to change directory before execution.";
+    let mut exception = popen_error(errno, dir);
+    exception["event"]["msg"] = json!(msg);
+    let mut result = Map::new();
+    result.insert("cmd".into(), cmd);
+    for key in ["rc", "start", "end", "delta"] {
+        result.insert(key.into(), Value::Null);
+    }
+    for key in ["stdout", "stderr"] {
+        result.insert(key.into(), json!(""));
+        result.insert(format!("{key}_lines"), json!([]));
+    }
+    result.insert("changed".into(), json!(false));
+    result.insert("msg".into(), json!(msg));
+    result.insert("failed".into(), json!(true));
+    result.insert("exception".into(), exception);
+    TaskResult(result)
+}
+
+#[cfg(not(unix))]
+fn chdir_failure(cmd: Value, dir: &str, err: &std::io::Error) -> TaskResult {
+    spawn_failure(cmd, Some(dir), err)
+}
+
+/// A program that would not start, as the reference reports `Popen` raising: `rc` is the errno,
+/// `cmd` is the words after expansion, quoted and joined into one string, and the cause is in the
+/// `exception`. A shell line is split the way `_clean_args` splits it.
+#[cfg(unix)]
+fn exec_failure(argv: &[String], shell_line: bool, raw: &str, err: &std::io::Error) -> TaskResult {
+    let errno = err.raw_os_error().unwrap_or(libc::EIO);
+    let words: Vec<String> = if shell_line {
+        shlex::split(raw).unwrap_or_default()
+    } else {
+        argv.to_vec()
+    };
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let mut result = Map::new();
+    result.insert("cmd".into(), json!(clean_args(&words)));
+    result.insert("rc".into(), json!(errno));
+    result.insert("msg".into(), json!("Error executing command."));
+    for key in ["stdout", "stderr"] {
+        result.insert(key.into(), json!(""));
+        result.insert(format!("{key}_lines"), json!([]));
+    }
+    result.insert("changed".into(), json!(false));
+    result.insert("failed".into(), json!(true));
+    result.insert("exception".into(), popen_error(errno, &argv[0]));
+    TaskResult(result)
+}
+
+/// `os.path.expandvars`: `$name` and `${name}` whose name `var` knows; any other stays as written.
+fn expand_vars(text: &str, var: &dyn Fn(&str) -> Option<String>) -> String {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (name, len) = if let Some(braced) = after.strip_prefix('{') {
+            braced
+                .find('}')
+                .map_or(("", 0), |end| (&braced[..end], end + 2))
+        } else {
+            let end = after.find(|c| !word(c)).unwrap_or(after.len());
+            (&after[..end], end)
+        };
+        match (len > 0).then(|| var(name)).flatten() {
+            Some(value) => out.push_str(&value),
+            None => out.push_str(&rest[at..=at + len]),
+        }
+        rest = &after[len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `os.path.expanduser`: a leading `~` or `~name` becomes the home directory of the module's
+/// `HOME`, or of the account; an unknown account leaves the word as written.
+#[cfg(unix)]
+fn expand_user(path: &str, var: &dyn Fn(&str) -> Option<String>) -> String {
+    let Some(tail) = path.strip_prefix('~') else {
+        return path.to_string();
+    };
+    let uid = unsafe { libc::getuid() };
+    let end = tail.find('/').unwrap_or(tail.len());
+    let (name, rest) = tail.split_at(end);
+    let home = if name.is_empty() {
+        var("HOME").or_else(|| passwd_home(&uid.to_string(), true))
+    } else {
+        passwd_home(name, false)
+    };
+    let Some(home) = home else {
+        return path.to_string();
+    };
+    let joined = format!("{}{rest}", home.trim_end_matches('/'));
+    if joined.is_empty() {
+        "/".into()
+    } else {
+        joined
+    }
+}
+
+/// The home directory of an account, by name or by uid. The agent is a static musl binary, whose
+/// `getpwnam` reads `/etc/passwd` and nothing else, as this does.
+#[cfg(unix)]
+fn passwd_home(key: &str, by_uid: bool) -> Option<String> {
+    let text = std::fs::read_to_string("/etc/passwd").ok()?;
+    text.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        (fields.len() >= 6 && fields[usize::from(by_uid) * 2] == key).then(|| fields[5].to_string())
+    })
+}
+
 fn program_name(cmd: &Value) -> String {
     match cmd {
         Value::Array(list) => list
@@ -567,15 +719,15 @@ mod tests {
     )]
     #[case::missing_program(
         json!({"_raw_params": "volant-no-such-program"}), Some(json!(2)),
-        Some("[Errno 2] No such file or directory")
+        Some("Error executing command.")
     )]
     #[case::missing_chdir(
-        json!({"_raw_params": "echo never", "chdir": "/definitely/not/here"}), Some(json!(2)),
-        Some("[Errno 2] No such file or directory: b'/definitely/not/here'")
+        json!({"_raw_params": "echo never", "chdir": "/definitely/not/here"}), Some(json!(null)),
+        Some("Unable to change directory before execution.")
     )]
     #[case::missing_chdir_before_a_guard(
         json!({"_raw_params": "rm -rf cache", "chdir": "/definitely/not/here", "removes": "cache"}),
-        Some(json!(2)), Some("[Errno 2] No such file or directory: b'/definitely/not/here'")
+        Some(json!(null)), Some("Unable to change directory before execution.")
     )]
     #[case::chdir_that_is_a_file(
         json!({"_raw_params": "rm -rf cache", "chdir": "$FILE", "removes": "cache"}), None, None

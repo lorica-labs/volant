@@ -1,0 +1,60 @@
+- hosts: h1
+  gather_facts: false
+  environment:
+    FOO: bar
+    HOME: /srv/home/
+  tasks:
+    - name: every spelling
+      command: /bin/echo $FOO ${FOO} ~ ~/x $NOPE ${NOPE} $$ a$FOO ~root x~ $ ${ ~root/x "$FOO" \$FOO ${FOO:-d} ~nosuchaccount
+      register: spelled
+    - debug:
+        var: spelled.stdout
+    - name: argv
+      command:
+        argv: [/bin/echo, $FOO, "~"]
+      register: listed
+    - debug:
+        var: listed.stdout
+    - name: off
+      command: /bin/echo $FOO ~
+      args:
+        expand_argument_vars: false
+      register: disabled
+    - debug:
+        var: disabled.stdout
+    - name: off, spelled no
+      command: /bin/echo $FOO
+      args:
+        expand_argument_vars: "no"
+      register: spelled_no
+    - debug:
+        var: spelled_no.stdout
+    - name: task environment wins
+      command: /bin/echo $FOO
+      environment:
+        FOO: x y
+      register: task_env
+    - debug:
+        var: task_env.stdout
+    - name: the result keeps the words as written
+      command: /bin/echo $FOO ~
+      register: written
+    - debug:
+        var: written.cmd
+    - name: the shell expands, the module does not
+      shell: echo $FOO ~
+      register: shelled
+    - debug:
+        var: shelled.stdout
+    - name: shell with argv is not expanded
+      shell:
+        argv: [/bin/echo, $FOO, "~"]
+      register: shell_argv
+    - debug:
+        var: shell_argv.stdout
+    - name: a missing program reports the expanded words
+      command: nosuch-program $FOO ~
+      register: missing
+      ignore_errors: true
+    - debug:
+        var: missing.cmd

@@ -1,0 +1,28 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: free form
+      command: nosuch-program
+      register: free
+      ignore_errors: true
+    - debug:
+        var: free
+    - name: a list
+      command:
+        argv: [nosuch-program, one, two words]
+      register: listed
+      ignore_errors: true
+    - debug:
+        var: listed
+    - name: quoted words
+      command: nosuch-program -a "b c" --password=secret
+      register: quoted
+      ignore_errors: true
+    - debug:
+        var: quoted
+    - name: a directory is not a program
+      command: /
+      register: dir
+      ignore_errors: true
+    - debug:
+        msg: "{{ dir.rc }} {{ dir.cmd }}"

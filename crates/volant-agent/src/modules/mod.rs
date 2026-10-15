@@ -300,36 +300,11 @@ mod tests {
         );
     }
 
-    /// The pre-flight refuses `expand_argument_vars: true` before the first connection, and lets
-    /// `expand_argument_vars: "{{ flag }}"` through because it cannot read a template.
+    /// `shell` refuses `expand_argument_vars` whatever its value, a template the pre-flight could not
+    /// read included; `command` reads it.
     #[test]
     fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
         use crate::testing::args;
-        for refused in [json!(true), json!("true"), json!("YES"), json!(1)] {
-            assert_eq!(
-                refused_argument(
-                    &COMMAND,
-                    &args(
-                        json!({"_raw_params": "/bin/echo $HOME", "expand_argument_vars": refused})
-                    ),
-                )
-                .as_deref(),
-                Some(
-                    "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'. The host renders this value, so the check before the run could not read it."
-                ),
-                "{refused}"
-            );
-        }
-        for allowed in [json!(false), json!("no"), json!(0), json!("maybe")] {
-            assert_eq!(
-                refused_argument(
-                    &COMMAND,
-                    &args(json!({"expand_argument_vars": allowed.clone()})),
-                ),
-                None,
-                "{allowed}"
-            );
-        }
         for any in [json!(true), json!(false), json!("no"), json!("maybe")] {
             assert_eq!(
                 refused_argument(&SHELL, &args(json!({"expand_argument_vars": any.clone()})))
@@ -340,6 +315,10 @@ mod tests {
                 "{any}"
             );
         }
+        assert_eq!(
+            refused_argument(&COMMAND, &args(json!({"expand_argument_vars": true}))),
+            None
+        );
         for spec in [&COMMAND, &SHELL] {
             assert_eq!(
                 refused_argument(spec, &args(json!({"_raw_params": "x", "chdir": "/tmp"}))),

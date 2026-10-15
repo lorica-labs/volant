@@ -5136,64 +5136,6 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
     assert_no_survivor(&marker);
 }
 
-/// A module argument the reference has and this release does not act on is refused by its own name,
-/// before anything connects.
-#[test]
-fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
-    let out = volant(&["playbook", &fixture("module-argument-refused.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(4), "{stderr}{stdout}");
-    assert!(
-        stderr.contains(
-            "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"
-        ),
-        "the refusal did not name the argument:\n{stderr}"
-    );
-    assert!(
-        !stdout.contains("PLAY ["),
-        "a host was reached before the refusal:\n{stdout}"
-    );
-}
-
-/// The same refusal, for a value the pre-flight could not read.
-#[test]
-fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
-    let out = volant(&["playbook", &fixture("module-argument-refused-late.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(2), "{stdout}");
-    assert!(
-        stdout.contains(
-            "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'. The host renders this value, so the check before the run could not read it."
-        ),
-        "the task did not refuse the value it was handed:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("Never reached"),
-        "the play carried on past the refusal:\n{stdout}"
-    );
-}
-
-/// The default of that same argument is where the two engines part, and no playbook writes it.
-#[test]
-fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
-    let out = volant_within_env(
-        &[
-            "playbook",
-            &fixture("module-argument-expansion-default.yml"),
-        ],
-        DEFAULT_DEADLINE,
-        &[("VOLANT_EXPANSION_PROBE", "expanded")],
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "{stderr}{stdout}");
-    assert!(
-        stdout.contains(r#""msg": "command=$VOLANT_EXPANSION_PROBE shell=expanded""#),
-        "the default did something other than what the module page publishes:\n{stdout}"
-    );
-}
-
 /// An argument neither engine has fails the module at run time, with the reference's sentence and
 /// exit code.
 #[test]

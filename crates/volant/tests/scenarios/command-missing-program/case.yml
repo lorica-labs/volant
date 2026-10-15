@@ -1,0 +1,2 @@
+# A program that cannot start fails with the reference message, a string cmd and the errno as rc.
+args: [-i, inv.ini, missing.yml]

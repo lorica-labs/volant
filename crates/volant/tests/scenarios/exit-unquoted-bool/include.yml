@@ -1,0 +1,6 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg=before
+    - include_tasks: bad-tasks.yml
+    - debug: msg=after

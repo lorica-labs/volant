@@ -915,6 +915,46 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
 /// there at all is a different refusal with a different code, raised by the caller that knows
 /// which path it asked for.
 pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
+    parse_tasks_text(path).map_err(|err| {
+        if err.downcast_ref::<NotATaskList>().is_some() {
+            err
+        } else {
+            anyhow::Error::new(TaskFileRefused(format!("{err:#}")))
+        }
+    })
+}
+
+/// A task file the reference refuses while it loads it: a YAML error, a task it cannot parse.
+/// Raised from a dynamic include it ends the run at exit 4 with the statement's banner and no
+/// recap; measured on ansible-core 2.19.12, unlike [`NotATaskList`], which fails the host.
+#[derive(Debug)]
+pub(crate) struct TaskFileRefused(pub String);
+
+impl std::fmt::Display for TaskFileRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TaskFileRefused {}
+
+/// A task file whose document is not a list.
+#[derive(Debug)]
+pub(crate) struct NotATaskList(String);
+
+impl std::fmt::Display for NotATaskList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: included task files must contain a list of tasks",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for NotATaskList {}
+
+fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
@@ -925,7 +965,7 @@ pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> 
         Some(node @ Yaml::Sequence(_)) => {
             task_list(Some(node), "tasks").with_context(|| source.clone())
         }
-        Some(_) => bail!("{source}: included task files must contain a list of tasks"),
+        Some(_) => Err(NotATaskList(source).into()),
     }
 }
 

@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg=hi
+      notify: h
+  handlers:
+    - name: h
+      command: false

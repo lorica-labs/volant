@@ -810,7 +810,18 @@ pub(super) async fn drive_host(
                         &store,
                         &options.defaults,
                         &mut warnings,
+                        &options.abort,
                     );
+                    if options.abort.reason().is_some() {
+                        // The statement's banner is the last line the reference prints.
+                        let _ = tx
+                            .send(Event::Banner {
+                                host: name.clone(),
+                                index: pos,
+                            })
+                            .await;
+                        break 'run;
+                    }
                     for message in warnings {
                         let _ = tx
                             .send(Event::Warning {

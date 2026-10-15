@@ -864,6 +864,7 @@ name = "volant-protocol"
 version = "0.1.0-alpha.7"
 dependencies = [
  "miniz_oxide",
+ "rstest",
  "serde",
  "serde_json",
  "sha1_smol",

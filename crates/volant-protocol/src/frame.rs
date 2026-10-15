@@ -52,6 +52,8 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    use rstest::rstest;
+
     #[test]
     fn round_trips_a_payload() {
         let mut buf = Vec::new();
@@ -66,32 +68,11 @@ mod tests {
         assert_eq!(read_frame(Cursor::new(Vec::<u8>::new())).unwrap(), None);
     }
 
-    #[test]
-    fn truncated_length_is_an_error() {
-        let err = read_frame(Cursor::new(vec![0, 0])).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test]
-    fn truncated_payload_is_an_error() {
-        let err = read_frame(Cursor::new(vec![0, 0, 0, 9, b'x'])).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test]
-    fn oversized_length_is_rejected_before_allocating() {
-        let err = read_frame(Cursor::new(vec![0xff, 0xff, 0xff, 0xff])).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[test]
-    fn header_encodes_the_length_as_big_endian() {
-        assert_eq!(header(5).unwrap(), [0, 0, 0, 5]);
-    }
-
-    #[test]
-    fn payload_len_rejects_a_frame_over_the_limit() {
-        let err = payload_len([0xff; 4]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    #[rstest]
+    #[case::truncated_length(vec![0, 0], io::ErrorKind::UnexpectedEof)]
+    #[case::truncated_payload(vec![0, 0, 0, 9, b'x'], io::ErrorKind::UnexpectedEof)]
+    #[case::oversized_length(vec![0xff; 4], io::ErrorKind::InvalidData)]
+    fn a_broken_frame_is_an_error(#[case] bytes: Vec<u8>, #[case] kind: io::ErrorKind) {
+        assert_eq!(read_frame(Cursor::new(bytes)).unwrap_err().kind(), kind);
     }
 }

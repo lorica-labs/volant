@@ -822,154 +822,139 @@ mod tests {
         file.set_modified(mtime - Duration::from_secs(1)).unwrap();
     }
 
+    /// A second run hits the cache; a source rewritten in place or an upgraded collection misses it.
     #[test]
-    fn a_second_run_with_nothing_changed_hits_the_cache() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let stored = entry(root.path(), b"PK\x03\x04 zip");
-        store(&dir, &some_key(), &stored).unwrap();
-        let loaded = load(&dir, &some_key()).expect("nothing changed");
-        assert_eq!(loaded, stored);
-        assert_eq!(loaded.union.hash, stored.union.hash);
+    fn a_cache_hits_until_a_source_or_collection_changes() {
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let stored = entry(root.path(), b"PK\x03\x04 zip");
+            store(&dir, &some_key(), &stored).unwrap();
+            let loaded = load(&dir, &some_key()).expect("nothing changed");
+            assert_eq!(loaded, stored);
+            assert_eq!(loaded.union.hash, stored.union.hash);
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let stored = entry(root.path(), b"PK\x03\x04 zip");
+            store(&dir, &some_key(), &stored).unwrap();
+            let core = &stored.sources[0].path;
+            fs::write(core, "BASIC").unwrap();
+            age(core);
+            assert_eq!(Source::now(core).unwrap().len, stored.sources[0].len);
+            assert_eq!(load(&dir, &some_key()), None);
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let stored = entry(root.path(), b"PK\x03\x04 zip");
+            store(&dir, &some_key(), &stored).unwrap();
+            let files = &stored.sources[1].path;
+            fs::write(files, "{\"files\": [1]}").unwrap();
+            age(files);
+            assert_eq!(load(&dir, &some_key()), None);
+        }
     }
 
-    /// Review Focus 2: ansible-core upgraded at the same path, one of its files rewritten with
-    /// the same length. The mtime moving is enough to rebuild.
-    ///
-    /// What would make this red: the mtime left out of the check, which serves the old zip, and
-    /// its old `module_utils`, until a file happens to change length.
+    /// A rebuilt controller and every non-file input have a key of their own.
     #[test]
-    fn a_source_changed_in_place_misses_the_cache() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let stored = entry(root.path(), b"PK\x03\x04 zip");
-        store(&dir, &some_key(), &stored).unwrap();
-        let core = &stored.sources[0].path;
-        fs::write(core, "BASIC").unwrap();
-        age(core);
-        assert_eq!(Source::now(core).unwrap().len, stored.sources[0].len);
-        assert_eq!(load(&dir, &some_key()), None);
-    }
-
-    /// A collection upgraded in place: `ansible-galaxy collection install --upgrade` rewrites its
-    /// `FILES.json`, and the entry is rebuilt.
-    #[test]
-    fn a_collection_upgrade_misses_the_cache() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let stored = entry(root.path(), b"PK\x03\x04 zip");
-        store(&dir, &some_key(), &stored).unwrap();
-        let files = &stored.sources[1].path;
-        fs::write(files, "{\"files\": [1]}").unwrap();
-        age(files);
-        assert_eq!(load(&dir, &some_key()), None);
-    }
-
-    /// A rebuilt controller gets its own key.
-    ///
-    /// What would make this red: the key reading only the version number, so a rebuilt
-    /// controller whose refusals or fact keys changed gets the entry the previous build wrote.
-    #[test]
-    fn a_rebuilt_controller_is_another_key() {
-        let build = |mtime_ns| Source {
-            path: "/bin/volant".into(),
-            len: 10,
-            mtime_ns,
-        };
-        let with = |controller: &Source| {
-            key_from(
-                Some(controller),
-                &interpreter(),
-                &BTreeSet::new(),
-                &[],
-                &[],
-                &[],
-                Path::new("/work"),
-            )
-        };
-        assert_eq!(with(&build(1)), with(&build(1)));
-        assert_ne!(with(&build(1)), with(&build(2)), "a rebuild");
-        let longer = Source {
-            len: 11,
-            ..build(1)
-        };
-        assert_ne!(with(&build(1)), with(&longer), "another size");
-    }
-
-    /// Every input that is not a file has its own key.
-    ///
-    /// What would make this red: `ANSIBLE_MODULE_COMPRESSION` or `ANSIBLE_COLLECTIONS_PATH`
-    /// left out, which serves a union built under another configuration.
-    #[test]
-    fn an_ansible_environment_change_is_another_key() {
-        let modules = BTreeSet::from(["ping".to_string()]);
-        let with = |env: &[(&str, &str)], cfg: &[(PathBuf, Vec<u8>)], cwd: &str| {
-            let env: Vec<(OsString, OsString)> = env
-                .iter()
-                .map(|(name, value)| (name.into(), value.into()))
-                .collect();
-            key_from(
-                None,
-                &interpreter(),
-                &modules,
-                &[],
-                &env,
-                cfg,
-                Path::new(cwd),
-            )
-        };
-        let base = with(&[("TERM", "xterm")], &[], "/work");
-        assert_eq!(base, with(&[("TERM", "dumb")], &[], "/work"));
-        for other in [
-            with(
-                &[("ANSIBLE_MODULE_COMPRESSION", "ZIP_STORED")],
-                &[],
-                "/work",
-            ),
-            with(&[("ANSIBLE_COLLECTIONS_PATH", "/c")], &[], "/work"),
-            with(&[("PYTHONPATH", "/p")], &[], "/work"),
-            with(
-                &[],
-                &[("ansible.cfg".into(), b"[defaults]\n".to_vec())],
-                "/work",
-            ),
-            with(&[], &[], "/elsewhere"),
-            key_from(
-                None,
-                &InterpreterId {
-                    mtime_ns: 3,
-                    ..interpreter()
-                },
-                &modules,
-                &[],
-                &[],
-                &[],
-                Path::new("/work"),
-            ),
-            // A Nix profile's `python3`: the same path and size, another store path behind it.
-            key_from(
-                None,
-                &InterpreterId {
-                    real: "/nix/store/other-python3/bin/python3".into(),
-                    ..interpreter()
-                },
-                &modules,
-                &[],
-                &[],
-                &[],
-                Path::new("/work"),
-            ),
-            key_from(
-                None,
-                &interpreter(),
-                &BTreeSet::from(["ping".to_string(), "stat".to_string()]),
-                &[],
-                &[],
-                &[],
-                Path::new("/work"),
-            ),
-        ] {
-            assert_ne!(base, other);
+    fn a_controller_or_environment_change_is_another_key() {
+        {
+            let build = |mtime_ns| Source {
+                path: "/bin/volant".into(),
+                len: 10,
+                mtime_ns,
+            };
+            let with = |controller: &Source| {
+                key_from(
+                    Some(controller),
+                    &interpreter(),
+                    &BTreeSet::new(),
+                    &[],
+                    &[],
+                    &[],
+                    Path::new("/work"),
+                )
+            };
+            assert_eq!(with(&build(1)), with(&build(1)));
+            assert_ne!(with(&build(1)), with(&build(2)), "a rebuild");
+            let longer = Source {
+                len: 11,
+                ..build(1)
+            };
+            assert_ne!(with(&build(1)), with(&longer), "another size");
+        }
+        {
+            let modules = BTreeSet::from(["ping".to_string()]);
+            let with = |env: &[(&str, &str)], cfg: &[(PathBuf, Vec<u8>)], cwd: &str| {
+                let env: Vec<(OsString, OsString)> = env
+                    .iter()
+                    .map(|(name, value)| (name.into(), value.into()))
+                    .collect();
+                key_from(
+                    None,
+                    &interpreter(),
+                    &modules,
+                    &[],
+                    &env,
+                    cfg,
+                    Path::new(cwd),
+                )
+            };
+            let base = with(&[("TERM", "xterm")], &[], "/work");
+            assert_eq!(base, with(&[("TERM", "dumb")], &[], "/work"));
+            for other in [
+                with(
+                    &[("ANSIBLE_MODULE_COMPRESSION", "ZIP_STORED")],
+                    &[],
+                    "/work",
+                ),
+                with(&[("ANSIBLE_COLLECTIONS_PATH", "/c")], &[], "/work"),
+                with(&[("PYTHONPATH", "/p")], &[], "/work"),
+                with(
+                    &[],
+                    &[("ansible.cfg".into(), b"[defaults]\n".to_vec())],
+                    "/work",
+                ),
+                with(&[], &[], "/elsewhere"),
+                key_from(
+                    None,
+                    &InterpreterId {
+                        mtime_ns: 3,
+                        ..interpreter()
+                    },
+                    &modules,
+                    &[],
+                    &[],
+                    &[],
+                    Path::new("/work"),
+                ),
+                // A Nix profile's `python3`: the same path and size, another store path behind it.
+                key_from(
+                    None,
+                    &InterpreterId {
+                        real: "/nix/store/other-python3/bin/python3".into(),
+                        ..interpreter()
+                    },
+                    &modules,
+                    &[],
+                    &[],
+                    &[],
+                    Path::new("/work"),
+                ),
+                key_from(
+                    None,
+                    &interpreter(),
+                    &BTreeSet::from(["ping".to_string(), "stat".to_string()]),
+                    &[],
+                    &[],
+                    &[],
+                    Path::new("/work"),
+                ),
+            ] {
+                assert_ne!(base, other);
+            }
         }
     }
 
@@ -996,132 +981,145 @@ mod tests {
         )
     }
 
-    /// A module written, or rewritten in place, in a playbook's `library/` or `module_utils/`
-    /// is another key, and so is a playbook directory named in another place of the list.
-    ///
-    /// What would make this red: the key leaving the plugin directories out, which serves the
-    /// union built before a `library/stat.py` existed, with ansible-core's own `stat`, since no
-    /// source it kept names a directory that was not there; or a rewrite of the same size keeping
-    /// the key, which the mtime in each file's stamp is there to catch.
+    /// A library module is another key, a too-recent plugin file gives none, and an edit behind a link is seen.
     #[test]
-    fn a_module_written_in_a_playbook_s_library_is_another_key() {
-        let root = scratch();
-        let (play, role) = (root.path().join("play"), root.path().join("role"));
-        fs::create_dir_all(&play).unwrap();
-        fs::create_dir_all(&role).unwrap();
-        let both = [play.clone(), role.clone()];
-        let mut seen = vec![plugin_key(&both)];
-        assert_ne!(
-            plugin_key(&[role.clone(), play.clone()]),
-            seen[0],
-            "the order"
-        );
-        let stat = play.join("library").join("stat.py");
-        written(&stat, "one", 100);
-        seen.push(plugin_key(&both));
-        written(&stat, "two", 50);
-        seen.push(plugin_key(&both));
-        written(&role.join("module_utils").join("net").join("a.py"), "", 100);
-        seen.push(plugin_key(&both));
-        for (i, one) in seen.iter().enumerate() {
-            for other in &seen[i + 1..] {
-                assert_ne!(one, other);
+    fn plugin_files_decide_the_key() {
+        {
+            let root = scratch();
+            let (play, role) = (root.path().join("play"), root.path().join("role"));
+            fs::create_dir_all(&play).unwrap();
+            fs::create_dir_all(&role).unwrap();
+            let both = [play.clone(), role.clone()];
+            let mut seen = vec![plugin_key(&both)];
+            assert_ne!(
+                plugin_key(&[role.clone(), play.clone()]),
+                seen[0],
+                "the order"
+            );
+            let stat = play.join("library").join("stat.py");
+            written(&stat, "one", 100);
+            seen.push(plugin_key(&both));
+            written(&stat, "two", 50);
+            seen.push(plugin_key(&both));
+            written(&role.join("module_utils").join("net").join("a.py"), "", 100);
+            seen.push(plugin_key(&both));
+            for (i, one) in seen.iter().enumerate() {
+                for other in &seen[i + 1..] {
+                    assert_ne!(one, other);
+                }
             }
+            assert_eq!(plugin_key(&both), seen[3], "nothing changed since");
         }
-        assert_eq!(plugin_key(&both), seen[3], "nothing changed since");
+        {
+            let root = scratch();
+            fs::create_dir_all(root.path().join("library")).unwrap();
+            fs::write(root.path().join("library").join("m.py"), "x").unwrap();
+            let dirs = [root.path().to_path_buf()];
+            assert!(plugin_files(&dirs, SystemTime::now()).is_none());
+            assert!(plugin_files(&dirs, SystemTime::now() + Duration::from_secs(3)).is_some());
+        }
+        #[cfg(unix)]
+        {
+            let root = scratch();
+            let (role, shared) = (root.path().join("role"), root.path().join("shared"));
+            written(&shared.join("m.py"), "one", 100);
+            let utils = role.join("module_utils");
+            fs::create_dir_all(&utils).unwrap();
+            std::os::unix::fs::symlink(&shared, utils.join("shared")).unwrap();
+            std::os::unix::fs::symlink(&utils, utils.join("again")).unwrap();
+            let before = plugin_key(std::slice::from_ref(&role));
+            written(&shared.join("m.py"), "three", 100);
+            assert_ne!(plugin_key(std::slice::from_ref(&role)), before);
+        }
     }
 
-    /// A plugin file changed less than two seconds ago gives no key, so nothing is kept.
-    ///
-    /// What would make this red: the racy-timestamp rule left out, which files a union under the
-    /// stamp of a file that can still change without moving its size or its mtime.
+    /// A corrupt, older-format or re-hashed entry is rebuilt, never loaded.
     #[test]
-    fn a_plugin_file_too_recent_gives_no_key() {
-        let root = scratch();
-        fs::create_dir_all(root.path().join("library")).unwrap();
-        fs::write(root.path().join("library").join("m.py"), "x").unwrap();
-        let dirs = [root.path().to_path_buf()];
-        assert!(plugin_files(&dirs, SystemTime::now()).is_none());
-        assert!(plugin_files(&dirs, SystemTime::now() + Duration::from_secs(3)).is_some());
-    }
+    fn an_entry_that_cannot_be_trusted_is_a_miss() {
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            let stored = entry(root.path(), b"PK\x03\x04 zip");
+            store(&dir, &key, &stored).unwrap();
+            let zip = dir.join(format!("{}.zip", key.0));
+            let bytes = fs::read(&zip).unwrap();
+            fs::write(&zip, &bytes[..bytes.len() - 1]).unwrap();
+            assert_eq!(load(&dir, &key), None, "a truncated zip");
 
-    /// An edit behind a linked directory in `module_utils/` is another key, and a link back to an
-    /// ancestor is walked no further.
-    ///
-    /// What would make this red: a link to a directory read as a file and dropped, which leaves
-    /// everything behind it out of the key.
-    #[cfg(unix)]
-    #[test]
-    fn an_edit_behind_a_linked_directory_is_another_key() {
-        let root = scratch();
-        let (role, shared) = (root.path().join("role"), root.path().join("shared"));
-        written(&shared.join("m.py"), "one", 100);
-        let utils = role.join("module_utils");
-        fs::create_dir_all(&utils).unwrap();
-        std::os::unix::fs::symlink(&shared, utils.join("shared")).unwrap();
-        std::os::unix::fs::symlink(&utils, utils.join("again")).unwrap();
-        let before = plugin_key(std::slice::from_ref(&role));
-        written(&shared.join("m.py"), "three", 100);
-        assert_ne!(plugin_key(std::slice::from_ref(&role)), before);
-    }
+            store(&dir, &key, &stored).unwrap();
+            let manifest = dir.join(format!("{}.json", key.0));
+            fs::write(&manifest, "{\"format\": 1, \"hash\": ").unwrap();
+            assert_eq!(load(&dir, &key), None, "a manifest that is not JSON");
 
-    /// An entry that does not read whole is rebuilt, not trusted.
-    #[test]
-    fn a_corrupt_entry_is_rebuilt_not_trusted() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        let stored = entry(root.path(), b"PK\x03\x04 zip");
-        store(&dir, &key, &stored).unwrap();
-        let zip = dir.join(format!("{}.zip", key.0));
-        let bytes = fs::read(&zip).unwrap();
-        fs::write(&zip, &bytes[..bytes.len() - 1]).unwrap();
-        assert_eq!(load(&dir, &key), None, "a truncated zip");
+            store(&dir, &key, &stored).unwrap();
+            let text = fs::read_to_string(&manifest).unwrap();
+            fs::write(
+                &manifest,
+                text.replace(&format!("\"format\":{FORMAT}"), "\"format\":99"),
+            )
+            .unwrap();
+            assert_eq!(load(&dir, &key), None, "another format");
 
-        store(&dir, &key, &stored).unwrap();
-        let manifest = dir.join(format!("{}.json", key.0));
-        fs::write(&manifest, "{\"format\": 1, \"hash\": ").unwrap();
-        assert_eq!(load(&dir, &key), None, "a manifest that is not JSON");
-
-        store(&dir, &key, &stored).unwrap();
-        let text = fs::read_to_string(&manifest).unwrap();
-        fs::write(
-            &manifest,
-            text.replace(&format!("\"format\":{FORMAT}"), "\"format\":99"),
-        )
-        .unwrap();
-        assert_eq!(load(&dir, &key), None, "another format");
-
-        fs::remove_file(&manifest).unwrap();
-        assert_eq!(load(&dir, &key), None, "no entry");
-    }
-
-    /// An entry written before the facts carried `core` is a miss, not a union whose modules all
-    /// read as someone else's: the payloads are rebuilt and say what they are.
-    ///
-    /// What would make this red: the format left at 1 when `core` was added.
-    #[test]
-    fn an_entry_from_before_core_is_a_miss() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        let mut stored = entry(root.path(), b"PK zip");
-        stored
-            .union
-            .modules
-            .values_mut()
-            .for_each(|f| f.core = true);
-        store(&dir, &key, &stored).unwrap();
-        assert!(load(&dir, &key).is_some(), "the current format reads back");
-        let manifest = dir.join(format!("{}.json", key.0));
-        let text = fs::read_to_string(&manifest).unwrap();
-        let old = text
-            .replace(&format!("\"format\":{FORMAT}"), "\"format\":1")
-            .replace(",\"core\":true", "")
-            .replace("\"core\":true,", "");
-        assert!(!old.contains("core"), "{old}");
-        fs::write(&manifest, old).unwrap();
-        assert_eq!(load(&dir, &key), None);
+            fs::remove_file(&manifest).unwrap();
+            assert_eq!(load(&dir, &key), None, "no entry");
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            let mut stored = entry(root.path(), b"PK zip");
+            stored
+                .union
+                .modules
+                .values_mut()
+                .for_each(|f| f.core = true);
+            store(&dir, &key, &stored).unwrap();
+            assert!(load(&dir, &key).is_some(), "the current format reads back");
+            let manifest = dir.join(format!("{}.json", key.0));
+            let text = fs::read_to_string(&manifest).unwrap();
+            let old = text
+                .replace(&format!("\"format\":{FORMAT}"), "\"format\":1")
+                .replace(",\"core\":true", "")
+                .replace("\"core\":true,", "");
+            assert!(!old.contains("core"), "{old}");
+            fs::write(&manifest, old).unwrap();
+            assert_eq!(load(&dir, &key), None);
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            let stored = entry(root.path(), &long_zip());
+            store(&dir, &key, &stored).unwrap();
+            let manifest = dir.join(format!("{}.json", key.0));
+            let text = fs::read_to_string(&manifest).unwrap();
+            let value: Value = serde_json::from_str(&text).unwrap();
+            let hash = format!("\"deflated\":\"{}\",", value["deflated"].as_str().unwrap());
+            let (three, two) = ("\"format\":3", "\"format\":2");
+            assert!(text.contains(three) && text.contains(&hash), "{text}");
+            for (why, old) in [
+                ("format 2 with a hash", text.replace(three, two)),
+                ("format 2", text.replace(three, two).replace(&hash, "")),
+                ("format 3 without a hash", text.replace(&hash, "")),
+            ] {
+                fs::write(&manifest, old).unwrap();
+                assert_eq!(load(&dir, &key), None, "{why}");
+            }
+            fs::write(&manifest, text).unwrap();
+            assert_eq!(load(&dir, &key), Some(stored));
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
+            let zip = dir.join(format!("{}.zip", key.0));
+            let mut bytes = fs::read(&zip).unwrap();
+            bytes[4] ^= 1;
+            fs::write(&zip, bytes).unwrap();
+            assert_eq!(load(&dir, &key), None);
+        }
     }
 
     /// A zip long enough to be sent deflated.
@@ -1171,37 +1169,6 @@ mod tests {
         assert_eq!(unpacked(&again), zip);
     }
 
-    /// An entry of format 2, which has no deflated form, is a miss, never served, even with a
-    /// `.deflate` file beside it. Two checks hold that, each tried alone: the format, and the
-    /// deflated form's hash, which a format 3 manifest must carry.
-    ///
-    /// What would make this red: the format left at 2 or the format check relaxed (the case
-    /// that keeps the hash), or the hash read as optional (the format 3 case without one).
-    #[test]
-    fn a_format_two_entry_is_a_miss() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        let stored = entry(root.path(), &long_zip());
-        store(&dir, &key, &stored).unwrap();
-        let manifest = dir.join(format!("{}.json", key.0));
-        let text = fs::read_to_string(&manifest).unwrap();
-        let value: Value = serde_json::from_str(&text).unwrap();
-        let hash = format!("\"deflated\":\"{}\",", value["deflated"].as_str().unwrap());
-        let (three, two) = ("\"format\":3", "\"format\":2");
-        assert!(text.contains(three) && text.contains(&hash), "{text}");
-        for (why, old) in [
-            ("format 2 with a hash", text.replace(three, two)),
-            ("format 2", text.replace(three, two).replace(&hash, "")),
-            ("format 3 without a hash", text.replace(&hash, "")),
-        ] {
-            fs::write(&manifest, old).unwrap();
-            assert_eq!(load(&dir, &key), None, "{why}");
-        }
-        fs::write(&manifest, text).unwrap();
-        assert_eq!(load(&dir, &key), Some(stored));
-    }
-
     /// A deflated form that is missing, or is not the one the manifest names, is made again from
     /// the zip and written back, and the frame holds the zip: the entry is still a hit.
     ///
@@ -1239,255 +1206,211 @@ mod tests {
         }
     }
 
-    /// What would make this red: the zip read back without its hash checked, which hands the
-    /// hosts a blob whose name says something else.
+    /// The cache is private to this user; a linked or shared directory is refused.
     #[test]
-    fn a_zip_whose_hash_moved_is_never_loaded() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
-        let zip = dir.join(format!("{}.zip", key.0));
-        let mut bytes = fs::read(&zip).unwrap();
-        bytes[4] ^= 1;
-        fs::write(&zip, bytes).unwrap();
-        assert_eq!(load(&dir, &key), None);
-    }
-
-    /// The directory is created private, the files are readable by this user alone, and a
-    /// directory others can write is never read from.
-    #[cfg(unix)]
-    #[test]
-    fn the_cache_is_private_to_this_user() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&dir), 0o700);
-        assert_eq!(mode(&dir.join(format!("{}.zip", key.0))), 0o600);
-        assert_eq!(mode(&dir.join(format!("{}.json", key.0))), 0o600);
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
-        assert_eq!(load(&dir, &key), None);
-    }
-
-    /// What would make this red: nothing ever removed, so every module set a playbook ever
-    /// named stays in the user's home for good.
-    #[test]
-    fn an_entry_left_alone_for_a_month_is_swept() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
-        sweep(&dir, SystemTime::now() + STALE - Duration::from_secs(60));
-        assert!(load(&dir, &key).is_some(), "a recent entry is kept");
-        sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
-    }
-
-    /// The interpreter is found where `find_python` would look first, without running it, and
-    /// named by the path it was found at.
-    #[test]
-    fn the_interpreter_is_found_without_running_it() {
-        let root = scratch();
-        let python = root.path().join("venv/bin/python");
-        fs::create_dir_all(python.parent().unwrap()).unwrap();
-        fs::write(&python, "not a python").unwrap();
-        let venv = root.path().join("venv").display().to_string();
-        let found = interpreter_without_running(None, Some(&venv)).unwrap();
-        assert_eq!(found.path, python);
-        assert_eq!(found.len, 12);
-        let explicit = python.display().to_string();
-        assert_eq!(
-            interpreter_without_running(Some(&explicit), None).unwrap(),
-            found
-        );
-        assert_eq!(
-            interpreter_without_running(Some("/nowhere/python"), None),
-            None
-        );
-    }
-
-    /// A `#!` shim caches nothing.
-    ///
-    /// What would make this red: the shim taken for the interpreter. pyenv's `python3` is one
-    /// script for every version, so `pyenv global` from a 3.11 with ansible-core 2.17 to a 3.12
-    /// with 2.19.12 keeps the key, every 3.11 source is still on disk unchanged, and the 2.17
-    /// union is served.
-    #[test]
-    fn a_shim_interpreter_is_never_a_key() {
-        let root = scratch();
-        let shim = root.path().join("shims/python3");
-        fs::create_dir_all(shim.parent().unwrap()).unwrap();
-        fs::write(
-            &shim,
-            "#!/usr/bin/env bash\nexec pyenv exec python3 \"$@\"\n",
-        )
-        .unwrap();
-        let explicit = shim.display().to_string();
-        assert_eq!(interpreter_without_running(Some(&explicit), None), None);
-    }
-
-    /// The interpreter is named by its path and by where its links lead.
-    #[cfg(unix)]
-    #[test]
-    fn the_interpreter_names_where_its_link_leads() {
-        let root = scratch();
-        let real = root.path().join("store/python3");
-        let link = root.path().join("profile/python3");
-        fs::create_dir_all(real.parent().unwrap()).unwrap();
-        fs::create_dir_all(link.parent().unwrap()).unwrap();
-        fs::write(&real, "ELF").unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        let found = interpreter_without_running(Some(&link.display().to_string()), None).unwrap();
-        assert_eq!(found.path, link);
-        assert_eq!(found.real, fs::canonicalize(&real).unwrap());
-    }
-
-    /// `ANSIBLE_CONFIG` naming a directory is read as ansible-core reads it, `<dir>/ansible.cfg`.
-    ///
-    /// What would make this red: the directory form left out, which keeps the key when its
-    /// `ansible.cfg` moves `collections_path` to a directory with a newer collection, while every
-    /// tracked file stays where it was.
-    #[test]
-    fn an_ansible_config_directory_is_read_for_the_key() {
-        let root = scratch();
-        let cfg = root.path().join("ansible.cfg");
-        let key_now = || {
-            let found = configs(Some(root.path().as_os_str()), None);
-            key_from(
-                None,
-                &interpreter(),
-                &BTreeSet::new(),
-                &[],
-                &[],
-                &found,
-                Path::new("/work"),
-            )
-        };
-        fs::write(&cfg, "[defaults]\ncollections_path = ./colls\n").unwrap();
-        let before = key_now();
-        fs::write(&cfg, "[defaults]\ncollections_path = ./colls-next\n").unwrap();
-        assert_ne!(key_now(), before);
-        // A file named directly, and one that is not there, are both what they are.
-        assert_eq!(configs(Some(cfg.as_os_str()), None)[0].0, cfg);
-        let home = root.path().join("home");
-        fs::create_dir_all(&home).unwrap();
-        fs::write(home.join(".ansible.cfg"), "[defaults]\n").unwrap();
-        let fell_through = configs(
-            Some(root.path().join("absent.cfg").as_os_str()),
-            Some(&home),
-        );
-        assert!(
-            fell_through
-                .iter()
-                .any(|(path, _)| *path == home.join(".ansible.cfg")),
-            "{fell_through:?}"
-        );
-    }
-
-    /// `ANSIBLE_CONFIG` is expanded as ansible-core's `unfrackpath` expands it before it is looked
-    /// for.
-    ///
-    /// What would make this red: `~/proj/ansible.cfg` read as written, which names no file, so
-    /// editing the one ansible-core does read keeps the key.
-    #[test]
-    fn an_ansible_config_is_expanded_before_it_is_read() {
-        let var = |name: &str| (name == "PROJ").then(|| "/srv/proj".to_string());
-        let home = Some(Path::new("/home/u"));
-        assert_eq!(
-            expanded("~/a/ansible.cfg", home, var),
-            "/home/u/a/ansible.cfg"
-        );
-        assert_eq!(
-            expanded("$PROJ/ansible.cfg", home, var),
-            "/srv/proj/ansible.cfg"
-        );
-        assert_eq!(expanded("${PROJ}/x/~", home, var), "/srv/proj/x/~");
-        assert_eq!(expanded("$NOPE/${NOPE}/$", home, var), "$NOPE/${NOPE}/$");
-        assert_eq!(expanded("~other/a", home, var), "~other/a");
-
-        let root = scratch();
-        let cfg = root.path().join("proj/ansible.cfg");
-        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
-        fs::write(
-            &cfg,
-            "[defaults]
-",
-        )
-        .unwrap();
-        let found = configs(Some("~/proj/ansible.cfg".as_ref()), Some(root.path()));
-        assert!(found.iter().any(|(path, _)| *path == cfg), "{found:?}");
-    }
-
-    /// A cache directory that is a link is neither read nor written, and a `volant` directory
-    /// everyone can write is refused with it.
-    ///
-    /// What would make this red: the link followed, which on a shared `XDG_CACHE_HOME` lets
-    /// another account point `unions` at `~/.ssh`, where the store writes and the sweep deletes.
-    #[cfg(unix)]
-    #[test]
-    fn a_linked_or_shared_cache_directory_is_refused() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = scratch();
-        let target = root.path().join("dot-ssh");
-        fs::create_dir_all(&target).unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
-        let volant = root.path().join("volant");
-        fs::create_dir_all(&volant).unwrap();
-        let dir = volant.join("unions");
-        std::os::unix::fs::symlink(&target, &dir).unwrap();
-        let key = some_key();
-        assert!(store(&dir, &key, &entry(root.path(), b"PK")).is_err());
-        assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
-        assert_eq!(load(&dir, &key), None);
-
-        fs::remove_file(&dir).unwrap();
-        store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
-        fs::set_permissions(&volant, fs::Permissions::from_mode(0o777)).unwrap();
-        assert_eq!(load(&dir, &key), None);
-        fs::set_permissions(&volant, fs::Permissions::from_mode(0o775)).unwrap();
-        assert!(
-            load(&dir, &key).is_some(),
-            "a group-writable volant/ is the 002 umask"
-        );
-    }
-
-    /// The sweep removes only what this cache wrote, never through a link.
-    ///
-    /// What would make this red: every old file removed, which clears whatever else sits in the
-    /// directory, and whatever a link in it leads to.
-    #[test]
-    fn the_sweep_removes_only_its_own_files() {
-        let root = scratch();
-        let dir = root.path().join("unions");
-        let key = some_key();
-        store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
-        let hex = "a".repeat(64);
-        for name in [
-            "id_ed25519".to_string(),
-            format!("{hex}.zip.bak"),
-            format!("{hex}.json.tmp.x.1"),
-            format!("{}.zip", "A".repeat(64)),
-        ] {
-            fs::write(dir.join(name), "not the cache's").unwrap();
+    fn the_cache_directory_is_private_to_this_user() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
+            let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir), 0o700);
+            assert_eq!(mode(&dir.join(format!("{}.zip", key.0))), 0o600);
+            assert_eq!(mode(&dir.join(format!("{}.json", key.0))), 0o600);
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+            assert_eq!(load(&dir, &key), None);
         }
-        fs::write(dir.join(format!("{hex}.json.tmp.12.3")), "a dead run's").unwrap();
-        sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
-        let mut left: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|f| f.unwrap().file_name().into_string().unwrap())
-            .collect();
-        left.sort();
-        assert_eq!(
-            left,
-            [
-                format!("{}.zip", "A".repeat(64)),
-                format!("{hex}.json.tmp.x.1"),
-                format!("{hex}.zip.bak"),
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let root = scratch();
+            let target = root.path().join("dot-ssh");
+            fs::create_dir_all(&target).unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+            let volant = root.path().join("volant");
+            fs::create_dir_all(&volant).unwrap();
+            let dir = volant.join("unions");
+            std::os::unix::fs::symlink(&target, &dir).unwrap();
+            let key = some_key();
+            assert!(store(&dir, &key, &entry(root.path(), b"PK")).is_err());
+            assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+            assert_eq!(load(&dir, &key), None);
+
+            fs::remove_file(&dir).unwrap();
+            store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
+            fs::set_permissions(&volant, fs::Permissions::from_mode(0o777)).unwrap();
+            assert_eq!(load(&dir, &key), None);
+            fs::set_permissions(&volant, fs::Permissions::from_mode(0o775)).unwrap();
+            assert!(
+                load(&dir, &key).is_some(),
+                "a group-writable volant/ is the 002 umask"
+            );
+        }
+    }
+
+    /// An entry left alone for a month is swept; nothing else is.
+    #[test]
+    fn the_sweep_removes_old_entries_and_only_its_own_files() {
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
+            sweep(&dir, SystemTime::now() + STALE - Duration::from_secs(60));
+            assert!(load(&dir, &key).is_some(), "a recent entry is kept");
+            sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        }
+        {
+            let root = scratch();
+            let dir = root.path().join("unions");
+            let key = some_key();
+            store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
+            let hex = "a".repeat(64);
+            for name in [
                 "id_ed25519".to_string(),
-            ]
-        );
+                format!("{hex}.zip.bak"),
+                format!("{hex}.json.tmp.x.1"),
+                format!("{}.zip", "A".repeat(64)),
+            ] {
+                fs::write(dir.join(name), "not the cache's").unwrap();
+            }
+            fs::write(dir.join(format!("{hex}.json.tmp.12.3")), "a dead run's").unwrap();
+            sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
+            let mut left: Vec<String> = fs::read_dir(&dir)
+                .unwrap()
+                .map(|f| f.unwrap().file_name().into_string().unwrap())
+                .collect();
+            left.sort();
+            assert_eq!(
+                left,
+                [
+                    format!("{}.zip", "A".repeat(64)),
+                    format!("{hex}.json.tmp.x.1"),
+                    format!("{hex}.zip.bak"),
+                    "id_ed25519".to_string(),
+                ]
+            );
+        }
+    }
+
+    /// The interpreter is found without running it, a shim is never a key, and a link names where it leads.
+    #[test]
+    fn the_interpreter_is_identified_without_running_it() {
+        {
+            let root = scratch();
+            let python = root.path().join("venv/bin/python");
+            fs::create_dir_all(python.parent().unwrap()).unwrap();
+            fs::write(&python, "not a python").unwrap();
+            let venv = root.path().join("venv").display().to_string();
+            let found = interpreter_without_running(None, Some(&venv)).unwrap();
+            assert_eq!(found.path, python);
+            assert_eq!(found.len, 12);
+            let explicit = python.display().to_string();
+            assert_eq!(
+                interpreter_without_running(Some(&explicit), None).unwrap(),
+                found
+            );
+            assert_eq!(
+                interpreter_without_running(Some("/nowhere/python"), None),
+                None
+            );
+        }
+        {
+            let root = scratch();
+            let shim = root.path().join("shims/python3");
+            fs::create_dir_all(shim.parent().unwrap()).unwrap();
+            fs::write(
+                &shim,
+                "#!/usr/bin/env bash\nexec pyenv exec python3 \"$@\"\n",
+            )
+            .unwrap();
+            let explicit = shim.display().to_string();
+            assert_eq!(interpreter_without_running(Some(&explicit), None), None);
+        }
+        #[cfg(unix)]
+        {
+            let root = scratch();
+            let real = root.path().join("store/python3");
+            let link = root.path().join("profile/python3");
+            fs::create_dir_all(real.parent().unwrap()).unwrap();
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            fs::write(&real, "ELF").unwrap();
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let found =
+                interpreter_without_running(Some(&link.display().to_string()), None).unwrap();
+            assert_eq!(found.path, link);
+            assert_eq!(found.real, fs::canonicalize(&real).unwrap());
+        }
+    }
+
+    /// An ansible.cfg directory is read for the key, and its text is expanded first.
+    #[test]
+    fn the_ansible_config_is_read_and_expanded_for_the_key() {
+        {
+            let root = scratch();
+            let cfg = root.path().join("ansible.cfg");
+            let key_now = || {
+                let found = configs(Some(root.path().as_os_str()), None);
+                key_from(
+                    None,
+                    &interpreter(),
+                    &BTreeSet::new(),
+                    &[],
+                    &[],
+                    &found,
+                    Path::new("/work"),
+                )
+            };
+            fs::write(&cfg, "[defaults]\ncollections_path = ./colls\n").unwrap();
+            let before = key_now();
+            fs::write(&cfg, "[defaults]\ncollections_path = ./colls-next\n").unwrap();
+            assert_ne!(key_now(), before);
+            // A file named directly, and one that is not there, are both what they are.
+            assert_eq!(configs(Some(cfg.as_os_str()), None)[0].0, cfg);
+            let home = root.path().join("home");
+            fs::create_dir_all(&home).unwrap();
+            fs::write(home.join(".ansible.cfg"), "[defaults]\n").unwrap();
+            let fell_through = configs(
+                Some(root.path().join("absent.cfg").as_os_str()),
+                Some(&home),
+            );
+            assert!(
+                fell_through
+                    .iter()
+                    .any(|(path, _)| *path == home.join(".ansible.cfg")),
+                "{fell_through:?}"
+            );
+        }
+        {
+            let var = |name: &str| (name == "PROJ").then(|| "/srv/proj".to_string());
+            let home = Some(Path::new("/home/u"));
+            assert_eq!(
+                expanded("~/a/ansible.cfg", home, var),
+                "/home/u/a/ansible.cfg"
+            );
+            assert_eq!(
+                expanded("$PROJ/ansible.cfg", home, var),
+                "/srv/proj/ansible.cfg"
+            );
+            assert_eq!(expanded("${PROJ}/x/~", home, var), "/srv/proj/x/~");
+            assert_eq!(expanded("$NOPE/${NOPE}/$", home, var), "$NOPE/${NOPE}/$");
+            assert_eq!(expanded("~other/a", home, var), "~other/a");
+
+            let root = scratch();
+            let cfg = root.path().join("proj/ansible.cfg");
+            fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+            fs::write(
+                &cfg,
+                "[defaults]
+    ",
+            )
+            .unwrap();
+            let found = configs(Some("~/proj/ansible.cfg".as_ref()), Some(root.path()));
+            assert!(found.iter().any(|(path, _)| *path == cfg), "{found:?}");
+        }
     }
 }

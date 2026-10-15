@@ -867,12 +867,12 @@ mod tests {
         {
             let blob = stub_blob(
                 r#"
-        import os
-        marker = os.environ.get("VOLANT_PROBE_MARKER", "clean")
-        os.environ["VOLANT_PROBE_MARKER"] = "dirty"
-        os.chdir("/")
-        print(json.dumps({"marker": marker, "cwd": os.getcwd()}))
-    "#,
+    import os
+    marker = os.environ.get("VOLANT_PROBE_MARKER", "clean")
+    os.environ["VOLANT_PROBE_MARKER"] = "dirty"
+    os.chdir("/")
+    print(json.dumps({"marker": marker, "cwd": os.getcwd()}))
+"#,
             );
             let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
             let first = done(server.run(
@@ -897,9 +897,9 @@ mod tests {
         {
             let blob = stub_blob(
                 r#"
-        import os
-        print(json.dumps({"seen": os.environ.get("VOLANT_TASK_VAR", "unset")}))
-    "#,
+    import os
+    print(json.dumps({"seen": os.environ.get("VOLANT_TASK_VAR", "unset")}))
+"#,
             );
             let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
             let mut context = Context::default();
@@ -1152,12 +1152,12 @@ mod tests {
             .unwrap();
             let source_literal = format!("{:?}", source.to_str().unwrap());
             std::fs::write(
-                site.path().join("sitecustomize.py"),
-                format!(
-                    "import importlib.util, sys\n\n\nclass Elsewhere:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"volant_served_elsewhere\":\n            return importlib.util.spec_from_file_location(name, {source_literal})\n        return None\n\n\nsys.meta_path.append(Elsewhere())\n"
-                ),
-            )
-            .unwrap();
+            site.path().join("sitecustomize.py"),
+            format!(
+                "import importlib.util, sys\n\n\nclass Elsewhere:\n    def find_spec(self, name, path=None, target=None):\n        if name == \"volant_served_elsewhere\":\n            return importlib.util.spec_from_file_location(name, {source_literal})\n        return None\n\n\nsys.meta_path.append(Elsewhere())\n"
+            ),
+        )
+        .unwrap();
             let environment = BTreeMap::from([
                 (
                     "PYTHONPATH".to_string(),
@@ -1272,12 +1272,12 @@ mod tests {
                 "import json\nimport ansible.module_utils.gated\nprint(json.dumps({}))\n",
             )]);
             std::fs::write(
-                blob.path().join("ansible/module_utils/gated.py"),
-                format!(
-                    "import os, sys, time\nif getattr(sys.modules[\"__main__\"], \"__file__\", None) is None:\n    while not os.path.exists({gate_literal}):\n        time.sleep(0.01)\n"
-                ),
-            )
-            .unwrap();
+            blob.path().join("ansible/module_utils/gated.py"),
+            format!(
+                "import os, sys, time\nif getattr(sys.modules[\"__main__\"], \"__file__\", None) is None:\n    while not os.path.exists({gate_literal}):\n        time.sleep(0.01)\n"
+            ),
+        )
+        .unwrap();
             let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
             let first = done(server.run(
                 &payload("ansible.modules.probe"),
@@ -1295,20 +1295,20 @@ mod tests {
         }
         {
             const CHECK: &str = r#"
-    import json, sys, sysconfig
-    ns = {"__name__": "server"}
-    exec(sys.argv[1], ns)
-    outside = ns["Outside"]("/payload")
-    stdlib = sysconfig.get_path("stdlib")
-    print(json.dumps([
-        outside.allowed("/payload/ansible/module_utils/basic.py"),
-        outside.allowed(stdlib + "/json/__init__.py"),
-        outside.allowed(stdlib + "/dist-packages/apt/__init__.py"),
-        outside.allowed(stdlib + "/site-packages/yaml/__init__.py"),
-        outside.allowed("/usr/lib/python3/dist-packages/apt/__init__.py"),
-        outside.allowed("/payloadx/ansible/__init__.py"),
-    ]))
-    "#;
+import json, sys, sysconfig
+ns = {"__name__": "server"}
+exec(sys.argv[1], ns)
+outside = ns["Outside"]("/payload")
+stdlib = sysconfig.get_path("stdlib")
+print(json.dumps([
+    outside.allowed("/payload/ansible/module_utils/basic.py"),
+    outside.allowed(stdlib + "/json/__init__.py"),
+    outside.allowed(stdlib + "/dist-packages/apt/__init__.py"),
+    outside.allowed(stdlib + "/site-packages/yaml/__init__.py"),
+    outside.allowed("/usr/lib/python3/dist-packages/apt/__init__.py"),
+    outside.allowed("/payloadx/ansible/__init__.py"),
+]))
+"#;
             let out = Command::new(HOST_PYTHON)
                 .args(["-c", CHECK, SERVER])
                 .output()

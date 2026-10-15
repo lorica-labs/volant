@@ -809,13 +809,6 @@ esac
         }
 
         /// The fixture host, answered as the reference's own scanners answer the same outputs.
-        ///
-        /// What would make this red: `list-unit-files` read before `list-units` (a unit in both
-        /// would take its state from `show` and keep `list-units`' status); the last word of a
-        /// description read for failure states, or the others not; a unit file's state written
-        /// over a failure state; `show`'s output kept with its `ActiveState=` or its newline;
-        /// a template's failed `show` read as anything but `unknown`; the SysV entries missing
-        /// or given a `status`.
         #[test]
         fn a_host_is_answered_as_the_reference_parses_it() {
             let host = Host::new();
@@ -827,9 +820,6 @@ esac
 
         /// `service` exiting 4 on a host without `/etc/init.d` (what RHEL 9 does) is no SysV
         /// listing at all, and no warning: systemd's units are answered alone.
-        ///
-        /// What would make this red: the exit read as a failure, which hands back, or its
-        /// output read.
         #[test]
         fn a_service_tool_without_init_scripts_lists_nothing() {
             let host = Host::new();
@@ -860,12 +850,6 @@ esac
         }
 
         /// Hosts where the reference warns, fails, or reads another tool hand back.
-        ///
-        /// What would make this red, one each: a unit line too short for the reference's
-        /// indexing answered; a one-word unit file line answered (the reference raises); a
-        /// failing `list-units` or `service --status-all` answered (the reference warns);
-        /// `chkconfig` ignored; a host without systemd's canary answered; output that is not
-        /// UTF-8 answered; an argument accepted (the module takes none).
         #[test]
         fn a_host_outside_the_subset_hands_back() {
             let host = Host::new();
@@ -914,14 +898,8 @@ esac
             assert!(reason.contains("the argument x"), "{reason}");
         }
 
-        /// A hung command ends at the task's deadline with `TimedOut`, and a cancel with
-        /// `Cancelled`, whichever command hangs and whichever thread runs it: `locale` on this
-        /// thread, `service` beside systemd's listing, `list-units` on systemd's thread, and a
-        /// `show` on one of its workers.
-        ///
-        /// What would make this red, one each: any of those commands run without the deadline
-        /// or the cancel (the answer then waits out the sleep and is no stop, or the elapsed
-        /// check fails), or the cancel not asked while the threads run.
+        /// A hung `locale`, `service`, `list-units` or `show` ends at the task's deadline with
+        /// `TimedOut`, and at a cancel with `Cancelled`, on whichever thread runs it.
         #[test]
         fn a_hung_command_ends_at_the_deadline_or_the_cancel() {
             let hang = |sub: &str| {
@@ -943,7 +921,7 @@ esac
                 let started = Instant::now();
                 let never = || false;
                 let clock = Clock {
-                    deadline: Some(Instant::now() + Duration::from_millis(500)),
+                    deadline: Some(Instant::now() + Duration::from_millis(100)),
                     cancelled: &never,
                 };
                 let answer = host.answer_with(clock);

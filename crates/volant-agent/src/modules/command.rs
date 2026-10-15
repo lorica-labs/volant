@@ -872,12 +872,14 @@ mod tests {
         assert_eq!(r.0["stdout"], "from stdin");
     }
 
+    /// 4 MiB through `cat`: far past any pipe buffer, so a write that waited for the output to be
+    /// read would block.
     #[test]
     fn large_stdin_does_not_deadlock() {
         let payload: String = "abcdefghijklmnopqrstuvwxyz0123456789\n"
             .chars()
             .cycle()
-            .take(64 * 1_048_576)
+            .take(4 * 1_048_576)
             .collect();
         let r = done(execute(
             &args(json!({"_raw_params": "cat", "stdin": payload})),

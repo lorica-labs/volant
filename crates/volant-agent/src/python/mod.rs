@@ -92,6 +92,9 @@ pub struct Server {
     /// Modules a server gave up on importing ahead for in time; its replacements are asked not
     /// to import them ahead again.
     abandoned: HashSet<String>,
+    /// `REAP_TIMEOUT` and `PRELOAD_WAIT`; fields so a test can shorten them.
+    reap_timeout: Duration,
+    preload_wait: Duration,
 }
 
 /// Where the server stands before a task is sent to it.
@@ -189,6 +192,8 @@ impl Server {
             timing: Timing::default(),
             preloading: None,
             abandoned: HashSet::new(),
+            reap_timeout: REAP_TIMEOUT,
+            preload_wait: PRELOAD_WAIT,
         };
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
@@ -292,7 +297,7 @@ impl Server {
         let Some(module) = self.preloading.take() else {
             return Ok(Settled::Ready);
         };
-        let deadline = Instant::now() + PRELOAD_WAIT;
+        let deadline = Instant::now() + self.preload_wait;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.frames.recv_timeout(left.min(CANCEL_POLL)) {
@@ -360,7 +365,7 @@ impl Server {
         // already did the same imports in about the same time), so this frame is prompt. It is
         // waited for even when the task is already cancelled: without the pid there is nothing
         // to kill, and the result frame behind it would desynchronise the next task.
-        let first = self.frame(Instant::now() + REAP_TIMEOUT)?;
+        let first = self.frame(Instant::now() + self.reap_timeout)?;
         if stale(&first) {
             return Ok(None);
         }
@@ -410,7 +415,7 @@ impl Server {
     /// child's stdout, is killed instead: that is what keeps its orphan frame out of the next
     /// task.
     fn reap(&mut self, module: &str) {
-        match self.frame(Instant::now() + REAP_TIMEOUT) {
+        match self.frame(Instant::now() + self.reap_timeout) {
             Ok(frame) => {
                 if let Ok(frame) = serde_json::from_slice::<Value>(&frame) {
                     self.note_preload(&frame, module);
@@ -1457,19 +1462,13 @@ print(json.dumps([
         assert_eq!(after.0["value"], "two", "{:?}", after.0);
     }
 
-    /// A server still importing ahead when the next task comes is waited for a bounded time, then
-    /// given up on: the task runs under a fresh server instead of failing, and the fresh server
-    /// is asked not to import that module ahead again.
-    ///
-    /// The dependency blocks in the server alone, for as long as the gate stays shut.
-    ///
-    /// What would make this red: the request sent straight to the busy server (the task waits for
-    /// a pid that never comes and fails "did not answer"); or the module imported ahead again by
-    /// the replacement (the third task finds it busy in turn and runs under yet another server).
+    /// A server still importing ahead is given up on after a bounded wait (300 ms here): the task
+    /// runs under a fresh server, which is asked not to import that module ahead again.
     #[test]
     fn a_server_still_importing_ahead_is_given_up_on_not_waited_for() {
         let (blob, gate) = gated_blob();
         let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        server.preload_wait = Duration::from_millis(300);
         let first = call(&mut server, "ansible.modules.probe");
         assert!(!first.failed(), "{:?}", first.0);
         let second = call(&mut server, "ansible.modules.probe");
@@ -2617,22 +2616,15 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A cancel whose child leaves something holding its output is still a cancel.
-    ///
-    /// Slow on purpose: the module leaves a grandchild in a session of its own holding the pipe
-    /// the server drains, so the server cannot finish the task and the agent waits out its reap
-    /// allowance before giving up on it.
-    ///
-    /// What would make this red: propagating that expiry. The task becomes `the python server
-    /// stopped` and `run_batch` reports the batch `Failed` - a deliberate cancellation recorded
-    /// as an engine failure - and a task with `timeout:` gets the same wrong sentence instead of
-    /// the timeout the operator asked for.
+    /// A cancel whose child leaves a grandchild holding the server's pipe is still a cancel, once
+    /// the reap allowance (shortened to 300 ms) has run out.
     #[test]
     fn a_cancel_is_a_cancel_even_when_the_server_cannot_finish_reaping() {
         let blob = stub_blob(
             "\n    import os, subprocess\n    subprocess.Popen(['sleep', '120'], preexec_fn=os.setsid)\n    import time\n    time.sleep(120)\n",
         );
         let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+        server.reap_timeout = Duration::from_millis(300);
         let run = server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -2826,12 +2818,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     }
 
     /// A server that takes a request and never answers fails the task rather than holding the
-    /// batch behind it.
-    ///
-    /// Slow on purpose: the wait is the agent's reap allowance, and the point of the test is that
-    /// the allowance ends. What would make this red is removing the bound - the task, the batch
-    /// and the play would then wait for a frame that never comes, and only a `Cancel` would end
-    /// it.
+    /// batch behind it; the reap allowance is shortened to 200 ms.
     #[test]
     fn a_server_that_never_answers_fails_the_task_instead_of_waiting_for_ever() {
         let asked = Instant::now();
@@ -2843,6 +2830,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
         let mut server =
             Server::start(fake.to_str().unwrap(), Path::new("/blob"), &|| false).unwrap();
+        server.reap_timeout = Duration::from_millis(200);
         let result = done(server.run(
             &payload("ansible.modules.probe"),
             &args(json!({})),
@@ -2859,11 +2847,10 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
             !server.alive(),
             "a server that stopped answering is not kept"
         );
-        // Not a measurement of how fast anything is: the allowance is ten seconds and the fake
-        // sleeps for two minutes, so a ceiling between the two says only that the agent stopped
-        // waiting on its own terms rather than on the fake's.
+        // Not a measurement of speed: the fake sleeps for two minutes, so a ceiling far under that
+        // says only that the agent stopped waiting on its own terms rather than on the fake's.
         assert!(
-            asked.elapsed() < Duration::from_secs(60),
+            asked.elapsed() < Duration::from_secs(30),
             "the agent waited on the server rather than on its own allowance"
         );
     }

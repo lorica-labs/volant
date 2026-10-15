@@ -62,6 +62,12 @@ lint: clippy
 test:
     cargo nextest run --workspace --no-fail-fast
 
+# The goldens that run the recorded ansible-core against this machine (sudo, systemd, apt).
+# Run it when a native module, an action plugin or a golden recording changes; CI runs it in `ssh`.
+test-reference:
+    "${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" -c 'import ansible' || { echo "no ansible-core"; exit 1; }
+    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys)'
+
 # One crate, one test pattern: the loop while you are iterating. `check` is the gate, not the loop.
 test-one crate pattern:
     cargo nextest run -p {{crate}} -E 'test({{pattern}})'
@@ -218,7 +224,7 @@ ssh-test: agent-musl
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

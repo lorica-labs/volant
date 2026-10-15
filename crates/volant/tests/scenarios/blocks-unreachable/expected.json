@@ -1,0 +1,4 @@
+{
+  "code": 4,
+  "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Needs the host] **********************************************************\n[ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused\nOrigin: <golden-tmp>/unreachable.yml:5:11\n\n3   tasks:\n4     - block:\n5         - name: Needs the host\n            ^ column 11\n\nfatal: [h1]: UNREACHABLE! => {\"changed\": false, \"msg\": \"Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused\", \"unreachable\": true}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

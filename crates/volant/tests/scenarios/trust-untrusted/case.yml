@@ -1,0 +1,2 @@
+# A result that looks like a template is shown as data and never evaluated.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", untrusted.yml]

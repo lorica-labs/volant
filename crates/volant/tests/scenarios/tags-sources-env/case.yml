@@ -1,0 +1,3 @@
+# ANSIBLE_RUN_TAGS replaces the tags ansible.cfg names.
+args: [-i, inv.ini, --list-tasks, tags.yml]
+env: {ANSIBLE_RUN_TAGS: "y"}

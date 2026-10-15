@@ -1,0 +1,2 @@
+# A role's first_found and template lookups read its own directory.
+args: [-i, inv.ini, site.yml]

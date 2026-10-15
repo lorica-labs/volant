@@ -1,0 +1,2 @@
+# A play of nested blocks runs as one sequence.
+args: [happy.yml]

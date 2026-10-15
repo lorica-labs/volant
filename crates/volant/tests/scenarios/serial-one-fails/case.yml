@@ -1,0 +1,2 @@
+# A batch of one that fails ends the run.
+args: [-i, inv.ini, one_fails.yml]

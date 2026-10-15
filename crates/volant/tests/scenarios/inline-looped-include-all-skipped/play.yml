@@ -1,0 +1,32 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - when: false
+      block:
+        - name: First found
+          include_tasks: "{{ item }}"
+          with_first_found: [inc.yml]
+    - name: Tasks false
+      include_tasks: inc.yml
+      loop: [a, b]
+      when: false
+    - name: Tasks item
+      include_tasks: inc.yml
+      loop: [a, b]
+      when: item == 'z'
+    - name: Role false
+      include_role: { name: r }
+      loop: [a, b]
+      when: false
+    - name: Role item
+      include_role: { name: r }
+      loop: [a, b]
+      when: item == 'z'
+    - name: Tasks mixed
+      include_tasks: inc.yml
+      loop: [a, b]
+      when: item == 'a'
+    - name: Role mixed
+      include_role: { name: r }
+      loop: [a, b]
+      when: item == 'a'

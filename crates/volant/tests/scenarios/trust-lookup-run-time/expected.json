@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Show what a command printed] *********************************************\nok: [h1] => {\n    \"msg\": \"{{ lookup('pipe', 'touch marker') }}\"\n}\n\nTASK [Show what the environment held] ******************************************\nok: [h1] => {\n    \"msg\": \"{{ lookup('pipe', 'touch marker') }}\"\n}\n\nPLAY [Whether the payload ran] *************************************************\n\nTASK [Look for the marker the payload would have written] **********************\nchanged: [h1]\n\nTASK [The payload never ran] ***************************************************\nok: [h1] => {\n    \"marker.stdout\": \"never ran\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

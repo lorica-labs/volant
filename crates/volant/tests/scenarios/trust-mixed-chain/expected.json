@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Read a file whose text looks like a template] ****************************\nchanged: [h1]\n\nTASK [An author variable and a result in the same map] *************************\nok: [h1] => (item=a) => {\n    \"msg\": \"greet a and {{ lookup('pipe', 'touch marker') }}\"\n}\n\nPLAY [Whether the payload ran] *************************************************\n\nTASK [Look for the marker the payload would have written] **********************\nchanged: [h1]\n\nTASK [The payload never ran] ***************************************************\nok: [h1] => {\n    \"marker.stdout\": \"never ran\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

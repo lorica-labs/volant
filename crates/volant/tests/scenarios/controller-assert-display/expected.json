@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [loud] ********************************************************************\nok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"looks good\"\n}\n\nTASK [quiet] *******************************************************************\nok: [localhost]\n\nTASK [censored] ****************************************************************\nok: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

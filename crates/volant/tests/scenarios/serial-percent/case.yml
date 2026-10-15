@@ -1,0 +1,2 @@
+# A percentage serial is a batch size.
+args: [-i, inv.ini, percent.yml]

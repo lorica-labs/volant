@@ -1,0 +1,4 @@
+# The tags ansible.cfg names are read, and --tags adds to them rather than replacing them.
+runs:
+  - args: [-i, inv.ini, --list-tasks, tags.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, y, tags.yml]

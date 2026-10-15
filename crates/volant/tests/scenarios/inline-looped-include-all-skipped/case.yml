@@ -1,0 +1,2 @@
+# A looped include whose every item is skipped counts once.
+args: [play.yml]

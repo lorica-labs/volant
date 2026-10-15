@@ -1,0 +1,2 @@
+# What a file lookup reads is never evaluated.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", lookup-file.yml]

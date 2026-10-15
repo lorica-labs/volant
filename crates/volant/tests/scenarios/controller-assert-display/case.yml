@@ -1,0 +1,2 @@
+# An assert shows its result unless quiet.
+args: [assert-display.yml]

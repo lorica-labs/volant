@@ -1,0 +1,2 @@
+# Vars files are resolved for each host.
+args: ["-i", "pervars/inventory.ini", "pervars/site.yml"]

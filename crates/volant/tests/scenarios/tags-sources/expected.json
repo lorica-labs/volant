@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n"
+  }
+]

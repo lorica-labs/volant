@@ -1,0 +1,2 @@
+# An author chain beside a result still renders, and the result stays data.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", mixed-chain.yml]

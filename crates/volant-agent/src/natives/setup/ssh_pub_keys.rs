@@ -36,9 +36,6 @@ mod tests {
 
     /// Keys in `/etc/ssh` win, a key missing there is looked for in the next directory until the
     /// loop meets an algorithm it already has, and a file of one word hands back.
-    ///
-    /// What would make this red: every directory read to the end, which picks up keys the
-    /// reference never reaches; or the key and its type swapped.
     #[test]
     fn host_keys_follow_the_reference_s_loop() {
         let fake = FakeRoot::new("ssh");

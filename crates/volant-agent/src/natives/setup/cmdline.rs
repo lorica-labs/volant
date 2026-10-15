@@ -75,11 +75,8 @@ mod tests {
     use super::super::tests::{FakeRoot, probe};
     use super::*;
 
-    /// A kernel command line with a repeated key, a bare flag, quotes kept by the non-POSIX
-    /// split and a quoted word that ends where its quote closes.
-    ///
-    /// What would make this red: a POSIX split (quotes removed, `"a b"` one word), the last
-    /// repeated value dropped from `proc_cmdline`, or the flag spelled as a string.
+    /// A kernel command line with a repeated key, a bare flag, quotes kept by the non-POSIX split
+    /// and a quoted word that ends where its quote closes.
     #[test]
     fn the_kernel_command_line_is_split_like_the_reference() {
         let fake = FakeRoot::new("cmdline");

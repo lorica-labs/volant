@@ -420,8 +420,11 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
             command.env("VOLANT_PYTHON", python);
         }
         let out = process::run_within(&mut command, DEADLINE, None);
+        // macOS resolves its temporary directory under `/private`: mask both spellings.
+        let canonical = copy.canonicalize().unwrap_or_else(|_| copy.clone());
         let _ = std::fs::remove_dir_all(&copy);
         let got = String::from_utf8_lossy(&out.stdout)
+            .replace(&canonical.display().to_string(), "<golden-tmp>")
             .replace(&copy.display().to_string(), "<golden-tmp>");
         let shown = format!(
             "{name}: {}\n--- stderr\n{}",

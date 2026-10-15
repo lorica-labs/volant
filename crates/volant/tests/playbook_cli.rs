@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![cfg(unix)]
+use rstest::rstest;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -1103,20 +1104,16 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
     );
 }
 
-/// The other half of keeping the fork permit across a batch: one fork for two hosts, and a
-/// step that waits for the other host right behind a `register` that ended a batch. The driver
-/// has to hand the permit back in front of that wait, or the host holding it waits for a host
-/// that can never be given one.
-///
-/// `-f 1` is what makes it a proof: with a fork per host both of them hold one anyway and a
-/// permit held across the wait costs nothing. `volant_within` is what makes it a failure - a
-/// deadlock does not print a wrong answer, it prints nothing at all.
-///
-/// What would make this red: the permit kept across the boundary the second task reads
-/// `hostvars` at.
-#[test]
-fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within(
+/// One fork, two hosts, and a step waiting for the other host right behind a `register` that
+/// ended a batch: the run finishes, with and without batching.
+#[rstest]
+fn a_barrier_behind_a_registered_task_opens_with_one_fork(#[values(false, true)] batching: bool) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
+    let out = volant_within_env(
         &[
             "playbook",
             "-i",
@@ -1126,6 +1123,7 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
             &fixture("hostvars-barrier.yml"),
         ],
         std::time::Duration::from_secs(20),
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1142,97 +1140,17 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
     );
 }
 
-/// The same proof at the setting where the boundary has to be found rather than assumed. Under
-/// the strict default every step is a boundary, so the test above no longer says whether the
-/// driver hands its permit back at the boundary the textual scan raised, only that it hands it
-/// back somewhere. With batching asked for, the second task's `hostvars` is the only boundary in
-/// the play, and the permit has to go back in front of that one.
-///
-/// What would make this red: the permit kept across the boundary `reads_across_hosts` raised,
-/// which deadlocks the host holding it against a host that can never be given one.
-#[test]
-fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
-    let out = volant_within_env(
-        &[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            "-f",
-            "1",
-            &fixture("hostvars-barrier.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "1")],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(text.contains("stamped-alpha"), "beta read alpha: {text}");
-    assert_eq!(
-        text.matches("failed=0").count(),
-        2,
-        "both hosts reach the recap: {text}"
-    );
-}
-
-/// The same rule at the other kind of wait: a flush point, where a host waits for the splice
-/// the coordinator makes once every host has reached it. One fork, two hosts, and the flush
-/// sits right behind a `register`.
-///
-/// Under the default this no longer reads the splice rule: every step is a boundary, so the
-/// release in front of the wait is unconditional and the two splice disjuncts behind it in the
-/// `||` chain are never evaluated. What it still guards is that the run finishes and the
-/// handler runs on both hosts. The companion below is what holds the splice rule.
-///
-/// What would make this red: the permit kept in front of a wait at all.
-#[test]
-fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            "-f",
-            "1",
-            &fixture("handlers/flush-behind-a-register.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        text.matches("handler-ran").count(),
-        2,
-        "the handler runs on both hosts: {text}"
-    );
-    assert_eq!(
-        text.matches("ok=3").count(),
-        2,
-        "both hosts reach the recap: {text}"
-    );
-}
-
-/// The same proof at the setting where the splice point is the only thing that can free the
-/// permit. Under the strict default the release above is asked for every step, and
-/// `is_boundary` answers first in the `||` chain that guards it, so the two splice disjuncts
-/// behind it are never evaluated and the test above no longer says anything about them. With
-/// batching asked for, the `register` is not a boundary and the flush point is the only
-/// disjunct left that can hand the permit back.
-///
-/// What would make this red: the permit kept across a splice point, which is the deadlock the
-/// splice rule exists to forbid. It hangs rather than printing a wrong answer, so
-/// `volant_within` is what sees it.
-#[test]
-fn a_flush_point_behind_a_registered_task_opens_with_one_fork_with_batching() {
+/// One fork, two hosts, and a flush point behind a `register` that ended a batch: the run
+/// finishes, with and without batching.
+#[rstest]
+fn a_flush_point_behind_a_registered_task_opens_with_one_fork(
+    #[values(false, true)] batching: bool,
+) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
     let out = volant_within_env(
         &[
             "playbook",
@@ -1243,7 +1161,7 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork_with_batching() {
             &fixture("handlers/flush-behind-a-register.yml"),
         ],
         std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "1")],
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1771,55 +1689,15 @@ fn a_task_behind_a_fact_writing_module_renders_the_new_facts() {
 
 /// Measured against the reference: `beta` reads the stamp `alpha` registered at the previous
 /// task, and both hosts see each other in the play's live list.
-///
-/// One run, not ten. The repetition this test used to carry was there to catch a barrier that
-/// opened on nothing and passed by luck, and under the default there is no barrier that can do
-/// nothing: every step is one. The companion below keeps the ten runs, because that is where a
-/// barrier can still go missing. What this one is kept for is the result and the live list,
-/// which are what the reference was read for.
-///
-/// What would make this red: `beta` printing the stamp's template or an empty value, or either
-/// host dropping out of `ansible_play_hosts`.
-#[test]
-fn a_host_reading_hostvars_waits_for_the_others() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            &fixture("hostvars-barrier.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        text.contains("ok: [beta] => {\n    \"msg\": \"stamped-alpha\"\n}"),
-        "{text}"
-    );
-    assert!(
-        text.contains("ok: [alpha] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}")
-            && text.contains("ok: [beta] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}"),
-        "both hosts are still in the play: {text}"
-    );
-}
-
-/// The same play with batching asked for, which is where the textual scan is the only thing
-/// standing between `beta` and a stamp `alpha` has not written yet. Under the strict default the
-/// test above passes whatever `reads_across_hosts` answers, so this is the copy that still
-/// guards it. Ten runs, because a barrier that does nothing passes this once by luck, and with
-/// batching asked for a barrier that does nothing is exactly what a broken scan leaves behind.
-///
-/// What would make this red: `hostvars` dropped from `CROSS_HOST_NAMES`, or the scan no longer
-/// reading the argument a `msg` was written in.
-#[test]
-fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
-    for _ in 0..10 {
+#[rstest]
+fn a_host_reading_hostvars_waits_for_the_others(#[values(false, true)] batching: bool) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
+    // Batching lets a host run ahead, so its race is given ten chances to show.
+    for _ in 0..if batching { 10 } else { 1 } {
         let out = volant_within_env(
             &[
                 "playbook",
@@ -1828,7 +1706,7 @@ fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
                 &fixture("hostvars-barrier.yml"),
             ],
             std::time::Duration::from_secs(20),
-            &[("VOLANT_BATCHING", "1")],
+            envs,
         );
         let text = String::from_utf8(out.stdout).unwrap();
         assert_eq!(
@@ -2932,39 +2810,15 @@ fn a_templated_notify_in_an_include_is_refused_by_name() {
 }
 
 /// A local failure that steps over an include, with fewer forks than hosts.
-#[test]
-fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            "-f",
-            "1",
-            &fixture("include/fail-then-splice.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("rescued on h1") && text.contains("rescued on h2"),
-        "both hosts got through the jump and into the rescue: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
-        ) && text.contains(
-            "h2                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
-        ),
-        "{text}"
-    );
-}
-
-/// The same jump at the setting where the failure path's own release is the only thing that can
-/// free the permit.
-#[test]
-fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back_with_batching() {
+#[rstest]
+fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back(
+    #[values(false, true)] batching: bool,
+) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
     let out = volant_within_env(
         &[
             "playbook",
@@ -2975,7 +2829,7 @@ fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back_with_batching
             &fixture("include/fail-then-splice.yml"),
         ],
         PROBE_DEADLINE,
-        &[("VOLANT_BATCHING", "1")],
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");

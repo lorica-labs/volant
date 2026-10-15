@@ -475,12 +475,13 @@ pub(super) async fn run_batch(
                             header_shown = true;
                         }
                         stats.unreachable(&host);
-                        if !censored {
-                            out.error(&crate::render::ErrorBlock::unreachable(
-                                &msg,
-                                origin.as_ref(),
-                            ));
-                        }
+                        // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
+                        // the reason censored.
+                        out.error(&crate::render::ErrorBlock::unreachable(
+                            &msg,
+                            origin.as_ref(),
+                            censored,
+                        ));
                         out.unreachable(&host, &msg, censored, delegate.as_deref());
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
@@ -597,12 +598,13 @@ pub(super) async fn run_batch(
                 origin,
             } => {
                 stats.unreachable(&host);
-                if !censored {
-                    out.error(&crate::render::ErrorBlock::unreachable(
-                        &msg,
-                        origin.as_ref(),
-                    ));
-                }
+                // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
+                // the reason censored.
+                out.error(&crate::render::ErrorBlock::unreachable(
+                    &msg,
+                    origin.as_ref(),
+                    censored,
+                ));
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
                 state.failed_hosts.insert(host);
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);

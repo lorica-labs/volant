@@ -34,26 +34,59 @@ pub struct ErrorBlock {
 impl ErrorBlock {
     /// The block of a failed result: the message the executor settled on, or `Task failed: ` and
     /// the result's `msg` for a failure that never went through it.
-    pub fn of(result: &TaskResult, origin: Option<&crate::playbook::Origin>) -> Self {
+    pub fn of(
+        result: &TaskResult,
+        origin: Option<&crate::playbook::Origin>,
+        censored: bool,
+    ) -> Self {
         let message = result
             .0
             .get(ERROR_KEY)
             .and_then(serde_json::Value::as_str)
             .map_or_else(|| task_failed(&message_of(result)), str::to_string);
         Self {
-            message,
+            message: if censored { censor(&message) } else { message },
             origin: origin.cloned(),
         }
     }
 
     /// The block of a host the task could not reach: its message is the reason, which the
     /// reference words `Task failed: ...` too.
-    pub fn unreachable(msg: &str, origin: Option<&crate::playbook::Origin>) -> Self {
+    pub fn unreachable(
+        msg: &str,
+        origin: Option<&crate::playbook::Origin>,
+        censored: bool,
+    ) -> Self {
+        let message = task_failed(msg);
         Self {
-            message: task_failed(msg),
+            message: if censored { censor(&message) } else { message },
             origin: origin.cloned(),
         }
     }
+}
+
+/// What the reference writes in place of a `no_log` task's error detail, measured on an
+/// unreachable host: `Failed to connect to the host via ssh: <error censored due to no log>`.
+pub const CENSORED_ERROR: &str = "<error censored due to no log>";
+
+/// A `no_log` task's error message with everything but its fixed prefixes replaced by
+/// `CENSORED_ERROR`. The reference censors only an unreachable host's detail and prints a
+/// failed task's message as it is, the secret a `fail: msg=` carries included (ansible-core
+/// 2.19.12); Volant censors both.
+fn censor(message: &str) -> String {
+    const PREFIXES: [&str; 4] = [
+        "Task failed: ",
+        "Module failed: ",
+        "Action failed: ",
+        "Failed to connect to the host via ssh: ",
+    ];
+    let mut kept = String::new();
+    let mut rest = message;
+    while let Some(prefix) = PREFIXES.iter().find(|p| rest.starts_with(**p)) {
+        kept.push_str(prefix);
+        rest = &rest[prefix.len()..];
+    }
+    format!("{kept}{CENSORED_ERROR}")
 }
 
 /// The key the executor leaves the error block's message under on a failed result. Taken off

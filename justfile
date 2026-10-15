@@ -219,10 +219,11 @@ ssh-test: agent-musl
     # pythons skip them. The same holds for the CLI test of `retries` on an action plugin, which
     # needs ansible-core to run `copy`. The path check runs against `volant_echo`, a native only
     # an agent built with `test-natives` has, kept apart from the agent every other test runs.
+    # Every scenario too: one that `needs` ansible-core skips in the `test` job and runs here.
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

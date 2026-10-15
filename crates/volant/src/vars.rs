@@ -1575,7 +1575,7 @@ mod tests {
             assert_eq!(v["play_hosts"], json!(["h2"]));
             assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
             // The map is cached, and the next batch is a different answer: asking again with other
-            // lists has to rebuild it. What would make this red: a cache that never checks its key.
+            // lists has to rebuild it.
             let next = store.shared_values(&Scope {
                 play_hosts: vec!["h3".into()],
                 batch_hosts: vec!["h3".into()],

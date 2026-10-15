@@ -3020,13 +3020,8 @@ fn an_unknown_handler_is_refused_with_exit_1() {
     assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
 }
 
-/// A templated `ignore_errors` decides, rendered per host, on an ordinary task and on an include
-/// statement alike: `"{{ true }}"`-like values let the play go on with the failure counted as
-/// ignored, `false` ones fail the host there.
-///
-/// What would make this red: the template read as "not ignored" on either, which is what an
-/// include statement did (`report_include` read the keyword as written); or the verdict rendered
-/// and then dropped on the way from `prepare` to the driver.
+/// A templated `ignore_errors`, rendered per host, decides on an ordinary task and on an include
+/// statement alike.
 #[test]
 fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     let run = |cmd: &str, inc: &str| {

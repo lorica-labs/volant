@@ -3466,9 +3466,17 @@ mod tests {
             let value = r.0.remove(stamp).expect(stamp);
             assert_eq!(value.as_str().map(str::len), Some(26), "{value}");
         }
+        // The seconds in `stdout` are measured, so a slow runner prints 1.01: check the prefix.
+        let stdout = r.0.remove("stdout").expect("stdout");
+        assert!(
+            stdout
+                .as_str()
+                .is_some_and(|s| s.starts_with("Paused for 1.") && s.ends_with(" seconds")),
+            "{stdout}"
+        );
         assert_eq!(
             Value::Object(r.0),
-            json!({"changed": false, "delta": 1, "echo": true, "rc": 0, "stderr": "", "stdout": "Paused for 1.0 seconds", "user_input": ""})
+            json!({"changed": false, "delta": 1, "echo": true, "rc": 0, "stderr": "", "user_input": ""})
         );
     }
 

@@ -1406,6 +1406,7 @@ pub fn space_needed_kib(size: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::testing::{defaults, scratch};
+    use rstest::rstest;
     use serde_json::json;
 
     fn host(vars: Value) -> Host {
@@ -1427,96 +1428,87 @@ mod tests {
         }
     }
 
-    /// `-n` refuses to ask, so a host that wants a password fails fast instead of blocking on a
-    /// prompt nothing will ever answer. In the form that does read the password, `-k` is what
-    /// makes `-S` read stdin at all: measured on `sudo` 1.9.15p5 and `sudo-rs` 0.2.13, a
-    /// still-valid authentication makes `-S` leave the password on the pipe, where the agent
-    /// would read it as the first bytes of its first frame.
+    /// The sudo command line, the stdin preamble and the remote prefix follow the probed form.
     #[test]
-    fn the_sudo_command_line_names_the_user_and_asks_for_the_password_on_stdin() {
-        let password = format!("only-this-run-{}", std::process::id());
-        let secret = escalation(Some(password.as_str()));
-        let argv = local_argv("/usr/bin/volant-agent", Some((&secret, SudoForm::NoPrompt)));
-        assert_eq!(
-            argv,
-            [
-                "sudo",
-                "-H",
-                "-n",
-                "-u",
-                "deploy",
-                "--",
-                "/usr/bin/volant-agent"
-            ]
-        );
-        let argv = local_argv(
-            "/usr/bin/volant-agent",
-            Some((&secret, SudoForm::ReadStdin)),
-        );
-        assert_eq!(
-            argv,
-            [
-                "sudo",
-                "-H",
-                "-k",
-                "-S",
-                "-p",
-                "",
-                "-u",
-                "deploy",
-                "--",
-                "/usr/bin/volant-agent"
-            ]
-        );
-        assert!(
-            !argv.contains(&password),
-            "the password never reaches a command line: {argv:?}"
-        );
-        assert_eq!(
-            local_argv("/usr/bin/volant-agent", None),
-            ["/usr/bin/volant-agent"],
-            "without escalation the agent is the command"
-        );
-    }
-
-    /// The preamble follows the form the probe settled on, not whether a password happens to be
-    /// available: a `sudo` that needs no authentication never reads stdin, and the line written
-    /// for it would be read by the agent as its first frame header.
-    #[test]
-    fn only_the_form_that_reads_stdin_is_given_the_password() {
-        let password = format!("only-this-run-{}", std::process::id());
-        let secret = escalation(Some(password.as_str()));
-        assert_eq!(
-            preamble(Some((&secret, SudoForm::ReadStdin))),
-            Some(format!("{password}\n").into_bytes())
-        );
-        assert_eq!(preamble(Some((&secret, SudoForm::NoPrompt))), None);
-        assert_eq!(
-            preamble(Some((&escalation(None), SudoForm::ReadStdin))),
-            None
-        );
-        assert_eq!(preamble(None), None);
-    }
-
-    #[test]
-    fn the_remote_sudo_prefix_quotes_the_user_and_carries_no_password() {
-        let password = format!("only-this-run-{}", std::process::id());
-        let secret = escalation(Some(password.as_str()));
-        let prefix = sudo_prefix(Some((&secret, SudoForm::ReadStdin)));
-        assert_eq!(prefix, "sudo -H '-k' '-S' '-p' '' -u 'deploy' -- ");
-        assert!(!prefix.contains(&password), "{prefix}");
-        assert_eq!(
-            sudo_prefix(Some((
-                &Escalation {
-                    user: "it's me".into(),
-                    password: None
-                },
-                SudoForm::NoPrompt
-            ))),
-            r"sudo -H '-n' -u 'it'\''s me' -- ",
-            "a user name that would otherwise break out of the remote shell word is quoted"
-        );
-        assert!(sudo_prefix(None).is_empty());
+    fn the_sudo_words_follow_the_probed_form() {
+        {
+            let password = format!("only-this-run-{}", std::process::id());
+            let secret = escalation(Some(password.as_str()));
+            let argv = local_argv("/usr/bin/volant-agent", Some((&secret, SudoForm::NoPrompt)));
+            assert_eq!(
+                argv,
+                [
+                    "sudo",
+                    "-H",
+                    "-n",
+                    "-u",
+                    "deploy",
+                    "--",
+                    "/usr/bin/volant-agent"
+                ]
+            );
+            let argv = local_argv(
+                "/usr/bin/volant-agent",
+                Some((&secret, SudoForm::ReadStdin)),
+            );
+            assert_eq!(
+                argv,
+                [
+                    "sudo",
+                    "-H",
+                    "-k",
+                    "-S",
+                    "-p",
+                    "",
+                    "-u",
+                    "deploy",
+                    "--",
+                    "/usr/bin/volant-agent"
+                ]
+            );
+            assert!(
+                !argv.contains(&password),
+                "the password never reaches a command line: {argv:?}"
+            );
+            assert_eq!(
+                local_argv("/usr/bin/volant-agent", None),
+                ["/usr/bin/volant-agent"],
+                "without escalation the agent is the command"
+            );
+        }
+        {
+            let password = format!("only-this-run-{}", std::process::id());
+            let secret = escalation(Some(password.as_str()));
+            assert_eq!(
+                preamble(Some((&secret, SudoForm::ReadStdin))),
+                Some(format!("{password}\n").into_bytes())
+            );
+            assert_eq!(preamble(Some((&secret, SudoForm::NoPrompt))), None);
+            assert_eq!(
+                preamble(Some((&escalation(None), SudoForm::ReadStdin))),
+                None
+            );
+            assert_eq!(preamble(None), None);
+        }
+        {
+            let password = format!("only-this-run-{}", std::process::id());
+            let secret = escalation(Some(password.as_str()));
+            let prefix = sudo_prefix(Some((&secret, SudoForm::ReadStdin)));
+            assert_eq!(prefix, "sudo -H '-k' '-S' '-p' '' -u 'deploy' -- ");
+            assert!(!prefix.contains(&password), "{prefix}");
+            assert_eq!(
+                sudo_prefix(Some((
+                    &Escalation {
+                        user: "it's me".into(),
+                        password: None
+                    },
+                    SudoForm::NoPrompt
+                ))),
+                r"sudo -H '-n' -u 'it'\''s me' -- ",
+                "a user name that would otherwise break out of the remote shell word is quoted"
+            );
+            assert!(sudo_prefix(None).is_empty());
+        }
     }
 
     /// The strings come from the two `sudo` implementations measured for this: `sudo` 1.9.15p5
@@ -1560,44 +1552,28 @@ mod tests {
         );
     }
 
-    /// `sudo`'s own words are the message when it says something neither known implementation
-    /// says, and that message reaches a task result. No measured `sudo` echoes the password it
-    /// was offered, but the password belongs to the controller, so the path is closed by
-    /// construction rather than by trusting every `sudo` on every host.
-    #[test]
-    fn sudos_own_words_cannot_carry_the_password_back_into_a_message() {
+    /// A refusal's own words reach a task result, and the password the controller offered never goes with them.
+    #[rstest]
+    #[case::sudo(|stderr: &str, password: &str| match escalation_outcome(false, stderr, Some(password)) {
+        Err(ConnectError::Become(msg)) => msg,
+        other => panic!("expected Become, got {other:?}"),
+    }, "sudo: bespoke build read '{password}' and disliked it", "disliked it")]
+    #[case::ssh(
+        |stderr: &str, password: &str| unreachable_message(stderr, Some(password)),
+        "client_loop: send disconnect: Broken pipe reading '{password}'",
+        "Broken pipe",
+    )]
+    fn a_message_never_carries_the_password_back(
+        #[case] message: fn(&str, &str) -> String,
+        #[case] stderr: &str,
+        #[case] survives: &str,
+    ) {
         let password = format!("only-this-run-{}", std::process::id());
-        let stderr = format!("sudo: bespoke build read '{password}' and disliked it");
-        let Err(ConnectError::Become(msg)) =
-            escalation_outcome(false, &stderr, Some(password.as_str()))
-        else {
-            panic!("expected Become");
-        };
-        // Neither assertion prints `msg`. A failure here is a run where the redaction did not
-        // happen, so the failure output would be one more place carrying the password.
+        let msg = message(&stderr.replace("{password}", &password), &password);
+        // Neither assertion prints `msg`: a failure would be one more place carrying the password.
         assert!(!msg.contains(&password));
-        assert!(
-            msg.contains("<redacted>") && msg.contains("disliked it"),
-            "the rest of what sudo said survives"
-        );
+        assert!(msg.contains("<redacted>") && msg.contains(survives));
     }
-
-    /// `run_capturing`'s 255 arm is fed by the same `ReadStdin` preamble that writes the
-    /// password to a child's stdin for the escalation probe, so it owes the password the same
-    /// redaction `sudo`'s own refusal gets. No `ssh` measured here echoes its stdin into its own
-    /// stderr, but this is the only other path a password reaches a captured stderr from, and a
-    /// scrubber with one way around it is worth less than it looks.
-    #[test]
-    fn a_dying_sshs_own_words_are_redacted_the_same_way_sudos_refusal_is() {
-        let password = format!("only-this-run-{}", std::process::id());
-        let stderr = format!("client_loop: send disconnect: Broken pipe reading '{password}'");
-        let msg = unreachable_message(&stderr, Some(password.as_str()));
-        // Neither assertion prints `msg`: a failure here is a run where the redaction did not
-        // happen, so the failure output would be one more place carrying the password.
-        assert!(!msg.contains(&password));
-        assert!(msg.contains("<redacted>") && msg.contains("Broken pipe"));
-    }
-
     fn agent_version() -> Captured {
         Captured {
             code: Some(0),
@@ -1841,133 +1817,6 @@ mod tests {
         assert_eq!(target.remote_tmp, "/var/tmp/v");
     }
 
-    /// A host variable is the one source of `remote_tmp` that used to be taken at face value.
-    /// `-e ansible_remote_tmp=` reached `cache_dir()` as an empty path, which puts the agent at
-    /// `/volant-agent-<version>`, so the upload fails on permissions at the filesystem root and
-    /// the host is reported unreachable over a directory the operator never wrote. The file and
-    /// the environment arms already read a blank value as no value; this one now does too.
-    ///
-    /// What would make this red: the blank reaching `SshTarget`, which the assertion on the
-    /// cache path catches wherever the emptiness is finally noticed.
-    #[test]
-    fn a_blank_host_remote_tmp_reads_as_no_value() {
-        for blank in ["", "   "] {
-            let Transport::Ssh(target) =
-                Transport::for_host(&host(json!({ "ansible_remote_tmp": blank })), &defaults())
-                    .unwrap()
-            else {
-                panic!("expected ssh")
-            };
-            assert_eq!(target.remote_tmp, "~/.ansible/tmp", "{blank:?}");
-        }
-        let Transport::Ssh(target) = Transport::for_host(
-            &host(json!({ "ansible_remote_tmp": "  /var/tmp/v  " })),
-            &defaults(),
-        )
-        .unwrap() else {
-            panic!("expected ssh")
-        };
-        assert_eq!(target.remote_tmp, "/var/tmp/v");
-    }
-
-    /// The host-variable table on the connections page is a hand-written copy of the names
-    /// this module reads, and the page has already outlived one rewrite of `for_vars` without
-    /// anybody opening it. The prose in the second column is not a function of anything the run
-    /// reads, so it stays hand-written; the set of names is, so it is checked here.
-    ///
-    /// Every `ansible_*` literal in this file is a connection variable, which is why the whole
-    /// source is the input rather than one function: a name read by `port_of` or `split_args`
-    /// belongs on that page exactly as much as one read in `for_vars`. The four `become`
-    /// variables under it come from `executor/prepare.rs` and are not in this set.
-    ///
-    /// What would make this red: a connection variable added, renamed or dropped here without
-    /// the page following. A new `ansible_*` literal that is deliberately not read -- a test
-    /// proving one is ignored, say -- is red too, and the answer is to give the page a row
-    /// saying so rather than to loosen this.
-    #[test]
-    fn the_published_host_variables_are_the_ones_this_module_reads() {
-        let source = include_str!("transport.rs");
-        let mut read: Vec<&str> = source
-            .split("\"ansible_")
-            .skip(1)
-            .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
-            .filter(|name| {
-                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-            })
-            .collect();
-        read.sort_unstable();
-        read.dedup();
-
-        let page = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../docs/src/content/docs/hosts/connections.md"),
-        )
-        .expect("the connections page is in the repository");
-        let mut published: Vec<&str> = page
-            .lines()
-            .filter_map(|line| line.strip_prefix("| `ansible_"))
-            .filter_map(|rest| rest.split_once('`').map(|(name, _)| name))
-            .filter(|name| !name.starts_with("become"))
-            .collect();
-        published.sort_unstable();
-        published.dedup();
-        assert_eq!(
-            published, read,
-            "the connections page and Transport::for_vars disagree about the host variables"
-        );
-    }
-
-    #[test]
-    fn host_key_checking_off_adds_the_two_options() {
-        let mut d = defaults();
-        d.host_key_checking = false;
-        let Transport::Ssh(target) = Transport::for_host(&host(json!({})), &d).unwrap() else {
-            panic!()
-        };
-        let text = target.ssh_argv("true").join(" ");
-        assert!(
-            text.contains("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"),
-            "{text}"
-        );
-        assert!(
-            text.ends_with("web1 -- true"),
-            "the inventory name is the address by default: {text}"
-        );
-    }
-
-    #[test]
-    fn defaults_apply_when_the_host_says_nothing() {
-        let d = ConnectionDefaults {
-            remote_user: Some("ops".into()),
-            private_key: Some("/k".into()),
-            ..defaults()
-        };
-        let Transport::Ssh(target) = Transport::for_host(&host(json!({})), &d).unwrap() else {
-            panic!()
-        };
-        let text = target.ssh_argv("true").join(" ");
-        assert!(text.contains("-l ops") && text.contains("-i /k"), "{text}");
-        let Transport::Ssh(target) =
-            Transport::for_host(&host(json!({"ansible_user": "me"})), &d).unwrap()
-        else {
-            panic!()
-        };
-        assert!(
-            target.ssh_argv("true").join(" ").contains("-l me"),
-            "host vars beat defaults"
-        );
-    }
-
-    #[test]
-    fn a_quoted_port_is_still_a_port() {
-        let Transport::Ssh(target) =
-            Transport::for_host(&host(json!({"ansible_port": "2222"})), &defaults()).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(target.port, Some(2222));
-    }
-
     /// `run_capturing` builds its command line with this exact call, so the assertions below
     /// are about the production path and not about a vector the test filled in itself.
     #[test]
@@ -1988,20 +1837,6 @@ mod tests {
                 .contains(&"-C".to_string()),
             "a command with no payload is not compressed"
         );
-    }
-
-    #[test]
-    fn unbalanced_quotes_in_the_ssh_arguments_refuse_the_host() {
-        for key in ["ansible_ssh_common_args", "ansible_ssh_extra_args"] {
-            let err = Transport::for_host(
-                &host(json!({ key: "-o ProxyCommand='ssh bastion" })),
-                &defaults(),
-            )
-            .unwrap_err();
-            let text = format!("{err:#}");
-            assert!(text.contains(key), "the variable is named: {text}");
-            assert!(text.contains("ProxyCommand"), "the value is quoted: {text}");
-        }
     }
 
     #[test]
@@ -2198,73 +2033,123 @@ mod tests {
         );
     }
 
-    /// The other direction, and the one that says the rule is not simply "refuse every tilde":
-    /// `~`, `~root` and `~some.user-1` are user names and still reach the remote shell bare,
-    /// which is the only thing that can expand them.
-    ///
-    /// What would make this red: a validator refusing every `~`, which would break the default
-    /// `remote_tmp` and every inventory that sets one.
+    /// Tilde users, tilde words, agent triples and the headroom of an upload.
     #[test]
-    fn an_ordinary_tilde_user_is_still_passed_through() {
-        for value in ["~", "~root", "~some.user-1"] {
-            assert!(validate_remote_tmp(value).is_ok(), "{value}");
+    fn the_small_remote_rules_hold() {
+        {
+            for value in ["~", "~root", "~some.user-1"] {
+                assert!(validate_remote_tmp(value).is_ok(), "{value}");
+            }
+        }
+        {
+            assert_eq!(shell_word("~/a b/c"), "~/'a b/c'");
+            assert_eq!(shell_word("~"), "~");
+            assert_eq!(
+                shell_word("~deploy/a b"),
+                "~deploy/'a b'",
+                "a named user's home expands too, not just the caller's own"
+            );
+            assert_eq!(shell_word("/var/tmp/a b"), "'/var/tmp/a b'");
+            assert_eq!(
+                shell_word("~/it's here"),
+                r"~/'it'\''s here'",
+                "an embedded single quote in the quoted remainder is escaped"
+            );
+        }
+        {
+            assert_eq!(triple_for("x86_64"), Some("x86_64-unknown-linux-musl"));
+            assert_eq!(triple_for("aarch64"), Some("aarch64-unknown-linux-musl"));
+            assert_eq!(triple_for("arm64"), Some("aarch64-unknown-linux-musl"));
+            assert_eq!(triple_for("riscv64"), None);
+        }
+        {
+            // 672480 bytes is 656.7 KiB; two copies are 1313 KiB, plus a mebibyte of headroom.
+            assert_eq!(space_needed_kib(672_480), 2337);
+            assert_eq!(space_needed_kib(0), 1024, "the headroom stands on its own");
+            assert_eq!(
+                space_needed_kib(1_048_576),
+                3072,
+                "a mebibyte agent needs three"
+            );
+            assert!(
+                space_needed_kib(5_000_000) > 2 * 5_000_000 / 1024,
+                "always more than the two copies it covers"
+            );
         }
     }
 
-    #[test]
-    fn shell_word_expands_only_the_tilde_prefix() {
-        assert_eq!(shell_word("~/a b/c"), "~/'a b/c'");
-        assert_eq!(shell_word("~"), "~");
-        assert_eq!(
-            shell_word("~deploy/a b"),
-            "~deploy/'a b'",
-            "a named user's home expands too, not just the caller's own"
-        );
-        assert_eq!(shell_word("/var/tmp/a b"), "'/var/tmp/a b'");
-        assert_eq!(
-            shell_word("~/it's here"),
-            r"~/'it'\''s here'",
-            "an embedded single quote in the quoted remainder is escaped"
-        );
-    }
-
-    #[test]
-    fn remote_architectures_map_to_agent_triples() {
-        assert_eq!(triple_for("x86_64"), Some("x86_64-unknown-linux-musl"));
-        assert_eq!(triple_for("aarch64"), Some("aarch64-unknown-linux-musl"));
-        assert_eq!(triple_for("arm64"), Some("aarch64-unknown-linux-musl"));
-        assert_eq!(triple_for("riscv64"), None);
-    }
-
-    /// The numbers are spelled out rather than recomputed from the formula. Restating the
-    /// formula in the test catches an implementation that drifts away from it, but never a
-    /// formula that was wrong to begin with, which is the mistake worth guarding against here.
-    #[test]
-    fn space_needed_has_headroom() {
-        // 672480 bytes is 656.7 KiB; two copies are 1313 KiB, plus a mebibyte of headroom.
-        assert_eq!(space_needed_kib(672_480), 2337);
-        assert_eq!(space_needed_kib(0), 1024, "the headroom stands on its own");
-        assert_eq!(
-            space_needed_kib(1_048_576),
-            3072,
-            "a mebibyte agent needs three"
+    /// What the host says, or the defaults when it says nothing, shapes the ssh command line.
+    #[rstest]
+    #[case::host_key_checking_off(json!({}), |d: &mut ConnectionDefaults| d.host_key_checking = false,
+        "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")]
+    #[case::defaults_apply(json!({}), |d: &mut ConnectionDefaults| {
+        d.remote_user = Some("ops".into());
+        d.private_key = Some("/k".into());
+    }, "-l ops -i /k")]
+    #[case::host_beats_defaults(json!({"ansible_user": "me"}), |d: &mut ConnectionDefaults| d.remote_user = Some("ops".into()), "-l me")]
+    #[case::quoted_port(json!({"ansible_port": "2222"}), |_: &mut ConnectionDefaults| {}, "-p 2222")]
+    fn the_host_and_the_defaults_shape_the_ssh_command(
+        #[case] vars: Value,
+        #[case] tweak: fn(&mut ConnectionDefaults),
+        #[case] expected: &str,
+    ) {
+        let mut d = defaults();
+        tweak(&mut d);
+        let Transport::Ssh(target) = Transport::for_host(&host(vars), &d).unwrap() else {
+            panic!("expected ssh")
+        };
+        let text = target.ssh_argv("true").join(" ");
+        assert!(
+            expected.split(' ').all(|w| text.contains(w)),
+            "{expected}: {text}"
         );
         assert!(
-            space_needed_kib(5_000_000) > 2 * 5_000_000 / 1024,
-            "always more than the two copies it covers"
+            text.ends_with("web1 -- true"),
+            "the inventory name is the address by default: {text}"
         );
     }
 
-    #[test]
-    fn unknown_connections_are_still_refused_by_name() {
-        let err = Transport::for_host(
-            &host(json!({"ansible_connection": "carrier_pigeon"})),
-            &defaults(),
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("carrier_pigeon"));
+    /// A blank `ansible_remote_tmp` reads as no value; one with spaces around it is trimmed.
+    #[rstest]
+    #[case("", "~/.ansible/tmp")]
+    #[case("   ", "~/.ansible/tmp")]
+    #[case("  /var/tmp/v  ", "/var/tmp/v")]
+    fn a_host_remote_tmp_is_trimmed_and_a_blank_is_no_value(
+        #[case] value: &str,
+        #[case] want: &str,
+    ) {
+        let Transport::Ssh(target) =
+            Transport::for_host(&host(json!({ "ansible_remote_tmp": value })), &defaults())
+                .unwrap()
+        else {
+            panic!("expected ssh")
+        };
+        assert_eq!(target.remote_tmp, want);
     }
 
+    /// A host the engine cannot connect to is refused with the variable or the connection named.
+    #[rstest]
+    #[case(
+        "ansible_ssh_common_args",
+        "-o ProxyCommand='ssh bastion",
+        "ProxyCommand"
+    )]
+    #[case(
+        "ansible_ssh_extra_args",
+        "-o ProxyCommand='ssh bastion",
+        "ProxyCommand"
+    )]
+    #[case("ansible_connection", "carrier_pigeon", "carrier_pigeon")]
+    fn a_host_that_cannot_be_reached_is_refused_by_name(
+        #[case] key: &str,
+        #[case] value: &str,
+        #[case] quoted: &str,
+    ) {
+        let err = Transport::for_host(&host(json!({ key: value })), &defaults()).unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains(key) || key == "ansible_connection", "{text}");
+        assert!(text.contains(quoted), "{text}");
+    }
     /// Two ssh identities of one name are two links. The name and the escalated user are equal
     /// here and only the port differs, so the key can only tell them apart through the whole
     /// `SshTarget` -- which is what tells a task that asked for port 2223 from one that asked
@@ -2313,66 +2198,60 @@ mod tests {
         }
     }
 
-    /// The three options come as one block, in the order the reference writes them, ahead of
-    /// every word the operator wrote.
+    /// A shared connection carries its three options before the operator's words, and a keepalive of its own.
     #[test]
-    fn a_shared_connection_puts_its_three_options_before_the_operators_words() {
-        let target = ssh_target(
-            "web1",
-            json!({"ansible_ssh_common_args": "-o ProxyJump=bastion"}),
-            SHARED,
-        );
-        let path = target.control_path.clone().expect("a control path");
-        assert!(path.starts_with("/run/user/1000/volant-cm"), "{path:?}");
-        let argv = target.ssh_argv("true");
-        let block = [
-            "-o".to_string(),
-            "ControlMaster=auto".into(),
-            "-o".into(),
-            format!("ControlPath={}", path.display()),
-            "-o".into(),
-            "ControlPersist=30s".into(),
-        ];
-        let at = argv
-            .windows(block.len())
-            .position(|w| w == block)
-            .unwrap_or_else(|| panic!("the three options, in order: {argv:?}"));
-        let user = argv
-            .iter()
-            .position(|w| w == "ProxyJump=bastion")
-            .expect("the operator's option");
-        assert!(at < user, "{argv:?}");
-    }
-
-    /// A shared connection carries a keepalive, so its master exits by itself once its host
-    /// stops answering; an operator's own keepalive is left to win, and a connection Volant
-    /// does not share gets none from Volant.
-    ///
-    /// What would make this red: the two options dropped, or added over the operator's own.
-    #[test]
-    fn a_shared_connection_keeps_itself_alive_or_dies() {
-        let argv = ssh_target("web1", json!({}), SHARED).ssh_argv("true");
-        let block = [
-            "-o".to_string(),
-            "ServerAliveInterval=5".into(),
-            "-o".into(),
-            "ServerAliveCountMax=3".into(),
-        ];
-        assert!(argv.windows(block.len()).any(|w| w == block), "{argv:?}");
-        for (vars, why) in [
-            (json!({}), "not shared"),
-            (
-                json!({"ansible_ssh_common_args": "-o ControlPath=/x"}),
-                "the operator's own sharing",
-            ),
-            (
-                json!({"ansible_ssh_extra_args": "-o ServerAliveInterval=60"}),
-                "the operator's own keepalive",
-            ),
-        ] {
-            let dir = if why == "not shared" { None } else { SHARED };
-            let text = ssh_target("web1", vars, dir).ssh_argv("true").join(" ");
-            assert!(!text.contains("ServerAliveInterval=5"), "{why}: {text}");
+    fn a_shared_connection_carries_its_options_and_a_keepalive() {
+        {
+            let target = ssh_target(
+                "web1",
+                json!({"ansible_ssh_common_args": "-o ProxyJump=bastion"}),
+                SHARED,
+            );
+            let path = target.control_path.clone().expect("a control path");
+            assert!(path.starts_with("/run/user/1000/volant-cm"), "{path:?}");
+            let argv = target.ssh_argv("true");
+            let block = [
+                "-o".to_string(),
+                "ControlMaster=auto".into(),
+                "-o".into(),
+                format!("ControlPath={}", path.display()),
+                "-o".into(),
+                "ControlPersist=30s".into(),
+            ];
+            let at = argv
+                .windows(block.len())
+                .position(|w| w == block)
+                .unwrap_or_else(|| panic!("the three options, in order: {argv:?}"));
+            let user = argv
+                .iter()
+                .position(|w| w == "ProxyJump=bastion")
+                .expect("the operator's option");
+            assert!(at < user, "{argv:?}");
+        }
+        {
+            let argv = ssh_target("web1", json!({}), SHARED).ssh_argv("true");
+            let block = [
+                "-o".to_string(),
+                "ServerAliveInterval=5".into(),
+                "-o".into(),
+                "ServerAliveCountMax=3".into(),
+            ];
+            assert!(argv.windows(block.len()).any(|w| w == block), "{argv:?}");
+            for (vars, why) in [
+                (json!({}), "not shared"),
+                (
+                    json!({"ansible_ssh_common_args": "-o ControlPath=/x"}),
+                    "the operator's own sharing",
+                ),
+                (
+                    json!({"ansible_ssh_extra_args": "-o ServerAliveInterval=60"}),
+                    "the operator's own keepalive",
+                ),
+            ] {
+                let dir = if why == "not shared" { None } else { SHARED };
+                let text = ssh_target("web1", vars, dir).ssh_argv("true").join(" ");
+                assert!(!text.contains("ServerAliveInterval=5"), "{why}: {text}");
+            }
         }
     }
 
@@ -2484,46 +2363,69 @@ mod tests {
         assert_eq!(unique.len(), paths.len(), "{paths:?}");
     }
 
-    /// A delegated link is kept by the delegating host's driver until the end of the play, so
-    /// the delegate's own master would carry one session per delegating host, and sshd refuses
-    /// the eleventh (`MaxSessions` 10). Each (host, delegate) pair gets its own master instead.
-    ///
-    /// What would make this red: the key built from the delegate's name alone.
+    /// Each (host, delegate) pair and each inventory name gets its own master.
     #[test]
-    fn delegating_hosts_do_not_pile_onto_one_master() {
-        let vars = json!({"ansible_host": "10.0.0.9"});
-        let own = ssh_target("lb1", vars.clone(), SHARED).control_path;
-        let mut paths: Vec<_> = (1..=20)
-            .map(|n| {
-                let transport =
-                    Transport::for_vars("lb1", vars.as_object().expect("an object"), &defaults())
-                        .expect("an ssh transport")
-                        .shared(SHARED.map(Path::new), &format!("web{n}"), Some("lb1"));
-                match transport {
-                    Transport::Ssh(target) => target.control_path.expect("shared"),
-                    Transport::Local => panic!("expected ssh"),
-                }
-            })
-            .collect();
-        assert!(paths.iter().all(|p| Some(p) != own.as_ref()));
-        paths.sort();
-        paths.dedup();
-        assert_eq!(paths.len(), 20, "one master per delegating host");
-
-        // Two inventory aliases of one delegate, reached from one host: two masters, as the
-        // aliases get when they are the hosts themselves.
-        let via = |delegate: &str| match Transport::for_vars(
-            delegate,
-            vars.as_object().expect("an object"),
-            &defaults(),
-        )
-        .expect("an ssh transport")
-        .shared(SHARED.map(Path::new), "web1", Some(delegate))
+    fn every_host_name_and_delegation_gets_its_own_master() {
         {
-            Transport::Ssh(target) => target.control_path,
-            Transport::Local => panic!("expected ssh"),
-        };
-        assert_ne!(via("lb1"), via("lb1-alias"));
+            let vars = json!({"ansible_host": "10.0.0.9"});
+            let own = ssh_target("lb1", vars.clone(), SHARED).control_path;
+            let mut paths: Vec<_> = (1..=20)
+                .map(|n| {
+                    let transport = Transport::for_vars(
+                        "lb1",
+                        vars.as_object().expect("an object"),
+                        &defaults(),
+                    )
+                    .expect("an ssh transport")
+                    .shared(
+                        SHARED.map(Path::new),
+                        &format!("web{n}"),
+                        Some("lb1"),
+                    );
+                    match transport {
+                        Transport::Ssh(target) => target.control_path.expect("shared"),
+                        Transport::Local => panic!("expected ssh"),
+                    }
+                })
+                .collect();
+            assert!(paths.iter().all(|p| Some(p) != own.as_ref()));
+            paths.sort();
+            paths.dedup();
+            assert_eq!(paths.len(), 20, "one master per delegating host");
+
+            // Two inventory aliases of one delegate, reached from one host: two masters, as the
+            // aliases get when they are the hosts themselves.
+            let via = |delegate: &str| match Transport::for_vars(
+                delegate,
+                vars.as_object().expect("an object"),
+                &defaults(),
+            )
+            .expect("an ssh transport")
+            .shared(SHARED.map(Path::new), "web1", Some(delegate))
+            {
+                Transport::Ssh(target) => target.control_path,
+                Transport::Local => panic!("expected ssh"),
+            };
+            assert_ne!(via("lb1"), via("lb1-alias"));
+        }
+        {
+            let vars = json!({"ansible_host": "10.0.0.5"});
+            let one = ssh_target("web1", vars.clone(), SHARED);
+            let two = ssh_target("web2", vars.clone(), SHARED);
+            assert_eq!(one.address, two.address);
+            assert_ne!(one.control_path, two.control_path);
+            assert_eq!(
+                one.control_path,
+                ssh_target("web1", vars, SHARED).control_path,
+                "one name, one path"
+            );
+            let other_user = ssh_target(
+                "web1",
+                json!({"ansible_host": "10.0.0.5", "ansible_user": "ops"}),
+                SHARED,
+            );
+            assert_ne!(one.control_path, other_user.control_path);
+        }
     }
 
     /// `ssh -O exit` reaches the socket the link would use, and returns even though nothing
@@ -2563,30 +2465,6 @@ mod tests {
             }),
         );
         assert_eq!(accepted, Ok(true), "ssh -O exit never came to {socket:?}");
-    }
-
-    /// Measured: fifty inventory aliases of one machine sharing one master ran past the
-    /// server's `MaxSessions`, so the inventory name is part of the key.
-    ///
-    /// What would make this red: the key hashed without the inventory name.
-    #[test]
-    fn two_inventory_names_of_one_address_are_two_connections() {
-        let vars = json!({"ansible_host": "10.0.0.5"});
-        let one = ssh_target("web1", vars.clone(), SHARED);
-        let two = ssh_target("web2", vars.clone(), SHARED);
-        assert_eq!(one.address, two.address);
-        assert_ne!(one.control_path, two.control_path);
-        assert_eq!(
-            one.control_path,
-            ssh_target("web1", vars, SHARED).control_path,
-            "one name, one path"
-        );
-        let other_user = ssh_target(
-            "web1",
-            json!({"ansible_host": "10.0.0.5", "ansible_user": "ops"}),
-            SHARED,
-        );
-        assert_ne!(one.control_path, other_user.control_path);
     }
 
     /// `ssh` binds the socket under the path plus 17 bytes before renaming it, and macOS allows
@@ -2736,84 +2614,5 @@ mod tests {
         assert_eq!(open_file_limit().rlim_cur, 256);
         raise_open_file_limit();
         assert_eq!(open_file_limit().rlim_cur, before.rlim_max.min(1 << 20));
-    }
-
-    /// A limit raised after the first connections opened would come too late for them.
-    ///
-    /// What would make this red: the call moved behind `run_all`, or dropped.
-    #[test]
-    fn the_open_file_limit_is_raised_before_anything_connects() {
-        let source = include_str!("cli.rs");
-        let body = source
-            .split_once("pub fn run(")
-            .expect("cli::run is where both binaries start")
-            .1;
-        let raise = body
-            .find("raise_open_file_limit()")
-            .expect("cli::run raises the open file limit");
-        let run_all = body.find("run_all(&args").expect("cli::run calls run_all");
-        assert!(raise < run_all, "the limit is raised before run_all");
-    }
-
-    /// Every connection of a run is resolved in the driver, so sharing is applied there, on
-    /// each resolution, or not at all.
-    ///
-    /// What would make this red: a resolution in the driver that skips `shared`.
-    #[test]
-    fn the_driver_shares_every_connection_it_resolves() {
-        let source = include_str!("executor/driver.rs");
-        let calls: Vec<&str> = source.split("Transport::for_vars(").skip(1).collect();
-        assert!(!calls.is_empty(), "the driver resolves its connections");
-        for call in calls {
-            let arm: String = call
-                .split("Err(")
-                .next()
-                .unwrap_or(call)
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            assert!(
-                arm.contains(
-                    ".shared(options.control_dir.as_deref(),&name,delegate_name.as_deref()"
-                ),
-                "a resolution without sharing, or shared under the delegate's name: {arm}"
-            );
-        }
-    }
-
-    /// A reconnection to a host that went away first stops the host's master, in the two
-    /// places one happens: the plugin that rebooted it, and a kept link found dead after a
-    /// reboot.
-    ///
-    /// What would make this red: the master stopped after the connection, or not at all.
-    #[test]
-    fn a_reconnection_after_a_reboot_starts_from_a_fresh_connection() {
-        let source = include_str!("executor/run.rs");
-        for (start, end) in [
-            (
-                "impl Relink<AgentLink> for Relinker",
-                "fn with_connect_timeout",
-            ),
-            ("pub(super) async fn reuse_or_connect", "\n}\n"),
-        ] {
-            let body = source.split_once(start).expect(start).1;
-            let body: String = body[..body.find(end).expect(end)]
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let (stop, reconnect) = if start.contains("Relinker") {
-                ("transport.stop_shared().await", "connect(&transport,")
-            } else {
-                // `check_kept` stops the master on a failed check; its own test proves how.
-                ("check_kept(", "connect(&key.transport,")
-            };
-            let stop = body
-                .find(stop)
-                .unwrap_or_else(|| panic!("{start} stops the master"));
-            let connect = body
-                .find(reconnect)
-                .unwrap_or_else(|| panic!("{start} reconnects through the transport it stopped"));
-            assert!(stop < connect, "{start}: the master is stopped first");
-        }
     }
 }

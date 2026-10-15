@@ -1272,73 +1272,67 @@ mod tests {
         }
     }
 
+    /// Directories layer in name order under the play, vars_files, task vars, `set_fact` and `-e`;
+    /// hidden and backup files are ignored.
     #[test]
-    fn directories_layer_in_ansible_order() {
-        let tmp = tree();
-        let dir = tmp.path();
-        let (_, mut store) = store(dir);
-        let v = store.for_host("web1", &scope(&["web1"]));
-        assert_eq!(
-            v["layer"],
-            json!("play_host"),
-            "playbook host_vars is the highest directory source"
-        );
-        assert_eq!(v["only_inv_all"], json!(1));
-        assert_eq!(
-            v["split"],
-            json!("second"),
-            "files in a directory apply in name order"
-        );
-        assert_eq!(v["from"], json!("ini_group"));
-        assert_eq!(v["tier"], json!("ini"));
-        assert_eq!(
-            v["play_all"],
-            json!(true),
-            "yes as data is a boolean too, matching PyYAML"
-        );
-        assert!(!v.contains_key("hidden") && !v.contains_key("backup"));
+    fn directory_and_run_layers_stack_in_the_reference_order() {
+        {
+            let tmp = tree();
+            let dir = tmp.path();
+            let (_, mut store) = store(dir);
+            let v = store.for_host("web1", &scope(&["web1"]));
+            assert_eq!(
+                v["layer"],
+                json!("play_host"),
+                "playbook host_vars is the highest directory source"
+            );
+            assert_eq!(v["only_inv_all"], json!(1));
+            assert_eq!(
+                v["split"],
+                json!("second"),
+                "files in a directory apply in name order"
+            );
+            assert_eq!(v["from"], json!("ini_group"));
+            assert_eq!(v["tier"], json!("ini"));
+            assert_eq!(
+                v["play_all"],
+                json!(true),
+                "yes as data is a boolean too, matching PyYAML"
+            );
+            assert!(!v.contains_key("hidden") && !v.contains_key("backup"));
+        }
+        {
+            let tmp = tree();
+            let dir = tmp.path();
+            let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
+            let extra: Map<String, Value> = json!({"layer": "extra"}).as_object().unwrap().clone();
+            let mut store = VarStore::new(
+                &inv,
+                Some(&dir.join("inventory/hosts.ini")),
+                &dir.join("play"),
+                extra,
+            )
+            .unwrap();
+            let mut sc = scope(&["web1"]);
+            sc.play_vars = json!({"layer": "play", "p": 1})
+                .as_object()
+                .unwrap()
+                .clone();
+            sc.vars_files = vec![json!({"p": 2, "f": 1}).as_object().unwrap().clone()];
+            sc.task_vars = json!({"f": 2, "t": 1}).as_object().unwrap().clone();
+            store.set_fact("web1", "t", json!(2));
+            store.set_fact("web1", "fact", json!("set"));
+            let v = store.for_host("web1", &sc);
+            assert_eq!(v["layer"], json!("extra"), "extra vars beat everything");
+            assert_eq!(v["p"], json!(2), "vars_files beat play vars");
+            assert_eq!(v["f"], json!(2), "task vars beat vars_files");
+            assert_eq!(v["t"], json!(2), "set_fact beats task vars");
+            assert_eq!(v["fact"], json!("set"));
+        }
     }
 
-    #[test]
-    fn play_task_fact_and_extra_vars_stack_on_top() {
-        let tmp = tree();
-        let dir = tmp.path();
-        let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
-        let extra: Map<String, Value> = json!({"layer": "extra"}).as_object().unwrap().clone();
-        let mut store = VarStore::new(
-            &inv,
-            Some(&dir.join("inventory/hosts.ini")),
-            &dir.join("play"),
-            extra,
-        )
-        .unwrap();
-        let mut sc = scope(&["web1"]);
-        sc.play_vars = json!({"layer": "play", "p": 1})
-            .as_object()
-            .unwrap()
-            .clone();
-        sc.vars_files = vec![json!({"p": 2, "f": 1}).as_object().unwrap().clone()];
-        sc.task_vars = json!({"f": 2, "t": 1}).as_object().unwrap().clone();
-        store.set_fact("web1", "t", json!(2));
-        store.set_fact("web1", "fact", json!("set"));
-        let v = store.for_host("web1", &sc);
-        assert_eq!(v["layer"], json!("extra"), "extra vars beat everything");
-        assert_eq!(v["p"], json!(2), "vars_files beat play vars");
-        assert_eq!(v["f"], json!(2), "task vars beat vars_files");
-        assert_eq!(v["t"], json!(2), "set_fact beats task vars");
-        assert_eq!(v["fact"], json!("set"));
-    }
-
-    /// Every host variable the engine reads to decide where, as whom or under what a task runs
-    /// is one a managed host cannot set through `ansible_facts`. The names are read off the
-    /// source rather than listed here: every call of `host_setting` and of the transport's two
-    /// readers built on it, in every file of the crate outside its tests. And no other code may
-    /// read an `ansible_*` variable by name, so a reader cannot sit outside the scan.
-    ///
-    /// What would make this red: a connection, escalation or interpreter setting that
-    /// `restricted_fact` keeps. It was red on `ansible_remote_tmp`, which the reference keeps
-    /// and this engine derives the escalated agent's path from; or a new reader that goes
-    /// around `host_setting`.
+    /// Every host variable the engine reads to decide where, as whom or under what a task runs is
+    /// one a managed host cannot set through `ansible_facts`.
     #[test]
     fn every_host_setting_is_stripped_from_gathered_facts() {
         let reader = regex::Regex::new(
@@ -1393,209 +1387,207 @@ mod tests {
         );
     }
 
-    /// Gathered facts rank where ansible-core 2.19.12 ranks host facts: over an inventory host
-    /// variable, under the play's `vars:`, a task's `vars:` and a `set_fact`, whichever came
-    /// first. Measured on the development machine: an inventory `ansible_distribution=from-inventory`
-    /// reads `Ubuntu` after `setup`, a play `vars: {ansible_distribution: from-play}` still reads
-    /// `from-play`, a `set_fact` made before a second `setup` survives it, and a task's `vars:`
-    /// wins over the fact.
-    ///
-    /// What would make this red: gathered facts written into the `set_fact` layer, which puts a
-    /// managed host's answer over the author's own variables and lets a later `setup` erase a
-    /// `set_fact`. And a play variable that shadows a gathered name still counted as untrusted,
-    /// which would leave a template in it unrendered.
+    /// Gathered facts rank under the play and over the inventory; a role's defaults, vars and
+    /// parameters sit where the reference puts them.
     #[test]
-    fn gathered_facts_rank_under_the_play_and_over_the_inventory() {
-        let inv = Inventory::parse_ini("h1 ansible_inv=from-inventory\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        store.set_fact("h1", "ansible_kept", json!("from-set-fact"));
-        let facts = json!({"ansible_inv": "Ubuntu", "ansible_play": "Ubuntu", "ansible_task": "Ubuntu", "ansible_kept": "Ubuntu"});
-        store.gather_facts("h1", facts.as_object().unwrap());
-        let mut sc = scope(&["h1"]);
-        sc.play_vars = json!({"ansible_play": "from-play"})
-            .as_object()
-            .unwrap()
-            .clone();
-        sc.task_vars = json!({"ansible_task": "from-task"})
-            .as_object()
-            .unwrap()
-            .clone();
-        let v = store.for_host("h1", &sc);
-        assert_eq!(
-            v["ansible_inv"],
-            json!("Ubuntu"),
-            "a fact beats an inventory variable"
-        );
-        assert_eq!(
-            v["ansible_play"],
-            json!("from-play"),
-            "a play variable beats a fact"
-        );
-        assert_eq!(
-            v["ansible_task"],
-            json!("from-task"),
-            "a task variable beats a fact"
-        );
-        assert_eq!(
-            v["ansible_kept"],
-            json!("from-set-fact"),
-            "a later setup keeps a set_fact"
-        );
-        let untrusted = store.untrusted_of("h1", &sc);
-        assert!(
-            untrusted.contains("ansible_inv"),
-            "the fact that answers is untrusted"
-        );
-        for name in ["ansible_play", "ansible_task", "ansible_kept"] {
-            assert!(
-                !untrusted.contains(name),
-                "{name} answers with the author's value"
-            );
-        }
-        assert_eq!(
-            store.hostvars_shared("h1")["h1"]["ansible_kept"],
-            json!("from-set-fact"),
-            "hostvars ranks them the same way"
-        );
-    }
-
-    /// Where a role's three layers sit, one assertion per measured relation.
-    ///
-    /// Every value quoted here was read off ansible-core 2.19.12 on the development machine:
-    /// `defaults/main.yml` loses to an inventory host variable (`d=inv-host`), `vars/main.yml`
-    /// beats the play's `vars:` and loses to a task's `vars:` (`shared=task-var` with the role
-    /// still reading `v=role-var`), a role parameter beats a `set_fact` (`p=param` against a
-    /// fact of `fact`) and loses to `-e` (`p=extra`).
-    ///
-    /// What would make this red: any one layer applied at the wrong rank. Each assertion pins
-    /// one boundary, so a layer that slides past its neighbour names itself rather than leaving
-    /// a single "the role's value appears" to pass on a merge that is wrong everywhere else.
-    #[test]
-    fn the_role_layers_sit_where_the_reference_puts_them() {
-        let inv = Inventory::parse_ini("h1 d=inv-host\n").unwrap();
-        let role = |extra: Map<String, Value>| Scope {
-            role_defaults: json!({"d": "role-default", "shared": "role-default"})
+    fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
+        {
+            let inv = Inventory::parse_ini("h1 ansible_inv=from-inventory\n").unwrap();
+            let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+            store.set_fact("h1", "ansible_kept", json!("from-set-fact"));
+            let facts = json!({"ansible_inv": "Ubuntu", "ansible_play": "Ubuntu", "ansible_task": "Ubuntu", "ansible_kept": "Ubuntu"});
+            store.gather_facts("h1", facts.as_object().unwrap());
+            let mut sc = scope(&["h1"]);
+            sc.play_vars = json!({"ansible_play": "from-play"})
                 .as_object()
                 .unwrap()
-                .clone(),
-            role_vars: json!({"v": "role-var", "shared": "role-var"})
+                .clone();
+            sc.task_vars = json!({"ansible_task": "from-task"})
                 .as_object()
                 .unwrap()
-                .clone(),
-            role_params: json!({"p": "param"}).as_object().unwrap().clone(),
-            play_vars: json!({"shared": "play-var"}).as_object().unwrap().clone(),
-            task_vars: extra,
-            ..Scope::default()
-        };
-
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        store.set_fact("h1", "p", json!("fact"));
-        let v = store.for_host("h1", &role(Map::new()));
-        assert_eq!(
-            v["d"],
-            json!("inv-host"),
-            "a role default loses to an inventory variable"
-        );
-        assert_eq!(
-            v["shared"],
-            json!("role-var"),
-            "a role's vars beat the play's own vars:"
-        );
-        assert_eq!(
-            v["p"],
-            json!("param"),
-            "a role parameter beats a fact of the same name"
-        );
-
-        let task = json!({"shared": "task-var"}).as_object().unwrap().clone();
-        let v = store.for_host("h1", &role(task));
-        assert_eq!(
-            v["shared"],
-            json!("task-var"),
-            "a task's vars: beat a role's vars"
-        );
-        assert_eq!(
-            v["v"],
-            json!("role-var"),
-            "and leave the rest of them alone"
-        );
-
-        let extra: Map<String, Value> = json!({"p": "extra"}).as_object().unwrap().clone();
-        let mut store = VarStore::new(&inv, None, Path::new("."), extra).unwrap();
-        let v = store.for_host("h1", &role(Map::new()));
-        assert_eq!(
-            v["p"],
-            json!("extra"),
-            "an extra var beats a role parameter"
-        );
-    }
-
-    #[test]
-    fn magic_variables_are_present() {
-        let tmp = tree();
-        let dir = tmp.path();
-        let (_, mut store) = store(dir);
-        let v = store.for_host("web1", &scope(&["web1"]));
-        assert_eq!(v["inventory_hostname"], json!("web1"));
-        assert_eq!(v["inventory_hostname_short"], json!("web1"));
-        assert_eq!(v["group_names"], json!(["web"]));
-        for name in [
-            "hostvars",
-            "groups",
-            "ansible_play_hosts",
-            "ansible_play_hosts_all",
-            "ansible_play_batch",
-            "play_hosts",
-        ] {
+                .clone();
+            let v = store.for_host("h1", &sc);
+            assert_eq!(
+                v["ansible_inv"],
+                json!("Ubuntu"),
+                "a fact beats an inventory variable"
+            );
+            assert_eq!(
+                v["ansible_play"],
+                json!("from-play"),
+                "a play variable beats a fact"
+            );
+            assert_eq!(
+                v["ansible_task"],
+                json!("from-task"),
+                "a task variable beats a fact"
+            );
+            assert_eq!(
+                v["ansible_kept"],
+                json!("from-set-fact"),
+                "a later setup keeps a set_fact"
+            );
+            let untrusted = store.untrusted_of("h1", &sc);
             assert!(
-                v.get(name).is_none(),
-                "{name} is handed to templates as a shared view, not merged into the map"
+                untrusted.contains("ansible_inv"),
+                "the fact that answers is untrusted"
+            );
+            for name in ["ansible_play", "ansible_task", "ansible_kept"] {
+                assert!(
+                    !untrusted.contains(name),
+                    "{name} answers with the author's value"
+                );
+            }
+            assert_eq!(
+                store.hostvars_shared("h1")["h1"]["ansible_kept"],
+                json!("from-set-fact"),
+                "hostvars ranks them the same way"
             );
         }
-        let shared = store.shared_values(&scope(&["web1"]));
-        assert_eq!(shared["groups"]["web"], json!(["web1"]));
-        assert_eq!(shared["ansible_play_hosts"], json!(["web1"]));
-        assert_eq!(shared["ansible_play_hosts_all"], json!(["web1"]));
-        assert_eq!(shared["ansible_play_batch"], json!(["web1"]));
-        // Asking the host's variables by name, which is what an argument spec does, answers for
-        // the five as well: they are somewhere else, not gone.
-        let host = HostVars {
-            map: v.clone(),
-            hostvars: Arc::default(),
-            shared,
-            ..HostVars::default()
-        };
-        assert_eq!(
-            host.get("groups").map(|g| &g["web"]),
-            Some(&json!(["web1"]))
-        );
-        assert_eq!(host.get("inventory_hostname"), Some(&json!("web1")));
-        assert_eq!(
-            v["playbook_dir"],
-            json!(dir.join("play").display().to_string())
-        );
-        assert_eq!(
-            v["inventory_dir"],
-            json!(dir.join("inventory").display().to_string())
-        );
-        assert_eq!(
-            v["inventory_file"],
-            json!(dir.join("inventory/hosts.ini").display().to_string())
-        );
-        assert_eq!(v["omit"], json!(omit_token()));
-        assert_eq!(v["ansible_check_mode"], json!(false));
+        {
+            let inv = Inventory::parse_ini("h1 d=inv-host\n").unwrap();
+            let role = |extra: Map<String, Value>| Scope {
+                role_defaults: json!({"d": "role-default", "shared": "role-default"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                role_vars: json!({"v": "role-var", "shared": "role-var"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                role_params: json!({"p": "param"}).as_object().unwrap().clone(),
+                play_vars: json!({"shared": "play-var"}).as_object().unwrap().clone(),
+                task_vars: extra,
+                ..Scope::default()
+            };
+
+            let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+            store.set_fact("h1", "p", json!("fact"));
+            let v = store.for_host("h1", &role(Map::new()));
+            assert_eq!(
+                v["d"],
+                json!("inv-host"),
+                "a role default loses to an inventory variable"
+            );
+            assert_eq!(
+                v["shared"],
+                json!("role-var"),
+                "a role's vars beat the play's own vars:"
+            );
+            assert_eq!(
+                v["p"],
+                json!("param"),
+                "a role parameter beats a fact of the same name"
+            );
+
+            let task = json!({"shared": "task-var"}).as_object().unwrap().clone();
+            let v = store.for_host("h1", &role(task));
+            assert_eq!(
+                v["shared"],
+                json!("task-var"),
+                "a task's vars: beat a role's vars"
+            );
+            assert_eq!(
+                v["v"],
+                json!("role-var"),
+                "and leave the rest of them alone"
+            );
+
+            let extra: Map<String, Value> = json!({"p": "extra"}).as_object().unwrap().clone();
+            let mut store = VarStore::new(&inv, None, Path::new("."), extra).unwrap();
+            let v = store.for_host("h1", &role(Map::new()));
+            assert_eq!(
+                v["p"],
+                json!("extra"),
+                "an extra var beats a role parameter"
+            );
+        }
     }
 
-    /// `ansible_run_tags` and `ansible_skip_tags`, read by the condition of the `k3s_server`
-    /// role's `Apply K3S kubeconfig to control node` block, with `kubectl` present and the copy
-    /// before it unchanged. Measured on ansible-core 2.19.12: `run=['all'] skip=[]` with no tag
-    /// option, `run=['kubeconfig']` under `--tags kubeconfig`, `skip=['foo']` under
-    /// `--skip-tags foo`. Both are the engine's own words, so a host fact of either name loses.
-    ///
-    /// What would make this red: either name left unset, which fails the condition on an
-    /// undefined name on every host that has `kubectl`; the lists the run asked for not reaching
-    /// it, which leaves the block skipped under `--tags kubeconfig`; or the names taken from the
-    /// facts layer, which lets a host decide what the run was asked to do.
+    /// Magic variables are present, and the batch, live play and resolved play are three host lists.
+    #[test]
+    fn the_magic_variables_follow_the_batch_and_the_play() {
+        {
+            let tmp = tree();
+            let dir = tmp.path();
+            let (_, mut store) = store(dir);
+            let v = store.for_host("web1", &scope(&["web1"]));
+            assert_eq!(v["inventory_hostname"], json!("web1"));
+            assert_eq!(v["inventory_hostname_short"], json!("web1"));
+            assert_eq!(v["group_names"], json!(["web"]));
+            for name in [
+                "hostvars",
+                "groups",
+                "ansible_play_hosts",
+                "ansible_play_hosts_all",
+                "ansible_play_batch",
+                "play_hosts",
+            ] {
+                assert!(
+                    v.get(name).is_none(),
+                    "{name} is handed to templates as a shared view, not merged into the map"
+                );
+            }
+            let shared = store.shared_values(&scope(&["web1"]));
+            assert_eq!(shared["groups"]["web"], json!(["web1"]));
+            assert_eq!(shared["ansible_play_hosts"], json!(["web1"]));
+            assert_eq!(shared["ansible_play_hosts_all"], json!(["web1"]));
+            assert_eq!(shared["ansible_play_batch"], json!(["web1"]));
+            // Asking the host's variables by name, which is what an argument spec does, answers for
+            // the five as well: they are somewhere else, not gone.
+            let host = HostVars {
+                map: v.clone(),
+                hostvars: Arc::default(),
+                shared,
+                ..HostVars::default()
+            };
+            assert_eq!(
+                host.get("groups").map(|g| &g["web"]),
+                Some(&json!(["web1"]))
+            );
+            assert_eq!(host.get("inventory_hostname"), Some(&json!("web1")));
+            assert_eq!(
+                v["playbook_dir"],
+                json!(dir.join("play").display().to_string())
+            );
+            assert_eq!(
+                v["inventory_dir"],
+                json!(dir.join("inventory").display().to_string())
+            );
+            assert_eq!(
+                v["inventory_file"],
+                json!(dir.join("inventory/hosts.ini").display().to_string())
+            );
+            assert_eq!(v["omit"], json!(omit_token()));
+            assert_eq!(v["ansible_check_mode"], json!(false));
+        }
+        {
+            let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
+            let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+            let v = store.shared_values(&Scope {
+                play_hosts: vec!["h2".into(), "h3".into()],
+                batch_hosts: vec!["h2".into()],
+                all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+                ..Scope::default()
+            });
+            assert_eq!(v["ansible_play_hosts"], json!(["h2", "h3"]));
+            assert_eq!(v["ansible_play_batch"], json!(["h2"]));
+            assert_eq!(v["play_hosts"], json!(["h2"]));
+            assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
+            // The map is cached, and the next batch is a different answer: asking again with other
+            // lists has to rebuild it.
+            let next = store.shared_values(&Scope {
+                play_hosts: vec!["h3".into()],
+                batch_hosts: vec!["h3".into()],
+                all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+                ..Scope::default()
+            });
+            assert_eq!(next["ansible_play_hosts"], json!(["h3"]));
+            assert_eq!(next["ansible_play_batch"], json!(["h3"]));
+        }
+    }
+
+    /// The run's own tag lists decide the kubeconfig block; a host fact of either name loses.
     #[test]
     fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
         let inventory = Inventory::parse_ini("h1\n").unwrap();
@@ -1623,49 +1615,8 @@ mod tests {
         assert_eq!(holds(&mut store), (false, json!(["all"]), json!(["foo"])));
     }
 
-    /// The four host lists are three different answers: the play's resolved hosts never move,
-    /// the play's live hosts lose whoever failed, and the batch's live hosts are narrower still.
-    ///
-    /// Measured on ansible-core 2.19.12 with `serial: 2` over `h1, h2, h3`, `h1` failing in the
-    /// first batch: `h2` then reads `ansible_play_batch` as `['h2']`, `ansible_play_hosts` as
-    /// `['h2', 'h3']` and `ansible_play_hosts_all` as all three, and the deprecated `play_hosts`
-    /// answers with the batch.
-    ///
-    /// What would make this red: `ansible_play_batch` or `play_hosts` served from the play's
-    /// live list, which is what they were before `serial` existed - a task counting the hosts of
-    /// its own batch would then count the ones waiting for the next one.
-    #[test]
-    fn the_batch_the_live_play_and_the_resolved_play_are_three_lists() {
-        let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        let v = store.shared_values(&Scope {
-            play_hosts: vec!["h2".into(), "h3".into()],
-            batch_hosts: vec!["h2".into()],
-            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
-            ..Scope::default()
-        });
-        assert_eq!(v["ansible_play_hosts"], json!(["h2", "h3"]));
-        assert_eq!(v["ansible_play_batch"], json!(["h2"]));
-        assert_eq!(v["play_hosts"], json!(["h2"]));
-        assert_eq!(v["ansible_play_hosts_all"], json!(["h1", "h2", "h3"]));
-        // The map is cached, and the next batch is a different answer: asking again with other
-        // lists has to rebuild it. What would make this red: a cache that never checks its key.
-        let next = store.shared_values(&Scope {
-            play_hosts: vec!["h3".into()],
-            batch_hosts: vec!["h3".into()],
-            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
-            ..Scope::default()
-        });
-        assert_eq!(next["ansible_play_hosts"], json!(["h3"]));
-        assert_eq!(next["ansible_play_batch"], json!(["h3"]));
-    }
-
-    /// The view `hostvars` reads: one shared map for every host of the inventory, and a
-    /// completed one for a host the inventory does not carry.
-    ///
-    /// What would make this red: a host's own identity dropped from its view, a view that
-    /// nests `hostvars` inside itself, an implicit `localhost` left out of the map it is about
-    /// to render against, or two hosts of the inventory handed two different maps.
+    /// The view `hostvars` reads: one shared map for every host of the inventory, and a completed
+    /// one for a host the inventory does not carry.
     #[test]
     fn the_shared_hostvars_view_answers_for_every_host() {
         let tmp = tree();
@@ -1792,17 +1743,7 @@ mod tests {
         }
     }
 
-    /// The three layers `layered_for_host` hands out read, name for name, like the one merged
-    /// map the store used to build for every task, laid under the inventory-wide values. 500
-    /// random stores and scopes, every layer drawing its names from one small pool so that they
-    /// collide with each other, with the magic variables and with the restricted names a gather
-    /// strips. Each case reads every host twice around more writes, with the same scope, so a
-    /// kept facts layer that should have been rebuilt is read.
-    ///
-    /// What would make this red: two layers merged in the wrong order; a gathered name left in
-    /// the facts layer although a layer above it answers, the host's own magic variables among
-    /// those layers, so a fact named `inventory_hostname` would win; the facts read over the
-    /// inventory-wide values; a kept facts layer served after the host gathered again.
+    /// The layers `layered_for_host` hands out read, name for name, like the one merged map.
     #[test]
     fn the_layered_view_reads_like_the_merged_one() {
         let seed = 0x5eed_1a7e_u64;
@@ -1836,153 +1777,125 @@ mod tests {
         }
     }
 
-    /// A host that leaves the play takes its kept facts layer with it, and costs the hosts still
-    /// in it nothing: no entry of theirs is rebuilt. Each host has a fact a `set_fact` outranks,
-    /// so each has an entry to keep.
-    ///
-    /// What would make this red: entries keyed on the inventory-wide map, which every change of
-    /// the host lists replaces (the others are rebuilt); a host's entry kept after it left.
+    /// A host leaving the play or writing a fact rebuilds only its own entries; a host's facts are
+    /// shared and carry nothing of the inventory.
     #[test]
-    fn a_host_leaving_the_play_leaves_the_others_facts_alone() {
-        let inventory = Inventory::parse_ini("h1\nh2\nh3\n").unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
-        for host in ["h1", "h2", "h3"] {
-            store.gather_facts(
-                host,
-                json!({"ansible_x": 1, "ansible_y": 2}).as_object().unwrap(),
-            );
-            store.set_fact(host, "ansible_x", json!("author"));
-        }
-        let all = scope(&["h1", "h2", "h3"]);
-        for host in ["h1", "h2", "h3"] {
-            assert_eq!(
-                store.layered_for_host(host, &all).facts.get("ansible_x"),
-                None
-            );
-        }
-        let built = |store: &VarStore| {
-            ["h1", "h2", "h3"].map(|h| store.facts_built.get(h).copied().unwrap_or(0))
-        };
-        assert_eq!(built(&store), [1, 1, 1]);
-        // `h2` went unreachable: the lists move, and the two left read on.
-        let left = scope(&["h1", "h3"]);
-        for host in ["h1", "h3"] {
-            let layers = store.layered_for_host(host, &left);
-            assert_eq!(layers.facts.get("ansible_y"), Some(&json!(2)));
-        }
-        assert_eq!(built(&store), [1, 1, 1], "no entry of h1 or h3 built again");
-        assert!(
-            !store.host_facts.contains_key("h2"),
-            "h2's entry left with it"
-        );
-        assert!(store.host_facts.contains_key("h1") && store.host_facts.contains_key("h3"));
-    }
-
-    /// A host's facts cost one copy of its own facts at most, never a copy of anything the
-    /// inventory shares. With nothing outranking them, a task reads the gathered map itself.
-    ///
-    /// What would make this red: the inventory-wide values merged into a host's facts layer (a
-    /// copy of `groups` and the host lists per host, the size of the inventory each); the facts
-    /// copied even when nothing outranks them.
-    #[test]
-    fn a_host_s_facts_are_shared_and_carry_nothing_of_the_inventory() {
-        let hosts: Vec<String> = (0..50).map(|i| format!("h{i:02}")).collect();
-        let text = hosts.join("\n");
-        let inventory = Inventory::parse_ini(&format!("[web]\n{text}\n[db]\n{text}\n")).unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
-        let names: Vec<&str> = hosts.iter().map(String::as_str).collect();
-        let play = scope(&names);
-        let facts = json!({"ansible_x": 1, "ansible_y": 2});
-        for host in &names {
-            store.gather_facts(host, facts.as_object().unwrap());
-        }
-        store.set_fact("h01", "ansible_x", json!("author"));
-        let plain = store.layered_for_host("h00", &play);
-        assert!(
-            Arc::ptr_eq(&plain.facts, &store.gathered["h00"]),
-            "shared, not copied"
-        );
-        let outranked = store.layered_for_host("h01", &play);
-        for layers in [&plain, &outranked] {
+    fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
+        {
+            let inventory = Inventory::parse_ini("h1\nh2\nh3\n").unwrap();
+            let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+            for host in ["h1", "h2", "h3"] {
+                store.gather_facts(
+                    host,
+                    json!({"ansible_x": 1, "ansible_y": 2}).as_object().unwrap(),
+                );
+                store.set_fact(host, "ansible_x", json!("author"));
+            }
+            let all = scope(&["h1", "h2", "h3"]);
+            for host in ["h1", "h2", "h3"] {
+                assert_eq!(
+                    store.layered_for_host(host, &all).facts.get("ansible_x"),
+                    None
+                );
+            }
+            let built = |store: &VarStore| {
+                ["h1", "h2", "h3"].map(|h| store.facts_built.get(h).copied().unwrap_or(0))
+            };
+            assert_eq!(built(&store), [1, 1, 1]);
+            // `h2` went unreachable: the lists move, and the two left read on.
+            let left = scope(&["h1", "h3"]);
+            for host in ["h1", "h3"] {
+                let layers = store.layered_for_host(host, &left);
+                assert_eq!(layers.facts.get("ansible_y"), Some(&json!(2)));
+            }
+            assert_eq!(built(&store), [1, 1, 1], "no entry of h1 or h3 built again");
             assert!(
-                layers
-                    .facts
-                    .keys()
-                    .all(|k| store.gathered["h01"].contains_key(k)),
-                "facts only: {:?}",
-                layers.facts.keys().collect::<Vec<_>>()
+                !store.host_facts.contains_key("h2"),
+                "h2's entry left with it"
+            );
+            assert!(store.host_facts.contains_key("h1") && store.host_facts.contains_key("h3"));
+        }
+        {
+            let hosts: Vec<String> = (0..50).map(|i| format!("h{i:02}")).collect();
+            let text = hosts.join("\n");
+            let inventory =
+                Inventory::parse_ini(&format!("[web]\n{text}\n[db]\n{text}\n")).unwrap();
+            let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+            let names: Vec<&str> = hosts.iter().map(String::as_str).collect();
+            let play = scope(&names);
+            let facts = json!({"ansible_x": 1, "ansible_y": 2});
+            for host in &names {
+                store.gather_facts(host, facts.as_object().unwrap());
+            }
+            store.set_fact("h01", "ansible_x", json!("author"));
+            let plain = store.layered_for_host("h00", &play);
+            assert!(
+                Arc::ptr_eq(&plain.facts, &store.gathered["h00"]),
+                "shared, not copied"
+            );
+            let outranked = store.layered_for_host("h01", &play);
+            for layers in [&plain, &outranked] {
+                assert!(
+                    layers
+                        .facts
+                        .keys()
+                        .all(|k| store.gathered["h01"].contains_key(k)),
+                    "facts only: {:?}",
+                    layers.facts.keys().collect::<Vec<_>>()
+                );
+            }
+            assert_eq!(outranked.facts.len(), store.gathered["h01"].len() - 1);
+            assert_eq!(
+                store.host_facts.len(),
+                1,
+                "one entry, for the host with an outranked fact"
             );
         }
-        assert_eq!(outranked.facts.len(), store.gathered["h01"].len() - 1);
-        assert_eq!(
-            store.host_facts.len(),
-            1,
-            "one entry, for the host with an outranked fact"
-        );
+        {
+            let inventory = Inventory::parse_ini("h1\nh2\n").unwrap();
+            let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+            let built = |store: &VarStore, host: &str| store.views_built.get(host).copied();
+            let first = store.hostvars_shared("h1");
+            assert_eq!(
+                (built(&store, "h1"), built(&store, "h2")),
+                (Some(1), Some(1))
+            );
+
+            store.set_untrusted_fact("h1", "r", json!({"rc": 0}));
+            let second = store.hostvars_shared("h2");
+            assert_eq!(second["h1"]["r"], json!({"rc": 0}), "the write is seen");
+            assert_eq!(
+                (built(&store, "h1"), built(&store, "h2")),
+                (Some(2), Some(1))
+            );
+            assert!(
+                first["h1"].get("r").is_none(),
+                "a held map keeps what it saw"
+            );
+
+            store.gather_facts("h2", json!({"ansible_x": 1}).as_object().unwrap());
+            store.set_fact("h2", "y", json!(2));
+            let third = store.hostvars_shared("h1");
+            assert_eq!(third["h2"]["ansible_x"], json!(1));
+            assert_eq!(third["h2"]["y"], json!(2));
+            assert_eq!(
+                (built(&store, "h1"), built(&store, "h2")),
+                (Some(2), Some(2))
+            );
+            assert!(
+                second["h2"].get("y").is_none(),
+                "a held map keeps what it saw"
+            );
+
+            let fourth = store.hostvars_shared("h2");
+            assert!(
+                Arc::ptr_eq(&third, &fourth),
+                "nothing written, nothing rebuilt"
+            );
+        }
     }
 
-    /// Only the host that wrote a fact has its `hostvars` entry built again, and the entry is the
-    /// new one: the other host reads it on its very next task. A render still holding the
-    /// previous map keeps what it saw.
-    ///
-    /// What would make this red: every write dropping the whole map again (the other host's
-    /// entry is rebuilt, and counted); a write that marks nothing (the entry read is stale).
-    #[test]
-    fn a_fact_written_on_one_host_leaves_the_other_hosts_views_alone() {
-        let inventory = Inventory::parse_ini("h1\nh2\n").unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
-        let built = |store: &VarStore, host: &str| store.views_built.get(host).copied();
-        let first = store.hostvars_shared("h1");
-        assert_eq!(
-            (built(&store, "h1"), built(&store, "h2")),
-            (Some(1), Some(1))
-        );
-
-        store.set_untrusted_fact("h1", "r", json!({"rc": 0}));
-        let second = store.hostvars_shared("h2");
-        assert_eq!(second["h1"]["r"], json!({"rc": 0}), "the write is seen");
-        assert_eq!(
-            (built(&store, "h1"), built(&store, "h2")),
-            (Some(2), Some(1))
-        );
-        assert!(
-            first["h1"].get("r").is_none(),
-            "a held map keeps what it saw"
-        );
-
-        store.gather_facts("h2", json!({"ansible_x": 1}).as_object().unwrap());
-        store.set_fact("h2", "y", json!(2));
-        let third = store.hostvars_shared("h1");
-        assert_eq!(third["h2"]["ansible_x"], json!(1));
-        assert_eq!(third["h2"]["y"], json!(2));
-        assert_eq!(
-            (built(&store, "h1"), built(&store, "h2")),
-            (Some(2), Some(2))
-        );
-        assert!(
-            second["h2"].get("y").is_none(),
-            "a held map keeps what it saw"
-        );
-
-        let fourth = store.hostvars_shared("h2");
-        assert!(
-            Arc::ptr_eq(&third, &fourth),
-            "nothing written, nothing rebuilt"
-        );
-    }
-
-    /// One name per layer, each holding `{{ 1 + 1 }}`, rendered through the view the engine now
-    /// builds and through the merged map it used to build: the same answer and the same set of
-    /// names that are data, for every layer. The gathered name and the untrusted fact stay text;
-    /// a play variable over a gathered name, and one built from a gathered name, behave as
-    /// before.
-    ///
-    /// A fact named `groups` loses to the inventory's own, as it did when it sat in the map
-    /// under the inventory-wide values.
-    ///
-    /// What would make this red: a gathered name reaching a template without its taint, which
-    /// renders it to `2`; a shadowed gathered name still answering from the facts layer; a
-    /// template reading the facts before the inventory-wide values.
+    /// Every layer keeps its trust through the layered view: gathered and untrusted names stay text.
     #[test]
     fn every_layer_keeps_its_trust_through_the_layered_view() {
         let inventory = Inventory::parse_ini("h1 i=\"{{ 1 + 1 }}\"\n").unwrap();
@@ -2090,12 +2003,7 @@ mod tests {
         );
     }
 
-    /// `lookup('template', ...)` renders its file against the host's variables, the gathered
-    /// facts included, and the two names it writes itself still beat a fact of the same name:
-    /// the same text as through the merged map.
-    ///
-    /// What would make this red: the lookup rebuilding its variables without the facts layer
-    /// (the fact is undefined); a fact named `template_path` answering over the lookup's own.
+    /// A gathered fact reaches a template lookup, with the same text as through the merged map.
     #[test]
     fn a_gathered_fact_reaches_a_template_lookup() {
         let tmp = scratch();
@@ -2135,99 +2043,84 @@ mod tests {
         assert_eq!(got, json!("hello t.j2"));
     }
 
+    /// A short hostname drops the domain; a host sharing a group's name still gets its variables.
     #[test]
-    fn a_short_hostname_drops_the_domain() {
-        let inv = Inventory::parse_ini("web1.example.com\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
-        assert_eq!(v["inventory_hostname_short"], json!("web1"));
-    }
-
-    #[test]
-    fn a_host_that_shares_a_group_name_still_gets_its_variables() {
-        // Ansible warns "Found both group and host with same name" and runs the host.
-        let inv = Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        let v = store.for_host("db", &scope(&["db"]));
-        assert_eq!(v["inventory_hostname"], json!("db"));
-        assert_eq!(v["x"], json!(1));
-        assert_eq!(v["from"], json!("group"));
-    }
-
-    #[test]
-    fn extra_vars_take_key_value_json_and_files() {
-        let tmp = tree();
-        let dir = tmp.path();
-        write(dir, "extra.yml", "from_file: 1\nlayer: file\n");
-        let parsed = parse_extra_vars(
-            &[
-                "a=1 b=two".to_string(),
-                r#"{"c": [1]}"#.to_string(),
-                "@extra.yml".to_string(),
-            ],
-            dir,
-        )
-        .unwrap();
-        assert_eq!(parsed["a"], json!("1"), "key=value extra vars are strings");
-        assert_eq!(parsed["b"], json!("two"));
-        assert_eq!(parsed["c"], json!([1]));
-        assert_eq!(parsed["from_file"], json!(1));
-        assert_eq!(parsed["layer"], json!("file"));
-    }
-
-    #[test]
-    fn ansible_version_comes_from_the_reference_file() {
-        let v = ansible_version();
-        let reference = include_str!("../tests/golden/ANSIBLE_VERSION").trim();
-        assert_eq!(v["full"], json!(reference));
-        assert_eq!(v["major"], json!(2));
-    }
-
-    #[test]
-    fn a_broken_vars_file_names_itself() {
-        let tmp = tree();
-        let dir = tmp.path();
-        write(dir, "play/group_vars/all.yml", "a: [1,\n");
-        let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
-        let err = VarStore::new(
-            &inv,
-            Some(&dir.join("inventory/hosts.ini")),
-            &dir.join("play"),
-            Map::new(),
-        )
-        .unwrap_err();
-        assert!(format!("{err:#}").contains("all.yml"));
-    }
-
-    /// A vars file holding a document start and a comment and nothing else is an empty mapping.
-    /// The two texts are the ones `geerlingguy.docker` and `geerlingguy.git` ship as
-    /// `vars/main.yml`; measured on ansible-core 2.19.12, the reference loads both as empty, where
-    /// this engine refused them with `a variables file must contain a mapping`. A file holding a
-    /// scalar is still refused.
-    ///
-    /// What would make this red: the empty document read as anything but null on its way out of
-    /// the YAML loader (saphyr resolves it to an empty string), or a fix that accepts any scalar
-    /// in place of a mapping, which lets `42` through.
-    #[test]
-    fn a_vars_file_holding_only_a_comment_is_empty_and_a_scalar_is_refused() {
-        let tmp = scratch();
-        let dir = tmp.path();
-        for text in [
-            "---\n# Empty file\n",
-            "---\n# This space intentionally left blank.\n",
-        ] {
-            let file = dir.join("main.yml");
-            std::fs::write(&file, text).unwrap();
-            assert_eq!(load_vars_file(&file).unwrap(), Map::new(), "{text:?}");
+    fn a_short_hostname_drops_the_domain_and_a_homonym_keeps_its_variables() {
+        {
+            let inv = Inventory::parse_ini("web1.example.com\n").unwrap();
+            let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+            let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
+            assert_eq!(v["inventory_hostname_short"], json!("web1"));
         }
-        for text in ["42\n", "\"x\"\n", "---\n''\n"] {
-            let file = dir.join("main.yml");
-            std::fs::write(&file, text).unwrap();
-            let err = load_vars_file(&file).unwrap_err();
-            assert!(
-                format!("{err:#}").contains("a variables file must contain a mapping"),
-                "{text:?}: {err:#}"
-            );
+        {
+            // Ansible warns "Found both group and host with same name" and runs the host.
+            let inv =
+                Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
+            let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+            let v = store.for_host("db", &scope(&["db"]));
+            assert_eq!(v["inventory_hostname"], json!("db"));
+            assert_eq!(v["x"], json!(1));
+            assert_eq!(v["from"], json!("group"));
+        }
+    }
+
+    /// Extra vars take key=value, JSON and files; a broken vars file names itself, a comment-only
+    /// one is empty and a scalar is refused.
+    #[test]
+    fn extra_vars_and_vars_files_are_read_or_refused_by_name() {
+        {
+            let tmp = tree();
+            let dir = tmp.path();
+            write(dir, "extra.yml", "from_file: 1\nlayer: file\n");
+            let parsed = parse_extra_vars(
+                &[
+                    "a=1 b=two".to_string(),
+                    r#"{"c": [1]}"#.to_string(),
+                    "@extra.yml".to_string(),
+                ],
+                dir,
+            )
+            .unwrap();
+            assert_eq!(parsed["a"], json!("1"), "key=value extra vars are strings");
+            assert_eq!(parsed["b"], json!("two"));
+            assert_eq!(parsed["c"], json!([1]));
+            assert_eq!(parsed["from_file"], json!(1));
+            assert_eq!(parsed["layer"], json!("file"));
+        }
+        {
+            let tmp = tree();
+            let dir = tmp.path();
+            write(dir, "play/group_vars/all.yml", "a: [1,\n");
+            let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
+            let err = VarStore::new(
+                &inv,
+                Some(&dir.join("inventory/hosts.ini")),
+                &dir.join("play"),
+                Map::new(),
+            )
+            .unwrap_err();
+            assert!(format!("{err:#}").contains("all.yml"));
+        }
+        {
+            let tmp = scratch();
+            let dir = tmp.path();
+            for text in [
+                "---\n# Empty file\n",
+                "---\n# This space intentionally left blank.\n",
+            ] {
+                let file = dir.join("main.yml");
+                std::fs::write(&file, text).unwrap();
+                assert_eq!(load_vars_file(&file).unwrap(), Map::new(), "{text:?}");
+            }
+            for text in ["42\n", "\"x\"\n", "---\n''\n"] {
+                let file = dir.join("main.yml");
+                std::fs::write(&file, text).unwrap();
+                let err = load_vars_file(&file).unwrap_err();
+                assert!(
+                    format!("{err:#}").contains("a variables file must contain a mapping"),
+                    "{text:?}: {err:#}"
+                );
+            }
         }
     }
 }

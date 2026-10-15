@@ -1808,20 +1808,14 @@ pub(crate) fn after_pending(c: &Compiled, pos: usize, cleanup: usize) -> Option<
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use serde_json::json;
 
     use super::*;
     use crate::playbook::parse;
     use crate::testing::{compiled, play, scratch};
 
-    /// The three states the doc comment on [`beside_or_in_role`] measures against
-    /// UBUNTU22-CIS: only beside the importer, only in the role's own `tasks/`, and both -
-    /// the one beside the importer winning whenever it is there.
-    ///
-    /// What would make this red: the role fallback never taking over even when nothing sits
-    /// beside the importer, which is the one behaviour every automated test before this one
-    /// left to a doc comment and a full third-party role in `bench-compile` - a recipe outside
-    /// this crate's own test gate.
+    /// A file beside the importer wins; the role's own `tasks/` is the fallback.
     #[test]
     fn beside_or_in_role_prefers_beside_and_falls_back_to_the_role() {
         let dir_guard = scratch();
@@ -1886,51 +1880,49 @@ mod tests {
             .collect())
     }
 
-    /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same
-    /// way it cuts them.
-    ///
-    /// The percentages are the half to get wrong: `int()` truncates rather than rounds, so both
-    /// `"34%"` and `"50%"` of three hosts are one, and a percentage is always taken of the whole
-    /// host list, so `[1, "50%"]` is three batches of one rather than one and then two. A
-    /// percentage that truncates to zero is one host and never none.
-    ///
-    /// What would make this red: rounding a percentage up, taking it of what is left rather than
-    /// of the whole, or letting a zero through - which would ask for a batch of nobody and cut
-    /// batches for ever.
-    #[test]
-    fn serial_cuts_the_batches_the_reference_cuts() {
-        for (serial, sizes) in [
-            (json!(2), vec![2, 1]),
-            (json!(1), vec![1, 1, 1]),
-            (json!(0), vec![3]),
-            (json!(-1), vec![3]),
-            (json!(10), vec![3]),
-            (json!(true), vec![1, 1, 1]),
-            (json!("2"), vec![2, 1]),
-            (json!("10%"), vec![1, 1, 1]),
-            (json!("0%"), vec![1, 1, 1]),
-            (json!("34%"), vec![1, 1, 1]),
-            (json!("50%"), vec![1, 1, 1]),
-            (json!("100%"), vec![3]),
-            (json!([1, 5]), vec![1, 2]),
-            (json!([1, "50%"]), vec![1, 1, 1]),
-            (json!([]), vec![3]),
-        ] {
-            assert_eq!(
-                cut(Some(serial.clone()), 3).unwrap_or_else(|e| panic!("{serial}: {e:#}")),
-                sizes,
-                "serial: {serial}"
-            );
+    /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same way
+    /// it cuts them, and the ones nobody can read, refused by keyword.
+    #[rstest]
+    #[case::two(json!(2), Some(vec![2, 1]))]
+    #[case::one(json!(1), Some(vec![1, 1, 1]))]
+    #[case::zero(json!(0), Some(vec![3]))]
+    #[case::negative(json!(-1), Some(vec![3]))]
+    #[case::more_than_hosts(json!(10), Some(vec![3]))]
+    #[case::boolean(json!(true), Some(vec![1, 1, 1]))]
+    #[case::text_number(json!("2"), Some(vec![2, 1]))]
+    #[case::ten_percent(json!("10%"), Some(vec![1, 1, 1]))]
+    #[case::zero_percent(json!("0%"), Some(vec![1, 1, 1]))]
+    #[case::thirty_four_percent(json!("34%"), Some(vec![1, 1, 1]))]
+    #[case::fifty_percent(json!("50%"), Some(vec![1, 1, 1]))]
+    #[case::hundred_percent(json!("100%"), Some(vec![3]))]
+    #[case::list(json!([1, 5]), Some(vec![1, 2]))]
+    #[case::list_with_percent(json!([1, "50%"]), Some(vec![1, 1, 1]))]
+    #[case::empty_list(json!([]), Some(vec![3]))]
+    #[case::word(json!("abc"), None)]
+    #[case::bad_percent(json!("x%"), None)]
+    #[case::mapping(json!({}), None)]
+    #[case::list_with_word(json!([1, "abc"]), None)]
+    #[case::percent_with_trailing_space(json!("50% "), None)]
+    fn serial_cuts_what_the_reference_cuts(
+        #[case] serial: Value,
+        #[case] sizes: Option<Vec<usize>>,
+    ) {
+        match (cut(Some(serial.clone()), 3), sizes) {
+            (Ok(got), Some(want)) => assert_eq!(got, want, "serial: {serial}"),
+            (Err(err), None) => {
+                let err = format!("{err:#}");
+                assert!(
+                    err.contains("Error processing keyword 'serial'"),
+                    "{serial}: {err}"
+                );
+            }
+            (got, want) => panic!("serial {serial}: got {got:?}, wanted {want:?}"),
         }
         assert_eq!(cut(None, 3).unwrap(), vec![3], "no serial is one batch");
     }
 
-    /// `serial` is rendered before it is read, against the variables the play was given, and a
-    /// name with no value stops the run the way the reference's does - measured, exit 4 and
-    /// `Error processing keyword 'serial': 'n' is undefined`, with no banner in front of it.
-    ///
-    /// What would make this red: a template taken literally, which would refuse `"{{ n }}"` as a
-    /// number it cannot read even when `-e n=2` gave it one.
+    /// `serial` is rendered first against the play's variables; a name with no value stops the
+    /// run (measured: exit 4, `Error processing keyword 'serial'`).
     #[test]
     fn a_templated_serial_is_rendered_first() {
         let hosts: Vec<Host> = ["h1", "h2", "h3"]
@@ -1953,31 +1945,6 @@ mod tests {
             batches(&hosts, Some(&json!("{{ n }}")), &templar, &Map::new()).unwrap_err()
         );
         assert!(err.contains("Error processing keyword 'serial'"), "{err}");
-    }
-
-    /// A `serial` nobody can read stops the run rather than running on a guess, and says which
-    /// keyword and which value it could not read.
-    ///
-    /// What would make this red: a value that falls through to a default batch size, which would
-    /// run the play in a shape the operator never asked for.
-    #[test]
-    fn an_unreadable_serial_is_refused_by_name() {
-        // `"50% "` - a percentage with trailing whitespace after the sign - is refused rather
-        // than read as 50%: the reference's own `endswith('%')` test runs on the raw string and
-        // misses it too, so it falls to `int("50% ")` and crashes the way `serial: abc` does.
-        for serial in [
-            json!("abc"),
-            json!("x%"),
-            json!({}),
-            json!([1, "abc"]),
-            json!("50% "),
-        ] {
-            let err = format!("{:#}", cut(Some(serial.clone()), 3).unwrap_err());
-            assert!(
-                err.contains("Error processing keyword 'serial'"),
-                "{serial}: {err}"
-            );
-        }
     }
 
     /// Whether a step is one of the flush points the compiler puts in itself. They carry no task
@@ -2060,9 +2027,6 @@ mod tests {
 
     /// The tree flattens in playbook order, section by section, and every block's span covers
     /// exactly the steps it holds.
-    ///
-    /// What would make this red: a section laid out in the wrong order, or a span whose end
-    /// falls short of the steps it holds - both of which leave a step the driver walks past.
     #[test]
     fn a_nested_play_flattens_in_playbook_order() {
         let c = compiled(NESTED);
@@ -2091,8 +2055,6 @@ mod tests {
         assert_eq!((nested.always.start, nested.always.end), (4, 5));
         assert_eq!(nested.parent, Some(0));
         assert_eq!(nested.section, Section::Body);
-        // Every span ends inside the list it describes, which is what keeps `after` from
-        // naming a step that does not exist.
         for span in &c.blocks {
             assert!(span.always.end <= c.steps.len());
             assert_eq!(span.body.end, span.rescue.start);
@@ -2100,38 +2062,25 @@ mod tests {
         }
     }
 
-    /// A host that fails nothing never enters a rescue, at any depth, and leaves each block
-    /// through its `always`.
-    ///
-    /// What would make this red: `after` returning `pos + 1` everywhere, which walks both
-    /// rescue sections on the happy path - the failure handling of a playbook running as if it
-    /// were ordinary work.
-    #[test]
-    fn the_happy_path_steps_over_every_rescue() {
-        let c = compiled(NESTED);
-        assert_eq!(
-            walk(&c, 0),
-            [
-                "before",
-                "body one",
-                "nested body",
-                "nested always",
-                "outer always",
-                "after",
-            ]
-        );
-    }
-
-    /// A block that ends where its parent's body ends leaves through the parent's `always`, not
-    /// through the parent's `rescue`.
-    ///
-    /// What would make this red: `after` returning the inner block's `always.start` and stopping
-    /// there. That index is the parent's rescue when the inner block has no `always` of its own,
-    /// so the happy path would run the outer recovery with nothing to recover from.
-    #[test]
-    fn leaving_a_block_at_the_end_of_a_parent_body_steps_over_the_parent_rescue() {
-        let c = compiled(
-            r#"
+    /// How a host walks a compiled play: with no failure, after a failure at a step, and where
+    /// a rescue takes it.
+    #[rstest]
+    #[case::nested(
+        NESTED,
+        &["before", "body one", "nested body", "nested always", "outer always", "after"],
+        &[("nested body", &["nested always", "outer always"][..])],
+        &[
+            ("body one", Some("outer rescue")),
+            ("nested body", Some("nested rescue")),
+            ("nested rescue", Some("outer rescue")),
+            ("nested always", Some("outer rescue")),
+            ("outer rescue", None),
+            ("outer always", None),
+            ("before", None),
+        ]
+    )]
+    #[case::block_ending_where_its_parent_body_ends(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2147,53 +2096,24 @@ mod tests {
     - name: after
       command: "true"
 "#,
-        );
-        assert_eq!(
-            names(&c),
-            ["inner only", "outer rescue", "outer always", "after"]
-        );
-        assert_eq!(walk(&c, 0), ["inner only", "outer always", "after"]);
-    }
-
-    /// A block with neither section behaves like the tasks written out in its place, and a task
-    /// outside every block just moves on.
-    #[test]
-    fn a_bare_block_and_a_bare_task_move_to_the_next_step() {
-        let c = compiled(
-            "- hosts: all\n  tasks:\n    - block:\n        - name: one\n          command: \"true\"\n    - name: two\n      command: \"true\"\n",
-        );
-        assert_eq!(walk(&c, 0), ["one", "two"]);
-    }
-
-    /// A rescue that is empty leaves `always` starting where the body ended, so the happy path
-    /// walks straight into it.
-    #[test]
-    fn an_empty_rescue_leads_straight_into_always() {
-        let c = compiled(
-            "- hosts: all\n  tasks:\n    - block:\n        - name: one\n          command: \"true\"\n      always:\n        - name: cleanup\n          command: \"true\"\n",
-        );
-        assert_eq!(c.blocks[0].rescue, 1..1);
-        assert_eq!(walk(&c, 0), ["one", "cleanup"]);
-    }
-
-    /// A failure runs the `always` of every block around it, innermost first, and then the play
-    /// is over for that host.
-    ///
-    /// What would make this red: a failure that leaves the play straight away, which skips the
-    /// cleanup the playbook wrote; or one that walks into the outer block's body again.
-    #[test]
-    fn a_failure_runs_every_enclosing_always_and_then_stops() {
-        let c = compiled(NESTED);
-        // "nested body" fails.
-        assert_eq!(walk_failure(&c, 2), ["nested always", "outer always"]);
-    }
-
-    /// A failure inside an `always` section does not finish it: measured, the rest of the
-    /// section is skipped and the host leaves through whatever is outside.
-    #[test]
-    fn a_failure_inside_an_always_leaves_the_rest_of_it() {
-        let c = compiled(
-            r#"
+        &["inner only", "outer always", "after"],
+        &[],
+        &[]
+    )]
+    #[case::bare_block_and_task(
+        "- hosts: all\n  tasks:\n    - block:\n        - name: one\n          command: \"true\"\n    - name: two\n      command: \"true\"\n",
+        &["one", "two"],
+        &[],
+        &[]
+    )]
+    #[case::empty_rescue_leads_into_always(
+        "- hosts: all\n  tasks:\n    - block:\n        - name: one\n          command: \"true\"\n      always:\n        - name: cleanup\n          command: \"true\"\n",
+        &["one", "cleanup"],
+        &[],
+        &[]
+    )]
+    #[case::failure_inside_an_always_ends_the_section(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2205,37 +2125,15 @@ mod tests {
         - name: second cleanup
           command: "true"
 "#,
-        );
-        let cleanup = c.blocks[0].always.clone();
-        assert_eq!(c.steps[cleanup.start].task.name, "first cleanup");
-        assert_eq!(
-            after_pending(&c, cleanup.start, cleanup.end)
-                .map(|(p, _)| c.steps[p].task.name.as_str()),
-            Some("second cleanup"),
-            "a pending failure still finishes the section"
-        );
-        assert_eq!(
-            after_failure(&c, cleanup.start),
-            None,
-            "a failure raised here ends the section instead"
-        );
-    }
-
-    /// A cleanup written as a block runs to the end of the section, and a failure inside that
-    /// block ends the cleanup where the reference ends it.
-    ///
-    /// Measured on ansible-core 2.19.12, on this shape: both cleanup tasks run and the recap
-    /// reads `ok=2 changed=2 failed=1`; with the first of them failing instead, neither the
-    /// second nor the step behind the nested block runs and the recap reads `failed=2`.
-    ///
-    /// What would make this red: reading the section a host is draining off the step it is on.
-    /// A cleanup task inside a nested block carries that block's `Body`, so the host would take
-    /// the first such step for the end of the cleanup and leave the play with the rest of it
-    /// never run and never reported - a run that exits having done less than the playbook says.
-    #[test]
-    fn a_cleanup_written_as_a_block_runs_to_the_end_of_the_section() {
-        let c = compiled(
-            r#"
+        &["body", "first cleanup", "second cleanup"],
+        &[
+            ("body", &["first cleanup", "second cleanup"][..]),
+            ("first cleanup", &[][..]),
+        ],
+        &[]
+    )]
+    #[case::cleanup_written_as_a_block(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2250,26 +2148,15 @@ mod tests {
         - name: cleanup last
           command: "true"
 "#,
-        );
-        assert_eq!(
-            walk_failure(&c, 0),
-            ["cleanup one", "cleanup two", "cleanup last"]
-        );
-        assert_eq!(
-            after_failure(&c, 1),
-            None,
-            "a failure inside the nested cleanup ends the section, measured"
-        );
-    }
-
-    /// A nested cleanup that has an `always` of its own runs it, and the section holding it
-    /// still finishes.
-    ///
-    /// Measured on ansible-core 2.19.12 on this shape: `ok=3 changed=3 failed=1`.
-    #[test]
-    fn a_cleanup_block_runs_its_own_always_and_the_section_goes_on() {
-        let c = compiled(
-            r#"
+        &["fails", "cleanup one", "cleanup two", "cleanup last"],
+        &[
+            ("fails", &["cleanup one", "cleanup two", "cleanup last"][..]),
+            ("cleanup one", &[][..]),
+        ],
+        &[]
+    )]
+    #[case::cleanup_block_with_its_own_always(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2285,23 +2172,12 @@ mod tests {
         - name: cleanup last
           command: "true"
 "#,
-        );
-        assert_eq!(
-            walk_failure(&c, 0),
-            ["cleanup one", "cleanup inner cleanup", "cleanup last"]
-        );
-    }
-
-    /// The same on the failure path: a cleanup that opens on a block with an empty `block:` list
-    /// opens on that block's rescue, and a host walking out through the `always` sections has
-    /// failed somewhere else entirely.
-    ///
-    /// What would make this red: entering an `always` at its first index rather than at its
-    /// first step, which runs a recovery section as cleanup.
-    #[test]
-    fn a_cleanup_does_not_start_in_a_rescue_either() {
-        let c = compiled(
-            r#"
+        &["fails", "cleanup one", "cleanup inner cleanup", "cleanup last"],
+        &[("fails", &["cleanup one", "cleanup inner cleanup", "cleanup last"][..])],
+        &[]
+    )]
+    #[case::cleanup_does_not_start_in_a_rescue(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2315,22 +2191,12 @@ mod tests {
         - name: cleanup
           command: "true"
 "#,
-        );
-        assert_eq!(names(&c), ["fails", "cleanup recovery", "cleanup"]);
-        assert_eq!(walk_failure(&c, 0), ["cleanup"]);
-    }
-
-    /// A block with an empty `block:` list is entered on its rescue, and nothing has failed:
-    /// the happy path steps over it, whether the block is the first thing in the play or comes
-    /// after another step.
-    ///
-    /// What would make this red: a walk that only handles leaving a block. Entering one whose
-    /// body is empty lands straight on the first step of its rescue, so the recovery path of a
-    /// playbook would run as ordinary work.
-    #[test]
-    fn an_empty_body_is_not_a_way_into_a_rescue() {
-        let c = compiled(
-            r#"
+        &["fails", "cleanup"],
+        &[("fails", &["cleanup"][..])],
+        &[]
+    )]
+    #[case::an_empty_body_is_not_a_way_into_a_rescue(
+        r#"
 - hosts: all
   tasks:
     - block: []
@@ -2349,59 +2215,12 @@ mod tests {
     - name: two
       command: "true"
 "#,
-        );
-        assert_eq!(
-            names(&c),
-            ["first recovery", "one", "second recovery", "cleanup", "two"]
-        );
-        assert_eq!(first(&c), 1, "the play does not start inside a rescue");
-        assert_eq!(walk(&c, first(&c)), ["one", "cleanup", "two"]);
-    }
-
-    /// Which rescue takes a failure, at every place in a three-level play one can be raised.
-    ///
-    /// Measured on ansible-core 2.19.12, one playbook per line: a failure in a body goes to that
-    /// block's rescue; a failure in a rescue is **not** taken by the block whose rescue it is,
-    /// and goes to the grandparent's rescue when there is one (`rescued=2`, exit 0); a failure
-    /// in an `always` goes to the enclosing block's rescue (`rescued=1`, exit 0).
-    ///
-    /// What would make this red: reading the block off the step and ignoring the section, which
-    /// sends a failing rescue back into its own rescue - the same steps for ever, and a run that
-    /// never returns.
-    #[test]
-    fn the_rescue_that_takes_a_failure_is_never_the_one_it_was_raised_in() {
-        let c = compiled(NESTED);
-        let at = |name: &str| index_of(&c, name);
-        let target = |name: &str| rescue_target(&c, at(name)).map(|i| c.steps[i].task.name.clone());
-        assert_eq!(target("body one").as_deref(), Some("outer rescue"));
-        assert_eq!(target("nested body").as_deref(), Some("nested rescue"));
-        assert_eq!(
-            target("nested rescue").as_deref(),
-            Some("outer rescue"),
-            "a rescue does not rescue itself; the block around it does"
-        );
-        assert_eq!(
-            target("nested always").as_deref(),
-            Some("outer rescue"),
-            "measured: a failure in a child's always is taken by the parent's rescue"
-        );
-        assert_eq!(target("outer rescue"), None);
-        assert_eq!(target("outer always"), None);
-        assert_eq!(
-            target("before"),
-            None,
-            "a step in no block is rescued by none"
-        );
-    }
-
-    /// A block that has an `always` and no `rescue` rescues nothing, and the cleanup still runs.
-    ///
-    /// Measured on ansible-core 2.19.12: `failed=1 rescued=0`, the `always` task runs, and the
-    /// step behind the block does not.
-    #[test]
-    fn a_block_without_a_rescue_cleans_up_and_lets_the_failure_stand() {
-        let c = compiled(
-            r#"
+        &["one", "cleanup", "two"],
+        &[],
+        &[]
+    )]
+    #[case::no_rescue_cleans_up_and_lets_the_failure_stand(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2413,25 +2232,12 @@ mod tests {
     - name: after
       command: "true"
 "#,
-        );
-        assert_eq!(rescue_target(&c, 0), None);
-        assert_eq!(walk_failure(&c, 0), ["cleanup"]);
-    }
-
-    /// A block written inside a rescue is reachable in both directions: its recovery takes a
-    /// failure raised in it, and its cleanup runs on the way out.
-    ///
-    /// Measured on ansible-core 2.19.12: the parent's body fails, the rescue runs, the block in
-    /// it fails, its own `always` runs, then the parent's `always`, and the recap reads
-    /// `ok=2 failed=1 rescued=1`.
-    ///
-    /// What would make this red: seeking into those sections as if the host had entered no
-    /// rescue. Every step of them sits in a rescue, so all of them would be stepped over - the
-    /// cleanup a playbook wrote inside its recovery, skipped in silence.
-    #[test]
-    fn a_block_inside_a_rescue_keeps_its_own_sections() {
-        let c = compiled(
-            r#"
+        &["fails", "cleanup", "after"],
+        &[("fails", &["cleanup"][..])],
+        &[("fails", None)]
+    )]
+    #[case::a_block_inside_a_rescue(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2451,39 +2257,15 @@ mod tests {
         - name: outer cleanup
           command: "true"
 "#,
-        );
-        let at = |name: &str| index_of(&c, name);
-        assert_eq!(
-            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
-            Some("in the rescue".to_string()),
-            "the rescue is entered on its first step, not on its first index"
-        );
-        assert_eq!(
-            rescue_target(&c, at("in the rescue")).map(|i| c.steps[i].task.name.clone()),
-            Some("rescue of the rescue".to_string())
-        );
-        assert_eq!(
-            walk_failure(&c, at("in the rescue")),
-            ["cleanup in the rescue", "outer cleanup"]
-        );
-    }
-
-    /// The fixture above cannot tell a sought target from a raw index: its rescue's first index
-    /// already is its first runnable step. Here it is not - a nested block with an empty
-    /// `block:` list opens the rescue on its own un-entered rescue, and `rescue_target` has to
-    /// seek past that to reach a step the failure can actually run.
-    ///
-    /// Measured on ansible-core 2.19.12: a rescue built this way still reads `rescued=1`, exit
-    /// 0, with nothing from the nested rescue running.
-    ///
-    /// What would make this red: `rescue_target` returning `c.blocks[id].rescue.start` unchanged
-    /// instead of seeking. That raw index is "rescue recovery" here, a step sitting in the
-    /// nested block's own rescue, which this failure never entered - so an unsought return
-    /// would name it instead of "rescue cleanup", the sibling behind it.
-    #[test]
-    fn rescue_target_seeks_past_a_nested_blocks_own_rescue() {
-        let c = compiled(
-            r#"
+        &["body fails", "outer cleanup"],
+        &[("in the rescue", &["cleanup in the rescue", "outer cleanup"][..])],
+        &[
+            ("body fails", Some("in the rescue")),
+            ("in the rescue", Some("rescue of the rescue")),
+        ]
+    )]
+    #[case::rescue_target_seeks_past_a_nested_rescue(
+        r#"
 - hosts: all
   tasks:
     - block:
@@ -2500,18 +2282,33 @@ mod tests {
         - name: outer cleanup
           command: "true"
 "#,
-        );
-        assert_eq!(
-            rescue_target(&c, 0).map(|i| c.steps[i].task.name.clone()),
-            Some("rescue cleanup".to_string())
-        );
+        &["fails", "outer cleanup"],
+        &[],
+        &[("fails", Some("rescue cleanup"))]
+    )]
+    fn a_host_walks_blocks_as_the_reference_does(
+        #[case] text: &str,
+        #[case] happy: &[&str],
+        #[case] failed: &[(&str, &[&str])],
+        #[case] rescued: &[(&str, Option<&str>)],
+    ) {
+        let c = compiled(text);
+        assert_eq!(walk(&c, first(&c)), happy, "no failure");
+        for (step, cleanup) in failed {
+            assert_eq!(
+                walk_failure(&c, index_of(&c, step)),
+                *cleanup,
+                "failure at {step}"
+            );
+        }
+        for (step, target) in rescued {
+            let got = rescue_target(&c, index_of(&c, step)).map(|i| c.steps[i].task.name.as_str());
+            assert_eq!(got, *target, "rescue of a failure at {step}");
+        }
     }
 
     /// Every keyword a block carries reaches the tasks under it, and a task that says something
     /// itself keeps its own answer.
-    ///
-    /// What would make this red: an inherited keyword dropped in the merge, which runs the task
-    /// without the `become`, the `when` or the timeout the operator wrote around it.
     #[test]
     fn a_block_s_keywords_reach_the_tasks_under_it() {
         let c = compiled(
@@ -2595,109 +2392,26 @@ mod tests {
       debug: msg=f
 ";
 
-    /// Every selection measured against ansible-core 2.19.12 on this exact playbook, each one
-    /// asserting the whole list of surviving names rather than the presence of one of them.
-    ///
-    /// What would make this red: `always` treated as an ordinary tag, which turns `--tags x`
-    /// into `[a]` and empties `--tags never`, `--tags untagged` and `--tags blk` of the one
-    /// task that has to be in all four; `never` forgotten, which puts `d-never` into the
-    /// default list; `untagged` read as an empty set rather than as the reference's
-    /// one-element `{untagged}`, which breaks `--tags untagged` and `--skip-tags untagged` in
-    /// opposite directions; or `--skip-tags all` reading as "skip everything", which drops the
-    /// `always` task the reference keeps.
+    /// The selections the `--list-tags` goldens do not measure: `--tags all`, `--skip-tags never`,
+    /// and the literal word `untagged` beside a real tag, which does not make a task untagged.
     #[test]
-    fn every_measured_tag_selection_keeps_the_tasks_the_reference_keeps() {
-        let cases: &[(&[&str], &[&str], &[&str])] = &[
-            (
-                &[],
-                &[],
-                &["a", "b", "c-always", "e-in-block", "f-untagged"],
-            ),
-            (
-                &["all"],
-                &[],
-                &["a", "b", "c-always", "e-in-block", "f-untagged"],
-            ),
-            (&["x"], &[], &["a", "c-always"]),
-            (&["blk"], &[], &["c-always", "e-in-block"]),
-            (&["never"], &[], &["c-always", "d-never"]),
-            (&["untagged"], &[], &["c-always", "f-untagged"]),
-            (&["tagged"], &[], &["a", "b", "c-always", "e-in-block"]),
-            (&["nosuchtag"], &[], &["c-always"]),
-            (&[], &["y"], &["a", "c-always", "e-in-block", "f-untagged"]),
-            (&[], &["always"], &["a", "b", "e-in-block", "f-untagged"]),
-            (
-                &[],
-                &["never"],
-                &["a", "b", "c-always", "e-in-block", "f-untagged"],
-            ),
-            (&[], &["untagged"], &["a", "b", "c-always", "e-in-block"]),
-            (&[], &["tagged"], &["f-untagged"]),
-            (&[], &["all"], &["c-always"]),
-            (&["x"], &["x"], &["c-always"]),
-        ];
-        for (run, skip, want) in cases {
+    fn the_tag_selections_the_listing_goldens_leave_out() {
+        let all_but_never = ["a", "b", "c-always", "e-in-block", "f-untagged"];
+        for (run, skip) in [(&["all"][..], &[][..]), (&[][..], &["never"][..])] {
             let c = selected(TAGGED, &selection(run, skip));
-            assert_eq!(names(&c), *want, "--tags {run:?} --skip-tags {skip:?}");
+            assert_eq!(
+                names(&c),
+                all_but_never,
+                "--tags {run:?} --skip-tags {skip:?}"
+            );
         }
-    }
-
-    /// `own.len() == 1` is what pairs with `own[0] == UNTAGGED` to mark a task the untagged
-    /// set: a task carrying two tags is not that set, even when one of the two happens to be
-    /// the literal word "untagged" - the pseudo-tag is a property of an empty-looking list,
-    /// not of any list that contains the word.
-    ///
-    /// What would make this red: the length check loosened so a two-tag list also counts,
-    /// which would drop this task from `--tags tagged` and, symmetrically, tighten so a
-    /// genuine one-tag `untagged` list stopped counting and such a task leaked into
-    /// `--tags tagged`.
-    #[test]
-    fn a_second_tag_beside_the_literal_word_untagged_keeps_the_task_tagged() {
         let sel = selection(&["tagged"], &[]);
         assert!(sel.selects(&["untagged".to_string(), "real".to_string()]));
         assert!(!sel.selects(&["untagged".to_string()]));
     }
 
-    /// A block's tags reach the tasks under it and join whatever they carry themselves, at any
-    /// depth, and the play's own tags reach all of them.
-    ///
-    /// What would make this red: the merge overwriting instead of joining, which loses either
-    /// the inner tag or the outer one and makes one of the two `--tags` below select nothing.
-    #[test]
-    fn tags_accumulate_from_the_play_down_through_nested_blocks() {
-        let text = r"
-- hosts: all
-  tags: [play]
-  tasks:
-    - block:
-        - block:
-            - name: deep
-              debug: msg=d
-              tags: [own]
-          tags: [inner]
-      tags: [outer]
-";
-        let c = compiled(text);
-        assert_eq!(c.steps[0].task.tags, ["inner", "outer", "own", "play"]);
-        for tag in ["play", "outer", "inner", "own"] {
-            assert_eq!(
-                names(&selected(text, &selection(&[tag], &[]))),
-                ["deep"],
-                "--tags {tag}"
-            );
-            assert!(
-                names(&selected(text, &selection(&[], &[tag]))).is_empty(),
-                "--skip-tags {tag}"
-            );
-        }
-    }
-
-    /// A block whose tasks the selection all drops leaves a span with nothing in it, and the
-    /// spans of everything around it still cover exactly the steps they hold.
-    ///
-    /// What would make this red: filtering the finished list instead of never pushing the
-    /// dropped steps. Every span after the first dropped step would then be off by one, which
-    /// sends a host into a section it never entered.
+    /// A block whose tasks the selection all drops leaves a span with nothing in it, and the spans
+    /// of everything around it still cover exactly the steps they hold.
     #[test]
     fn filtering_leaves_every_span_covering_its_own_steps() {
         let c = selected(
@@ -2784,28 +2498,6 @@ mod tests {
 
     /// The tags the layers around a dynamic include gave the statement reach the tasks it brings
     /// in, and the tags written on the statement itself stop there.
-    ///
-    /// Measured on ansible-core 2.19.12, `connection: local`, one row per line of the table below:
-    /// a role applied with `tags: [t]` whose `main.yml` is one `include_tasks` runs the included
-    /// task under `--tags t` (`included:`, then the task, `ok=2`); so does a block tagged `b`
-    /// around an `include_tasks` or an `include_role` under `--tags b`, a role tagged `t` whose
-    /// tasks `include_role` another under `--tags t`, a role tagged `always` under `--tags
-    /// other`, and a role tagged `[never, n]` under `--tags n`. An `include_tasks` or an
-    /// `include_role` tagged `i` itself shows `included:` under `--tags i` and runs nothing
-    /// behind it (`ok=1`). `--skip-tags t`, `--tags zz` and an untagged run of a role tagged
-    /// `never` show no line at all. ansible-core's source says the same: a block read by a
-    /// dynamic include skips the statement and asks the statement's own parent for what it
-    /// inherits (`Block._get_parent_attribute`, "defer to the grandparent").
-    ///
-    /// The same source rule covers every keyword that source extends or inherits, which is what
-    /// the last four assertions check (unmeasured): a role entry's `become`, a block's `no_log`,
-    /// `when` and `check_mode`.
-    ///
-    /// What would make this red: the included file compiled against the play's layer alone,
-    /// which drops everything a role or a block gave the statement, so the rows expecting
-    /// `[in]` get `[]` and the run succeeds having done nothing, an included `apt` runs
-    /// unescalated and an included task's arguments are printed; or the statement's own tags
-    /// handed down as well, which fills the two `[i]` rows.
     #[test]
     fn a_dynamic_include_hands_down_what_the_layers_above_it_gave_it() {
         // The play, `--tags`, `--skip-tags`, and what the include at the bottom brings in.
@@ -2913,13 +2605,8 @@ mod tests {
         assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
     }
 
-    /// Inserting steps one past the last step of a block's body grows that body and shifts the
-    /// two sections behind it, and inserting past the block moves nothing.
-    ///
-    /// What would make this red: `range.end > at` instead of `>=`. The body would not grow, so
-    /// the steps spliced in would sit in a range that says they belong to nothing - and the
-    /// handler steps a flush point inserts are exactly that shape, since a flush written last in
-    /// a body ends it one index before them.
+    /// Inserting steps one past the last step of a block's body grows that body and shifts the two
+    /// sections behind it, and inserting past the block moves nothing.
     #[test]
     fn a_splice_grows_the_section_it_lands_at_the_end_of() {
         let mut c = compiled(
@@ -2990,16 +2677,8 @@ mod tests {
         assert_eq!(c.blocks[0].always, before.always);
     }
 
-    /// A `notify` reaches the **first** handler of that name and **every** handler listening for
-    /// it, in definition order.
-    ///
-    /// Measured on ansible-core 2.19.12, both halves separately: two handlers written with the
-    /// same name run the first alone, and a handler named `x` beside one listening for `x` both
-    /// run when `x` is notified.
-    ///
-    /// What would make this red: every name match returned, which plays a role's handler once
-    /// per instance of that role - three times for the role list this repository's own fixture
-    /// writes; or `listen` ignored, which loses a handler a playbook asked for.
+    /// A notify takes the first handler of a name and every listener; a block's notify reaches
+    /// its tasks.
     #[test]
     fn a_notify_takes_the_first_handler_of_that_name_and_every_listener() {
         let c = compiled(
@@ -3013,28 +2692,31 @@ mod tests {
     - name: listening
       debug: msg=three
       listen: twice
+    - name: h
+      debug: msg=h
+    - name: own
+      debug: msg=own
   tasks:
     - command: "true"
       notify: twice
+    - block:
+        - name: inherits
+          command: "true"
+        - name: adds its own
+          command: "true"
+          notify: own
+      notify: h
 "#,
         );
-        assert_eq!(c.handlers.len(), 3);
+        assert_eq!(c.handlers.len(), 5);
         assert_eq!(resolve_notify(&c, "twice"), [0, 2]);
         assert_eq!(resolve_notify(&c, "listening"), [2]);
         assert!(resolve_notify(&c, "nobody").is_empty());
+        assert_eq!(c.steps[1].task.notify, ["h"]);
+        assert_eq!(c.steps[2].task.notify, ["own", "h"]);
     }
 
-    /// A play that gathers facts opens with the reference's `setup`, and that step is listed
-    /// nowhere.
-    ///
-    /// What would make this red: no step at all, which is the release that warned and gathered
-    /// nothing - a playbook reading `ansible_facts.*` then fails per host on an undefined
-    /// variable. Red the other way if the step is listed: measured on ansible-core 2.19.12,
-    /// `--list-tasks` on a play that gathers shows no `Gathering Facts` line and `TASK TAGS`
-    /// carries no `always` from it.
-    ///
-    /// `always` is what makes `--tags deploy` still gather, and `--skip-tags always` the one way
-    /// to drop it, which is the pair the two selections below pin.
+    /// A play that gathers facts opens with an unlisted `setup` step, kept by `always` tags.
     #[test]
     fn a_play_that_gathers_facts_opens_with_the_setup_module() {
         let text = "- hosts: all\n  tasks:\n    - name: body\n      command: \"true\"\n";
@@ -3064,12 +2746,8 @@ mod tests {
         assert_eq!(c.steps[0].task.name, "body");
     }
 
-    /// The three flush points close the three sections, and neither they nor a handler are
-    /// listed anywhere.
-    ///
-    /// Measured on ansible-core 2.19.12: `--list-tasks` on a playbook full of handlers shows the
-    /// `meta` the playbook wrote and not one handler, and the implicit flushes are the
-    /// reference's own structure rather than anything it prints.
+    /// The three flush points close the three sections, and neither they nor a handler are listed
+    /// anywhere.
     #[test]
     fn each_section_ends_with_a_flush_point_that_nothing_lists() {
         let c = compiled(
@@ -3107,32 +2785,6 @@ mod tests {
         assert_eq!(listed, ["pre", "body", "meta", "post"]);
     }
 
-    /// A `notify` on a block reaches the tasks under it, and a task that notifies something of
-    /// its own keeps both. Measured on ansible-core 2.19.12.
-    #[test]
-    fn a_block_s_notify_reaches_the_tasks_under_it() {
-        let c = compiled(
-            r#"
-- hosts: all
-  handlers:
-    - name: h
-      debug: msg=h
-    - name: own
-      debug: msg=own
-  tasks:
-    - block:
-        - name: inherits
-          command: "true"
-        - name: adds its own
-          command: "true"
-          notify: own
-      notify: h
-"#,
-        );
-        assert_eq!(c.steps[0].task.notify, ["h"]);
-        assert_eq!(c.steps[1].task.notify, ["own", "h"]);
-    }
-
     /// The action table is the reference's own list, sorted and free of duplicates.
     #[test]
     fn the_meta_actions_are_sorted_and_free_of_duplicates() {
@@ -3144,15 +2796,6 @@ mod tests {
     }
 
     /// `public` is judged by what it is worth, not by being written.
-    ///
-    /// Measured on ansible-core 2.19.12: `public: false` is the default and keeps the role's
-    /// `defaults` and `vars` behind the include, which is what this release does whether the
-    /// statement says so or not. Refusing every `public` by presence turned a statement asking
-    /// for the engine's own behaviour into an error at exit 4.
-    ///
-    /// What would make this red: `public: false` refused again, so a real role that spells the
-    /// default out cannot be included at all; or a truthy or unresolved `public` accepted, which
-    /// exports nothing and says nothing about it.
     #[test]
     fn public_is_refused_by_value_and_not_by_presence() {
         let asked = |value: Value| {

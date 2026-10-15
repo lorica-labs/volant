@@ -1,0 +1,2 @@
+# A fact the playbook wrote can still name a variable.
+args: [-i, inv.ini, author-fact-name.yml]

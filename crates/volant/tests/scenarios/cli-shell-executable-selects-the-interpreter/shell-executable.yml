@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ask the shell which shell it is
+      shell: '[ -n "$BASH_VERSION" ] && echo bash || echo not-bash'
+      args:
+        executable: /bin/bash
+      register: interpreter
+    - name: Report it
+      debug:
+        msg: "version={{ interpreter.stdout }}"

@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [A fact the playbook wrote, naming another variable] **********************\nok: [h1]\n\nTASK [A fact the playbook wrote, holding a plain string] ***********************\nok: [h1]\n\nTASK [Show the variable the first fact names] **********************************\nok: [h1] => {\n    \"greeting\": \"hello\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

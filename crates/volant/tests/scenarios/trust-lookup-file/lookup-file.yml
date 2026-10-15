@@ -1,0 +1,17 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: A file read as data
+      debug:
+        msg: "{{ lookup('file', payload) }}"
+
+- name: Whether the payload ran
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Look for the marker the payload would have written
+      shell: "test -e {{ playbook_dir }}/marker && echo ran || echo never ran"
+      register: marker
+    - name: The payload never ran
+      debug:
+        var: marker.stdout

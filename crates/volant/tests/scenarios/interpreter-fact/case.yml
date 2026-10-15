@@ -1,2 +1,5 @@
 # The first module result on a host that discovered its interpreter carries the fact and the warning.
-args: [-i, inv.ini, play.yml]
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, delegate.yml]
+  - args: [-i, inv.ini, failed.yml]

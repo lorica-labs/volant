@@ -1854,25 +1854,42 @@ pub(super) async fn drive_host(
                     (true, Some(to)) => std::slice::from_ref(to),
                     _ => &targets[..],
                 };
-                let discovered = match (discovering.get(index), &found) {
+                // The host the module ran on decides whether anything is discovered: it is the
+                // delegate's interpreter that is asked about, and that the fact is kept for.
+                let ran_on = batch_delegate.as_deref().unwrap_or(&name);
+                let due = match (discovering.get(index), &found) {
                     (Some(&warns), Some(path))
                         if {
                             let vars = store.lock().expect("vars lock");
                             // The reference gives the implicit `localhost` the controller's own
                             // Python as its interpreter, so nothing is discovered there.
-                            !vars.is_implicit_localhost(batch_delegate.as_deref().unwrap_or(&name))
-                                && !vars.all_gathered(fact_hosts, DISCOVERED_INTERPRETER)
+                            !vars.is_implicit_localhost(ran_on)
+                                && !vars.all_gathered(
+                                    std::slice::from_ref(&ran_on.to_string()),
+                                    DISCOVERED_INTERPRETER,
+                                )
                         } =>
                     {
-                        // The first result that reached the host: a skipped item ran nothing.
-                        results
-                            .iter_mut()
-                            .zip(items)
-                            .find(|(_, item)| item.skipped.is_none())
-                            .map(|((_, result), _)| {
-                                stamp_discovery(result, path);
-                                warns
-                            })
+                        Some((warns, path))
+                    }
+                    _ => None,
+                };
+                // The first result that reached the host: a skipped item ran nothing.
+                let first = results
+                    .iter()
+                    .zip(items)
+                    .position(|(_, item)| item.skipped.is_none());
+                let discovered = match (due, first) {
+                    (Some((warns, path)), Some(i)) => {
+                        // Measured on ansible-core 2.19.12: a delegated task returns and keeps the
+                        // fact only under `delegate_facts`; the warning comes either way.
+                        // And only on the first attempt: a retried task's final result is a later
+                        // attempt's, which found the interpreter already known. The warning stays.
+                        let retried = bi == 0 && lefts.get(i).is_some_and(|left| !left.is_empty());
+                        if (batch_delegate.is_none() || task.delegates_facts()) && !retried {
+                            stamp_discovery(&mut results[i].1, path);
+                        }
+                        Some(warns)
                     }
                     _ => None,
                 };
@@ -1891,7 +1908,7 @@ pub(super) async fn drive_host(
                 // host and the path and nothing the task returned, and it shows on a hidden task.
                 // Registered without the pointer to the documentation the line ends with.
                 if let (Some(true), Some(path)) = (discovered, &found) {
-                    let text = discovery_warning(batch_delegate.as_deref().unwrap_or(&name), path);
+                    let text = discovery_warning(&name, path);
                     let _ = tx
                         .send(Event::Warning {
                             host: name.clone(),

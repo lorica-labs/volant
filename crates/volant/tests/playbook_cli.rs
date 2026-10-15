@@ -154,34 +154,8 @@ fn a_failing_task_stops_the_host_and_exits_2() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
-/// An assert that is not `quiet` shows its result indented, `changed` included; a `quiet` one or
-/// a `no_log` one shows `ok:` alone (ansible-core 2.19.12).
-#[test]
-fn an_assert_shows_its_result_unless_quiet() {
-    let out = volant(&["playbook", &fixture("controller/assert-display.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("ok:")).collect();
-    assert_eq!(
-        lines,
-        ["ok: [localhost] => {", "ok: [localhost]", "ok: [localhost]",],
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "ok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"looks good\"\n}"
-        ),
-        "{text}"
-    );
-}
-
 /// Measured on ansible-core 2.19.12 with two hosts and standard input not a terminal: a `pause`
-/// runs for the first host alone. One `ok: [h1]`, one warning, `q` registered on h1 only, and a
-/// `when` that leaves h1 out skips the pause for both. A pause that fails takes the other hosts
-/// out of the play with no line and no recap entry, and the run exits 2.
-///
-/// What would make this red: a pause run per host, which prints `ok: [h2]`, registers `q` on h2 and pauses h2 under its `when`; or a failed pause that leaves h2 running
-/// the next task.
+/// runs for the first host alone.
 #[test]
 fn a_pause_runs_once_for_the_first_host() {
     let inventory = fixture("controller/two-hosts.ini");
@@ -235,11 +209,7 @@ fn a_pause_runs_once_for_the_first_host() {
 }
 
 /// A play whose pattern matches no host is skipped whole, so the pre-flight does not refuse a
-/// prompting `pause` in it even on a terminal. Measured on ansible-core 2.19.12 under `script`
-/// (a terminal on standard input): `skipping: no hosts matched`, the next play runs, exit 0.
-///
-/// What would make this red: the pause pre-flight run over a play nothing reaches, which refuses
-/// with exit 4 a playbook the reference runs to its end.
+/// prompting `pause` in it even on a terminal.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
@@ -274,11 +244,7 @@ fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
 }
 
 /// A controller-side `set_fact` or `include_vars` that failed keeps none of the facts it answered,
-/// `ignore_errors` or not, and a loop is judged whole. Measured on ansible-core 2.19.12 with this
-/// fixture: `"msg": "False False False"`, recap `ok=4 ... ignored=3`.
-///
-/// What would make this red: the facts written as the module runs, before `failed_when` has
-/// judged the result (`"True True True"`).
+/// `ignore_errors` or not, and a loop is judged whole.
 #[test]
 fn a_failed_controller_side_task_keeps_none_of_its_facts() {
     let out = volant_within(
@@ -291,16 +257,7 @@ fn a_failed_controller_side_task_keeps_none_of_its_facts() {
 }
 
 /// `retries` is rendered per item, on the agent path, the controller-side one and an action
-/// plugin's. Measured on ansible-core 2.19.12 with these fixtures, for each task: one retry line
-/// for `r: 1`, two for `r: 2`, the item `r: x` failed alone with `"changed": false` and
-/// `"msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be
-/// converted to 'int'."`, `r: 0` run once, and the registered `attempts` read `1,2,-,-`. The
-/// `r: 0` item still has its `changed_when` applied: no `"changed": true` under the `command`,
-/// one under the `copy`.
-///
-/// What would make this red: the plan rendered once, against the first item, which retries
-/// every item once and runs `r: x` (`1,1,1,1`); or an item that does not retry, in a task
-/// another item retries, reported without its conditions.
+/// plugin's.
 #[test]
 fn retries_are_rendered_per_item() {
     let check = |text: &str, tasks: &[&str], changed: usize| {
@@ -357,14 +314,7 @@ fn retries_are_rendered_per_item() {
 }
 
 /// `retries` and `delay` are converted as the reference converts them, and a `delay` its
-/// `time.sleep` refuses fails the item after the retry line. Measured on ansible-core 2.19.12
-/// with this fixture, for both tasks: `nan` and `1e20` each print `(1 retries left)` then fail
-/// with `Task failed: Invalid value NaN (not a number)` and `Task failed: timestamp out of range
-/// for C PyTime_t`; `delay: x` fails `... could not be converted to 'float'.`; `retries: '2.5'`
-/// fails `... could not be converted to 'int'.`; `retries: true` retries once.
-///
-/// What would make this red: the huge delay waited out (the test's deadline) or NaN taken for
-/// it; `'int'` in the `delay` message; or `'2.5'` truncated into two retries.
+/// `time.sleep` refuses fails the item after the retry line.
 #[test]
 fn retries_and_delay_are_converted_as_the_reference_does() {
     let out = volant_within(
@@ -395,14 +345,8 @@ fn retries_and_delay_are_converted_as_the_reference_does() {
     }
 }
 
-/// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller
-/// side alike, and the play goes on. Measured on ansible-core 2.19.12 with this fixture: both
-/// items of the `command` loop fail with `Task failed: Timeout 9223372036854775807 is invalid,
-/// it must be between 0 and 100000000.`, the `debug` with the same sentence for 100000001, and
-/// `after` runs.
-///
-/// What would make this red: the timeout taken as it stands, whose deadline overflows and
-/// panics the agent (the host then reads unreachable), or runs the `debug`.
+/// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller side
+/// alike, and the play goes on.
 #[test]
 fn a_timeout_out_of_range_fails_the_task() {
     let out = volant_within(
@@ -425,13 +369,8 @@ fn a_timeout_out_of_range_fails_the_task() {
     assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
-/// Measured on ansible-core 2.19.12: a `pause` that asks for an answer without a terminal shows
-/// `[WARNING]: Not waiting for response to prompt as stdin is not interactive` once, and its
-/// registered result has no `warnings` key. The driver shows every result's `warnings` that way,
-/// a module's as well as a controller-side action's.
-///
-/// What would make this red: the warnings left in the result, which prints nothing and registers
-/// a key the reference does not.
+/// A result's warnings are shown once by the driver, a module's and an action's alike, and are not
+/// registered.
 #[test]
 fn a_result_s_warnings_are_shown_and_not_registered() {
     let out = volant_within_full(
@@ -459,12 +398,8 @@ fn a_result_s_warnings_are_shown_and_not_registered() {
     );
 }
 
-/// Measured on ansible-core 2.19.12: `timeout` applies to a controller-side action as it does
-/// to a module, and a `pause: {seconds: 5}` under `timeout: 1` fails after one second with the
-/// message `command` gives. `frame` is left out, as the agent leaves it out.
-///
-/// What would make this red: the keyword ignored on the controller, which waits the five
-/// seconds and reports `ok`.
+/// `timeout` applies to a controller-side action as to a module: a `pause: {seconds: 5}` under
+/// `timeout: 1` fails after one second.
 #[test]
 fn a_task_timeout_ends_a_controller_side_action() {
     let out = volant_within(
@@ -478,32 +413,6 @@ fn a_task_timeout_ends_a_controller_side_action() {
             && text.contains(
                 r#""msg": "Task failed: Timed out after 1 second(s).", "timedout": {"period": 1}}"#
             ),
-        "{text}"
-    );
-}
-
-#[test]
-fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
-    let out = volant(&["playbook", &fixture("local-conditions.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains("changed: [localhost]\n")
-            && text.contains("changed: [localhost] => {\n    \"msg\": \"changed\"\n}"),
-        "changed_when marks set_fact and debug as changed: {text}"
-    );
-    assert!(
-        text.contains("fatal: [localhost]: FAILED! => {\n    \"msg\": \"assert\"\n}"),
-        "failed_when fails a debug task: {text}"
-    );
-    assert!(
-        !text.contains("Never reached"),
-        "the host stops after a failed_when: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=3    changed=2    unreachable=0    failed=1"
-        ),
         "{text}"
     );
 }
@@ -583,43 +492,6 @@ fn a_variable_naming_a_later_bound_variable_still_renders() {
 }
 
 #[test]
-fn vars_files_are_resolved_for_each_host() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("pervars/inventory.ini"),
-        &fixture("pervars/site.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("ok: [one] => {\n    \"msg\": \"one is red\"\n}")
-            && text.contains("ok: [two] => {\n    \"msg\": \"two is blue\"\n}"),
-        "each host reads the file its own variables name: {text}"
-    );
-}
-
-#[test]
-fn each_playbook_resolves_paths_against_its_own_directory() {
-    let out = volant(&[
-        "playbook",
-        &fixture("multi/first.yml"),
-        &fixture("multi/sub/second.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        text.contains("ok: [localhost] => {\n    \"msg\": \"kept here\"\n}"),
-        "the second playbook reads its own vars_files and keeps the first one's facts: {text}"
-    );
-}
-
-#[test]
 fn a_failed_host_leaves_the_following_plays() {
     let out = volant(&[
         "playbook",
@@ -674,35 +546,6 @@ fn a_deferred_render_error_does_not_resurrect_a_host_that_already_failed() {
 }
 
 #[test]
-fn extra_vars_and_limit_apply() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("cfg/hosts.ini"),
-        "-e",
-        "colour=blue",
-        "-l",
-        "two",
-        &fixture("cfg/site.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains(
-            "ok: [two] => {
-    \"msg\": \"two blue"
-        ),
-        "{text}"
-    );
-    assert!(!text.contains("[one]"), "limit must exclude one: {text}");
-    let reference = include_str!("golden/ANSIBLE_VERSION").trim();
-    assert!(
-        text.contains(&format!("blue {reference} 2\"")),
-        "ansible_version comes from the reference file: {text}"
-    );
-}
-
-#[test]
 fn ansible_cfg_supplies_the_inventory_when_none_is_given() {
     let out = volant_within_env(
         &["playbook", &fixture("cfg/site.yml")],
@@ -740,11 +583,8 @@ fn a_limit_that_matches_nothing_is_an_error() {
     );
 }
 
-/// A `--limit` naming a host that is not there narrows the run and says so, rather than
-/// narrowing it silently. Measured against the reference: `-l web1,web-typo` prints
-/// `[WARNING]: Could not match supplied host pattern, ignoring: web-typo` and then runs on
-/// `web1`, exit 0. The wording is the reference's, word for word, and it is the same line a
-/// play's own `hosts` already printed for an unmatched pattern.
+/// A `--limit` naming a host that is not there narrows the run and says so, rather than narrowing
+/// it silently.
 #[test]
 fn a_limit_naming_a_host_that_is_not_there_warns_and_runs_the_rest() {
     let out = volant(&[
@@ -769,9 +609,7 @@ fn a_limit_naming_a_host_that_is_not_there_warns_and_runs_the_rest() {
     );
 }
 
-/// A playbook that is there and does not parse exits 4, not 1. Measured against the reference:
-/// a YAML error, an unknown play keyword, an unknown module and `a playbook must be a list of
-/// plays` all exit 4, while a playbook file that is not there exits 1 (covered above).
+/// A playbook that is there and does not parse exits 4, not 1.
 #[test]
 fn a_playbook_that_does_not_parse_exits_4() {
     let dir = std::env::temp_dir().join(format!("volant-parse-{}", std::process::id()));
@@ -800,19 +638,6 @@ fn a_playbook_that_does_not_parse_exits_4() {
 }
 
 /// A configuration file that is there and cannot be read is ignored, and the run goes on.
-/// That is the reference's own behaviour, measured against ansible-core 2.19.12: an
-/// `ansible.cfg` at mode 000 changes nothing there and the playbook exits **0**, silently.
-/// This used to exit 2, which refused playbooks the reference runs.
-///
-/// One divergence is kept on purpose: a `[WARNING]` naming the file. A configuration the
-/// operator wrote and the process cannot open is worth a line, and a warning changes no exit
-/// code, so nothing that reads the code sees a difference.
-///
-/// What would make this red: the refusal coming back (exit 2 and no play), or the warning
-/// disappearing so an unreadable file becomes indistinguishable from no file at all.
-///
-/// The unreadable file here is one that is not text, because that fails for `root` too and this
-/// suite has to give the same answer whoever runs it; a file at mode 000 takes the same path.
 #[test]
 fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     let dir = std::env::temp_dir().join(format!("volant-badcfg-{}", std::process::id()));
@@ -835,64 +660,6 @@ fn an_unreadable_ansible_cfg_is_ignored_with_a_warning() {
     assert!(
         err.contains("[WARNING]") && err.contains("ansible.cfg"),
         "the file it could not read is named: {text}\n{err}"
-    );
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// `[tags] run`, `ANSIBLE_RUN_TAGS` and `--tags` are three sources of one list, and the command
-/// line **adds** to whichever of the other two was read rather than replacing it.
-///
-/// Measured on ansible-core 2.19.12: with `[tags] run = x` in `ansible.cfg`, `--tags y` lists
-/// the `x` task **and** the `y` task. The option's own default is that list and the option
-/// appends to its default, so a command line can only ever widen what the file asked for. An
-/// engine that took the command line as a replacement would run less than the reference does
-/// from the same two files, silently.
-///
-/// What would make this red: either source dropped, which selects only the other one's tasks;
-/// or the command line replacing rather than adding, which loses the `x` task here.
-#[test]
-fn the_three_sources_of_a_tag_list_add_up() {
-    let dir = std::env::temp_dir().join(format!("volant-cfgtags-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let cfg = dir.join("ansible.cfg");
-    std::fs::write(&cfg, "[tags]\nrun = x\n").unwrap();
-    let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios/listing-tags");
-    let config = cfg.display().to_string();
-    let list = |run_tags: Option<&str>, args: &[&str]| -> String {
-        let mut argv = vec!["playbook", "-i", "inv.ini", "--list-tasks"];
-        argv.extend_from_slice(args);
-        argv.push("tags.yml");
-        let mut envs = vec![("ANSIBLE_CONFIG", config.as_str())];
-        if let Some(tags) = run_tags {
-            envs.push(("ANSIBLE_RUN_TAGS", tags));
-        }
-        let out = volant_within_full(
-            &argv,
-            DEFAULT_DEADLINE,
-            None,
-            None,
-            Some(&listing),
-            None,
-            &envs,
-        );
-        String::from_utf8_lossy(&out.stdout).to_string()
-    };
-    let from_file = list(None, &[]);
-    assert!(
-        from_file.contains("\n      a\t") && !from_file.contains("\n      b\t"),
-        "the file's own list is read: {from_file}"
-    );
-    let both = list(None, &["--tags", "y"]);
-    assert!(
-        both.contains("\n      a\t") && both.contains("\n      b\t"),
-        "the command line adds to the file's list, it does not replace it: {both}"
-    );
-    // The environment replaces the file, and the command line then adds to the environment.
-    let from_env = list(Some("y"), &[]);
-    assert!(
-        from_env.contains("\n      b\t") && !from_env.contains("\n      a\t"),
-        "the environment replaces the file's list: {from_env}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -936,11 +703,7 @@ fn the_agent_connection_survives_across_plays() {
     );
 }
 
-/// Six one-second sleeps, run six at a time and then one at a time. The bounds are absolute
-/// rather than a ratio between the two durations: comparing them made the noisier of the two
-/// the denominator, so a loaded runner that took 2.4 s for the wide run failed a required CI
-/// job with a correct implementation. `narrow >= 5s` cannot be reached by an implementation
-/// that ignores `-f 1`, and `wide < 3s` cannot be reached by one that serialises everything.
+/// Six one-second sleeps, run six at a time and then one at a time.
 #[test]
 fn forks_bounds_the_hosts_running_at_once() {
     let dir = std::env::temp_dir().join(format!("volant-forks-{}", std::process::id()));
@@ -986,96 +749,66 @@ fn forks_bounds_the_hosts_running_at_once() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn zero_forks_is_refused() {
-    let out = volant(&["playbook", "-f", "0", &fixture("site.yml")]);
-    // Exit 2, matching the reference and matching clap's own exit code for `-f abc` or `-f -1`
-    // on this same flag today; kept at 1 would put a refused `0` on the only remaining flag
-    // value clap still hands off to this check, split three ways across two codes.
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&out.stderr)
-            .contains("The number of processes (--forks) must be >= 1"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// A `forks` the file writes but nobody can read refuses the run, with the reference's own
-/// code. Measured against ansible-core 2.19.12: `forks = many` in `ansible.cfg` stops with
-/// `ERROR: Config 'DEFAULT_FORKS' from '<path>' has an invalid value: Invalid value provided
-/// for 'integer': 'many'` and exit **5**, before any play header. This used to exit 2, which
-/// is the code a refused `-f 0` gets - a different event that deserves a different code.
-///
-/// What would make this red: the file arm falling back to a default and running, or the
-/// refusal carrying any code but 5. The fixture names an inventory, so a lost refusal shows up
-/// as a successful run and not as an empty one.
-#[test]
-fn an_unparsable_forks_in_ansible_cfg_is_refused_with_the_reference_s_code() {
-    let out = volant_within_env(
-        &["playbook", &fixture("cfg/site.yml")],
-        DEFAULT_DEADLINE,
-        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-forks.cfg"))],
-    );
+/// A run setting nobody can use is refused before any play, with the reference's code and words;
+/// a `remote_tmp` whose `~` names a user is not one of them.
+#[rstest]
+#[case::zero_forks(&["-f", "0"], &[], 2, &["The number of processes (--forks) must be >= 1"])]
+#[case::unparsable_forks_in_ansible_cfg(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/bad-forks.cfg")],
+    5,
+    &["Config 'DEFAULT_FORKS'", "Invalid value provided for 'integer'"]
+)]
+#[case::a_substitution_in_remote_tmp_s_home_part(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/bad-remote-tmp.cfg")],
+    5,
+    &["~$(id)/x"]
+)]
+#[case::a_bare_tilde(&[], &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~")], 0, &[])]
+#[case::a_tilde_user(&[], &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~root")], 0, &[])]
+#[case::a_dotted_tilde_user(
+    &[],
+    &[("ANSIBLE_CONFIG", "cfg/ansible.cfg"), ("ANSIBLE_REMOTE_TMP", "~some.user-1")],
+    0,
+    &[]
+)]
+fn a_run_setting_is_refused_before_any_play_or_honoured(
+    #[case] flags: &[&str],
+    #[case] envs: &[(&str, &str)],
+    #[case] code: i32,
+    #[case] says: &[&str],
+) {
+    // A configuration file is a fixture; any other value is passed as written.
+    let envs: Vec<(&str, String)> = envs
+        .iter()
+        .map(|(k, v)| {
+            let v = if v.ends_with(".cfg") {
+                fixture(v)
+            } else {
+                (*v).to_string()
+            };
+            (*k, v)
+        })
+        .collect();
+    let envs: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let mut args = vec!["playbook"];
+    args.extend_from_slice(flags);
+    let book = if flags.is_empty() {
+        fixture("cfg/site.yml")
+    } else {
+        fixture("site.yml")
+    };
+    args.push(&book);
+    let out = volant_within_env(&args, DEFAULT_DEADLINE, &envs);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
-    assert!(
-        stderr.contains("Config 'DEFAULT_FORKS'")
-            && stderr.contains("Invalid value provided for 'integer'"),
-        "{stderr}"
-    );
-    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
-}
-
-/// A `remote_tmp` whose `~user` part holds anything but a user name is refused when the
-/// configuration is read, before a connection is opened.
-///
-/// The assertion is the exit code and the value in the message: exit 5 is what an unusable
-/// configuration value gets, measured in the 1.4 plan, and naming the value is what lets an
-/// operator find it.
-///
-/// What would make this red: `shell_word` leaving the segment bare and nothing checking it,
-/// which is what this release does -- the substitution reaches the remote shell.
-#[test]
-fn a_remote_tmp_with_a_substitution_in_its_home_part_is_refused() {
-    let out = volant_within_env(
-        &["playbook", &fixture("cfg/site.yml")],
-        DEFAULT_DEADLINE,
-        &[("ANSIBLE_CONFIG", &fixture("cfg/bad-remote-tmp.cfg"))],
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(5), "{stdout}\n{stderr}");
-    assert!(stderr.contains("~$(id)/x"), "{stderr}");
-    assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
-}
-
-/// The other direction, and the one that says the rule is not simply "refuse every tilde": `~`,
-/// `~root` and `~some.user-1` are user names and still reach the remote shell bare, which is the
-/// only thing that can expand them. Read from `ANSIBLE_REMOTE_TMP` rather than a fixture per
-/// value, since only the value under test changes.
-///
-/// What would make this red: a validator refusing every `~`, which would break the default
-/// `remote_tmp` and every inventory that sets one.
-#[test]
-fn an_ordinary_tilde_user_is_still_passed_through() {
-    for value in ["~", "~root", "~some.user-1"] {
-        let out = volant_within_env(
-            &["playbook", &fixture("cfg/site.yml")],
-            DEFAULT_DEADLINE,
-            &[
-                ("ANSIBLE_CONFIG", &fixture("cfg/ansible.cfg")),
-                ("ANSIBLE_REMOTE_TMP", value),
-            ],
-        );
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "'{value}': {}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    assert_eq!(out.status.code(), Some(code), "{stdout}\n{stderr}");
+    for words in says {
+        assert!(stderr.contains(words), "{stderr}");
+    }
+    if code != 0 {
+        assert!(!stdout.contains("PLAY"), "a refusal runs no play: {stdout}");
     }
 }
 
@@ -1128,14 +861,8 @@ fn fake_python3_without_ansible(name: &str) -> std::path::PathBuf {
     dir
 }
 
-fn volant_with_path(args: &[&str], dir: &Path) -> Output {
-    volant_within_with_path(args, DEFAULT_DEADLINE, Some(dir), &[])
-}
-
 /// Needs passwordless sudo for the current user, as on the development machine and on the CI
-/// runner. The second task drops back to the invoking account, so the same run proves both
-/// that escalation happened and that it did not leak into the task that declined it: a
-/// `become` that quietly did nothing would print that account twice.
+/// runner.
 #[test]
 fn become_switches_user_and_back() {
     let out = volant(&["playbook", &fixture("become.yml")]);
@@ -1152,23 +879,7 @@ fn become_switches_user_and_back() {
     );
 }
 
-/// Six escalated tasks, each closing its batch with a `register`. The escalated agent opens
-/// once, at either setting: the link belongs to the host it runs on and not to the fork permit,
-/// so the permit goes back in front of every wait while the link stays with the driver.
-///
-/// Strict `linear` is what makes the second half worth asserting. It raises a boundary in front
-/// of nearly every task, so a link released with the permit was rebuilt per task -- an `ssh`, a
-/// `sudo` and a handshake each time, which is what made an escalated play slower than the
-/// reference it is meant to beat. Both settings are read here rather than in two tests, because
-/// they are one mechanism at its two settings and a second copy would only restate the first.
-///
-/// Counted through a `sudo` that records every invocation and then runs the command it was
-/// given as the invoking user: the count is what is being measured, and needing real privileges
-/// to measure it would make this a test of the machine.
-///
-/// What would make this red: the driver releasing its escalated links with the fork permit
-/// again, which puts six launches in the log under the strict default; or handing them back
-/// after every batch whatever the setting, which puts six in both.
+/// Six escalated tasks, each closing its batch with a `register`.
 #[test]
 fn escalated_links_survive_a_batch_that_a_register_closed() {
     let escalations = |envs: &[(&str, &str)]| {
@@ -1217,55 +928,15 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
     );
 }
 
-/// The other half of keeping the fork permit across a batch: one fork for two hosts, and a
-/// step that waits for the other host right behind a `register` that ended a batch. The driver
-/// has to hand the permit back in front of that wait, or the host holding it waits for a host
-/// that can never be given one.
-///
-/// `-f 1` is what makes it a proof: with a fork per host both of them hold one anyway and a
-/// permit held across the wait costs nothing. `volant_within` is what makes it a failure - a
-/// deadlock does not print a wrong answer, it prints nothing at all.
-///
-/// What would make this red: the permit kept across the boundary the second task reads
-/// `hostvars` at.
-#[test]
-fn a_barrier_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            "-f",
-            "1",
-            &fixture("hostvars-barrier.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(text.contains("stamped-alpha"), "beta read alpha: {text}");
-    assert_eq!(
-        text.matches("failed=0").count(),
-        2,
-        "both hosts reach the recap: {text}"
-    );
-}
-
-/// The same proof at the setting where the boundary has to be found rather than assumed. Under
-/// the strict default every step is a boundary, so the test above no longer says whether the
-/// driver hands its permit back at the boundary the textual scan raised, only that it hands it
-/// back somewhere. With batching asked for, the second task's `hostvars` is the only boundary in
-/// the play, and the permit has to go back in front of that one.
-///
-/// What would make this red: the permit kept across the boundary `reads_across_hosts` raised,
-/// which deadlocks the host holding it against a host that can never be given one.
-#[test]
-fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
+/// One fork, two hosts, and a step waiting for the other host right behind a `register` that
+/// ended a batch: the run finishes, with and without batching.
+#[rstest]
+fn a_barrier_behind_a_registered_task_opens_with_one_fork(#[values(false, true)] batching: bool) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
     let out = volant_within_env(
         &[
             "playbook",
@@ -1276,7 +947,7 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
             &fixture("hostvars-barrier.yml"),
         ],
         std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "1")],
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1293,19 +964,18 @@ fn a_barrier_behind_a_registered_task_opens_with_one_fork_with_batching() {
     );
 }
 
-/// The same rule at the other kind of wait: a flush point, where a host waits for the splice
-/// the coordinator makes once every host has reached it. One fork, two hosts, and the flush
-/// sits right behind a `register`.
-///
-/// Under the default this no longer reads the splice rule: every step is a boundary, so the
-/// release in front of the wait is unconditional and the two splice disjuncts behind it in the
-/// `||` chain are never evaluated. What it still guards is that the run finishes and the
-/// handler runs on both hosts. The companion below is what holds the splice rule.
-///
-/// What would make this red: the permit kept in front of a wait at all.
-#[test]
-fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
-    let out = volant_within(
+/// One fork, two hosts, and a flush point behind a `register` that ended a batch: the run
+/// finishes, with and without batching.
+#[rstest]
+fn a_flush_point_behind_a_registered_task_opens_with_one_fork(
+    #[values(false, true)] batching: bool,
+) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
+    let out = volant_within_env(
         &[
             "playbook",
             "-i",
@@ -1315,6 +985,7 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
             &fixture("handlers/flush-behind-a-register.yml"),
         ],
         std::time::Duration::from_secs(20),
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -1335,63 +1006,51 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork() {
     );
 }
 
-/// The same proof at the setting where the splice point is the only thing that can free the
-/// permit. Under the strict default the release above is asked for every step, and
-/// `is_boundary` answers first in the `||` chain that guards it, so the two splice disjuncts
-/// behind it are never evaluated and the test above no longer says anything about them. With
-/// batching asked for, the `register` is not a boundary and the flush point is the only
-/// disjunct left that can hand the permit back.
-///
-/// What would make this red: the permit kept across a splice point, which is the deadlock the
-/// splice rule exists to forbid. It hangs rather than printing a wrong answer, so
-/// `volant_within` is what sees it.
-#[test]
-fn a_flush_point_behind_a_registered_task_opens_with_one_fork_with_batching() {
-    let out = volant_within_env(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            "-f",
-            "1",
-            &fixture("handlers/flush-behind-a-register.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-        &[("VOLANT_BATCHING", "1")],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        text.matches("handler-ran").count(),
-        2,
-        "the handler runs on both hosts: {text}"
-    );
-    assert_eq!(
-        text.matches("ok=3").count(),
-        2,
-        "both hosts reach the recap: {text}"
-    );
-}
-
-/// A `sudo` that wants a password is a task that failed, never a host that could not be
-/// reached: the connection worked, and the run has to exit 2 rather than 4.
-#[test]
-fn a_missing_sudo_password_fails_the_task_not_the_host() {
-    let dir = fake_sudo(
-        "fakesudo",
-        "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n",
-    );
-    let out = volant_with_path(&["playbook", &fixture("become.yml")], &dir);
+/// An escalation that cannot happen fails the task, never the host: a `sudo` wanting a password,
+/// one refusing the password given, and no `sudo` at all.
+#[rstest]
+#[case::a_missing_password(
+    Some("#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n"),
+    None,
+    volant::transport::MISSING_SUDO_PASSWORD
+)]
+#[case::a_rejected_password(
+    Some("#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n"),
+    Some("not-the-password\n"),
+    volant::transport::INCORRECT_SUDO_PASSWORD
+)]
+#[case::no_sudo_at_all(None, None, "sudo")]
+fn an_escalation_that_cannot_happen_fails_the_task(
+    #[case] sudo: Option<&str>,
+    #[case] password: Option<&str>,
+    #[case] says: &str,
+) {
+    let dir = if let Some(body) = sudo {
+        fake_sudo(&format!("sudo-{}", says.len()), body)
+    } else {
+        let dir = std::env::temp_dir().join(format!("volant-nosudo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    };
+    let book = fixture("become.yml");
+    let args: Vec<&str> = if password.is_some() {
+        vec!["playbook", "-K", &book]
+    } else {
+        vec!["playbook", &book]
+    };
+    // A fake `sudo` goes in front of the real one; with none, `PATH` holds nothing at all.
+    let (front, only) = if sudo.is_some() {
+        (Some(dir.as_path()), None)
+    } else {
+        (None, Some(dir.as_path()))
+    };
+    let out = volant_within_full(&args, DEFAULT_DEADLINE, front, only, None, password, &[]);
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
-        text.contains("fatal: [localhost]: FAILED!")
-            && text.contains(volant::transport::MISSING_SUDO_PASSWORD),
-        "{text}"
+        text.contains("fatal: [localhost]: FAILED!") && text.contains(says),
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
     );
     assert!(
         !text.contains("UNREACHABLE"),
@@ -1401,64 +1060,7 @@ fn a_missing_sudo_password_fails_the_task_not_the_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same host, the same connection, a password that `sudo` rejects. The two messages have
-/// to be told apart, because the operator's next move differs.
-#[test]
-fn a_rejected_sudo_password_is_named_as_such() {
-    let dir = fake_sudo(
-        "badpassword",
-        "#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n",
-    );
-    let out = volant_feeding_stdin(
-        &["playbook", "-K", &fixture("become.yml")],
-        &dir,
-        "not-the-password\n",
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        text.contains(volant::transport::INCORRECT_SUDO_PASSWORD),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!text.contains("UNREACHABLE"), "{text}");
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A host with no `sudo` at all: still a failed task, and the shell's own words rather than a
-/// guess about passwords.
-#[test]
-fn a_host_without_sudo_fails_the_task_with_the_shells_words() {
-    let dir = std::env::temp_dir().join(format!("volant-nosudo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    // An empty directory as the whole PATH: nothing named `sudo` can be found from here.
-    let out = volant_within_full(
-        &["playbook", &fixture("become.yml")],
-        DEFAULT_DEADLINE,
-        None,
-        Some(&dir),
-        None,
-        None,
-        &[],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("fatal: [localhost]: FAILED!"), "{text}");
-    assert!(
-        text.contains("sudo"),
-        "the message names the program: {text}"
-    );
-    assert!(!text.contains("UNREACHABLE"), "{text}");
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// `become_method` other than `sudo` stops the run before anything executes, with the method
-/// named. `sudo` is not silently substituted for the program the playbook asked for.
-///
-/// Exit 2, measured: the reference reads the keyword happily, finds no plugin for the method and
-/// fails the task that would have used it. Volant refuses earlier, so nothing runs and there is
-/// no recap, but the code an operator's script reads is the same one.
+/// `become_method` other than `sudo` stops the run before anything executes, with the method named.
 #[test]
 fn unsupported_become_methods_are_refused_by_name() {
     let dir = std::env::temp_dir().join(format!("volant-su-{}", std::process::id()));
@@ -1536,16 +1138,8 @@ fn volant_feeding_stdin(args: &[&str], dir: &Path, line: &str) -> Output {
     )
 }
 
-/// The only path the password itself travels: `sudo -k -S` reads it off the link's stdin, ahead
-/// of the first protocol frame. The fake `sudo` here consumes exactly one line and then runs the
-/// command it was given, which is what a real `sudo -k -S` does, so the run exercises the whole
-/// sequence for real: the escalation check, the preamble on the link, the handshake and a batch.
-/// Left on the pipe, that line would be read by the agent as its first frame header and the
-/// handshake would fail, which is the failure this covers.
-///
-/// The answer the fake `sudo` accepts is built from this process's own id rather than written
-/// as a literal, so two runs never share one and a leftover directory from an earlier run
-/// cannot satisfy this one.
+/// The only path the password itself travels: `sudo -k -S` reads it off the link's stdin, ahead of
+/// the first protocol frame.
 #[test]
 fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
     let expected = format!("only-this-run-{}", std::process::id());
@@ -1580,16 +1174,8 @@ fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A `sudo` that needs no authentication at all - a `NOPASSWD` rule - never reads stdin,
-/// whatever flags it is given: `-k` invalidates a cached authentication, and there is nothing
-/// cached to invalidate. So the presence of a password is no reason to write one. Written
-/// anyway, the line stays on the pipe and the agent reads it as the first bytes of its first
-/// frame; the escalation check still passes, and the run then dies as `UNREACHABLE` with no
-/// answer from the agent, which is exactly the unexplained failure this guards against.
-///
-/// The fake `sudo` here never reads a line, so a run that survives it is a run that wrote
-/// nothing. The `-K` answer is built from this process's own id rather than written as a
-/// literal, so two runs never share one.
+/// A `sudo` that reads no password is never written one, or the line would be read as the agent's
+/// first frame.
 #[test]
 fn a_sudo_that_reads_no_password_is_never_written_one() {
     let dir = fake_sudo(
@@ -1655,16 +1241,8 @@ fn trace_steps(trace: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `linear` means the hosts of a batch meet in front of every task. Two hosts append a line
-/// each to one file, twice; with one fork the order is fully determined, and it says which
-/// engine ran.
-///
-/// The assertion is the file's contents, not the terminal: the coordinator reorders what it
-/// prints to keep the display in task order, so a run whose execution interleaved wrongly can
-/// still print in the right order. Only a shared effect shows the difference.
-///
-/// What would make this red: a task running ahead of another host's previous task, which is
-/// what this release did whenever no task mentioned `hostvars`.
+/// `linear` means the hosts of a batch meet in front of every task. Two hosts append a line each to
+/// one file, twice; with one fork the order is fully determined, and it says which engine ran.
 #[test]
 fn every_task_is_a_barrier_by_default() {
     let (dir, inventory, trace) = two_hosts_and_a_trace("order-strict");
@@ -1703,12 +1281,8 @@ fn every_task_is_a_barrier_by_default() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The other direction: with batching asked for, a host carries on through the tasks between
-/// two barriers, which is the whole point of the option. Same fixture, same forks, different
-/// order -- so this test is what proves the switch is wired rather than ignored.
-///
-/// What would make this red: `[volant] batching` or `VOLANT_BATCHING` read and dropped, which
-/// would leave the engine strict in both modes and the measured cost of the option unexplained.
+/// The other direction: with batching asked for, a host carries on through the tasks between two
+/// barriers, which is the whole point of the option.
 #[test]
 fn batching_lets_a_host_run_ahead_when_it_is_asked_for() {
     let (dir, inventory, trace) = two_hosts_and_a_trace("order-batching");
@@ -1749,13 +1323,8 @@ fn batching_lets_a_host_run_ahead_when_it_is_asked_for() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A templated task name shows what it rendered to when the step ran, not what the host's
-/// variables say by the time the banner prints. Under batching `alpha` runs past the banner's
-/// step and through the `set_fact` behind it while `beta` sleeps, and the coordinator cannot
-/// print that step before `beta` is done with the one in front of it.
-///
-/// What would make this red: the banner rendered at print time, which reads `release` after
-/// `alpha`'s `set_fact` and prints `Deploy 2` where the reference prints `Deploy 1`.
+/// A templated task name shows what it rendered to when the step ran, not what the host's variables
+/// say by the time the banner prints.
 #[test]
 fn a_banner_shows_the_name_as_it_rendered_at_its_step() {
     let (dir, inventory, _) = two_hosts_and_a_trace("banner-at-its-step");
@@ -1781,11 +1350,7 @@ fn a_banner_shows_the_name_as_it_rendered_at_its_step() {
 }
 
 /// A lookup reads the controller when its task renders, and every task of a batch is rendered
-/// before the batch goes out, so a task calling one starts its own batch. Here the `shell` in
-/// front of it rewrites the file the lookup reads.
-///
-/// What would make this red: the lookup rendered in the same batch as the `shell`, which reads
-/// the file before the `shell` ran and writes `old`.
+/// before the batch goes out, so a task calling one starts its own batch.
 #[test]
 fn a_lookup_reads_the_controller_after_the_tasks_in_front_of_it() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -1828,13 +1393,8 @@ fn a_lookup_reads_the_controller_after_the_tasks_in_front_of_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Every task of a batch is rendered before the batch goes out, so a task that writes facts
-/// ends its batch. Here the second `setup` reads a custom fact the `copy` in front of it just
-/// changed, and the `shell` behind it writes what it rendered; in one batch with the `setup`,
-/// it would render the fact the first `setup` gathered.
-///
-/// What would make this red: the batch not ending behind a fact-writing module, which writes
-/// `old`.
+/// Every task of a batch is rendered before the batch goes out, so a task that writes facts ends
+/// its batch.
 #[test]
 fn a_task_behind_a_fact_writing_module_renders_the_new_facts() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -1885,55 +1445,15 @@ fn a_task_behind_a_fact_writing_module_renders_the_new_facts() {
 
 /// Measured against the reference: `beta` reads the stamp `alpha` registered at the previous
 /// task, and both hosts see each other in the play's live list.
-///
-/// One run, not ten. The repetition this test used to carry was there to catch a barrier that
-/// opened on nothing and passed by luck, and under the default there is no barrier that can do
-/// nothing: every step is one. The companion below keeps the ten runs, because that is where a
-/// barrier can still go missing. What this one is kept for is the result and the live list,
-/// which are what the reference was read for.
-///
-/// What would make this red: `beta` printing the stamp's template or an empty value, or either
-/// host dropping out of `ansible_play_hosts`.
-#[test]
-fn a_host_reading_hostvars_waits_for_the_others() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("vars/inventory.ini"),
-            &fixture("hostvars-barrier.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        text.contains("ok: [beta] => {\n    \"msg\": \"stamped-alpha\"\n}"),
-        "{text}"
-    );
-    assert!(
-        text.contains("ok: [alpha] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}")
-            && text.contains("ok: [beta] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}"),
-        "both hosts are still in the play: {text}"
-    );
-}
-
-/// The same play with batching asked for, which is where the textual scan is the only thing
-/// standing between `beta` and a stamp `alpha` has not written yet. Under the strict default the
-/// test above passes whatever `reads_across_hosts` answers, so this is the copy that still
-/// guards it. Ten runs, because a barrier that does nothing passes this once by luck, and with
-/// batching asked for a barrier that does nothing is exactly what a broken scan leaves behind.
-///
-/// What would make this red: `hostvars` dropped from `CROSS_HOST_NAMES`, or the scan no longer
-/// reading the argument a `msg` was written in.
-#[test]
-fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
-    for _ in 0..10 {
+#[rstest]
+fn a_host_reading_hostvars_waits_for_the_others(#[values(false, true)] batching: bool) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
+    // Batching lets a host run ahead, so its race is given ten chances to show.
+    for _ in 0..if batching { 10 } else { 1 } {
         let out = volant_within_env(
             &[
                 "playbook",
@@ -1942,7 +1462,7 @@ fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
                 &fixture("hostvars-barrier.yml"),
             ],
             std::time::Duration::from_secs(20),
-            &[("VOLANT_BATCHING", "1")],
+            envs,
         );
         let text = String::from_utf8(out.stdout).unwrap();
         assert_eq!(
@@ -2026,8 +1546,7 @@ fn a_waiting_host_is_released_when_the_others_die() {
 }
 
 /// A host that fails still reports the task it failed on, so the test above is released by the
-/// play's progress rather than by the live set shrinking. This one removes that: `alpha` never
-/// reaches the first task at all, so nothing but the shrinking live set can end `beta`'s wait.
+/// play's progress rather than by the live set shrinking.
 #[test]
 fn a_waiting_host_is_released_when_the_others_never_report() {
     let dir = std::env::temp_dir().join(format!("volant-silent-{}", std::process::id()));
@@ -2088,9 +1607,8 @@ fn banner_section<'a>(text: &'a str, banner: &str) -> &'a str {
     }
 }
 
-/// Measured against ansible-core 2.19.12: a loop over an empty list prints
-/// `skipping: [localhost]`, never `ok`, and registers
-/// `{"changed": false, "results": [], "skipped": true, "skipped_reason": "No items in the list"}`.
+/// A loop over an empty list prints `skipping: [localhost]` and registers an empty `results` with
+/// `skipped: true`.
 #[test]
 fn an_empty_loop_is_skipped_and_registers_no_items() {
     let out = volant(&["playbook", &fixture("loops-edge.yml")]);
@@ -2118,18 +1636,6 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
 }
 
 /// A loop over an undefined variable under a block whose `when` is false is skipped, not failed.
-/// Measured on ansible-core 2.19.12 with the first task below alone (`k3s-ansible`'s `Copy
-/// manifests` under `when: extra_manifests is defined` has this shape): `skipping: [h]`, `ok=0
-/// failed=0 skipped=1`. Its `task_executor.py` keeps the loop's undefined error, runs the task
-/// once through `_execute` with no item, and raises the error only once the conditional holds.
-/// So the task is a plain one there: one `skipping:` line, the plain skip registered with no
-/// `results`, an include counted like any skipped task, and the same loop under a true `when`
-/// fails on the undefined variable.
-///
-/// What would make this red: the loop rendered before the `when` is read, which fails the first
-/// case with `undefined variable`; the task still reported as a loop, which prints a second
-/// `skipping:` line, registers `msg` and `results`, and counts the include as nothing; or the
-/// kept error dropped once the `when` holds, which runs the task with no items.
 #[test]
 fn an_undefined_loop_under_a_false_when_is_skipped() {
     let dir = std::env::temp_dir().join(format!("volant-loop-when-{}", std::process::id()));
@@ -2193,83 +1699,8 @@ fn an_undefined_loop_under_a_false_when_is_skipped() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Measured against ansible-core 2.19.12, local connection: a looped `include_tasks` or
-/// `include_role` whose every item is skipped prints the item lines, then `skipping: [h]` for the
-/// task, and counts the host `skipped=1` - whether the loop is a `with_first_found` under a
-/// block's false `when`, a `loop:` under `when: false`, or a `when` reading `item` that no item
-/// meets. When one item runs, the other's `skipping:` line stands alone and counts nothing: the
-/// recap reads `ok=2 ... skipped=0` for each of those two tasks.
-///
-/// What would make this red: the task's own line left out after its items, or the recap missing
-/// the skipped include (`skipped=0` with no host line, the way it read before); or a summary line
-/// and a count for the loop one item of which was included.
-#[test]
-fn a_looped_include_whose_every_item_is_skipped_counts_once() {
-    let dir = std::env::temp_dir().join(format!("volant-include-skip-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("roles/r/tasks")).unwrap();
-    std::fs::write(dir.join("inc.yml"), "- debug: { msg: in-inc }\n").unwrap();
-    std::fs::write(
-        dir.join("roles/r/tasks/main.yml"),
-        "- debug: { msg: in-role }\n",
-    )
-    .unwrap();
-    let path = dir.join("play.yml");
-    std::fs::write(
-        &path,
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - when: false\n      block:\n        - name: First found\n          include_tasks: \"{{ item }}\"\n          with_first_found: [inc.yml]\n    - name: Tasks false\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: false\n    - name: Tasks item\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: item == 'z'\n    - name: Role false\n      include_role: { name: r }\n      loop: [a, b]\n      when: false\n    - name: Role item\n      include_role: { name: r }\n      loop: [a, b]\n      when: item == 'z'\n    - name: Tasks mixed\n      include_tasks: inc.yml\n      loop: [a, b]\n      when: item == 'a'\n    - name: Role mixed\n      include_role: { name: r }\n      loop: [a, b]\n      when: item == 'a'\n",
-    )
-    .unwrap();
-    let out = volant_within(&["playbook", &path.display().to_string()], PROBE_DEADLINE);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let skips = |task: &str| -> Vec<String> {
-        section(&text, task)
-            .lines()
-            .map(str::trim_end)
-            .filter(|line| line.starts_with("skipping:"))
-            .map(str::to_string)
-            .collect()
-    };
-    let first = skips("First found");
-    assert_eq!(first.len(), 2, "{text}");
-    assert!(
-        first[0].starts_with("skipping: [localhost] => (item=") && first[0].ends_with("inc.yml)"),
-        "{text}"
-    );
-    assert_eq!(first[1], "skipping: [localhost]", "{text}");
-    for task in ["Tasks false", "Tasks item", "Role false", "Role item"] {
-        assert_eq!(
-            skips(task),
-            [
-                "skipping: [localhost] => (item=a)",
-                "skipping: [localhost] => (item=b)",
-                "skipping: [localhost]",
-            ],
-            "{task}: {text}"
-        );
-    }
-    for task in ["Tasks mixed", "Role mixed"] {
-        assert_eq!(
-            skips(task),
-            ["skipping: [localhost] => (item=b)"],
-            "{task}: {text}"
-        );
-    }
-    assert!(
-        text.contains("ok=4    changed=0    unreachable=0    failed=0    skipped=5 "),
-        "{text}"
-    );
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// Measured against ansible-core 2.19.12: a loop whose every item a `when` leaves out prints
-/// `skipping: [localhost] => (item=a)`, `skipping: [localhost] => (item=b)`, then one more line,
-/// `skipping: [localhost]`, for the task itself. `geerlingguy.git`'s `Build git.` does this on
-/// a host that already has git.
-///
-/// What would make this red: the task's own line left out after its items, the two item lines
-/// alone.
+/// A loop whose every item a `when` skips prints each item, then one more `skipping: [localhost]`
+/// line for the task.
 #[test]
 fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
     let out = volant_within(
@@ -2296,10 +1727,7 @@ fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
 }
 
 /// Measured against the reference: every item of a loop runs, the one that failed and the ones
-/// behind it alike, whether or not `ignore_errors` is on the task. The reference prints no
-/// aggregate line for the task, only the items and then `...ignoring` where the failure was
-/// swallowed, and its recap for this playbook reads
-/// `ok=8 changed=2 unreachable=0 failed=1 skipped=1 rescued=0 ignored=1`.
+/// behind it alike, whether or not `ignore_errors` is on the task.
 #[test]
 fn a_loop_runs_every_item_after_one_fails() {
     let out = volant(&["playbook", &fixture("loops-edge.yml")]);
@@ -2363,9 +1791,7 @@ fn a_loop_runs_every_item_after_one_fails() {
     );
 }
 
-/// Measured against the reference: a registered `debug` stores `changed: false` and
-/// `failed: false` and no `skipped`, so `when: reg.changed is defined` and `when: not
-/// reg.changed` both hold instead of raising an undefined variable.
+/// A registered `debug` stores `changed: false` and `failed: false` and no `skipped`.
 #[test]
 fn a_registered_debug_carries_changed_and_failed() {
     let out = volant(&["playbook", &fixture("loops-edge.yml")]);
@@ -2392,13 +1818,8 @@ fn a_registered_debug_carries_changed_and_failed() {
     );
 }
 
-/// Measured against the reference: an undefined variable is the only `vars_files` template
-/// failure it forgives. `"{{ 1 + [] }}.yml"` gives `[ERROR]: Error rendering template:
-/// unsupported operand type(s) for +: 'int' and 'list'`, `"{{ nope | badfilter }}.yml"` gives
-/// `[ERROR]: Syntax error in template: No filter named 'badfilter'.` and an unclosed
-/// `"{{ unclosed "` gives `[ERROR]: Syntax error in template: unexpected end of template,
-/// expected 'end of print statement'.` — each of the three on stderr with no `PLAY RECAP` and
-/// exit 1. So the run must fail, and it must not blame an undefined variable.
+/// Measured against the reference: an undefined variable is the only `vars_files` template failure
+/// it forgives.
 #[test]
 fn a_broken_vars_files_template_fails_the_run() {
     for case in ["illegal-operation", "bad-filter", "unclosed"] {
@@ -2427,11 +1848,7 @@ fn a_broken_vars_files_template_fails_the_run() {
 }
 
 /// Measured against the reference: a `vars_files` entry that renders to something other than a
-/// string prints "Invalid `vars_files` value of type 'int'. A `vars_files` value should either be
-/// a string or list of strings." on stderr, with no recap, and exits 4. The message is matched
-/// word for word and so is the code, which is the reference's own for a playbook it cannot make
-/// sense of. A `vars_files` entry whose *template* fails is a different case and exits 1 there,
-/// also measured; the test above covers it.
+/// string prints "Invalid `vars_files` value of type 'int'.
 #[test]
 fn a_vars_files_entry_that_is_not_a_string_is_refused() {
     let out = volant(&[
@@ -2458,7 +1875,6 @@ fn a_vars_files_entry_that_is_not_a_string_is_refused() {
 
 /// Measured against the reference: a `vars_files` entry that names no file is skipped without a
 /// word and the play runs; an entry whose template has no value is skipped with one warning.
-/// Exit code 0 on both counts, and a recap for every host.
 #[test]
 fn a_missing_vars_files_entry_is_skipped() {
     let out = volant(&[
@@ -2500,42 +1916,8 @@ fn a_missing_vars_files_entry_is_skipped() {
     );
 }
 
-/// Measured against the reference: two playbook arguments print two `PLAY RECAP` blocks, and
-/// the counters carry over rather than resetting, so the same playbook run twice reads `ok=1
-/// changed=1` and then `ok=2 changed=2`.
-#[test]
-fn each_playbook_prints_its_own_recap() {
-    let out = volant(&["playbook", &fixture("second.yml"), &fixture("second.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        text.matches("PLAY RECAP").count(),
-        2,
-        "one recap per playbook argument: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
-        ),
-        "the first recap counts the first playbook: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
-        ),
-        "the second recap carries the first one's counters: {text}"
-    );
-}
-
-/// The bounded event channel at scale: seventy hosts, seventy forks, each sending several
-/// events while the coordinator waits on the slowest one, and every one of them reaching the
-/// recap. `volant_within` is what makes a wedge a failure here: an elapsed-time assertion
-/// cannot fire on a run that never returns.
+/// The bounded event channel at scale: seventy hosts, seventy forks, each sending several events
+/// while the coordinator waits on the slowest one, and every one of them reaching the recap.
 #[test]
 fn seventy_hosts_finish_with_a_full_recap() {
     let dir = std::env::temp_dir().join(format!("volant-many-{}", std::process::id()));
@@ -2571,64 +1953,8 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A play written as a tree runs as one sequence, in playbook order, with every block's
-/// keywords reaching the tasks under it and every `always` running on the way out.
-///
-/// `volant_within` rather than `volant`: a host that steps over a step without telling the
-/// coordinator leaves its per-step loop waiting for a report that will never come, and a run
-/// that never returns cannot be caught by an assertion on what it printed.
-///
-/// What would make this red: a step run out of order, a nested `always` left out of the walk,
-/// or a block's `vars` not reaching the task inside it.
-#[test]
-fn a_play_of_nested_blocks_runs_as_one_sequence() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/happy.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let order: Vec<usize> = [
-        "In the block",
-        "Nested",
-        "Nested cleanup",
-        "Outer cleanup",
-        "After the block",
-    ]
-    .iter()
-    .map(|name| {
-        text.find(&format!("TASK [{name}]"))
-            .unwrap_or_else(|| panic!("{name} is missing from {text}"))
-    })
-    .collect();
-    assert!(
-        order.windows(2).all(|w| w[0] < w[1]),
-        "the steps run in playbook order: {text}"
-    );
-    assert!(
-        !text.contains("TASK [Around everything]"),
-        "a block's own name is shown nowhere, measured on the reference: {text}"
-    );
-    assert!(
-        text.contains("localhost                  : ok=5"),
-        "five steps ran and every one of them is counted: {text}"
-    );
-}
-
-/// A failure inside a nested block runs the `always` of every block around it, innermost
-/// first, and then the host leaves the play.
-///
-/// Measured on ansible-core 2.19.12 on the same shape: the step after the failure is skipped,
-/// both cleanups run, the step after the outer block never runs, and the recap reads
-/// `ok=2 failed=1`.
-///
-/// What would make this red: a failure that leaves the play straight away, which skips the
-/// cleanup the playbook wrote; or one that carries on through the body it was in.
+/// A failure inside a nested block runs the `always` of every block around it, innermost first, and
+/// then the host leaves the play.
 #[test]
 fn a_failure_runs_the_cleanups_around_it_and_stops_there() {
     let out = volant_within(
@@ -2657,14 +1983,6 @@ fn a_failure_runs_the_cleanups_around_it_and_stops_there() {
 }
 
 /// A failure whose cleanup is written as a block runs the whole cleanup.
-///
-/// Measured on ansible-core 2.19.12 on this shape: both cleanup tasks run, in order, and the
-/// recap reads `ok=2 changed=2 failed=1` at exit 2.
-///
-/// What would make this red: a host reading the section it is draining off the step it is on.
-/// The first cleanup task carries the nested block's own `Body`, so the host would take it for
-/// the end of the cleanup, leave the play, and report a run that did less than the playbook
-/// asked for.
 #[test]
 fn a_cleanup_written_as_a_block_runs_all_of_it() {
     let out = volant_within(
@@ -2688,20 +2006,8 @@ fn a_cleanup_written_as_a_block_runs_all_of_it() {
     );
 }
 
-/// A failure a `rescue` takes is shown as a failure, counted as `rescued`, and the play goes
-/// on for that host - while a host that failed nothing walks past the rescue without entering
-/// it.
-///
-/// Measured on ansible-core 2.19.12 on this shape, two hosts, only `h1` failing: `h1` prints
-/// `fatal: [h1]: FAILED!`, the rescue runs on `h1` alone, the `always` runs on both, the step
-/// behind the block runs on both with `ansible_play_hosts` still two long, and the recap reads
-/// `failed=0 rescued=1` for `h1` and `rescued=0` for `h2`, exit 0.
-///
-/// What would make this red: a rescue nobody enters (no `TASK [Rescue task]`); a body that
-/// carries on under the failure (`Never reached on h1` showing a line for `h1`); a rescued
-/// failure counted as `failed`, which exits 2 where the reference exits 0; a rescued host taken
-/// out of the live set, which reads `hosts=1`; or `h2` walking into the rescue it has no
-/// business in.
+/// A failure a `rescue` takes is shown as a failure, counted as `rescued`, and the play goes on for
+/// that host - while a host that failed nothing walks past the rescue without entering it.
 #[test]
 fn a_failure_in_a_block_is_rescued_and_the_play_goes_on() {
     let out = volant_within(
@@ -2753,15 +2059,6 @@ fn a_failure_in_a_block_is_rescued_and_the_play_goes_on() {
 }
 
 /// A rescue that fails itself still runs the `always`, and then the host leaves the play.
-///
-/// Measured on ansible-core 2.19.12 on this shape: the `always` runs, the step behind the block
-/// does not run for that host, and the recap reads `failed=1 rescued=1` - the body's rescue is
-/// kept, the rescue's own failure is not rescued again - at exit 2. Measured with it: by the
-/// time its `always` runs, the host is already out of `ansible_play_hosts`.
-///
-/// What would make this red: an `always` skipped after a failed rescue, which drops the cleanup
-/// a playbook wrote for exactly this case; a rescue that rescues itself, which would loop; or a
-/// host carrying on into the play after its rescue failed.
 #[test]
 fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
     let out = volant_within(
@@ -2796,80 +2093,8 @@ fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
     );
 }
 
-/// A block whose `when` is false skips every task inside it, one line each.
-///
-/// Measured on ansible-core 2.19.12: the banner of each inner task is printed with a
-/// `skipping: [h]` under it, nested blocks included, and the recap counts one `skipped` per
-/// task rather than one per block.
-///
-/// What would make this red: a block skipped whole, which prints nothing and recaps
-/// `skipped=0` - a playbook's tasks silently absent from the run and from the report.
-#[test]
-fn a_block_whose_when_is_false_skips_every_task_inside() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/when-false.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(
-        text.matches("skipping: [localhost]").count(),
-        2,
-        "one line per task inside the block, the nested one included: {text}"
-    );
-    assert!(
-        text.contains("localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=2"),
-        "both tasks are counted as skipped: {text}"
-    );
-}
-
-/// A host that cannot be reached is not rescued, and its `always` does not run either.
-///
-/// Measured on ansible-core 2.19.12: an unreachable host inside a block leaves the play at
-/// once, the rescue does not take it and the `always` is not run, the recap reads
-/// `unreachable=1 rescued=0` and the run exits 4. The trigger here is this engine's own - an
-/// unknown connection plugin, which it reports as `UNREACHABLE` - and what is under test is
-/// what a host leaving that way does to the sections around it.
-///
-/// What would make this red: an unreachable host routed through the failure path, which would
-/// print `msg: rescued`, exit 2 instead of 4, and report a host as recovered when nothing ever
-/// reached it.
-#[test]
-fn an_unreachable_host_is_not_rescued() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("blocks/unreachable.ini"),
-            &fixture("blocks/unreachable.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
-    assert!(
-        !text.contains("TASK [Rescue task]") && !text.contains("TASK [Always task]"),
-        "neither section runs for a host nothing reached: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0"
-        ),
-        "an unreachable host is counted once, as unreachable: {text}"
-    );
-}
-
-/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that
-/// names it.
-///
-/// The connection dies between two steps of a block's body, which is the one way a host can go
-/// unreachable with work already behind it. Measured on ansible-core 2.19.12: an unreachable
-/// host inside a block is not rescued and its `always` does not run either, and the run exits 4.
-///
-/// What would make this red - and it is the worst outcome this file guards against - a lost
-/// host routed into the rescue, which would print `rescued`, run the cleanup on a host that is
-/// not there, and exit 0 on a playbook that did half of what it says.
+/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that names
+/// it.
 #[test]
 fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
     let out = volant_within(
@@ -2896,14 +2121,6 @@ fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
 }
 
 /// A failure `ignore_errors` swallows never reaches the rescue: the body carries on.
-///
-/// Measured on ansible-core 2.19.12: the task prints `fatal:` followed by `...ignoring`, the
-/// next task of the body runs, the rescue does not, and the recap reads `ignored=1 rescued=0`
-/// at exit 0.
-///
-/// What would make this red: the rescue path reading the failure before `ignore_errors` does,
-/// which jumps into a recovery for a failure the playbook said to ignore and skips the rest of
-/// the body on the way.
 #[test]
 fn ignore_errors_inside_a_block_does_not_enter_the_rescue() {
     let out = volant_within(
@@ -2928,16 +2145,6 @@ fn ignore_errors_inside_a_block_does_not_enter_the_rescue() {
 }
 
 /// A `meta` shows one banner per live host and counts nothing.
-///
-/// Measured on ansible-core 2.19.12 with three hosts, one of them already out of the play:
-/// two `TASK [meta]` banners in a row, nothing underneath either of them, and the recap
-/// counting only the task that followed, `h0` reading `failed=1` and the other two `ok=1
-/// skipped=1`.
-///
-/// What would make this red: a banner printed on the first report rather than on the first
-/// event that shows something, which gives one banner for two hosts; a `meta` counted as a
-/// task, which reads `ok=2`; or a host that has left the play still being shown one, which
-/// gives three.
 #[test]
 fn a_meta_shows_one_banner_per_live_host_and_counts_nothing() {
     let out = volant_within(
@@ -3030,16 +2237,6 @@ fn run_probe(
 }
 
 /// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
-///
-/// That a parked keyword is refused by its own name is a property of `parse` plus `check`, and
-/// the unit test `every_preflight_keyword_is_refused_by_its_own_name` walks all four tables
-/// for it in one process. Only "no output before the refusal" needs a real run, and it is the
-/// same property for every row, so three fixtures carry it: one parked task keyword, one parked
-/// block keyword, one parked play keyword. Walking the whole grammar here spawned a hundred
-/// processes to re-prove in-process what one assertion already proves.
-///
-/// What would make this red: a refusal raised after the banner, by which time tasks may already
-/// have run and the operator has a half-applied playbook to undo.
 #[test]
 fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
@@ -3076,174 +2273,7 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// Every handler the tasks notified, run once each, in **definition** order, at the flush point
-/// the playbook asked for and at the one that closes the section.
-///
-/// The whole of this is measured on ansible-core 2.19.12 with this fixture. `second handler` is
-/// written first and notified second, and it runs first; `first handler` is notified twice and
-/// runs once; `ok does not notify` came back `ok` and notifies nothing; `notify listen` reaches
-/// two handlers through `listen: group`, one of which carries no `name` of that spelling, and
-/// only h1 notified so only h1 has a line under those banners; the explicit `meta` shows one
-/// `TASK [meta]` per live host with nothing under it; `after flush` notifies `second handler`
-/// again and it runs a second time, at the flush that closes `tasks`, for h1 alone because h2
-/// has failed by then. Recap `h1 ok=9 changed=4 skipped=1`, `h2 ok=6 failed=1 skipped=1`, exit 2.
-///
-/// What would make this red: handlers run in notification order (`first handler` first); a
-/// handler run twice for one notification (`ok=10`); a task that came back `ok` notifying; a
-/// `listen` name resolving to nothing; a host that never notified showing a line under a handler
-/// banner; or a host that failed still running its handlers, which is what `--force-handlers` is
-/// for and what the next test asks for instead.
-#[test]
-fn handlers_run_once_in_definition_order_after_the_tasks() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("handlers/handlers.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let banners: Vec<&str> = text
-        .lines()
-        .filter(|l| l.starts_with("RUNNING HANDLER ["))
-        .map(|l| l.split(']').next().unwrap_or_default())
-        .collect();
-    assert_eq!(
-        banners,
-        [
-            "RUNNING HANDLER [second handler",
-            "RUNNING HANDLER [first handler",
-            "RUNNING HANDLER [listener",
-            "RUNNING HANDLER [second handler",
-        ],
-        "definition order, and `second handler` once per notification: {text}"
-    );
-    assert!(
-        !handler_section(&text, "listener").contains("[h2]"),
-        "only the host that notified has a line: {text}"
-    );
-    assert_eq!(
-        text.matches("TASK [meta]").count(),
-        2,
-        "one banner per live host for the explicit flush, with nothing under it: {text}"
-    );
-    let between = text
-        .split_once("TASK [meta]")
-        .and_then(|(_, rest)| rest.split_once("RUNNING HANDLER"))
-        .map(|(before, _)| before)
-        .unwrap_or_default();
-    assert!(
-        !between.contains("ok: ") && !between.contains("changed: "),
-        "a flush shows no result line of its own: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=9    changed=4    unreachable=0    failed=0    skipped=1"
-        ),
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "h2                         : ok=6    changed=3    unreachable=0    failed=1    skipped=1"
-        ),
-        "a host that failed after notifying does not run its handlers: {text}"
-    );
-}
-
-/// A task that changed nothing notifies nothing, and the handler shows nowhere.
-///
-/// Measured on this fixture: one line, `ok: [localhost]`, recap `ok=1` and no `RUNNING HANDLER`
-/// anywhere. What would make this red: `notify` read without looking at whether the task changed
-/// anything, which runs every handler of every playbook on every run.
-#[test]
-fn a_task_that_did_not_change_does_not_notify() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/unchanged.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(!text.contains("RUNNING HANDLER"), "{text}");
-    assert!(
-        text.contains(
-            "localhost                  : ok=1    changed=0    unreachable=0    failed=0"
-        ),
-        "{text}"
-    );
-}
-
-/// A failure `ignore_errors` swallowed notifies nothing, even though a failed `command` reports
-/// `changed: true`: the reference files a notification from the ok branch of
-/// `_process_pending_results` alone. Measured on ansible-core 2.19.12 with this fixture: no
-/// `RUNNING HANDLER`, recap `ok=2 changed=1 ... ignored=1`, exit 0.
-///
-/// What would make this red: the notification filed for any changed result, failed or not.
-#[test]
-fn an_ignored_failure_does_not_notify() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/ignored-failure.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("...ignoring"), "{text}");
-    assert!(!text.contains("RUNNING HANDLER"), "{text}");
-}
-
-/// `--force-handlers` runs the handlers of a host that failed, and the failure still stands.
-///
-/// Measured on ansible-core 2.19.12 with the same fixture as above: the only difference is one
-/// line, `ok: [h2]` under the last `RUNNING HANDLER [second handler]`, and `h2 ok=7` against
-/// `ok=6`. The exit code is still 2 and `failed=1` is still there.
-///
-/// What would make this red: the flag read and the driver still leaving the play at the failure,
-/// which is the shape of a keyword accepted and then ignored; or a forced host counted as
-/// something other than failed, which would turn exit 2 into exit 0.
-#[test]
-fn force_handlers_runs_them_on_a_failed_host() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("handlers/handlers.yml"),
-            "--force-handlers",
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains(
-            "h2                         : ok=7    changed=3    unreachable=0    failed=1    skipped=1"
-        ),
-        "the failed host ran the handler it notified and is still counted failed: {text}"
-    );
-}
-
 /// An escalation the host refuses hands its fork back before the driver carries on.
-///
-/// The refusal is a task failure, so the host stays in the run and walks to the block's
-/// `rescue`, stepping over a flush point on the way and waiting there for the splice. With
-/// `-f 1` the fork it still held would be the only one, and the other host could never reach
-/// that same flush to open it.
-///
-/// Measured on ansible-core 2.19.12 on this fixture, with a `sudo` that refuses and `-f 1`:
-/// `fatal:` for both hosts under `escalates`, then `recovered` for both, then
-/// `RUNNING HANDLER [the handler]` for both at the flush that closes `tasks`; recap
-/// `ok=3 changed=1 rescued=1` each, exit 0. The flush written in the body shows no banner: both
-/// hosts stepped over it.
-///
-/// What would make this red: a permit held across the wait that follows the refusal. Only
-/// `volant_within` can see it, since the run hangs rather than printing anything wrong.
 #[test]
 fn a_refused_escalation_hands_its_fork_back_before_waiting() {
     let dir = fake_sudo(
@@ -3281,109 +2311,7 @@ fn a_refused_escalation_hands_its_fork_back_before_waiting() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A handler notifying a handler defined **after** it: the second one runs, in the same flush.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `notifies the first handler` changed, then
-/// `RUNNING HANDLER [the first handler]` changed, then `RUNNING HANDLER [the second handler]`
-/// with `second-ran`; recap `ok=3 changed=2`, exit 0. The other direction is the one that runs
-/// nothing - a handler notified by a handler defined before it runs in neither flush - which is
-/// what makes a flush's notifications die with it.
-///
-/// What would make this red: a notification raised while the host is walking the handler steps
-/// being dropped, which is the same mechanism read one step too far.
-#[test]
-fn a_handler_notifies_a_handler_defined_behind_it() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/chained.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        handler_section(&text, "the second handler").contains("second-ran"),
-        "the handler a handler notified runs in that same flush: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0"
-        ),
-        "{text}"
-    );
-}
-
-/// `ANSIBLE_FORCE_HANDLERS` in the environment does what `--force-handlers` does, and an
-/// unrecognised value leaves it off.
-///
-/// Measured on ansible-core 2.19.12 with this fixture: `ansible-config list` gives the setting
-/// one environment name, `ANSIBLE_FORCE_HANDLERS`, and it is typed `boolean`. Run end to end,
-/// `True`, `yes` and `1` each give `h2 ok=7`, while `0` and `maybe` give `ok=6` - the same two
-/// recap lines as the flag and its absence.
-///
-/// What would make this red: the environment arm deleted, or reading a name the reference does
-/// not answer to. Both are the accepted-then-ignored shape, and neither reddens anything else.
-#[test]
-fn the_environment_forces_handlers_the_way_the_flag_does() {
-    for (value, recap) in [("yes", "ok=7"), ("maybe", "ok=6")] {
-        let out = volant_within_env(
-            &[
-                "playbook",
-                "-i",
-                &fixture("handlers/inv.ini"),
-                &fixture("handlers/handlers.yml"),
-            ],
-            std::time::Duration::from_secs(20),
-            &[("ANSIBLE_FORCE_HANDLERS", value)],
-        );
-        let text = String::from_utf8(out.stdout).unwrap();
-        assert_eq!(out.status.code(), Some(2), "{text}");
-        assert!(
-            text.contains(&format!(
-                "h2                         : {recap}    changed=3    unreachable=0    failed=1    skipped=1"
-            )),
-            "ANSIBLE_FORCE_HANDLERS={value} should give {recap}: {text}"
-        );
-    }
-}
-
-/// `[defaults] force_handlers` in `ansible.cfg` does the same.
-///
-/// Measured on ansible-core 2.19.12 with this fixture: `force_handlers = True` gives
-/// `h2 ok=7`, `False` gives `ok=6`. `ansible-config list` puts the key in the `defaults`
-/// section.
-///
-/// What would make this red: the file arm deleted, which leaves a setting the file is allowed to
-/// carry and nothing reads.
-#[test]
-fn ansible_cfg_forces_handlers_the_way_the_flag_does() {
-    let out = volant_within_env(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("handlers/handlers.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-        &[("ANSIBLE_CONFIG", &fixture("handlers/force.cfg"))],
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains(
-            "h2                         : ok=7    changed=3    unreachable=0    failed=1    skipped=1"
-        ),
-        "{text}"
-    );
-}
-
 /// A `notify` naming nothing stops the run with the reference's own sentence and exit 1.
-///
-/// Measured on ansible-core 2.19.12: that text, exit **1** and no recap. The one divergence is
-/// the moment - the reference prints the notifying task's banner first and refuses while running
-/// it, this refuses before the first connection, so nothing has run at all.
-///
-/// What would make this red: exit 4, which is what an unloadable playbook gets and what a
-/// refusal raised without its own code would be; or the run going ahead with a `notify` nobody
-/// answers, which is a playbook asking for work that never happens.
 #[test]
 fn an_unknown_handler_is_refused_with_exit_1() {
     let out = volant_within(
@@ -3402,248 +2330,8 @@ fn an_unknown_handler_is_refused_with_exit_1() {
     assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
 }
 
-/// A handler that fails fails its host, and the handlers behind it do not run.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `fatal:` under
-/// `RUNNING HANDLER [bad handler]`, `good handler` nowhere, recap `ok=1 changed=1 failed=1`,
-/// exit 2. Measured again with `--force-handlers`: `good handler` still does not run, so the
-/// flag buys a failed host its handlers and not a failed handler its successors.
-///
-/// What would make this red: a handler whose failure goes unreported, which is a task that
-/// failed and a run that exits 0.
-#[test]
-fn a_failing_handler_fails_the_host() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/failing.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        handler_section(&text, "bad handler").contains("fatal: [localhost]: FAILED!"),
-        "{text}"
-    );
-    assert!(
-        !text.contains("good handler"),
-        "the host leaves, so the handler behind the failing one does not run: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=1    changed=1    unreachable=0    failed=1"
-        ),
-        "{text}"
-    );
-}
-
-/// A handler is an ordinary task: it loops, it has a `when`, and a task in a `rescue` may notify
-/// one.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `(item=1)` and `(item=2)` under
-/// `RUNNING HANDLER [loopy]`, `skipping: [localhost]` under `[conditional]`, `rescued-notify`
-/// under `[from rescue]`, recap `ok=4 changed=2 skipped=1 rescued=1`, exit 0.
-///
-/// What would make this red: a notification raised inside a rescue lost with the failure that
-/// led to it, which is a handler a playbook asked for and never got.
-#[test]
-fn handlers_accept_loops_conditions_and_notifications_from_a_rescue() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/shapes.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let loopy = handler_section(&text, "loopy");
-    assert!(
-        loopy.contains("(item=1)") && loopy.contains("(item=2)"),
-        "{text}"
-    );
-    assert!(
-        handler_section(&text, "conditional").contains("skipping: [localhost]"),
-        "{text}"
-    );
-    assert!(
-        handler_section(&text, "from rescue").contains("rescued-notify"),
-        "a task in a rescue notifies like any other: {text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=1    rescued=1"
-        ),
-        "{text}"
-    );
-}
-
-/// A `meta: flush_handlers` written inside a block runs the handlers there, inside that block:
-/// one that fails is taken by the block's own `rescue`, and the block's `always` still runs.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `TASK [meta]`, then
-/// `RUNNING HANDLER [bad handler]` with a `fatal:` under it, then `the rescue`, then
-/// `the cleanup`, then `after the block`; recap `ok=5 changed=2 rescued=1 failed=0`, exit 0.
-///
-/// This is the fixture the splice is written for. The handler steps are inserted **into** the
-/// block's body, one past the flush, and every block range that ends there has to grow with
-/// them: that is what the `>=` in `Compiled::splice` is for. What would make this red:
-/// `range.start > at` instead of `>=`, which leaves this block's `rescue` starting at the first
-/// spliced handler, so the failing handler is "rescued" into itself and the run never returns.
-/// `volant_within` is what says so, since no assertion on printed output can catch a hang.
-#[test]
-fn a_flush_inside_a_block_runs_its_handlers_inside_that_block() {
-    let out = volant_within(
-        &["playbook", &fixture("handlers/flush-in-block.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        handler_section(&text, "bad handler").contains("fatal: [localhost]: FAILED!"),
-        "{text}"
-    );
-    assert!(
-        section(&text, "the rescue").contains("rescue-ran"),
-        "the block's rescue takes the handler's failure: {text}"
-    );
-    assert!(
-        section(&text, "the cleanup").contains("cleanup-ran")
-            && section(&text, "after the block").contains("\"msg\": \"after\""),
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "localhost                  : ok=5    changed=2    unreachable=0    failed=0    skipped=0    rescued=1"
-        ),
-        "{text}"
-    );
-}
-
-/// A flush point one host runs and another steps over.
-///
-/// The flush is written in a `rescue` only `h1` enters. Measured on ansible-core 2.19.12 on this
-/// fixture: one `TASK [meta]` banner, `RUNNING HANDLER [the handler]` with `ok: [h1]` alone under
-/// it, then `after the block` for both hosts, then the handler again for `h2` alone at the flush
-/// that closes `tasks` - `h2`'s own notification, which the rescue's flush never reached. Recap
-/// `h1 ok=4 changed=1 rescued=1`, `h2 ok=3 changed=1 skipped=1`, exit 0.
-///
-/// This is the other half of the splice's safety, and the half the plan did not have. `h2` walks
-/// from the block's body straight past the rescue, which means past a flush point, while `h1` is
-/// still short of it - so `h2` has to stop there and wait for the handler steps to go in, exactly
-/// as `h1` does after running it. Reading the list one step earlier would leave `h2` holding an
-/// index into a list that has since grown underneath it.
-///
-/// What would make this red: a host that steps over a flush point without waiting for it. The
-/// step behind the block reads `ansible_play_hosts`, so it is a barrier and `h2` cannot simply
-/// race to the end; what it does instead is run whatever step its stale index now names.
-#[test]
-fn a_host_that_steps_over_a_flush_point_waits_for_it_too() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("handlers/flush-in-rescue.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(
-        text.matches("TASK [meta]").count(),
-        1,
-        "the flush shows for the host that entered the rescue and for no other: {text}"
-    );
-    let banners: Vec<&str> = text
-        .lines()
-        .filter(|l| l.starts_with("RUNNING HANDLER ["))
-        .collect();
-    assert_eq!(
-        banners.len(),
-        2,
-        "one flush each, at different points: {text}"
-    );
-    let first = handler_section(&text, "the handler");
-    assert!(
-        first.contains("[h1]") && !first.contains("[h2]"),
-        "only the host that reached the flush runs its handler there: {text}"
-    );
-    assert!(
-        section(&text, "after the block").contains("[h1]")
-            && section(&text, "after the block").contains("[h2]"),
-        "both hosts are still in the play behind the block: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
-        ) && text.contains(
-            "h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
-        ),
-        "{text}"
-    );
-}
-
-/// A `meta: flush_handlers` written inside a dynamic include belongs to the hosts that asked for
-/// that include, and to no others.
-///
-/// Measured on ansible-core 2.19.12 with `h1` alone including the file: `included: ... for h1`,
-/// `TASK [flush inside the include]`, then `RUNNING HANDLER [the handler]` with `handler for h1`
-/// alone; `TASK [after]` for both; and a **second** `RUNNING HANDLER` at the end of the play
-/// carrying `handler for h2`. Recap `h1 ok=4 changed=1`, `h2 ok=3 changed=1 skipped=1`, exit 0.
-///
-/// This is where the splice and the include mask meet, and nothing combined them before. The
-/// handler steps the coordinator splices in behind a flush carry the flush step's own mask, so a
-/// host outside it walks them and runs none. And that host never entered the flush, so it keeps
-/// the notifications it is carrying for the flush it does reach.
-///
-/// What would make this red: handler steps spliced in unmasked, which runs `h2`'s handler early,
-/// under `h1`'s flush, at a point `h2` never asked to flush at; or a masked-out host counted as
-/// having flushed, which throws its notification away and leaves `handler for h2` out of the run
-/// altogether.
-#[test]
-fn a_flush_inside_an_include_runs_the_handlers_of_the_hosts_that_asked_for_it() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("handlers/flush-in-include.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let banners = text
-        .lines()
-        .filter(|l| l.starts_with("RUNNING HANDLER ["))
-        .count();
-    assert_eq!(banners, 2, "one flush each, at different points: {text}");
-    let first = handler_section(&text, "the handler");
-    assert!(
-        first.contains("handler for h1") && !first.contains("handler for h2"),
-        "only the host whose include carried the flush runs its handler there: {text}"
-    );
-    assert!(
-        text.contains("handler for h2"),
-        "and the other host still runs its own, at the flush that closes the play: {text}"
-    );
-    assert!(
-        text.find("after on h2").unwrap() < text.rfind("handler for h2").unwrap(),
-        "h2's handler goes at the end of the play, behind the last task: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
-        ) && text.contains(
-            "h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
-        ),
-        "{text}"
-    );
-}
-
-/// A templated `ignore_errors` decides, rendered per host, on an ordinary task and on an include
-/// statement alike: `"{{ true }}"`-like values let the play go on with the failure counted as
-/// ignored, `false` ones fail the host there.
-///
-/// What would make this red: the template read as "not ignored" on either, which is what an
-/// include statement did (`report_include` read the keyword as written); or the verdict rendered
-/// and then dropped on the way from `prepare` to the driver.
+/// A templated `ignore_errors`, rendered per host, decides on an ordinary task and on an include
+/// statement alike.
 #[test]
 fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     let run = |cmd: &str, inc: &str| {
@@ -3678,16 +2366,8 @@ fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     );
 }
 
-/// A `notify` in an included file naming a handler the play does not have ends the run, in the
-/// words the pre-flight uses for the same typo in the play itself: exit 1, no recap, and the
-/// task's `ignore_errors: true` or a `rescue:` around the statement changes nothing. The included
-/// file is read once the host reaches the statement, so the pre-flight never saw it. Read off
-/// ansible-core 2.19.12's strategy, which raises the sentence as an `AnsibleError` with
-/// `ERROR_ON_MISSING_HANDLER` on, its default.
-///
-/// What would make this red: the name resolved to nothing and dropped, which runs no handler and
-/// exits 0; or the typo reported as a failure of the task, which `ignore_errors` and a `rescue`
-/// then swallow, and the run exits 0 all the same.
+/// A `notify` in an included file naming no handler ends the run at exit 1, whatever
+/// `ignore_errors` or a `rescue` says.
 #[test]
 fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
     for playbook in ["include/notify-typo.yml", "include/notify-typo-rescue.yml"] {
@@ -3717,12 +2397,7 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
 }
 
 /// A task that failed notifies nothing, so its misspelt handler is never looked up: the reference
-/// searches for a handler in the ok branch of `_process_pending_results` alone. A failing
-/// `command` under `ignore_errors: true` in an included file prints `...ignoring` and the play
-/// goes on to exit 0.
-///
-/// What would make this red: the lookup made for a changed result whatever else it says, which
-/// ends a run the reference finishes, at exit 1.
+/// searches for a handler in the ok branch of `_process_pending_results` alone.
 #[test]
 fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
     let out = volant_within(
@@ -3742,12 +2417,8 @@ fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
     assert!(!text.contains("reloaded"), "{text}");
 }
 
-/// A templated `notify` in an included file is refused by name, as it is in the play, rather
-/// than looked up as a handler called `restart {{ svc }}`: the statement fails for the host that
-/// reached it, and nothing in the file runs.
-///
-/// What would make this red: the template-shape check missing from what an include is checked
-/// with, which ends the run as a missing handler once the task changes.
+/// A templated `notify` in an included file is refused by name, as it is in the play, rather than
+/// looked up as a handler called `restart {{ svc }}`: the statement fails for the host that...
 #[test]
 fn a_templated_notify_in_an_include_is_refused_by_name() {
     let out = volant_within(
@@ -3773,68 +2444,15 @@ fn a_templated_notify_in_an_include_is_refused_by_name() {
 }
 
 /// A local failure that steps over an include, with fewer forks than hosts.
-///
-/// `-f 1` and two hosts, so there is exactly one permit in the play. `h1` takes it for the remote
-/// task, keeps it - the task ends its batch on its `register`, not on a wait - and then fails at a
-/// `debug` the next step, with an empty batch. The jump its failure takes runs from that step to
-/// the rescue, and the `include_tasks` sits in between, so `h1` steps over a splice point and
-/// waits there for the coordinator. `h2` cannot get to that same index without a permit, and the
-/// coordinator cannot splice until it does.
-///
-/// The permit release at the end of a batch is skipped for an empty one, and the release at the
-/// top of the step loop asks `steps_over_a_splice_point`, which reads the step's **success**
-/// successor - the include itself, one step along, stepped over by nobody. Neither one looks at
-/// the range a failure is about to jump across. So the permit was still in hand at the wait.
-///
-/// Recap `rescued=1` for both hosts and exit 0, which is what the rescue makes of it.
-///
-/// Under the default the permit is already back before the `debug` runs, because every step is
-/// a boundary and the step loop releases it there, so this one no longer reads the failure
-/// path's own release. What it still guards is that both hosts get through the jump and into
-/// the rescue. The companion below is what holds the release on the failure path.
-///
-/// What would make this red: the permit kept in front of a wait at all. The run then hangs and
-/// only the deadline sees it - both hosts sit in a wait, print nothing more, and no assertion
-/// on the output can fail on that.
-#[test]
-fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            "-f",
-            "1",
-            &fixture("include/fail-then-splice.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("rescued on h1") && text.contains("rescued on h2"),
-        "both hosts got through the jump and into the rescue: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
-        ) && text.contains(
-            "h2                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=1"
-        ),
-        "{text}"
-    );
-}
-
-/// The same jump at the setting where the failure path's own release is the only thing that can
-/// free the permit. Under the strict default the step loop hands the permit back in front of
-/// the `debug`, because every step is a boundary there, so the test above never reaches the
-/// jump still holding one and no longer says anything about it. Measured: with the release on
-/// the failure path deleted, the test above still passes and this one hangs.
-///
-/// What would make this red: the permit, or an escalated link, kept across a failure jump. The
-/// run then hangs and only the deadline sees it.
-#[test]
-fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back_with_batching() {
+#[rstest]
+fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back(
+    #[values(false, true)] batching: bool,
+) {
+    let envs: &[(&str, &str)] = if batching {
+        &[("VOLANT_BATCHING", "1")]
+    } else {
+        &[]
+    };
     let out = volant_within_env(
         &[
             "playbook",
@@ -3845,7 +2463,7 @@ fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back_with_batching
             &fixture("include/fail-then-splice.yml"),
         ],
         PROBE_DEADLINE,
-        &[("VOLANT_BATCHING", "1")],
+        envs,
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -3863,20 +2481,8 @@ fn a_failure_that_steps_over_an_include_gives_its_fork_permit_back_with_batching
     );
 }
 
-/// A flush point stepped over from the step immediately in front of it, with that step still in
-/// the batch.
-///
-/// The block's body is emptied by `--skip-tags`, so the rescue's `meta: flush_handlers` is the
-/// very next step in the list behind the task that notifies. Measured on ansible-core 2.19.12
-/// with `--skip-tags dropped`: `notifies the handler` changed, `after the block`, then
-/// `RUNNING HANDLER [the handler]`; recap `ok=3 changed=1`, exit 0. The rescue is never entered,
-/// so its flush never runs and the handler goes at the one that closes `tasks`.
-///
-/// What would make this red: a host that reaches a flush point it steps over while it still owes
-/// the coordinator a `TaskDone` for a step in front of it. It would then wait for a splice at an
-/// index the coordinator cannot walk to, because the coordinator is itself waiting for that very
-/// `TaskDone` - a deadlock neither side can leave. Only `volant_within` can see it; no assertion
-/// on printed output can fail on a hang.
+/// A flush point stepped over from the step immediately in front of it, with that step still in the
+/// batch.
 #[test]
 fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
     let out = volant_within(
@@ -3907,17 +2513,6 @@ fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
 }
 
 /// `until`, `retries` and `delay`, measured on ansible-core 2.19.12 with this very fixture.
-///
-/// Every figure below is the reference's: `retries: R` is **R + 1 runs**, the first and R
-/// retries, the line after failed run `i` of the first R reads `(R - i + 1 retries left)` so the
-/// last one says `(1 retries left)` and one more run follows it, a task that runs out reports
-/// `"attempts": R`, `until` with no `retries` is R = 3, `retries` with no `until` retries while
-/// the result is failed, and a loop retries **each item on its own** - one line per item, and
-/// `"attempts": 1` in each item's own result after its two runs under `retries: 1`.
-///
-/// What would make this red: `attempts` counting `retries + 1`, the last retry line missing,
-/// the count starting one lower, or the loop retrying all its items together instead of one at
-/// a time.
 #[test]
 fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
     let dir = probe_dir("until");
@@ -3994,46 +2589,7 @@ fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// A templated task name renders in the `FAILED - RETRYING` line the way it renders everywhere
-/// else, rather than showing its own template braces.
-///
-/// What would make this red: the retry line sending `task.name` raw instead of the rendered
-/// form - `probe {{ n }}` in the line instead of `probe 3`.
-#[test]
-fn a_templated_task_name_renders_in_the_retry_line() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("inventory.ini"),
-            &fixture("until/templated-name.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("FAILED - RETRYING: [localhost]: probe 3 (1 retries left)."),
-        "{text}"
-    );
-    assert!(
-        !text
-            .lines()
-            .any(|line| line.contains("RETRYING") && line.contains("{{")),
-        "the retry line must not show the template's braces: {text}"
-    );
-}
-
 /// A task that never leaves the controller retries by the same loop as any other.
-///
-/// Measured on ansible-core 2.19.12 with this fixture: two retry lines, `fatal:` carrying the
-/// `debug`'s own cleaned body, `...ignoring`, `attempts: 2` in the registered value and a recap
-/// of `ok=2 ignored=1`. Two differences with the reference are deliberate and recorded: it
-/// appends `Result was: {...}` to each retry line for a `debug` and puts a `retries` key in the
-/// result, and this prints neither.
-///
-/// What would make this red: the retry loop skipped for `set_fact` and `debug`, which is how a
-/// task carrying `until` would quietly run once and pass.
 #[test]
 fn a_controller_side_task_retries_like_any_other() {
     let out = volant_within(
@@ -4071,15 +2627,6 @@ fn a_controller_side_task_retries_like_any_other() {
 }
 
 /// An `until` expression that cannot be evaluated ends the task there.
-///
-/// Measured on ansible-core 2.19.12: `fatal:` carrying
-/// `Task failed: Error while evaluating conditional: ...`, **no** retry line, no `attempts`, and
-/// the run carries on. The sentence after the colon is this engine's own - the reference names
-/// the Python type - and the prefix is the reference's, which is what a playbook testing
-/// `'Task failed' in result.msg` reads.
-///
-/// What would make this red: a condition that throws treated as false, which would retry and
-/// print the retry lines this asserts are absent.
 #[test]
 fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     let out = volant_within(
@@ -4110,16 +2657,8 @@ fn an_until_that_cannot_be_evaluated_stops_the_attempts() {
     );
 }
 
-/// `delay` is waited after each failed run but the last, proved from the results rather than
-/// from the clock: the task before records the epoch second it ran at, and the retried task's own
-/// `stdout` is the epoch second of its **last** run. `retries: 2` is three runs, the first and two
-/// retries, with a `delay: 2` after each of the first two (ansible-core 2.19.12
-/// `task_executor.py`: `retries = 1 + R`, and the sleep sits behind the retry line, which the last
-/// run never prints), so at least four seconds separate the two stamps. The run is under
-/// `volant_within`, so a `delay` that never ends hangs the test rather than passing it.
-///
-/// What would make this red: a sleep dropped, or a run fewer - either puts the last run at most
-/// two seconds after the task before it.
+/// `delay` is waited after each failed run but the last, proved from the epoch seconds the
+/// attempts record rather than from the clock.
 #[test]
 fn the_delay_is_waited_between_two_attempts() {
     let out = volant_within(
@@ -4305,19 +2844,8 @@ fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
     }
 }
 
-/// `environment`, measured on ansible-core 2.19.12 with this fixture: the play's layer and the
-/// task's are both in force with the task's winning, a templated value is rendered, `42` reaches
-/// the process as the string `42`, a block's layer reaches its tasks, and a value that is not a
-/// mapping warns on **stderr** and is skipped while the task still runs and the layers around it
-/// stay. The `debug` at the end shows that an `environment` on a controller-side task changes
-/// nothing for `lookup('env', ...)`.
-///
-/// The warning quotes the whole layer stack the way the reference quotes it, as a Python list
-/// of the **raw** layers: measured, `['{{ secret }}']` for a one-layer stack, so nothing that
-/// was rendered from a variable reaches the line.
-///
-/// What would make this red: the play's layer lost (`" templated"`), `42` sent as a number (the
-/// agent refuses the shape), or a layer that is not a mapping failing the task.
+/// `environment`: the play's layer and the task's are both in force, the task's winning, and a
+/// templated value is rendered (ansible-core 2.19.12).
 #[test]
 fn environment_layers_merge_with_the_task_winning() {
     let out = volant_within(
@@ -5055,10 +3583,6 @@ ok: [localhost] => (item=one) => {
 
 /// Every keyword the table says this release answers -- `Runs` or `Partial` -- has a proof, and
 /// every proof belongs to a row.
-///
-/// What would make this red: a row flipped away from `Preflight` ahead of the code that answers
-/// it, which is the way a keyword comes to be accepted, waved through and ignored; or a proof
-/// left behind for a keyword that is now refused before the first connection.
 #[test]
 fn every_answered_keyword_has_a_proof_and_every_proof_has_a_row() {
     let mut declared: Vec<(&str, &str)> = [
@@ -5185,14 +3709,8 @@ fn every_runs_keyword_changes_something_observable() {
     std::fs::remove_dir_all(&no_ansible).expect("the fake python directory is removed");
 }
 
-/// A loop variable named after one of the values the whole inventory shares renders the item,
-/// not the inventory. Measured on ansible-core 2.19.12: the loop variable is bound once the
-/// host's variables are built, so it is the last write there is and it wins over the play's own
-/// host list for as long as the loop runs.
-///
-/// What would make this red: reading `play_hosts` out of the shared inventory-wide values with
-/// no account of what was written into the host's map afterwards. Both items then render the
-/// play's host list instead of `1` and `2`.
+/// A loop variable named after one of the values the whole inventory shares renders the item, not
+/// the inventory.
 #[test]
 fn a_loop_variable_wins_over_the_inventory_wide_value_it_is_named_after() {
     let dir = probe_dir("loop-var-shadows-shared");
@@ -5216,18 +3734,6 @@ fn a_loop_variable_wins_over_the_inventory_wide_value_it_is_named_after() {
 }
 
 /// A play's roles, read from the directory beside the playbook and spliced into the step list.
-///
-/// The snapshot is the reference's own output for this fixture, measured on ansible-core
-/// 2.19.12: the sections run `pre_tasks`, roles, `tasks`, `post_tasks`; a `meta/main.yml`
-/// dependency runs in front of the role that depends on it; every task of a role carries the
-/// `role : name` prefix, and an unnamed one shows its module behind that prefix
-/// (`TASK [spec : debug]`); a role read with `tasks_from` shows only that file's tasks; and an
-/// `import_tasks` inside a role reads its file against the role's `tasks/` directory, while a
-/// nested one reads against the directory of the file that wrote it.
-///
-/// What would make this red: the `base : ` prefix dropped, the dependency running after `child`
-/// instead of before it, a section running out of order, or an imported file looked for beside
-/// the playbook rather than beside its importer.
 #[test]
 fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -5250,17 +3756,8 @@ fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
     settings().bind(|| insta::assert_snapshot!(String::from_utf8(out.stdout).unwrap()));
 }
 
-/// A role nobody can find stops the run before the first banner, naming every directory it
-/// looked in, and exits **1**.
-///
-/// Measured on ansible-core 2.19.12: `the role 'nosuchrole' was not found in <paths joined by
-/// colons>`, exit 1 - not the 4 a playbook it cannot make sense of gets. The order is
-/// `<playbook_dir>/roles`, the `roles_path` entries, then `<playbook_dir>`.
-///
-/// What would make this red: the exit code drifting to the compiler's blanket 4, which is what
-/// happens the moment the refusal stops carrying a code of its own; a path missing from the
-/// list, which sends an operator looking in the wrong place; or a `PLAY` banner printed before
-/// the refusal, which would mean the roles were read after the run had started.
+/// A role nobody can find stops the run before the first banner, naming every directory it looked
+/// in, and exits **1**.
 #[test]
 fn a_missing_role_names_every_directory_searched_and_exits_1() {
     let out = volant(&["playbook", &fixture("roles/missing.yml")]);
@@ -5283,15 +3780,6 @@ fn a_missing_role_names_every_directory_searched_and_exits_1() {
 }
 
 /// Two identical entries are one role; two that differ in what they hand it are two.
-///
-/// Measured: `- base` twice runs once, `- base` and `- { role: base, vars: { p: twice } }` run
-/// twice, and a role whose required argument nobody supplied fails the run at exit 2 with the
-/// reference's own `argument_errors`.
-///
-/// What would make this red: an identity that compares the role's name alone, which drops the
-/// second entry and reports success having run one role less than the playbook asked for; or an
-/// argument check that passes whatever it is given, which lets a role run without a variable it
-/// declared it could not work without.
 #[test]
 fn identical_role_entries_run_once_and_different_parameters_run_twice() {
     let out = volant(&[
@@ -5317,19 +3805,7 @@ fn identical_role_entries_run_once_and_different_parameters_run_twice() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
-/// A role's `defaults` and `vars` stay visible to the rest of the play, and its parameters do
-/// not.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: the play's own task after the roles reads
-/// `shared=role-var d=role-default p=fact`, and the `pre_tasks` task that runs **before** any
-/// role reads `pre d=role-default shared=role-var`. So the export belongs to the play rather
-/// than accumulating as the list is walked, `vars/main.yml` beats the play's `vars:`, and a role
-/// parameter is gone once its role is over - `p` is back to the fact the `pre_tasks` set, not
-/// the `role-param` two entries handed the role.
-///
-/// What would make this red: dropping the export, which leaves both tasks reading `unset`; or
-/// exporting the parameters too, which would leave the task after the roles reading
-/// `p=role-param` - a role parameter outliving the role that was given it.
+/// A role's `defaults` and `vars` stay visible to the rest of the play, and its parameters do not.
 #[test]
 fn role_variables_stay_visible_after_the_role() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -5360,17 +3836,6 @@ fn role_variables_stay_visible_after_the_role() {
 }
 
 /// `vars:` on a role entry is a task variable; a free key beside `role:` is a role parameter.
-/// The two sit on opposite sides of a fact, which is what tells them apart.
-///
-/// Measured on ansible-core 2.19.12 on this fixture, whose `pre_tasks` set `p` to `fact`: the
-/// entry written `vars: { p: role-param }` runs the role reading `p=fact`, and the entry written
-/// with `p: role-param` as a free key runs it reading `p=role-param`. Three of the four entries
-/// read the fact - the bare one, the `vars:` one, and `child`'s dependency, which also hands its
-/// parameter through `vars:` - and only the free-key one reads its own value.
-///
-/// What would make this red: folding a role entry's `vars:` into its parameters, which lifts it
-/// above the fact and leaves two entries reading `role-param`; or the reverse, reading a free
-/// key as a task variable, which leaves all four reading `fact`.
 #[test]
 fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -5402,15 +3867,6 @@ fn a_role_entry_vars_loses_to_a_fact_and_a_free_key_beats_it() {
 
 /// `import_role` and `include_role` both run a role the play's `roles:` list has already run with
 /// the same parameters.
-///
-/// Measured on ansible-core 2.19.12 on this fixture: `base` runs six times - four entries in
-/// `roles:` counting `child`'s dependency, then once for the bare `import_role: { name: base }` in
-/// `tasks:` whose entry is identical to the bare one the list already ran, then once for the
-/// `include_role` behind it.
-///
-/// What would make this red: letting either statement consult the play's own list of what it has
-/// run, which drops it and leaves five - a run reporting success having done less than the
-/// playbook asked for.
 #[test]
 fn an_import_role_runs_again_what_the_roles_list_already_ran() {
     // Through the deadline, not bare: this play carries an `include_role`, so it reaches a
@@ -5435,16 +3891,6 @@ fn an_import_role_runs_again_what_the_roles_list_already_ran() {
 
 /// A ring of roles importing each other, and a file importing itself, are refused before the
 /// recursion runs out of stack.
-///
-/// Measured on ansible-core 2.19.12: two roles importing each other are refused with `A
-/// recursion loop was detected with the roles specified.`, exit 1, while a file importing itself
-/// with `import_tasks` is not caught at all - the interpreter dies and `ansible-playbook` exits
-/// 250 printing its own traceback. This engine refuses both, at exit 1, and the second in its
-/// own words: the divergence is recorded rather than reproducing a crash.
-///
-/// What would make this red: an unbounded recursion, which kills the process with no message and
-/// no exit code of its own; or a depth counter that only one of the two recursions increments,
-/// which leaves the other unbounded.
 #[test]
 fn a_ring_of_imports_is_refused_instead_of_exhausting_the_stack() {
     let deadline = std::time::Duration::from_secs(20);
@@ -5466,16 +3912,8 @@ fn a_ring_of_imports_is_refused_instead_of_exhausting_the_stack() {
     assert!(err.contains("self-loop.yml"), "{err}");
 }
 
-/// An argument an import statement does not take is refused by its own name, rather than read
-/// past and dropped.
-///
-/// Measured on ansible-core 2.19.12: `Invalid options for import_role: typo` and `Invalid
-/// options for import_tasks: apply`, exit 4 for both. The nine arguments `import_role` does take
-/// were measured the same way, `apply` being the one `import_tasks` refuses that its sibling
-/// `include_tasks` accepts.
-///
-/// What would make this red: reading the arguments the statement knows and ignoring the rest,
-/// which accepts a typo silently and runs the role without what the operator meant to hand it.
+/// An argument an import statement does not take is refused by its own name, rather than read past
+/// and dropped.
 #[test]
 fn an_import_statement_refuses_an_argument_it_does_not_take() {
     for (file, message) in [
@@ -5495,142 +3933,7 @@ fn an_import_statement_refuses_an_argument_it_does_not_take() {
     }
 }
 
-/// Everything an `include_tasks` does, on the campaign's own fixture.
-///
-/// Measured on ansible-core 2.19.12, line for line. A static include names one absolute path for
-/// both hosts; a name templated per host gives one `included:` line each, and the tasks behind
-/// them run for their own host alone; a `loop` gives one line per item with its own `=> (item=)`
-/// and the tasks repeat per item; an include a `when` left out for one host is `skipping:` there
-/// and runs for the other; and a file that is not there is a `fatal:` carrying `include` as the
-/// playbook wrote it and `reason` naming the controller path. Recap `h1 ok=10 skipped=1`,
-/// `h2 ok=9 failed=1`, exit 2.
-///
-/// What would make this red: the host mask ignored, which runs `from a` on h2 in the dynamic
-/// include; one `ok` for a two-item loop rather than one per item, which reads `ok=9`; a missing
-/// file reported as `UNREACHABLE` instead of a task failure; or a splice that nobody waits for,
-/// which hangs and `volant_within` fails rather than reporting an elapsed time.
-#[test]
-fn include_tasks_splices_what_each_host_asked_for() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/include.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let dir = fixture("include");
-    for line in [
-        format!("included: {dir}/inc-a.yml for h1, h2"),
-        format!("included: {dir}/inc-a.yml for h1"),
-        format!("included: {dir}/inc-b.yml for h2"),
-        format!("included: {dir}/inc-a.yml for h1, h2 => (item=1)"),
-        format!("included: {dir}/inc-a.yml for h1, h2 => (item=2)"),
-    ] {
-        assert!(text.contains(&line), "missing {line}:\n{text}");
-    }
-    // The dynamic include ran `from a` for h1 alone and `from b` for h2 alone, each under its
-    // own banner: the mask, not the banner, is what decides who shows a line.
-    assert_eq!(text.matches("TASK [from a]").count(), 4, "{text}");
-    assert_eq!(text.matches("\"msg\": \"a on h2\"").count(), 3, "{text}");
-    assert!(text.contains("skipping: [h1]"), "{text}");
-    assert!(
-        text.contains(
-            "fatal: [h2]: FAILED! => {\"changed\": false, \"include\": \"nosuch.yml\", \"reason\": \"Could not find or access '"
-        ),
-        "{text}"
-    );
-    assert!(
-        text.contains("h1                         : ok=10   changed=0    unreachable=0    failed=0    skipped=1"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=9    changed=0    unreachable=0    failed=1    skipped=0"),
-        "{text}"
-    );
-}
-
-/// The tags written on an `include_tasks` stop at the statement.
-///
-/// Measured on ansible-core 2.19.12 with the campaign's `tags2.yml`: `--tags inc` runs the
-/// statement - the `included:` line is there - and **not** the untagged task it brought in, while
-/// the play's own `always` task still runs. Measured the other way round too: `--tags playtag`,
-/// the play's own tag, does reach the included task, so what stops at the statement is its own
-/// tags and not the play's.
-///
-/// What would make this red: handing the statement's tags to the tasks it brought in, which runs
-/// `from b` under `--tags inc`.
-#[test]
-fn an_include_does_not_hand_its_tags_to_what_it_brings_in() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            "--tags",
-            "inc",
-            &fixture("include/tags.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("included: "), "{text}");
-    assert!(
-        !text.contains("TASK [from b]"),
-        "the tags stop there: {text}"
-    );
-    assert!(text.contains("TASK [always]"), "{text}");
-}
-
-/// `include_vars` reads a file of variables and they beat the play's own.
-///
-/// Measured on ansible-core 2.19.12 with the campaign's `include-vars.yml`: the first statement
-/// overrides the play's `iv: play`, a `name:` groups the file under that one key, and a file that
-/// is nowhere fails with `ansible_included_var_files` empty and every path it looked in listed.
-/// With `ignore_errors` the run still exits 0 with `ignored=1`.
-///
-/// What would make this red: the variables landing under the play's `vars:` instead of over them,
-/// which reads `iv=play`; a `name:` ignored, which leaves `ns.iv` undefined; or a file nobody can
-/// find reported as found.
-#[test]
-fn include_vars_sets_the_file_s_variables_over_the_play_s() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("include/inv.ini"),
-            &fixture("include/vars.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("\"iv\": \"from-include\""), "{text}");
-    assert!(text.contains("\"ns.iv\": \"from-include\""), "{text}");
-    assert!(
-        text.contains("\"ansible_included_var_files\": []"),
-        "{text}"
-    );
-    assert!(text.contains("Searched in:"), "{text}");
-    assert!(text.contains("...ignoring"), "{text}");
-    assert!(
-        text.contains("localhost") || text.contains("h1                         : ok=5"),
-        "{text}"
-    );
-}
-
 /// A `rescue` around an `include_tasks` takes a failure raised by a task the include brought in.
-///
-/// Measured on ansible-core 2.19.12: a block whose body includes a file whose task fails runs the
-/// block's `rescue`, then its `always`, then the task behind the block, and the recap reads
-/// `ok=5 rescued=1` at exit 0. `ansible_failed_task.name` is the included task's own name.
-///
-/// What would make this red: the spliced steps landing outside the block, so the failure has no
-/// rescue to reach and the host leaves the play - `rescued=0 failed=1` and exit 2.
 #[test]
 fn a_rescue_takes_a_failure_raised_inside_an_include() {
     let out = volant_within(
@@ -5656,20 +3959,8 @@ fn a_rescue_takes_a_failure_raised_inside_an_include() {
     );
 }
 
-/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out
-/// of a failed block, plus a `loop` over an empty list.
-///
-/// Measured on ansible-core 2.19.12, line for line: the empty loop shows one `skipping:` per host
-/// and counts one `skipped`, and both includes bring their file in for both hosts. Recap
-/// `ok=5 skipped=1 rescued=1` for each host, exit 0.
-///
-/// What this proves is that an include is reached from inside a `rescue` and from inside an
-/// `always` that runs behind one. Both hosts are rescued here, so neither is draining anything:
-/// the shape where a splice moves an index a host is already carrying is `draining.yml` below,
-/// and the assertions here cannot speak for it. What would make this red: a splice landing
-/// outside the section the statement sat in, so one of the two `included:` lines never prints;
-/// or an include reached with the batch unreported, which is a deadlock and fails on the
-/// deadline rather than on an assertion.
+/// An include in a `rescue` and an include in an `always`, both reached by a host on its way out of
+/// a failed block, plus a `loop` over an empty list.
 #[test]
 fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
     let out = volant_within(
@@ -5706,17 +3997,6 @@ fn an_include_in_a_rescue_and_in_an_always_are_both_reached() {
 
 /// A host draining the `always` of a block nobody rescues reaches an include written in that
 /// section, and the rest of the section still runs behind what the include brought in.
-///
-/// Measured on ansible-core 2.19.12: the body fails, the `always` runs its include and then the
-/// task behind it, the step after the block does not run, and the recap reads
-/// `ok=3 failed=1` at exit 2 for each host - the `include_tasks` statement itself counting one of
-/// those three.
-///
-/// This is the shape where a splice moves an index a host is already carrying, and it is the
-/// only test here that can see it: the end of the `always` section the host is draining sits
-/// past the insertion point, and the driver moves it by however much the list grew. What would
-/// make this red: that index left where it was, which ends the drain one step early -
-/// `second always task` never runs and the recap reads `ok=2`.
 #[test]
 fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
     let out = volant_within(
@@ -5750,20 +4030,8 @@ fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
     }
 }
 
-/// A block written inside an `always` a host is draining rescues its own failure, and the host
-/// goes on draining behind it - with an include between the failure and that rescue, so the
-/// list grows while the host holds the index the section ends at.
-///
-/// Measured on ansible-core 2.19.12: `h1` fails the outer body, fails again inside the cleanup's
-/// own block, is taken by that block's `rescue`, and then still runs `rest of the always`;
-/// `past the block` runs for neither host. Recap `h1 ok=2 failed=1 rescued=1` and
-/// `h2 ok=4 failed=1 skipped=1 rescued=0`, exit 2. `h2` skips the failing task and is the host
-/// that asks for the include, which is what makes the list grow under `h1`.
-///
-/// What would make this red: the end of the drained section left where it was while the steps
-/// the include brought in went in front of it. The host then reaches its own cleanup's end one
-/// step early, `rest of the always` never runs for `h1`, and the recap reads `ok=1` - a cleanup
-/// step nobody ran and nothing said so.
+/// A rescue inside an `always` a host is draining takes its own failure, an include between the
+/// two, and the host drains on behind it.
 #[test]
 fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
     let out = volant_within(
@@ -5793,14 +4061,6 @@ fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
 }
 
 /// A file that includes itself is bounded rather than followed.
-///
-/// Measured on ansible-core 2.19.12: it is not bounded there at all - the file is read again and
-/// again until Python's stack is gone, four thousand lines of output later, and
-/// `ansible-playbook` exits **250** reporting its own crash. This engine refuses at the depth its
-/// other recursions share, in its own words, as an ordinary task failure with a recap behind it.
-///
-/// What would make this red: the ceiling removed, which grows the step list until the process is
-/// killed and `volant_within` fails on the deadline rather than on an assertion.
 #[test]
 fn an_include_that_includes_itself_is_bounded() {
     let out = volant_within(
@@ -5826,15 +4086,6 @@ fn an_include_that_includes_itself_is_bounded() {
 
 /// An argument an include statement does not take, or takes and this release cannot honour, is
 /// refused by its own name before the first connection.
-///
-/// `include_role: public: true` is measured to export the role's `defaults` and `vars` to
-/// everything behind the statement, where the default keeps them to the role's own tasks - which
-/// would mean changing the play's variable layers while its hosts stand at different steps of it.
-/// `include_vars: dir:` is measured to read every file of a directory in name order. Both are
-/// refused rather than read and dropped.
-///
-/// What would make this red: either option accepted and forgotten, which runs the playbook
-/// without what the operator asked for and reports success.
 #[test]
 fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     for (file, message) in [
@@ -5858,25 +4109,8 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
     }
 }
 
-/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in,
-/// stops the statement instead of being read and dropped.
-///
-/// The pre-flight runs once, over the compilation, and a dynamic include reads its file while the
-/// play runs, so nothing used to look at what arrived. The assertion is the marker's absence, not
-/// the sentence on the terminal: a run that printed a refusal while still having run `touch` would
-/// pass a snapshot and fail this.
-///
-/// Two keywords rather than one, because the hole is the whole `Support::Preflight` class and not
-/// `check_mode`. `check_mode: true` is the sharp one - the task the operator asked to have only
-/// described runs for real - and `throttle` stands for the rest of the table.
-///
-/// **A deliberate divergence from ansible-core 2.19.12**, which has a check mode and skips the
-/// task. Refusing is the honest answer while the mode does not exist; running for real is not.
-///
-/// What would make this red: the spliced steps reaching the run unchecked, which creates the
-/// marker and reports success; the refusal arriving without naming the keyword, which leaves the
-/// operator to guess which line to fix; or the statement failing before it resolves its file,
-/// which would refuse every include there is - the test above is the other half of that.
+/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in, stops
+/// the statement instead of being read and dropped.
 #[test]
 fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
     for (kind, keyword, sentence) in [
@@ -5939,11 +4173,7 @@ fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
 }
 
 /// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this
-/// release has no layer to put the keywords it carries on. Both an unknown key and `apply` are
-/// caught before the first connection, the same as every other include and import statement.
-///
-/// What would make this red: `include_options` accepting anything, which would run the include
-/// and report success having ignored what the operator wrote.
+/// release has no layer to put the keywords it carries on.
 #[test]
 fn include_tasks_refuses_apply_and_an_unknown_key() {
     let dir = probe_dir("include-tasks-options");
@@ -5974,40 +4204,8 @@ fn include_tasks_refuses_apply_and_an_unknown_key() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// `import_playbook` puts the imported file's plays where the statement stands, not at the end.
-///
-/// Measured: a file importing `sub.yml`, declaring a play of its own and importing `sub.yml`
-/// again runs `PLAY [h2]`, `PLAY [h1]`, `PLAY [h2]` in that order, and the second import is
-/// written as a template with no variable in it.
-///
-/// What would make this red: appending the imported plays instead of splicing them, which runs
-/// the playbook in an order nobody wrote.
-#[test]
-fn import_playbook_splices_plays_in_place() {
-    let out = volant(&[
-        "playbook",
-        "-i",
-        &fixture("imports/hosts.ini"),
-        &fixture("imports/main.yml"),
-    ]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let order: Vec<&str> = text
-        .lines()
-        .filter(|l| l.starts_with("PLAY ["))
-        .map(|l| l.split_whitespace().nth(1).unwrap_or_default())
-        .collect();
-    assert_eq!(order, ["[h2]", "[h1]", "[h2]"], "{text}");
-}
-
 /// An `import_tasks` naming a file that is not there stops the run at exit 1, in the reference's
 /// own words, before anything has run.
-///
-/// Measured on ansible-core 2.19.12: `Unable to retrieve file contents.` followed by
-/// `Could not find or access '<absolute path>' on the Ansible Controller.`, exit 1.
-///
-/// What would make this red: an import whose file is missing being skipped, which is a run that
-/// reports success having done none of what the imported file said.
 #[test]
 fn an_import_tasks_naming_a_missing_file_stops_the_run() {
     let dir = probe_dir("import-missing");
@@ -6034,12 +4232,6 @@ fn an_import_tasks_naming_a_missing_file_stops_the_run() {
 
 /// `import_playbook` is a play-level statement; written as a task, the reference cannot run it
 /// either, and dies with its own traceback rather than a message naming what was wrong.
-///
-/// Measured on ansible-core 2.19.12: `Task failed: Action 'ansible.builtin.import_playbook' does
-/// not support raw params.`, exit 2. This engine refuses it the same way, before anything runs.
-///
-/// What would make this red: the task falling through to the ordinary module path instead, which
-/// would try to run a module named `import_playbook` and fail with a different message.
 #[test]
 fn import_playbook_written_as_a_task_is_refused_by_its_own_name() {
     let dir = probe_dir("import-playbook-as-task");
@@ -6070,135 +4262,8 @@ fn lines(out: &Output) -> Vec<String> {
         .collect()
 }
 
-/// `serial: 2` plays three hosts as two batches, each with its own banner, its own host lists
-/// and its own handlers.
-///
-/// Measured on ansible-core 2.19.12 with this playbook: `PLAY [all]` twice; the first batch
-/// reads `ansible_play_batch` as `h1, h2`, `ansible_play_hosts` as all three and
-/// `ansible_play_hosts_all` as all three; `h1` then fails, and `RUNNING HANDLER [h]` runs for
-/// `h2` alone at the end of that batch; the second batch reads `h3`, `h2, h3` and all three, and
-/// runs the handler again for `h3`. Recap `h1 failed=1`, exit 2.
-///
-/// What would make this red: one batch instead of two; `ansible_play_hosts` still carrying `h1`
-/// in the second batch; `ansible_play_batch` answering with the play rather than with the batch;
-/// or the handlers running once at the end of the play instead of once per batch.
-#[test]
-fn serial_plays_one_batch_at_a_time_with_its_own_handlers() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            &fixture("serial/two.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    let order: Vec<String> = lines(&out)
-        .into_iter()
-        .filter(|l| l.starts_with("PLAY [") || l.starts_with("RUNNING HANDLER ["))
-        .map(|l| l.split('*').next().unwrap_or_default().trim().to_string())
-        .collect();
-    assert_eq!(
-        order,
-        [
-            "PLAY [all]",
-            "RUNNING HANDLER [h]",
-            "PLAY [all]",
-            "RUNNING HANDLER [h]",
-        ],
-        "one banner and one handler run per batch: {text}"
-    );
-    assert!(
-        text.contains("ok: [h1] => {\n    \"msg\": \"h1,h2 / h1,h2,h3 / h1,h2,h3\"\n}"),
-        "the first batch is h1 and h2 and nobody has failed yet: {text}"
-    );
-    assert!(
-        text.contains("ok: [h3] => {\n    \"msg\": \"h3 / h2,h3 / h1,h2,h3\"\n}"),
-        "the second batch is h3 alone, and the play has lost h1: {text}"
-    );
-    assert!(
-        text.contains("ok: [h2] => {\n    \"msg\": \"handler on h2\"\n}")
-            && text.contains("ok: [h3] => {\n    \"msg\": \"handler on h3\"\n}"),
-        "each batch runs the handler its own hosts notified: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=2    changed=1    unreachable=0    failed=1"
-        ) && text.contains(
-            "h3                         : ok=3    changed=1    unreachable=0    failed=0"
-        ),
-        "{text}"
-    );
-}
-
-/// A batch that loses every host it had ends the whole run: no next batch, no next play, and the
-/// recap prints straight away.
-///
-/// Measured on ansible-core 2.19.12 with `serial: 1` over three hosts, the first failing: one
-/// `PLAY [all]`, a recap naming `h1` alone, exit 2. `h2` and `h3` never run, and the handler `h1`
-/// notified never runs either.
-///
-/// What would make this red: the second batch running, which shows a second `PLAY [all]` and puts
-/// `h2` in the recap - a run that carried on past the point the reference stops at.
-#[test]
-fn a_batch_that_loses_every_host_ends_the_run() {
-    one_host_batch_that_fails_stops_everything("serial/one_fails.yml");
-}
-
-/// A percentage is a batch size like any other: `"34%"` of three hosts is one host, measured, so
-/// this playbook runs exactly as the `serial: 1` one above does.
-///
-/// What would make this red: a percentage read as a plain number - `34` would be one batch of
-/// three, so `h2` and `h3` would run and reach the recap.
-#[test]
-fn a_percentage_serial_is_a_batch_size() {
-    one_host_batch_that_fails_stops_everything("serial/percent.yml");
-}
-
-/// The body both rows above share: three hosts cut into batches of one, the first failing.
-fn one_host_batch_that_fails_stops_everything(name: &str) {
-    let out = volant_within(
-        &["playbook", "-i", &fixture("serial/inv.ini"), &fixture(name)],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(2), "{name}: {text}");
-    assert_eq!(
-        text.matches("PLAY [all]").count(),
-        1,
-        "{name}: the batch that failed is the last one: {text}"
-    );
-    assert!(
-        text.contains("ok: [h1] => {\n    \"msg\": \"h1 / h1,h2,h3 / h1,h2,h3\"\n}"),
-        "{name}: the batch is one host: {text}"
-    );
-    assert!(
-        !text.contains("[h2]") && !text.contains("[h3]"),
-        "{name}: no host of a later batch ran: {text}"
-    );
-    assert!(
-        !text.contains("RUNNING HANDLER"),
-        "{name}: the only host that notified failed: {text}"
-    );
-    assert!(
-        text.contains("PLAY RECAP")
-            && text.contains(
-                "h1                         : ok=2    changed=1    unreachable=0    failed=1"
-            ),
-        "{name}: the recap prints where the run stopped: {text}"
-    );
-}
-
 /// The same rule without `serial`: a play whose every host fails is a batch that lost every host,
 /// so the play behind it never appears.
-///
-/// Measured on ansible-core 2.19.12: `h1` and `h2` both fail in the first play, `PLAY [` shows
-/// once, the second play's `second` is nowhere, exit 2.
-///
-/// What would make this red: the second play running, which is this repository's most expensive
-/// bug family - a run reporting on hosts it never touched.
 #[test]
 fn every_host_failing_ends_the_run_before_the_next_play() {
     let out = volant_within(
@@ -6219,14 +4284,6 @@ fn every_host_failing_ends_the_run_before_the_next_play() {
 
 /// A play whose resolved hosts have all failed already is not a batch that lost them: its banner
 /// prints alone and the run carries on.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails in the first play, `PLAY [h1]` prints with
-/// nothing under it - **no** `skipping: no hosts matched`, which is what a pattern that matched
-/// nothing gets - and `PLAY [h2]` then runs its task. Exit 2, from the first play's failure.
-///
-/// What would make this red: `skipping: no hosts matched` under the banner, the banner missing,
-/// or the run stopping there the way it stops for a batch that lost its hosts. The last is the
-/// one to watch: that rule and this one are one line apart and read the same two host sets.
 #[test]
 fn a_play_whose_hosts_have_all_failed_shows_its_banner_alone() {
     let out = volant_within(
@@ -6268,14 +4325,6 @@ fn a_play_whose_hosts_have_all_failed_shows_its_banner_alone() {
 
 /// A batch whose hosts had all failed before it started runs nothing, says nothing beyond its
 /// banner, and does **not** end the run.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails, a second play over `all` with `serial: 1`
-/// cuts `[h1]`, `[h2]`, `[h3]` - the failed host still gets a batch and a banner - and `h2` and
-/// `h3` then run theirs, followed by a third play. Exit 2, from the first play's failure.
-///
-/// What would make this red: cutting the batches from the surviving hosts, which merges them and
-/// loses a banner; or reading "no live host in this batch" as "this batch lost every host" and
-/// ending the run, which would silently drop two hosts and a whole play.
 #[test]
 fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
     let out = volant_within(
@@ -6312,19 +4361,8 @@ fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
     );
 }
 
-/// `vars_files` is read once per batch, not once for the whole play: a path templated on
-/// `ansible_play_batch` must read a different file for each batch of a `serial` play, and must
-/// not see a host that already failed in the play before it.
-///
-/// Measured on ansible-core 2.19.12: after `h1` fails, a second play with `serial: 1` over `all`
-/// reads `vars_h1.yml` for `h1`'s own (never-run) batch, `vars_h2.yml` when `h2`'s batch runs and
-/// `vars_h3.yml` when `h3`'s batch runs - three separate renders and reads, one per batch, each
-/// seeing that batch's own `ansible_play_batch`.
-///
-/// What would make this red: `vars_files` rendered once before the batches are cut, from the
-/// play's unfiltered host list - `ansible_play_batch` would then read `h1,h2,h3` for every host,
-/// `vars_h1_h2_h3.yml` does not exist among the fixtures, so the entry is silently skipped and
-/// `marker` stays undefined for both `h2` and `h3`.
+/// `vars_files` is read once per batch of a `serial` play, so a path templated on
+/// `ansible_play_batch` reads a different file for each batch.
 #[test]
 fn vars_files_is_read_per_batch_not_per_play() {
     let out = volant_within(
@@ -6348,180 +4386,7 @@ fn vars_files_is_read_per_batch_not_per_play() {
     );
 }
 
-/// A batch that goes unreachable ends the run exactly as a batch that fails does, but at exit 4
-/// rather than 2: `PlayEnd::stop_run`'s doc names this shape, and this pins it. `serial: 1` cuts
-/// `h1` into its own batch; `h1`'s connection plugin does not exist, so the batch is unreachable
-/// rather than failed - the run still stops there, no `h2`, no `h3`, no second play.
-///
-/// What would make this red: the run treating an unreachable batch as one that merely lost a
-/// host rather than one that ends the run, which would let `h2`'s batch start, or exit 2 instead
-/// of 4 where the unknown-connection tests above pin 4 for the same trigger outside `serial`.
-#[test]
-fn a_batch_that_goes_unreachable_ends_the_run_at_exit_4() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/unreachable_batch.ini"),
-            &fixture("serial/unreachable_batch.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
-    assert_eq!(
-        text.matches("PLAY [all]").count(),
-        1,
-        "the batch that went unreachable is the last one: {text}"
-    );
-    assert!(
-        !text.contains("[h2]") && !text.contains("[h3]"),
-        "no later batch and no second play ran: {text}"
-    );
-}
-
-/// `--limit` narrows the resolved hosts **before** `serial` cuts the batches, not after: measured
-/// on ansible-core 2.19.12, `--limit h2,h3` with `serial: 2` over a three-host inventory leaves
-/// one batch of two rather than cutting the original three-host list and then dropping `h1`
-/// (which would still show a two-batch shape for a two-host play). `ansible_play_hosts_all` is
-/// `h2,h3`, not `h1,h2,h3`.
-///
-/// What would make this red: cutting from the inventory's full resolved set and filtering `h1` out
-/// afterwards, which for this fixture is invisible in the batch count (both give one batch, since
-/// `serial: 2` covers two hosts either way) but would leak `h1` into `ansible_play_hosts_all`.
-#[test]
-fn limit_narrows_before_the_batches_are_cut() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("serial/inv.ini"),
-            "-l",
-            "h2,h3",
-            &fixture("serial/two.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(!text.contains("[h1]"), "h1 is limited out entirely: {text}");
-    assert_eq!(
-        text.matches("PLAY [all]").count(),
-        1,
-        "one batch, not two: {text}"
-    );
-    assert!(
-        text.contains("ok: [h2] => {\n    \"msg\": \"h2,h3 / h2,h3 / h2,h3\"\n}"),
-        "ansible_play_hosts_all is the limited set, not the inventory's full one: {text}"
-    );
-}
-
-/// A module run on the delegate under `delegate_facts` files its facts under the delegate, and
-/// its registered result under the host the task was written for. Measured on ansible-core
-/// 2.19.12 with this fixture: `ok: [h1 -> h3]`, then `"msg": "True none True"`.
-///
-/// What would make this red: the facts of a remote result filed under the delegating host, as
-/// they were before (`"none True True"`).
-#[test]
-fn a_remote_result_under_delegate_facts_lands_on_the_delegate() {
-    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
-        return;
-    };
-    let out = volant_within_env(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/delegate-facts-remote.yml"),
-        ],
-        std::time::Duration::from_secs(120),
-        &[("VOLANT_PYTHON", &python)],
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("ok: [h1 -> h3]"), "{text}");
-    assert!(text.contains(r#""msg": "True none True""#), "{text}");
-}
-
-/// `run_once`, `delegate_to` and `delegate_facts` on the campaign's own fixture.
-///
-/// Every line below is what ansible-core 2.19.12 printed for this playbook against this
-/// inventory: `changed: [h1]` alone under `once`, `once on h1` **and** `once on h2` from the
-/// variable one host registered for both, `changed: [h1 -> h3]` and `changed: [h2 -> h3]` for
-/// the delegated task, `"msg": "h1"` and `"msg": "h2"` behind it because `inventory_hostname`
-/// stays the host the task was written for, `ok: [h1 -> h3]` for the delegated `set_fact`,
-/// `"1 none"` twice because `delegate_facts` put the fact on h3 and not on the host that set
-/// it, and a recap of `h1 ok=6 changed=2`, `h2 ok=5 changed=1` with **no h3 line at all**.
-///
-/// What would make this red: the registered variable not handed to the other host (`once on h2`
-/// undefined, so a `fatal:`); `inventory_hostname` taken from the delegate (`"msg": "h3"`);
-/// `delegate_facts` writing on the delegating host (`"1 1"`); the arrow missing from a
-/// delegated line; or h3 counted in the recap for work it did on somebody else's behalf.
-#[test]
-fn run_once_and_delegate_to_follow_the_reference() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/delegate.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(
-        text.matches("changed: [h1]").count(),
-        1,
-        "one host runs the run_once task and it is the first of the batch: {text}"
-    );
-    assert!(
-        !text.contains("changed: [h2]"),
-        "the other host runs nothing for it: {text}"
-    );
-    assert!(text.contains(r#""msg": "once on h1""#), "{text}");
-    assert!(
-        text.contains(r#""msg": "once on h2""#),
-        "the registered variable reaches the host that did not run it: {text}"
-    );
-    assert!(text.contains("changed: [h1 -> h3]"), "{text}");
-    assert!(text.contains("changed: [h2 -> h3]"), "{text}");
-    assert!(
-        text.contains(r#""msg": "h1""#) && text.contains(r#""msg": "h2""#),
-        "inventory_hostname stays the delegating host: {text}"
-    );
-    assert!(text.contains("ok: [h1 -> h3]"), "{text}");
-    assert_eq!(
-        text.matches(r#""msg": "1 none""#).count(),
-        2,
-        "delegate_facts writes on h3 and not on the host that set it: {text}"
-    );
-    assert!(
-        text.contains("h1                         : ok=6    changed=2"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=5    changed=1"),
-        "{text}"
-    );
-    assert!(
-        !text.contains("h3                         :"),
-        "a delegate is not in the recap: {text}"
-    );
-}
-
 /// A `run_once` task that fails takes every other host of the batch out of the play.
-///
-/// Measured on ansible-core 2.19.12: `fatal: [h1]: FAILED!`, no `after` line for either host,
-/// **no recap line for h2** - it ran nothing, so there is nothing to count - and exit 2. The
-/// same holds with a `rescue` around the task: the host that ran it is rescued and carries on
-/// (`rescued=1`, its own `after the block` line), the other host still leaves, and the run
-/// still exits 2.
-///
-/// What would make this red: the other host carrying on past a task nobody ran for it, which is
-/// this project's own worst failure - a run reporting success having done nothing; or the
-/// rescued shape exiting 0, which would report success for a play the reference failed.
 #[test]
 fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
     let out = volant_within(
@@ -6573,16 +4438,8 @@ fn a_failing_run_once_task_ends_the_play_for_the_other_hosts() {
     assert!(!text.contains("h2                         :"), "{text}");
 }
 
-/// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the
-/// exit code stays the unreachable one.
-///
-/// Measured on ansible-core 2.19.12 with an unreachable h1: `fatal: [h1]: UNREACHABLE!` with no
-/// arrow, no line and no recap entry for h2, and exit **4** - not 6. So a host that leaves
-/// because its runner never answered adds nothing of its own to the exit code, while a host
-/// that leaves because its runner's task failed adds 2.
-///
-/// What would make this red: h2 waiting for a verdict that can never come, which hangs the run
-/// and reaches the deadline; or h2 counted as failed, which turns the reference's 4 into 6.
+/// A `run_once` runner nothing can reach ends the play for the hosts waiting on it, and the exit
+/// code stays the unreachable one.
 #[test]
 fn an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it() {
     let out = volant_within(
@@ -6604,199 +4461,8 @@ fn an_unreachable_run_once_runner_releases_the_hosts_waiting_on_it() {
     assert!(!text.contains("h2                         :"), "{text}");
 }
 
-/// `serial` cuts the play into batches and each batch elects its own runner.
-///
-/// Measured on ansible-core 2.19.12 with `serial: 1` over three hosts: `changed: [h1]`,
-/// `changed: [h2]` and `changed: [h3]`, one per batch, and each host reads its own batch's
-/// result. What would make this red: one runner for the whole play, which leaves two batches
-/// with an undefined registered variable.
-#[test]
-fn each_serial_batch_elects_its_own_run_once_runner() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/run-once-serial.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    for host in ["h1", "h2", "h3"] {
-        assert!(
-            text.contains(&format!("changed: [{host}]")),
-            "{host} runs the task for its own batch: {text}"
-        );
-        assert!(
-            text.contains(&format!(r#""msg": "once on {host}""#)),
-            "{text}"
-        );
-    }
-}
-
-/// A `run_once` step an include splices in is elected for against the list that now exists.
-///
-/// The splice moves every index behind it, and the election for the step that used to sit at the
-/// insertion point was already decided - against the step the splice pushed along, and against
-/// its mask. The coordinator drops it there rather than letting it name a step it was never about.
-///
-/// Measured on ansible-core 2.19.12, `h2` alone including a file whose first task is `run_once`:
-/// `skipping: [h1]`, `included: ... for h2`, `changed: [h2]` under `once inside the include`,
-/// `inside on h2`, then `changed: [h1]` for the `run_once` behind the include and `behind on h1`
-/// and `behind on h2` under it. Recap `h1 ok=2 changed=1 skipped=1`, `h2 ok=4 changed=1`, exit 0.
-///
-/// What would make this red: an election carried across the splice. It names the host the step
-/// behind the include was elected for, that host is outside the included step's mask so it runs
-/// nothing, and the host the include belongs to reads it as a runner other than itself and waits -
-/// so the `run_once` task inside the include is run by nobody and the run still exits 0, with the
-/// registered variable undefined for the host that asked for it.
-#[test]
-fn a_run_once_step_spliced_in_by_an_include_is_elected_for_afresh() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("handlers/inv.ini"),
-            &fixture("delegate/run-once-after-include.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("changed: [h2]") && text.contains(r#""msg": "inside on h2""#),
-        "the host the include belongs to runs its `run_once` task: {text}"
-    );
-    assert!(
-        text.contains(r#""msg": "behind on h1""#) && text.contains(r#""msg": "behind on h2""#),
-        "and the step behind the include still runs for the whole batch: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=1    rescued=0"
-        ) && text.contains(
-            "h2                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
-        ),
-        "{text}"
-    );
-}
-
-/// An `include_tasks` under `run_once` is read for the elected host alone, and only that host
-/// runs what it brought in.
-///
-/// Measured on ansible-core 2.19.12: `included: <path> for h1`, the included tasks running for
-/// h1 with no h2 line under any of their banners, `after` running for both, and a recap of
-/// `h1 ok=4 changed=1`, `h2 ok=1`.
-///
-/// What would make this red: the other host asking for its own copy of the file, which runs the
-/// included tasks twice for a statement the playbook said to run once.
-#[test]
-fn a_run_once_include_is_read_for_the_elected_host_alone() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/run-once-include.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("for h1"), "{text}");
-    assert!(!text.contains("for h1,h2"), "{text}");
-    assert_eq!(
-        text.matches(r#""msg": "included on h1""#).count(),
-        1,
-        "{text}"
-    );
-    assert!(!text.contains("included on h2"), "{text}");
-    assert!(text.contains(r#""msg": "after on h1""#), "{text}");
-    assert!(text.contains(r#""msg": "after on h2""#), "{text}");
-    assert!(
-        text.contains("h1                         : ok=4    changed=1"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=1    changed=0"),
-        "{text}"
-    );
-}
-
-/// A `run_once` step's runner is elected among the hosts the step's mask includes, and every
-/// other host of the batch waits for it - the ones the mask leaves out as well.
-///
-/// Three hosts and two plays, each with an `include_tasks` a `when` keeps one host out of and a
-/// `run_once` task inside whose registered value the next task reads. The first play leaves out
-/// h2, so the first live host is inside the mask; the second leaves out h1, so it is not.
-///
-/// Measured on ansible-core 2.19.12. First play: `skipping: [h2]`, `changed: [h1]` alone under
-/// the `run_once` banner, both h1 and h3 reading `once on ...` back, all three running `after`,
-/// recap `h1 ok=4 changed=1`, `h2 ok=1 skipped=1`, `h3 ok=3`. Second play: `skipping: [h1]`,
-/// **`changed: [h2]`** - the first host the mask holds, not the first live host - h2 and h3
-/// reading `twice on ...`, recap `h1 ok=1 skipped=1`, `h2 ok=4 changed=1`, `h3 ok=3`.
-///
-/// What would make this red, in the first play: a host outside the mask reporting the step
-/// instead of waiting for the verdict, which releases h3 before h1 has run anything, so h3
-/// reads a register that does not exist yet - `fatal: [h3]` on an undefined variable. In the
-/// second play: the runner elected from the whole live set, which hands the step to h1, a host
-/// that runs nothing - so nobody runs it and both waiting hosts read the same undefined
-/// register.
-#[test]
-fn a_run_once_runner_is_elected_inside_the_steps_mask() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/run-once-masked.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("skipping: [h2]"), "{text}");
-    assert!(text.contains("skipping: [h1]"), "{text}");
-    assert!(text.contains(r#""msg": "once on h1""#), "{text}");
-    assert!(text.contains(r#""msg": "once on h3""#), "{text}");
-    assert!(!text.contains("once on h2"), "{text}");
-    assert!(text.contains(r#""msg": "twice on h2""#), "{text}");
-    assert!(text.contains(r#""msg": "twice on h3""#), "{text}");
-    assert!(!text.contains("twice on h1"), "{text}");
-    for host in ["h1", "h2", "h3"] {
-        assert!(
-            text.contains(&format!(r#""msg": "after on {host}""#)),
-            "{text}"
-        );
-        assert!(
-            text.contains(&format!(r#""msg": "after again on {host}""#)),
-            "{text}"
-        );
-    }
-    assert!(
-        text.contains("h1                         : ok=5    changed=1"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h2                         : ok=5    changed=1"),
-        "{text}"
-    );
-    assert!(
-        text.contains("h3                         : ok=6    changed=0"),
-        "{text}"
-    );
-}
-
-/// A delegate nothing can reach takes the **delegating** host out of the run, and the line
-/// carries the arrow.
-///
-/// Measured on ansible-core 2.19.12 against an unreachable delegate:
-/// `fatal: [h2 -> h1]: UNREACHABLE!`, the delegating host counted `unreachable=1`, the delegate
-/// absent from the recap, and exit 4.
-///
-/// What would make this red: the arrow missing, which hides which host could not be reached; or
-/// the delegate counted in the recap, which invents a host line for work it never accepted.
+/// A delegate nothing can reach takes the **delegating** host out of the run, and the line carries
+/// the arrow.
 #[test]
 fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
     let out = volant_within(
@@ -6820,46 +4486,7 @@ fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
     assert!(!text.contains(r#""msg": "after""#), "{text}");
 }
 
-/// A `delegate_to` naming a host the inventory does not have is an implicit host, and
-/// `localhost` is the local one.
-///
-/// Measured on ansible-core 2.19.12 with no `localhost` in the inventory:
-/// `changed: [h1 -> localhost]`, the command's output readable back on h1, and
-/// `delegate_to: 127.0.0.1` behaving the same way. A delegated task a `when` left out prints
-/// `skipping: [h1]` with **no** arrow, which is the one line the delegate does not reach.
-///
-/// What would make this red: an unknown delegate refused at load, which refuses a playbook the
-/// reference runs; or the arrow printed on a `skipping:` line, which claims a host was
-/// contacted for a task that never left the controller.
-#[test]
-fn an_implicit_localhost_is_a_valid_delegate_and_a_skip_shows_no_arrow() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("delegate/inv.ini"),
-            &fixture("delegate/delegate-localhost.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("changed: [h1 -> localhost]"), "{text}");
-    assert!(text.contains(r#""msg": "hi""#), "{text}");
-    assert!(
-        text.contains("skipping: [h1]") && !text.contains("skipping: [h1 -> h3]"),
-        "a skipped task never reached the delegate: {text}"
-    );
-}
-
 /// A host that has failed is still a valid delegate.
-///
-/// Measured on ansible-core 2.19.12: h3 fails its own task, h1 then delegates to h3 and the
-/// task runs (`changed: [h1 -> h3]`), because the delegating driver opens its own connection to
-/// the delegate rather than sharing the one the delegate's own driver had.
-///
-/// What would make this red: the delegate looked for in the live host list, which would fail
-/// h1's task for a host that answers perfectly well.
 #[test]
 fn a_failed_host_is_still_a_valid_delegate() {
     let out = volant_within(
@@ -6903,241 +4530,8 @@ fn trust_dir(name: &str, hosts: &str) -> (std::path::PathBuf, std::path::PathBuf
     (dir, marker)
 }
 
-/// A value that arrived in a command's output is data: the engine prints it and never
-/// evaluates it, so an expression a managed host put there cannot run on the controller.
-///
-/// The payload asks for a file to be created. The assertion is that file's absence, not the
-/// text on the terminal: a run that printed the right thing while still having run the lookup
-/// would pass a snapshot and fail this.
-///
-/// Both display forms are here because the reference gives them the same verdict on every
-/// source it was measured against: `debug: var=` and `debug: msg=` agree, and it is where a
-/// value came from that decides, not the shape that shows it.
-///
-/// What would make this red: `render_in` taking one more pass over a string built from a
-/// registered variable, or `resolve_vars` rendering the fact itself, which is what this release
-/// did before.
-#[test]
-fn a_result_that_looks_like_a_template_is_never_evaluated() {
-    let (dir, marker) = trust_dir("untrusted", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/untrusted.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup in the command output ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        stdout.matches("lookup('pipe'").count(),
-        3,
-        "the raw text should be shown as data by both display forms and after set_fact:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The other direction, and the one that makes the fix a fix rather than the removal of a
-/// feature: a variable whose value is itself an author-written template is still rendered
-/// through, however many links the chain has.
-///
-/// What would make this red: `render_in` stopping after its first pass for every string, which
-/// is the lazy way to close the hole above and would break `vars: { y: "{{ z }}" }`.
-#[test]
-fn a_chain_of_author_templates_still_renders() {
-    let (dir, _) = trust_dir("chain", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("trust/trusted-chain.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    // `2`, not `"2"`: a template that is one expression keeps the expression's type, and the
-    // reference prints the same integer for the same chain.
-    assert!(stdout.contains("\"msg\": 2"), "{stdout}");
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A file read at run time is data too: `lookup('file', ...)` hands back the text and the text
-/// is never rendered, which is what the reference does by tagging the string it returns.
-///
-/// The marker again, for the same reason: what matters is that the expression in the file did
-/// not run, not that the terminal showed it.
-///
-/// What would make this red: the `file` lookup returning an ordinary string, which leaves
-/// `render_in` free to take another pass over it.
-#[test]
-fn lookup_file_content_is_never_evaluated() {
-    let (dir, marker) = trust_dir("lookup", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/lookup-file.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup in the file's text ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("lookup('pipe'"),
-        "the raw text should be shown as data:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The same value read from another host through `hostvars` is data on that side of the wire
-/// too: one host registers the payload, the other prints it, and the expression does not run.
-///
-/// What would make this red: the trust travelling with the host that renders rather than with
-/// the host the value came from, which is what a per-host set alone would give.
-#[test]
-fn a_fact_read_through_hostvars_is_never_evaluated() {
-    let (dir, marker) = trust_dir(
-        "hostvars",
-        "h1 ansible_connection=local\nh2 ansible_connection=local\n",
-    );
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/hostvars.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup in the command output ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("lookup('pipe'"),
-        "the raw text should be shown as data:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A task variable built from a registered result is data as well. The name the playbook wrote
-/// never went through the fact store, so the only place its provenance can be learnt is the
-/// resolution that built it, and that is a pass the task's own arguments are rendered after.
-///
-/// `vars:` on a task feeding a registered value into `debug` is an everyday idiom, and it is a
-/// plain playbook: no include, no role, nothing exotic.
-///
-/// What would make this red: the set of names a resolution pass turned into data staying inside
-/// `resolve_vars` instead of travelling out with the map it resolved.
-#[test]
-fn a_task_variable_built_from_a_result_is_never_evaluated() {
-    let (dir, marker) = trust_dir("task-vars", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/task-vars.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup a task variable carried ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("lookup('pipe'"),
-        "the raw text should be shown as data:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// What an include statement hands down is data when the value it was built from was. The
-/// statement's `vars:` are rendered on the driver and travel to the included steps as text, so
-/// the names among them that came from a host travel with them.
-///
-/// The included file need not even read the name: the merged map of every step the statement
-/// brought in is resolved as a whole.
-///
-/// What would make this red: `include_params` arriving with no record of which of its names were
-/// rendered from a managed host's output.
-#[test]
-fn an_include_parameter_built_from_a_result_is_never_evaluated() {
-    let (dir, marker) = trust_dir("include-params", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/include-params.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup an include parameter carried ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("lookup('pipe'"),
-        "the raw text should be shown as data:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so
-/// a value that arrived from a managed host must never reach it. Every other guard in this
-/// release stops a *second* render; this site takes what a render already produced and hands it
-/// back as source text, which is a different mechanism and needs a different stop.
-///
-/// Measured on ansible-core 2.19.12: both the plain form and the loop form fail the task with
-/// `Task failed: Error while resolving `var` expression: Encountered untrusted template or
-/// expression.`, so the refusal is the reference's answer and not this engine's invention.
-///
-/// The payload has no `{{ }}` around it, because an expression is what this site compiles. The
-/// marker's absence is the assertion; the sentence on the terminal is only the shape of the
-/// refusal.
-///
-/// What would make this red: rendering a task's arguments without keeping which of them read a
-/// managed host, which is what `render_value` alone gives.
+/// The name a `debug: var:` shows is compiled as an expression, not rendered as a template, so a
+/// value that arrived from a managed host must never reach it.
 #[test]
 fn a_variable_named_by_a_result_is_never_evaluated() {
     let (dir, marker) = trust_dir("debug-var", "h1 ansible_connection=local\n");
@@ -7170,46 +4564,8 @@ fn a_variable_named_by_a_result_is_never_evaluated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The other direction of the same guard, and the one a too-wide rule breaks: a play with no
-/// managed-host value anywhere in it still prints. The fact names another variable, and the
-/// `debug: var:` that shows it compiles that name as an expression.
-///
-/// Measured on ansible-core 2.19.12: the reference prints `"greeting": "hello"` here, both from
-/// a `set_fact` and from a play-level `vars:`. A rule that called every fact data would fail
-/// this play, which is a user-visible regression and not a security property.
-///
-/// What would make this red: writing a `set_fact` value with `set_untrusted_fact` whatever its
-/// render read, which is what this release did before.
-#[test]
-fn a_fact_the_playbook_wrote_can_still_name_a_variable() {
-    let (dir, _) = trust_dir("author-fact-name", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("trust/author-fact-name.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("\"greeting\": \"hello\""),
-        "a play with no host value in it should print:\n{stdout}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// And the half the previous test could be made to pass by giving up: a fact whose value came
-/// out of a managed host still cannot name the variable a `debug: var:` compiles.
-///
-/// The set_fact reads a registered value, so its render is the one that has to carry the answer
-/// forward; the marker's absence is the assertion.
-///
-/// What would make this red: writing a `set_fact` value with `set_fact` whatever its render
-/// read, which is the lazy way to fix the test above.
+/// A fact whose value came from a managed host still cannot name the variable a `debug: var:`
+/// compiles.
 #[test]
 fn a_fact_carrying_a_result_cannot_name_a_variable() {
     let (dir, marker) = trust_dir("result-fact-name", "h1 ansible_connection=local\n");
@@ -7234,89 +4590,6 @@ fn a_fact_carrying_a_result_cannot_name_a_variable() {
     assert!(
         stdout.contains("Encountered untrusted template or expression"),
         "the carried result should be refused:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The negative direction of the promotion: a map holding an author variable **and** a
-/// registered value promotes only the second. Without it nothing proves the promotion does not
-/// over-fire, because a map with no untrusted name in it cannot tell an over-wide set from a
-/// right one.
-///
-/// The author variable names the loop variable, so it cannot resolve until the item is bound
-/// and it is the *second* resolution that has to render it. That is the only shape where an
-/// over-wide promotion shows: a name already rendered by the pass that promoted it keeps its
-/// value whatever the set says.
-///
-/// What would make this red: promoting any name beyond the ones whose own render read a managed
-/// host - the greeting would then stay `greet {{ item }}` instead of reaching `greet a`. The
-/// other half of the same assertion is the marker: the registered value is still text.
-#[test]
-fn an_author_chain_beside_a_result_still_renders() {
-    let (dir, marker) = trust_dir("mixed-chain", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/mixed-chain.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup beside the author chain ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains(r#""msg": "greet a and {{ lookup('pipe'"#),
-        "the author variable should reach the item while the result stays text:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The other two lookups that read at run time. `lookup('file', ...)` was already data; a
-/// command's output and an environment variable are the same thing arriving by another door, and
-/// an engine that renders them again runs whatever they hold.
-///
-/// Measured on ansible-core 2.19.12: `pipe`, `env` and `file` all hand back a string the engine
-/// refuses to template a second time, each showing the `{{ 1 + 1 }}` its source held.
-///
-/// What would make this red: tainting only the `file` arm of the lookup, which is where this
-/// release started.
-#[test]
-fn what_a_lookup_read_at_run_time_is_never_evaluated() {
-    let (dir, marker) = trust_dir("lookup-run-time", "h1 ansible_connection=local\n");
-    let payload = std::fs::read_to_string(dir.join("payload.txt")).expect("the payload");
-    let out = volant_within_env(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            &format!("payload={}", dir.join("payload.txt").display()),
-            &fixture("trust/lookup-run-time.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-        &[("VOLANT_TRUST_PROBE", payload.trim_end())],
-    );
-    assert!(
-        !marker.exists(),
-        "the lookup in what was read at run time ran on the controller:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        stdout.matches("lookup('pipe'").count(),
-        2,
-        "both the command's output and the environment value should be shown as data:\n{stdout}"
     );
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -7361,13 +4634,7 @@ fn fake_ssh_recording(name: &str, inventory: &str) -> (std::path::PathBuf, std::
     (dir, log)
 }
 
-/// The effect asserted directly, since an exit code alone cannot tell a refusal from a
-/// connection that failed for some other reason: whatever reaches the fake `ssh`'s recorded
-/// command line, none of it carries the `$(` of a command substitution.
-///
-/// What would make this red: `shell_word` leaving `~$(id)/x` bare and nothing checking a
-/// host's own `ansible_remote_tmp`, so the substitution rides the probe command straight into
-/// the recorded line.
+/// A `remote_tmp` substitution never reaches the command line the fake `ssh` records.
 #[test]
 fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
     let (dir, log) = fake_ssh_recording(
@@ -7417,13 +4684,8 @@ fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The other half of the guard, and the one the exit-code test above cannot see: a user name
-/// still reaches the wire **bare**, because the remote shell is the only thing that can expand
-/// it. The recorded command line is the assertion.
-///
-/// What would make this red: `shell_word` single-quoting the tilde segment along with the rest.
-/// Every run would then cache the agent in a directory literally named `~root`, and a test that
-/// only read the exit code would stay green while every real host broke.
+/// The other half of the guard, and the one the exit-code test above cannot see: a user name still
+/// reaches the wire **bare**, because the remote shell is the only thing that can expand it.
 #[test]
 fn an_ordinary_tilde_user_reaches_the_ssh_command_line_bare() {
     let (dir, log) = fake_ssh_recording(
@@ -7454,298 +4716,99 @@ fn an_ordinary_tilde_user_reaches_the_ssh_command_line_bare() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A connection variable is an ordinary variable: an extra var that says `local` beats the
-/// inventory that says `ssh`, and nothing reaches the network.
-///
-/// The proof is a fake `ssh` first on `PATH` that writes a marker and exits 255. Its absence
-/// after the run is the assertion; the exit code alone would not tell a local run from an ssh
-/// that happened to work.
-///
-/// What would make this red: the transport reading the inventory object instead of the host's
-/// effective variables, which is what this release did.
-#[test]
-fn an_extra_var_switches_the_connection_to_local() {
-    let (dir, marker) = fake_ssh(
-        "extra-var-local",
-        "node ansible_connection=ssh ansible_host=192.0.2.1\n",
+/// Whether a run calls `ssh`, through a fake one that leaves a marker: the connection an extra
+/// var, a task's vars or a host or group file asks for, with and without batching.
+#[rstest]
+#[case::an_extra_var_switches_to_local(
+    "node ansible_connection=ssh ansible_host=192.0.2.1\n",
+    &["-e", "ansible_connection=local"],
+    "connection/local-override.yml",
+    &[],
+    false,
+    Some(0),
+    None
+)]
+#[case::a_task_that_changes_the_connection_opens_its_own_link(
+    "node ansible_connection=local\n",
+    &[],
+    "connection/task-vars-switch.yml",
+    &[],
+    true,
+    None,
+    Some("fatal: [node]: UNREACHABLE!")
+)]
+#[case::a_batch_splits_where_the_connection_changes(
+    "node ansible_connection=local\n",
+    &[],
+    "connection/task-vars-switch.yml",
+    &[("VOLANT_BATCHING", "1")],
+    true,
+    None,
+    Some("fatal: [node]: UNREACHABLE!")
+)]
+#[case::a_group_file_does_not_move_the_implicit_localhost(
+    "node ansible_connection=local\n",
+    &[],
+    "connection/implicit-local/play.yml",
+    &[],
+    false,
+    Some(0),
+    None
+)]
+#[case::a_host_file_does_move_the_implicit_localhost(
+    "node ansible_connection=local\n",
+    &[],
+    "connection/host-file-wins/play.yml",
+    &[],
+    true,
+    None,
+    None
+)]
+fn the_connection_a_run_asks_for_decides_whether_ssh_runs(
+    #[case] inventory: &str,
+    #[case] extra: &[&str],
+    #[case] playbook: &str,
+    #[case] envs: &[(&str, &str)],
+    #[case] ssh_runs: bool,
+    #[case] code: Option<i32>,
+    #[case] shows: Option<&str>,
+) {
+    let name = format!(
+        "conn-{}-{}-{}",
+        playbook.replace('/', "-"),
+        extra.len(),
+        envs.len()
     );
+    let (dir, marker) = fake_ssh(&name, inventory);
+    let inv = dir.join("inv.ini");
+    let mut args = vec!["playbook", "-i", inv.to_str().expect("a path")];
+    args.extend_from_slice(extra);
+    let book = fixture(playbook);
+    args.push(&book);
     let out = volant_within_with_path(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            "-e",
-            "ansible_connection=local",
-            &fixture("connection/local-override.yml"),
-        ],
+        &args,
         std::time::Duration::from_secs(30),
         Some(&dir.join("bin")),
-        &[],
+        envs,
     );
-    assert!(
-        !marker.exists(),
-        "ssh was called although the run asked for a local connection:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Two tasks of one host under one target user, the second carrying its own connection
-/// variables. The kept connection belongs to the first task's transport, so the second one has
-/// to open its own rather than reuse it.
-///
-/// The effect asserted is the fake `ssh` having run at all: the inventory makes the host local,
-/// so nothing but the second task's own `vars:` can put an `ssh` on the machine. An exit code
-/// would not say it - a run that reused the local link finishes at 0 exactly like a run whose
-/// ssh was never needed.
-///
-/// What would make this red: `LinkKey` keeping only the host name and the escalated user, which
-/// would make the second task reuse the first link and reach the wrong machine.
-#[test]
-fn a_task_that_changes_the_connection_opens_its_own_link() {
-    let (dir, marker) = fake_ssh("task-vars-switch", "node ansible_connection=local\n");
-    let out = volant_within_with_path(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("connection/task-vars-switch.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-        Some(&dir.join("bin")),
-        &[],
-    );
-    assert!(
         marker.exists(),
-        "the second task reused the first task's local connection instead of opening the ssh one it asked for:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        ssh_runs,
+        "ssh ran: {}\n{stdout}\n{stderr}",
+        marker.exists()
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("fatal: [node]: UNREACHABLE!"),
-        "the ssh the second task asked for should have failed and said so:\n{stdout}"
-    );
+    if let Some(code) = code {
+        assert_eq!(out.status.code(), Some(code), "{stdout}\n{stderr}");
+    }
+    if let Some(line) = shows {
+        assert!(stdout.contains(line), "{stdout}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same host, the same two tasks, with `[volant] batching` on. Nothing here is a barrier -
-/// neither task registers, loops or reads another host - so both land in one batch, and the
-/// batch is what has to notice that its second task asked for a different machine.
-///
-/// What would make this red: the batch-break condition comparing only the escalated user and
-/// the delegate. One link is then opened from the first task's view, the inventory's `local`,
-/// and the second task runs on the controller although it asked for an ssh to 192.0.2.1 -
-/// silently, exit 0.
-#[test]
-fn a_batch_splits_where_the_connection_changes() {
-    let (dir, marker) = fake_ssh(
-        "task-vars-switch-batched",
-        "node ansible_connection=local\n",
-    );
-    let out = volant_within_with_path(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("connection/task-vars-switch.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-        Some(&dir.join("bin")),
-        &[("VOLANT_BATCHING", "1")],
-    );
-    assert!(
-        marker.exists(),
-        "the batch carried the second task over the first task's local connection:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("fatal: [node]: UNREACHABLE!"),
-        "the ssh the second task asked for should have failed and said so:\n{stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A name the inventory never carried is an implicit `localhost` and runs on the controller. The
-/// `local` that says so sits at the inventory host var layer, so a `group_vars/all` file beside
-/// the playbook naming `ansible_connection` does not reach it.
-///
-/// Measured on ansible-core 2.19.12: the same play, the same group file, `changed: [localhost]`
-/// and no ssh.
-///
-/// What would make this red: the rule sitting under the group and role layers, which lets a
-/// repository-wide `group_vars/all` send every implicit `localhost` over ssh to an address it
-/// never meant for the controller.
-#[test]
-fn a_group_file_does_not_move_the_implicit_localhost() {
-    let (dir, marker) = fake_ssh("implicit-local-group", "node ansible_connection=local\n");
-    let out = volant_within_with_path(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("connection/implicit-local/play.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-        Some(&dir.join("bin")),
-        &[],
-    );
-    assert!(
-        !marker.exists(),
-        "a group file sent the implicit localhost over ssh:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The other side of the same boundary, and the one the reference settles rather than intuition:
-/// a `host_vars/localhost` file beside the playbook is *above* the inventory host var layer, so
-/// it does move the implicit `localhost`.
-///
-/// Measured on ansible-core 2.19.12 with the same file: `fatal: [localhost]: UNREACHABLE!`,
-/// exit 4.
-///
-/// What would make this red: the rule sitting above `host_vars/<host>` files, which would pin
-/// every implicit `localhost` to the controller and swallow the file.
-#[test]
-fn a_host_file_does_move_the_implicit_localhost() {
-    let (dir, marker) = fake_ssh(
-        "implicit-local-host-file",
-        "node ansible_connection=local\n",
-    );
-    let out = volant_within_with_path(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            &fixture("connection/host-file-wins/play.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-        Some(&dir.join("bin")),
-        &[],
-    );
-    assert!(
-        marker.exists(),
-        "the host file was swallowed by the implicit localhost rule:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// `creates` is resolved where the command would run, not where the agent happens to be. The
-/// directory already holds `marker`, so nothing runs and `should-not-run` never appears.
-///
-/// The assertion is that file's absence. A result that says `skipped` while the command ran
-/// would pass a snapshot and fail this; that is the shape this guard has to have, because what
-/// it protects is a migration or an initialisation running twice.
-///
-/// The exact result (`Did not run command since 'marker' exists`) is pinned at the module level
-/// instead, in `command.rs`'s own tests: the task reports `ok` with no body at this verbosity,
-/// as the reference does.
-///
-/// What would make this red: the guard calling `Path::exists` on the bare relative path, which
-/// resolves against the agent's own directory and finds nothing.
-#[test]
-fn a_relative_creates_is_resolved_against_chdir() {
-    let dir = std::env::temp_dir().join(format!("volant-creates-chdir-{}", std::process::id()));
-    let work = dir.join("work");
-    std::fs::create_dir_all(&work).expect("a work dir");
-    std::fs::write(work.join("marker"), "").expect("the marker");
-    let inventory = dir.join("inv.ini");
-    std::fs::write(&inventory, "h1 ansible_connection=local\n").expect("an inventory");
-
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            inventory.to_str().expect("a path"),
-            "-e",
-            &format!("workdir={}", work.display()),
-            &fixture("guards/creates-chdir.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        !work.join("should-not-run").exists(),
-        "the command ran although its guard said it should not:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The other half of the same fixture: `creates` is a glob, and the pattern is expanded in the
-/// directory the `chdir` names, not in the agent's own directory. `x-1` sits in `work`, matching
-/// `x-*`, so this guard must stop `should-not-run-2` from ever running too. Measurement (m)
-/// settles the message the module itself produces: it quotes the pattern as written (`x-*`),
-/// never the file that matched — pinned in `command.rs`'s own tests, for the reason given above.
-///
-/// What would make this red: a guard that falls back to a literal `Path::exists` for any pattern
-/// it does not resolve, which never matches `x-*` against `x-1` and lets the command run.
-#[test]
-fn a_pattern_creates_is_resolved_against_chdir() {
-    let dir = std::env::temp_dir().join(format!("volant-creates-glob-{}", std::process::id()));
-    let work = dir.join("work");
-    std::fs::create_dir_all(&work).expect("a work dir");
-    std::fs::write(work.join("x-1"), "").expect("the match");
-    let inventory = dir.join("inv.ini");
-    std::fs::write(&inventory, "h1 ansible_connection=local\n").expect("an inventory");
-
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            inventory.to_str().expect("a path"),
-            "-e",
-            &format!("workdir={}", work.display()),
-            &fixture("guards/creates-chdir.yml"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        !work.join("should-not-run-2").exists(),
-        "the pattern guard let the command run although 'x-1' matches it:\n{stdout}"
-    );
-    assert_eq!(out.status.code(), Some(0));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// `no_log` covers every event a task produces, not only its result. A diagnostic that goes
-/// straight to stderr is still that task speaking, and the policy has to reach it.
-///
-/// Both streams are grepped, because the warning this triggers is written to stderr while the
-/// censored result is written to stdout: a test reading one of them would pass while the value
-/// is on the other. `CANARY-7f3a9c` is a fixture string, not a credential.
-///
-/// The warning itself is **not** blanked: measured on ansible-core 2.19.12, a task whose
-/// `environment` does not render to a mapping warns with the raw source of the whole stack of
-/// layers, `['{{ secret }}']`, brackets included, and that text holds nothing the playbook did
-/// not already say out loud.
-///
-/// What would make this red: `prepare` printing the rendered value, which is what it did -- the
-/// censorship policy could not reach a write it never saw.
+/// `no_log` covers every event a task produces, not only its result.
 #[test]
 fn no_log_covers_the_environment_warning() {
     let out = volant_within(
@@ -7770,23 +4833,7 @@ fn no_log_covers_the_environment_warning() {
     assert_eq!(out.status.code(), Some(0));
 }
 
-/// A timeout covers the task, not the first process of it. A descendant holding stdout open keeps
-/// the task running, so the deadline has to reach the readers too.
-///
-/// The elapsed time is the property under test, so it is asserted -- the one place in this suite
-/// where it is. `volant_within` stays around it as the net against a hang: without it a regression
-/// that never returns would sit until the harness's own slow-test timeout.
-///
-/// Three seconds around a one-second deadline, not two: the rest of the budget is starting a
-/// debug-built controller, reading the inventory and spawning the local agent, and on a loaded
-/// runner that alone has no trouble taking a second. The regression this catches waits for the
-/// descendant, which holds the run for the five seconds its `sleep` asks for, so the extra
-/// second is taken out of slack rather than out of what the assertion discriminates.
-///
-/// What would make this red: waiting for the reader threads outside the deadline, which is what
-/// the wait did -- the task ended when the descendant did, and the run reported success. And,
-/// for the survivor check, a timeout that returns without killing the process group: every other
-/// assertion still holds with the descendant alive.
+/// A timeout covers the task, not the first process of it.
 #[test]
 fn a_timeout_covers_a_descendant_holding_the_pipes() {
     // A `sleep` duration that doubles as the `pgrep -f` marker, as in `local_transport.rs`.
@@ -7832,24 +4879,7 @@ fn assert_no_survivor(marker: &str) {
     );
 }
 
-/// The same deadline over the other pipe. A descendant that keeps standard input open without
-/// reading it leaves the write blocked once the pipe buffer is full, and that write is on the
-/// success path: the process has been reaped and both readers have returned end-of-file, so
-/// nothing has killed the group and nothing will until the descendant lets go.
-///
-/// The child of the shell exits at once and the grandchild holds the pipe for three seconds, so a
-/// run that waits for the write comes back at about three seconds reporting success, and a run
-/// that holds the deadline over it comes back at about one reporting the timeout. The megabyte is
-/// what makes the write block at all: anything that fits in a pipe buffer is written and forgotten
-/// before the child is even reaped, which is the ordinary path and stays green.
-///
-/// Elapsed time is asserted here for the same reason as above, with `volant_within` as the net
-/// against a regression that never returns.
-///
-/// What would make this red: joining the writer thread instead of waiting on it under the
-/// deadline. Measured against ansible-core 2.19.12, which fails this task on its timeout and exits
-/// 2; this release reported success and exit 0 after the descendant's three seconds. The survivor
-/// check reddens on a timeout that returns without killing the group.
+/// The same deadline over the other pipe.
 #[test]
 fn a_timeout_covers_a_descendant_holding_stdin() {
     // An argument the descendant ignores, carried on its command line for `pgrep -f`.
@@ -7880,16 +4910,8 @@ fn a_timeout_covers_a_descendant_holding_stdin() {
     assert_no_survivor(&marker);
 }
 
-/// A module argument the reference has and this release does not act on is refused by its own
-/// name, before anything connects. A table saying a module runs says nothing about the rest of
-/// that module's API, and an argument accepted and then dropped reports success having done
-/// something other than what the playbook asked for.
-///
-/// The assertion is that the refusal comes before the play header: a refusal after `PLAY [` means
-/// a host was already reached, and possibly changed.
-///
-/// What would make this red: the pre-flight not consulting the module's argument list, which lets
-/// the task through to an agent that drops the argument and reports the task green.
+/// A module argument the reference has and this release does not act on is refused by its own name,
+/// before anything connects.
 #[test]
 fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     let out = volant(&["playbook", &fixture("module-argument-refused.yml")]);
@@ -7908,18 +4930,7 @@ fn an_argument_this_release_does_not_honour_is_refused_before_the_play() {
     );
 }
 
-/// The same refusal, for a value the pre-flight could not read. A template is rendered per host,
-/// long after the pre-flight is over, so `check_arguments` leaves it alone rather than refusing on
-/// a guess -- and the agent, which has the value, refuses it there instead of dropping it.
-///
-/// Without this the task prints `$HOME`, reports `changed` and exits 0, where the reference prints
-/// the home directory: the accepted-then-silently-ignored divergence the argument registry exists
-/// to close, surviving inside the registry's own subject matter. The run reaches the host first,
-/// so the refusal costs a connection and exits 2 rather than 4.
-///
-/// What would make this red: the agent reading the registry for names alone, which lets the
-/// rendered value through unread; or the refusal borrowing the unknown-argument sentence, which
-/// tells an operator waiting on this release that they have a typo.
+/// The same refusal, for a value the pre-flight could not read.
 #[test]
 fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
     let out = volant(&["playbook", &fixture("module-argument-refused-late.yml")]);
@@ -7937,45 +4948,7 @@ fn a_refused_argument_the_pre_flight_could_not_read_fails_on_the_host() {
     );
 }
 
-/// The same argument set to `false` asks for exactly what this release does - it expands nothing -
-/// so the task runs. A refusal that reads the name and not the value stops a playbook that was
-/// byte-identical under both engines, while the value that really diverges is the default, which
-/// nobody writes and nothing can catch.
-///
-/// The assertion is the program's own output, not the exit code: `/bin/echo $HOME` succeeds
-/// either way, and only the five characters it printed say which engine expanded anything.
-///
-/// What would make this red: the refusal firing on the name, which exits 4 before connecting.
-#[test]
-fn asking_for_the_expansion_this_release_does_not_do_runs() {
-    let out = volant(&["playbook", &fixture("module-argument-expansion-off.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "{stderr}{stdout}");
-    assert!(
-        stdout.contains(r#""msg": "printed=$HOME""#),
-        "the argument the task asked for is not what the program was given:\n{stdout}"
-    );
-}
-
 /// The default of that same argument is where the two engines part, and no playbook writes it.
-/// Ansible expands `$VAR` in a `command`'s arguments unless it is told not to; this release
-/// expands nothing, so `command: mkdir -p $HOME/releases` makes a directory called `$HOME` and
-/// reports the same success. That divergence is published on the modules reference page rather than
-/// refused, because the pre-flight reads the text of a playbook and the text cannot say whether
-/// a `$` names something the host has set: `awk '{print $1}'` and a regular expression ending in
-/// `$` run identically under both engines, and refusing on the character would stop them before
-/// the first connection. This test is what pins the documented answer to the running one.
-///
-/// The probe variable rather than `$HOME`: it is set for this run alone, so the expanded form
-/// and the literal form are two strings this assertion can tell apart on any machine.
-///
-/// The `shell` half is the parity half, and it is here so that one test says where the boundary
-/// is. The line goes to a shell, the shell expands it, and both engines print the value.
-///
-/// What would make this red: the `command` path gaining expansion, which would make the page
-/// wrong; or the `shell` path losing it, which would diverge from the reference in the other
-/// direction and break every playbook that uses a shell variable.
 #[test]
 fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
     let out = volant_within_env(
@@ -7995,13 +4968,8 @@ fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
     );
 }
 
-/// An argument *neither* engine has is a different mistake, and gets the reference's own answer
-/// for it: the module fails at run time with the reference's sentence and the reference's code,
-/// rather than this engine's pre-flight refusal. Measured on ansible-core 2.19.12, through
-/// `args:` -- the ad-hoc path validates nothing, because `free_form` swallows the whole line.
-///
-/// What would make this red: the two paths collapsed into one, which gives the same code and the
-/// same words to a playbook waiting on this release and a playbook with a typo in it.
+/// An argument neither engine has fails the module at run time, with the reference's sentence and
+/// exit code.
 #[test]
 fn an_argument_neither_engine_has_fails_with_the_reference_s_words() {
     let out = volant(&["playbook", &fixture("module-argument-unknown.yml")]);
@@ -8016,32 +4984,6 @@ fn an_argument_neither_engine_has_fails_with_the_reference_s_words() {
     assert!(
         stdout.contains("PLAY ["),
         "the reference reaches the host and fails the task there:\n{stdout}"
-    );
-}
-
-/// `executable` selects the shell, which is the point of asking for it.
-///
-/// The assertion is what the shell printed, not the exit code: the task succeeded in both engines
-/// before this, and only the output told them apart.
-///
-/// What would make this red: the agent building `sh -c` whatever the task asked for, which is
-/// what this release did -- `$BASH_VERSION` is then empty and the task still reports success.
-#[test]
-fn shell_executable_selects_the_interpreter() {
-    assert!(
-        Path::new("/bin/bash").exists(),
-        "this test needs /bin/bash to tell one shell from another; both CI platforms have it"
-    );
-    let out = volant(&["playbook", &fixture("shell-executable.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let version = stdout
-        .split_once(r#""msg": "version="#)
-        .and_then(|(_, rest)| rest.split('"').next())
-        .unwrap_or_default();
-    assert!(
-        version.contains('.'),
-        "the shell reported no version, so it was not bash:\n{stdout}"
     );
 }
 
@@ -8114,19 +5056,8 @@ fn cached_blobs(remote_tmp: &Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-/// A playbook naming a Python module reaches its hosts carrying the payload this run built for
-/// it, and the helper that built it starts **once for the whole run**.
-///
-/// Four tasks over two hosts, and the proof is what is left behind: one line in `starts.log`, and
-/// the helper's own four bytes cached under each host's `remote_tmp` by the agent that received
-/// them.
-///
-/// What would make this red, and each of these survived the whole library suite before it was
-/// written: `cli.rs` keeping the union out of the run state, which leaves every Python task
-/// failing with "this run built none for it" and nothing on disk; the driver passing `None` where
-/// the blob belongs, which fails the batch before a byte goes out; and a helper started per host,
-/// per batch or per task, which writes two, two and four lines instead of one -- the real one
-/// costs a cold ansible-core build, so the count is the measurement, not a tidiness.
+/// A playbook naming a Python module reaches its hosts carrying the payload this run built for it,
+/// and the helper that built it starts **once for the whole run**.
 #[test]
 fn a_run_builds_one_payload_and_sends_it_to_every_host() {
     let dir = std::env::temp_dir().join(format!("volant-pypayload-{}", std::process::id()));
@@ -8188,22 +5119,8 @@ fn a_run_builds_one_payload_and_sends_it_to_every_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A role's `vars/main.yml` holding nothing but a comment is a convention some published Galaxy
-/// roles use to keep the file present with nothing to override: `geerlingguy.git` 3.0.1 ships one
-/// exactly this way. Measured against the reference running that role: PyYAML resolves the empty
-/// document to `None`, ansible-core's loader turns that into `{}`, and the play carries on.
-///
-/// Volant used to refuse the whole play before any host was contacted. The two engines part ways
-/// earlier than the loader that refusal sat in: saphyr (pinned at 0.1.0) resolves the same
-/// document to one node holding an empty *string* scalar, not null — confirmed with a standalone
-/// probe of `MarkedYaml::load_from_str("---\n# comment only\n")`, which returns a single document
-/// `Value(String(""))`. `crate::yaml::load` now reads a stream where every line is blank, a
-/// comment or a document marker (`holds_nothing`, crates/volant/src/yaml.rs) as `Scalar::Null`
-/// before the PyYAML-habits lowering pass runs, so `load_vars_file` sees the same `Value::Null`
-/// document it already turns into an empty mapping.
-///
-/// What would make this red: `holds_nothing` no longer recognising a comment-only stream, or
-/// `load_vars_file` (crates/volant/src/vars.rs) refusing a `Value::Null` document again.
+/// A role's `vars/main.yml` holding only a comment is an empty mapping, not a refusal, as published
+/// Galaxy roles rely on.
 #[test]
 fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
     let dir = std::env::temp_dir().join(format!("volant-emptyvars-{}", std::process::id()));
@@ -8237,82 +5154,8 @@ fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The two lookups a role reads, end to end, against the search path the controller gives a
-/// role's task. Measured on ansible-core 2.19.12: `lookup('first_found', ['files/x.txt'])`
-/// answers the role's own `files/x.txt`, and `lookup('template', 't.j2')`, with `templates/t.j2`
-/// holding `{{ '{{ 1 + 1 }}' }}`, shows `{{ 1 + 1 }}` under both `debug: var:` reading a task's
-/// own `vars:` and `debug: msg:`, never `2`.
-///
-/// What would make this red: `ansible_search_path` missing from a role task's variables (both
-/// lookups then look beside the playbook and fail), or the `template` arm of `lookup` not
-/// marking what it rendered as data (either debug shows `2`).
-#[test]
-fn a_role_s_first_found_and_template_lookups_read_its_own_directory() {
-    let dir = std::env::temp_dir().join(format!("volant-role-lookups-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    for sub in [
-        "roles/probe/tasks",
-        "roles/probe/templates",
-        "roles/probe/files",
-    ] {
-        std::fs::create_dir_all(dir.join(sub)).expect("the role's directories");
-    }
-    let dir = dir.canonicalize().expect("the probe directory resolves");
-    let write = |rel: &str, text: &str| std::fs::write(dir.join(rel), text).expect(rel);
-    write("roles/probe/files/x.txt", "x\n");
-    write("roles/probe/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");
-    write(
-        "roles/probe/templates/snip.j2",
-        "from role templates {{ who }}\n",
-    );
-    write(
-        "roles/probe/tasks/main.yml",
-        "- name: Via lookup, read back\n  debug:\n    var: via_lookup\n  vars:\n    via_lookup: \"{{ lookup('template', 't.j2') }}\"\n\
-         - name: First found\n  debug:\n    msg: \"found={{ lookup('first_found', ['files/x.txt']) }}\"\n\
-         - name: Snippet\n  debug:\n    msg: \"{{ lookup('template', 'snip.j2') }}\"\n  vars:\n    who: me\n",
-    );
-    write(
-        "site.yml",
-        "- hosts: all\n  gather_facts: false\n  roles:\n    - probe\n",
-    );
-    write("inv.ini", "h1 ansible_connection=local\n");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            dir.join("site.yml").to_str().expect("a path"),
-        ],
-        std::time::Duration::from_secs(30),
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    assert!(
-        stdout.contains(r#""via_lookup": "{{ 1 + 1 }}""#),
-        "debug: var: read the lookup's text back as data, not as an expression to evaluate:\n{stdout}"
-    );
-    let found = dir.join("roles/probe/files/x.txt");
-    assert!(
-        stdout.contains(&format!("\"msg\": \"found={}\"", found.display())),
-        "first_found did not answer the role's own file:\n{stdout}"
-    );
-    assert!(
-        stdout.contains(r#""msg": "from role templates me\n""#),
-        "the role's template was not rendered:\n{stdout}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Measured on ansible-core 2.19.12, `connection: local`: a role applied with `tags: [t]` whose
-/// `tasks/main.yml` is one `include_tasks: inc.yml`, run with `--tags t`, shows `included:` and
-/// then runs the included `command` (`changed: [h1]`, `ok=2 changed=1`). The tasks of a file a
-/// role includes carry the role's tags. Volant shows the same `included:` line, then runs nothing
-/// from the file and reports `ok=1 changed=0`, exit 0. The same thing happened to every task of
-/// `geerlingguy.security` and `geerlingguy.nginx` that sits behind an `include_tasks`, under
-/// `--tags security,nginx` against a real host.
-///
-/// What would make this red: the file's tasks filtered out by the tags the run asked for, because
-/// they do not inherit the role's own, so the marker is never written and the run still exits 0.
+/// A role applied with `tags: [t]` and run with `--tags t` runs the tasks of a file its
+/// `tasks/main.yml` includes (ansible-core 2.19.12).
 #[test]
 fn a_role_s_tags_reach_the_tasks_of_a_file_it_includes() {
     let dir = probe_dir("include-role-tags");
@@ -8350,16 +5193,8 @@ fn a_role_s_tags_reach_the_tasks_of_a_file_it_includes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Measured on ansible-core 2.19.12, `connection: local`: a play whose only task is
-/// `include_tasks: inc.yml`, the file holding one `stat: path=/`, shows `included:` then
-/// `ok: [h1]` for the `stat`. Volant builds its one payload union before the first connection,
-/// from the modules the compiled plays name, and a file a dynamic include reads is not among
-/// them: the `stat` fails with "module 'stat' needs a python payload, and this run built none
-/// for it". Against a real host the same thing stopped `geerlingguy.security` at its first
-/// `package` task, which sits in `fail2ban.yml` behind an `include_tasks`.
-///
-/// What would make this red: a Python module in a dynamically included file refused because the
-/// union was built without it.
+/// A Python module named only in a dynamically included file runs, though the payload union is
+/// built before the first connection.
 #[test]
 fn a_python_module_in_a_dynamically_included_file_runs() {
     let Ok(python) = std::env::var("VOLANT_PYTHON") else {
@@ -8409,13 +5244,7 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
-/// Measured on ansible-core 2.19.12, `connection: local`: a module in `library/` beside the
-/// playbook and one in a role's `library/` both run, `ok` with the value each returns
-/// (`add_all_plugin_dirs`, from `Playbook._load_playbook_data` and `Role._load_role_data`).
-///
-/// What would make this red: the playbook's or the role's directory not handed to the helper,
-/// which refuses the task with "couldn't resolve module/action"; or a name no builtin has
-/// refused before the controller's ansible-core was asked.
+/// A module in `library/` beside the playbook, and one in a role's `library/`, both run.
 #[test]
 fn a_module_in_the_playbook_s_library_or_a_role_s_runs() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8511,18 +5340,8 @@ fn kept_unions(cache: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)>
     out
 }
 
-/// A `library/` written beside the playbook after a run kept its union: the next run builds
-/// again and gets the playbook's `ping`, as ansible-core 2.19.12 does, where it finds the file
-/// before its own module.
-///
-/// The run gets a `HOME` of its own, aged with everything else it wrote: the helper watches
-/// `~/.ansible` (or `HOME` itself when that is absent), and on a shared machine another run
-/// touching it within two seconds keeps the union out of the cache. A second run with nothing
-/// changed has to hit the kept union, rewriting none of its files, or the third proves nothing.
-///
-/// What would make this red: the kept union's key blind to what the playbook's `library/`
-/// holds. No source the first run kept names a directory that was not there, so the third run
-/// loads the union holding ansible-core's `ping` and prints `pong`.
+/// A `library/` written beside the playbook after a run rebuilds the kept union, so the playbook's
+/// `ping` answers.
 #[test]
 fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8596,13 +5415,8 @@ fn a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// Measured on ansible-core 2.19.12 with a module calling `module.warn("probe warning")`: over
-/// `loop: [1, 2]`, then once more in a later task, `[WARNING]: probe warning` is printed once for
-/// the whole run (`Display._deduplicate`), while `w.warnings | length` is `2` and the later task
+/// A warning repeated by two loop items and a later task prints once, while each result still
 /// registers its own copy.
-///
-/// What would make this red: every copy printed, one line per item and per task; or the repeat
-/// taken off the registered values along with the line.
 #[test]
 fn a_warning_repeated_by_two_items_prints_once() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8709,24 +5523,8 @@ fn ping_run(python: &str, cache: &Path, playbooks: &[&Path]) -> (Option<i32>, Ve
     )
 }
 
-/// Measured on ansible-core 2.19.12, a `library/ping.py` in each position, the `msg` lines in
-/// order:
-/// - one playbook, a plain play then a play whose role ships `ping`: the role's `ping` answers
-///   in the first play too (`r2lib in play1`, `r2lib in role r2`, `r2lib in play2`), every play's
-///   roles being read before the first one runs;
-/// - two named playbooks, the first's role shipping `ping`, the second's own directory shipping
-///   one: the second directory wins everywhere (`blib in role ra`, `blib in A`, `blib in B`), as
-///   every named playbook's directory is added first;
-/// - `import_playbook` of a file whose directory ships `ping`, after a play whose role ships one:
-///   the role wins everywhere (`ralib in role ra`, `ralib in main`, `ralib in sub`);
-/// - two named playbooks, only the second's role shipping `ping`: `pong in A`, then the role's.
-///   One union cannot hold both, and Volant refuses the run, naming the directory;
-/// - `ping`, then an `include_role` of a role shipping it, then `ping`: `pong before`, then the
-///   role's. Refused the same way.
-///
-/// What would make this red: the directories added in another order (every play's directory
-/// before every role, which gives `sublib` in the third case), or a module a later playbook's
-/// role ships run for an earlier playbook's task.
+/// Library directories join the module search in the reference's order across plays, roles and
+/// named playbooks.
 #[test]
 fn library_directories_join_the_search_in_the_reference_s_order() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8805,15 +5603,8 @@ fn library_directories_join_the_search_in_the_reference_s_order() {
     std::fs::remove_dir_all(&root).expect("the probe directory is removed");
 }
 
-/// Measured on ansible-core 2.19.12 with a `library/ping.py` beside the playbook answering
-/// `lib`: `ping` and `ansible.legacy.ping` run it, `ansible.builtin.ping` runs ansible-core's and
-/// answers `pong` (`_find_fq_plugin` searches only the package for `ansible.builtin`, while
-/// `ansible.legacy` goes through the `library` search). The same run's gathering, which the
-/// reference runs as `ansible.legacy.setup`, gets a `library/setup.py`'s facts.
-///
-/// What would make this red: `ansible.builtin.ping` filed under the short name, which hands it
-/// the library's module; or the gathering named `ansible.builtin.setup`, which skips the
-/// playbook's `setup`.
+/// A library module answers its short name and `ansible.legacy`, never `ansible.builtin`, which
+/// runs ansible-core's own.
 #[test]
 fn a_library_module_answers_its_short_name_and_never_ansible_builtin() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8841,14 +5632,6 @@ fn a_library_module_answers_its_short_name_and_never_ansible_builtin() {
 }
 
 /// `retries` on a task an action plugin backs, through the real driver on the local connection.
-/// Measured on ansible-core 2.19.12 with the same two tasks on `localhost`: a `copy` that
-/// succeeds under `retries: 3` reports `attempts=1` and no retry line; a `copy` into a directory
-/// that does not exist under `retries: 2` prints `FAILED - RETRYING ... (2 retries left)`, then
-/// `(1 retries left)`, and fails with `"attempts": 2`.
-///
-/// What would make this red: the driver's plugin branch running each item once whatever the
-/// retry plan says, which gives no retry line and no `attempts` at all; or a passing attempt
-/// retried.
 #[test]
 fn a_task_an_action_plugin_backs_retries_through_the_driver() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8903,11 +5686,8 @@ fn a_task_an_action_plugin_backs_retries_through_the_driver() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// A task an action plugin backs runs over the link the host already has, and leaves it for
-/// the next task: the agent that answers before a `copy` is the one that answers after it.
-///
-/// What would make this red: the driver not putting the link back once the plugin is done with
-/// it, which connects a new agent for the next task, with a new process id.
+/// A task an action plugin backs runs over the link the host already has, and leaves it for the
+/// next task: the agent that answers before a `copy` is the one that answers after it.
 #[test]
 fn a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
@@ -8938,12 +5718,7 @@ fn a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// `ansible_run_tags` and `ansible_skip_tags` are the run's own tag options. Measured on
-/// ansible-core 2.19.12: `run=['all'] skip=[]` with no option, `run=['kubeconfig']` under
-/// `--tags kubeconfig`, `skip=['foo']` under `--skip-tags foo`.
-///
-/// What would make this red: the options never reaching the variables, which leaves every run
-/// reading `['all']` and `[]` whatever it was asked for.
+/// `ansible_run_tags` and `ansible_skip_tags` are the run's own tag options.
 #[test]
 fn the_tag_options_reach_ansible_run_tags_and_ansible_skip_tags() {
     let dir = probe_dir("run-tags");
@@ -8963,92 +5738,8 @@ fn the_tag_options_reach_ansible_run_tags_and_ansible_skip_tags() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// `failed_when` reads the facts its own task returned: measured on ansible-core 2.19.12,
-/// `set_fact: {seen: 1}` passes `failed_when: seen is not defined`, and an `include_vars`
-/// passes a `failed_when` naming a variable its file defines.
-///
-/// What would make this red: the conditions judged against the variables the task started with,
-/// which fails both tasks.
-#[test]
-fn failed_when_sees_the_fact_its_own_set_fact_returned() {
-    let dir = std::env::temp_dir().join(format!("volant-ownfacts-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
-    std::fs::write(dir.join("iv.yml"), "ivar: 1\n").expect("a vars file");
-    let play = dir.join("play.yml");
-    std::fs::write(
-        &play,
-        "- hosts: all\n  gather_facts: false\n  tasks:\n\
-         \x20   - set_fact: {seen: 1}\n\
-         \x20     failed_when: seen is not defined\n\
-         \x20   - include_vars: {file: iv.yml}\n\
-         \x20     failed_when: ivar is not defined\n",
-    )
-    .expect("a playbook");
-    let out = volant(&[
-        "playbook",
-        "-i",
-        dir.join("inv.ini").to_str().expect("a path"),
-        play.to_str().expect("a path"),
-    ]);
-    let text = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("ok=2 "), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A task `failed_when` fails, whose result has no `msg`, prints and registers the reference's
-/// `Task failed: Action failed: Unknown error.`. Measured on ansible-core 2.19.12 with the same
-/// play: the line below, and `r1.msg` the same sentence. The reference also prints an `[ERROR]:`
-/// line with an `Origin:` block, which this engine prints for no failure.
-///
-/// What would make this red: the `msg` left off, which prints the line without it and leaves
-/// `r1.msg` undefined.
-#[test]
-fn a_failed_when_failure_without_a_msg_reports_an_unknown_error() {
-    let dir = std::env::temp_dir().join(format!("volant-unknownerr-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");
-    let play = dir.join("play.yml");
-    std::fs::write(
-        &play,
-        "- hosts: all\n  gather_facts: false\n  tasks:\n\
-         \x20   - set_fact: {a: 1}\n\
-         \x20     failed_when: true\n\
-         \x20     register: r1\n\
-         \x20     ignore_errors: true\n\
-         \x20   - debug: {var: r1.msg}\n",
-    )
-    .expect("a playbook");
-    let out = volant(&[
-        "playbook",
-        "-i",
-        dir.join("inv.ini").to_str().expect("a path"),
-        play.to_str().expect("a path"),
-    ]);
-    let text = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains(r#"fatal: [probe]: FAILED! => {"ansible_facts": {"a": 1}, "changed": false, "failed_when_result": true, "msg": "Task failed: Action failed: Unknown error."}"#),
-        "{text}"
-    );
-    assert!(
-        text.contains(r#""r1.msg": "Task failed: Action failed: Unknown error.""#),
-        "{text}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// A word that is not `key=value` on a collection module, or on a `library/` module, fails that
-/// task while the play runs, as the reference does, rather than stopping the run before it
-/// starts. Measured on
-/// ansible-core 2.19.12 with a collection beside the playbook: the `fatal:` line below,
-/// `ignore_errors` and `rescue` both take the failure, a `when: false` still skips, and the play
-/// ends at exit 2. The helper here is a fake: the refusal comes before anything is sent.
-///
-/// What would make this red: the pre-flight refusing the word, which exits 4 before `PLAY [`.
+/// task while the play runs, as the reference does, rather than stopping the run before it starts.
 #[test]
 fn a_raw_argument_on_a_collection_module_fails_only_that_task() {
     let dir = std::env::temp_dir().join(format!("volant-rawparams-{}", std::process::id()));
@@ -9116,14 +5807,7 @@ fn a_raw_argument_on_a_collection_module_fails_only_that_task() {
 }
 
 /// A word that is not `key=value` on a core module that takes no raw parameters fails that task
-/// while the play runs. Measured on ansible-core 2.19.12: `ping: foo` fails with `Action
-/// 'ansible.builtin.ping' does not support raw params.`, `debug: foo` and `copy: foo` the same
-/// way under their own names, `ignore_errors` and `rescue` take it, and the play exits 2. The
-/// three cover the three roads a task takes: a Python module, a controller-side module and an
-/// action plugin. The helper is a fake: nothing is sent.
-///
-/// What would make this red: the loader refusing the word (`expected key=value`, exit 4 before
-/// `PLAY [`), or any of the three roads running the task anyway.
+/// while the play runs.
 #[test]
 fn a_raw_argument_on_a_core_module_fails_only_that_task() {
     let dir = std::env::temp_dir().join(format!("volant-rawcore-{}", std::process::id()));

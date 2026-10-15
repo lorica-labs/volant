@@ -1,0 +1,14 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: "false"
+      register: again
+      retries: 1
+      delay: 0
+      ignore_errors: true
+    - debug:
+        msg: "retried: {{ again.ansible_facts | default({}) | list | join(",") }} {{ again.warnings | default([]) | length }} {{ discovered_interpreter_python is defined }}"
+    - command: "true"
+      register: good
+    - debug:
+        msg: "then: {{ good.ansible_facts | list | join(",") }} {{ discovered_interpreter_python is defined }}"

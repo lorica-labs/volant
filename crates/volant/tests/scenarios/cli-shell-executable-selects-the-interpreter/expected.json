@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Ask the shell which shell it is] *****************************************\nchanged: [localhost]\n\nTASK [Report it] ***************************************************************\nok: [localhost] => {\n    \"msg\": \"version=bash\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

@@ -1,0 +1,2 @@
+# Each playbook prints its own recap.
+args: ["second.yml", "second.yml"]

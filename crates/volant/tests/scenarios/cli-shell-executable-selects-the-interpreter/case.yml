@@ -1,0 +1,2 @@
+# Shell executable selects the interpreter.
+args: ["shell-executable.yml"]

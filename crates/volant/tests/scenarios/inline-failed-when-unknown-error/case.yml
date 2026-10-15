@@ -1,0 +1,2 @@
+# A failed_when failure without a msg reports an unknown error.
+args: [-i, inv.ini, play.yml]

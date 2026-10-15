@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [A guard that must stop this] *********************************************\nchanged: [h1]\n\nTASK [A pattern guard that must also stop this] ********************************\nok: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

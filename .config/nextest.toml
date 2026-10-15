@@ -6,3 +6,13 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 10 }
 default-filter = "not binary(reference_modules)"
+
+# Tests that change the machine they run on (an account, a group, a unit, `/etc/passwd`) must not
+# run beside each other: in the `ssh` job one creating an account made another's setup fail with
+# `/etc/passwd changed`. One thread for the whole group, whichever binary the test is in.
+[test-groups.host-changing]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "binary(reference_modules) | binary(native_user) | binary(native_group) | test(=ssh_natives_match_python_on_a_real_host) | test(=ssh_a_native_falls_back_before_touching_the_host) | test(=ssh_twenty_copies_take_the_native_path)"
+test-group = "host-changing"

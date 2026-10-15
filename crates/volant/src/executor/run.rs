@@ -1488,13 +1488,18 @@ pub(super) const DISCOVERED_INTERPRETER: &str = "discovered_interpreter_python";
 /// What the warning on screen ends with; the copy a task registers stops before it.
 pub(super) const DISCOVERY_HELP: &str = "See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.";
 
-/// Whether the reference discovers the interpreter this task's module runs under: every module
-/// sent to a host but `raw`, which hands its line to the shell, once nobody named an interpreter.
+/// Whether the reference discovers the interpreter this task's module runs under, once nobody
+/// named one. Measured on ansible-core 2.19.12: every module sent to a host does, but not `raw`
+/// and `script` (they hand a line or a file to the shell) and not `fetch`, `reboot` and
+/// `wait_for_connection`, whose result is not a module's.
 pub(super) fn discovers_interpreter<V: crate::vars::HostSettings + ?Sized>(
     module: &str,
     vars: &V,
 ) -> bool {
-    short_name(module) != "raw" && requested_interpreter(vars).is_none()
+    !matches!(
+        short_name(module),
+        "raw" | "script" | "fetch" | "reboot" | "wait_for_connection"
+    ) && requested_interpreter(vars).is_none()
 }
 
 /// Whether the host asked for discovery without the warning, `auto_silent` or

@@ -1,0 +1,2 @@
+# An unreachable host is not rescued.
+args: [-i, inv.ini, unreachable.yml]

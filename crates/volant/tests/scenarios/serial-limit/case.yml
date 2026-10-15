@@ -1,0 +1,2 @@
+# --limit narrows the hosts before the batches are cut.
+args: [-i, inv.ini, -l, "h2,h3", two.yml]

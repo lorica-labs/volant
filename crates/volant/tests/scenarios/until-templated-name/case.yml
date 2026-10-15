@@ -1,0 +1,2 @@
+# A templated task name renders in the retry line.
+args: [-i, inventory.ini, templated-name.yml]

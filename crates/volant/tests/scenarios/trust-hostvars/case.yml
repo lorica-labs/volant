@@ -1,0 +1,2 @@
+# A result read through hostvars from another host is never evaluated.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", hostvars.yml]

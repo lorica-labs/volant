@@ -1,0 +1,2 @@
+# Import playbook splices plays in place.
+args: ["-i", "imports/hosts.ini", "imports/main.yml"]

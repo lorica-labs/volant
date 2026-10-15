@@ -1,0 +1,20 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Show what a command printed
+      debug:
+        msg: "{{ lookup('pipe', 'cat ' ~ payload) }}"
+    - name: Show what the environment held
+      debug:
+        msg: "{{ lookup('env', 'VOLANT_TRUST_PROBE') }}"
+
+- name: Whether the payload ran
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Look for the marker the payload would have written
+      shell: "test -e {{ playbook_dir }}/marker && echo ran || echo never ran"
+      register: marker
+    - name: The payload never ran
+      debug:
+        var: marker.stdout

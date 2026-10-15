@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [In the block] ************************************************************\nchanged: [localhost]\n\nTASK [Nested] ******************************************************************\nchanged: [localhost]\n\nTASK [Nested cleanup] **********************************************************\nchanged: [localhost]\n\nTASK [Outer cleanup] ***********************************************************\nchanged: [localhost]\n\nTASK [After the block] *********************************************************\nchanged: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=5    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

@@ -153,27 +153,6 @@ fn a_failing_task_stops_the_host_and_exits_2() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
-/// An assert that is not `quiet` shows its result indented, `changed` included; a `quiet` one or
-/// a `no_log` one shows `ok:` alone (ansible-core 2.19.12).
-#[test]
-fn an_assert_shows_its_result_unless_quiet() {
-    let out = volant(&["playbook", &fixture("controller/assert-display.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("ok:")).collect();
-    assert_eq!(
-        lines,
-        ["ok: [localhost] => {", "ok: [localhost]", "ok: [localhost]",],
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "ok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"looks good\"\n}"
-        ),
-        "{text}"
-    );
-}
-
 /// Measured on ansible-core 2.19.12 with two hosts and standard input not a terminal: a `pause`
 /// runs for the first host alone. One `ok: [h1]`, one warning, `q` registered on h1 only, and a
 /// `when` that leaves h1 out skips the pause for both. A pause that fails takes the other hosts

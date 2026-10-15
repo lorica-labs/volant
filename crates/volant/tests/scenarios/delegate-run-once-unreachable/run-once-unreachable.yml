@@ -1,0 +1,10 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: once on a runner nothing answers for
+      command: echo once
+      run_once: true
+      register: o
+    - name: show
+      debug:
+        msg: "{{ o.stdout | default('none') }} on {{ inventory_hostname }}"

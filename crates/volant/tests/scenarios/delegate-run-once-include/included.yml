@@ -1,0 +1,6 @@
+- name: inside the include
+  command: echo included
+  register: i
+- name: show inside
+  debug:
+    msg: "{{ i.stdout }} on {{ inventory_hostname }}"

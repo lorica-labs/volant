@@ -1,0 +1,2 @@
+# Each serial batch elects its own run_once runner.
+args: [-i, inv.ini, run-once-serial.yml]

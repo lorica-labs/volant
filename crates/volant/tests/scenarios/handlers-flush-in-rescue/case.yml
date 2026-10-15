@@ -1,0 +1,2 @@
+# A host that steps over a flush point still waits for it.
+args: [-i, inv.ini, flush-in-rescue.yml]

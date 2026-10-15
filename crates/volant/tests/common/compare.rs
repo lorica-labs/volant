@@ -35,12 +35,14 @@ pub fn same(a: &Value, b: &Value) -> bool {
 #[cfg(target_os = "linux")]
 pub const IF_BOTH: &[&str] = &["_ansible_no_log"];
 
-/// `ok:`/`changed:`/`fatal:` lines at `-v`, keyed by the task banner they arrived under.
+/// `ok:`/`changed:`/`fatal:` lines from `-v` on, keyed by the task banner they arrived under. A
+/// body indented over several lines (a `debug`'s, or any from `-vvv` on) ends at its own `}`.
 #[cfg(target_os = "linux")]
 pub fn results_by_task(stdout: &str) -> Map<String, Value> {
     let mut results = Map::new();
     let mut task = String::new();
-    for line in stdout.lines() {
+    let mut lines = stdout.lines();
+    while let Some(line) = lines.next() {
         if let Some(rest) = line.strip_prefix("TASK [")
             && let Some(end) = rest.find(']')
         {
@@ -49,9 +51,20 @@ pub fn results_by_task(stdout: &str) -> Map<String, Value> {
             .iter()
             .any(|p| line.starts_with(p))
             && let Some((_, json)) = line.split_once(" => ")
-            && let Ok(value) = serde_json::from_str(json)
         {
-            results.insert(task.clone(), value);
+            let mut body = json.to_string();
+            if body == "{" {
+                for next in lines.by_ref() {
+                    body.push('\n');
+                    body.push_str(next);
+                    if next == "}" {
+                        break;
+                    }
+                }
+            }
+            if let Ok(value) = serde_json::from_str(&body) {
+                results.insert(task.clone(), value);
+            }
         }
     }
     results

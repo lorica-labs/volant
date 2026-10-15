@@ -1,0 +1,2 @@
+# An ignored failure notifies nothing.
+args: [ignored-failure.yml]

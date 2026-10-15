@@ -284,11 +284,14 @@ impl Case {
     }
 }
 
-/// `stdout` with the lines an `unordered` regex matches sorted among themselves, each staying in
-/// the slots such lines take: only their order is excused.
+/// `stdout` with a command's timings masked, and the lines an `unordered` regex matches sorted
+/// among themselves, each staying in the slots such lines take: only their order is excused.
 fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
+    // A command's timings, which differ between two runs of the reference itself.
+    let timed = regex::Regex::new(r#""(start|end|delta)": "[^"]*""#).expect("the pattern compiles");
+    let stdout = timed.replace_all(stdout, r#""$1": "<time>""#);
     if unordered.is_empty() {
-        return stdout.to_string();
+        return stdout.into_owned();
     }
     let lines: Vec<&str> = stdout.split_inclusive('\n').collect();
     let loose = |line: &str| {

@@ -9,58 +9,88 @@ TASK [set_fact] ****************************************************************
 ok: [localhost]
 
 TASK [pre task] ****************************************************************
-ok: [localhost] => {"msg": "pre d=role-default shared=role-var"}
+ok: [localhost] => {
+    "msg": "pre d=role-default shared=role-var"
+}
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=fact"
+}
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=fact"
+}
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=role-param"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=role-param"
+}
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=fact"
+}
 
 TASK [child : child task] ******************************************************
-ok: [localhost] => {"msg": "child"}
+ok: [localhost] => {
+    "msg": "child"
+}
 
 TASK [spec : Validating arguments against arg spec 'main'] *********************
 ok: [localhost]
 
 TASK [spec : debug] ************************************************************
-ok: [localhost] => {"msg": "needed=given"}
+ok: [localhost] => {
+    "msg": "needed=given"
+}
 
 TASK [play task after roles] ***************************************************
-ok: [localhost] => {"msg": "shared=role-var d=role-default p=fact"}
+ok: [localhost] => {
+    "msg": "shared=role-var d=role-default p=fact"
+}
 
 TASK [notifies the role's handler] *********************************************
 changed: [localhost]
 
 TASK [base : extra task] *******************************************************
-ok: [localhost] => {"msg": "extra"}
+ok: [localhost] => {
+    "msg": "extra"
+}
 
 TASK [base : deeper task] ******************************************************
-ok: [localhost] => {"msg": "deeper"}
+ok: [localhost] => {
+    "msg": "deeper"
+}
 
 TASK [base : sibling task] *****************************************************
-ok: [localhost] => {"msg": "sibling"}
+ok: [localhost] => {
+    "msg": "sibling"
+}
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=fact"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=fact"
+}
 
 TASK [include_role] ************************************************************
 included: base for localhost
 
 TASK [base : base task] ********************************************************
-ok: [localhost] => {"msg": "d=role-default v=role-var shared=role-var p=include-param"}
+ok: [localhost] => {
+    "msg": "d=role-default v=role-var shared=role-var p=include-param"
+}
 
 RUNNING HANDLER [base : base handler] ******************************************
-ok: [localhost] => {"msg": "base handler ran, d=role-default"}
+ok: [localhost] => {
+    "msg": "base handler ran, d=role-default"
+}
 
 TASK [post task] ***************************************************************
-ok: [localhost] => {"msg": "post v=role-var"}
+ok: [localhost] => {
+    "msg": "post v=role-var"
+}
 
 PLAY RECAP *********************************************************************
 localhost                  : ok=19   changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

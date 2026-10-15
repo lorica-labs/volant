@@ -1,0 +1,2 @@
+# An unreachable delegate is the delegating host's failure.
+args: [-i, inv.ini, delegate-unreachable.yml]

@@ -14,7 +14,7 @@ Volant reaches a managed host, puts a small static agent there, and talks to it 
 | `ssh` | Runs the OpenSSH client from your `PATH`. Volant builds the command line itself, without a wrapper and without a Rust SSH library, so your `~/.ssh/config` applies. |
 | `local` | Runs the agent as a child process on the controller, with no network. |
 
-Any other value is not supported yet: that host is reported unreachable, with the transport named, and the rest of the run continues.
+Ansible's other connection plugins (`paramiko_ssh`, `winrm`, `psrp`) and a collection's are not supported yet: that host is reported unreachable, with the transport named, and the rest of the run continues. A value that names no plugin at all fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
 
 Only key files and keys held by an ssh-agent work. `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run. `-k` and `ansible_password` are not implemented, because OpenSSH cannot read a password from its standard input without `sshpass`.
 

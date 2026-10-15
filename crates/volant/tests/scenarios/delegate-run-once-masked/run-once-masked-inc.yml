@@ -1,0 +1,7 @@
+- name: once inside the include
+  command: echo once
+  run_once: true
+  register: o
+- name: read the register
+  debug:
+    msg: "{{ o.stdout }} on {{ inventory_hostname }}"

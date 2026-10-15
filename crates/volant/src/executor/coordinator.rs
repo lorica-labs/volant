@@ -95,6 +95,8 @@ pub(super) enum Event {
         /// the host the task was written for: measured on ansible-core 2.19.12, a play over h1
         /// and h2 delegating to h3 recaps h1 and h2 and shows no h3 line at all.
         delegate: Option<String>,
+        /// The `[ERROR]:` block printed in front of a failure's line, when it has one.
+        error: Option<crate::render::ErrorBlock>,
     },
     /// One attempt of a task with `until` or `retries` failed and another one is coming, or this
     /// was the last: the reference prints this line after every failed attempt, the last
@@ -172,6 +174,8 @@ pub(super) enum Event {
         /// `fatal: [h2 -> h1]: UNREACHABLE!` and takes the **delegating** host out of the run,
         /// which is the host the recap counts.
         delegate: Option<String>,
+        /// Where the task the host could not be reached for was written.
+        origin: Option<crate::playbook::Origin>,
     },
 }
 
@@ -288,6 +292,7 @@ pub(super) async fn run_batch(
                             msg: format!("driver panicked: {err}"),
                             censored: false,
                             delegate: None,
+                            origin: None,
                         })
                         .await;
                     let _ = watchdog_tx
@@ -457,6 +462,7 @@ pub(super) async fn run_batch(
                         msg,
                         censored,
                         delegate,
+                        origin,
                     }) => {
                         if !header_shown {
                             let live = progress_tx.borrow().clone();
@@ -469,6 +475,12 @@ pub(super) async fn run_batch(
                             header_shown = true;
                         }
                         stats.unreachable(&host);
+                        if !censored {
+                            out.error(&crate::render::ErrorBlock::unreachable(
+                                &msg,
+                                origin.as_ref(),
+                            ));
+                        }
                         out.unreachable(&host, &msg, censored, delegate.as_deref());
                         state.failed_hosts.insert(host.clone());
                         gone.insert(host);
@@ -582,8 +594,15 @@ pub(super) async fn run_batch(
                 msg,
                 censored,
                 delegate,
+                origin,
             } => {
                 stats.unreachable(&host);
+                if !censored {
+                    out.error(&crate::render::ErrorBlock::unreachable(
+                        &msg,
+                        origin.as_ref(),
+                    ));
+                }
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
                 state.failed_hosts.insert(host);
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);
@@ -745,6 +764,7 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         counts,
         censored,
         delegate,
+        error,
         ..
     } = event
     else {
@@ -757,6 +777,9 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         stats.record(&host, outcome, result.changed());
     }
     if show {
+        if let Some(error) = &error {
+            out.error(error);
+        }
         out.result(
             &host,
             outcome,

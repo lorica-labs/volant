@@ -1,0 +1,9 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: a run_once include
+      include_tasks: included.yml
+      run_once: true
+    - name: after
+      debug:
+        msg: "after on {{ inventory_hostname }}"

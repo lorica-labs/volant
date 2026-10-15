@@ -119,6 +119,7 @@ fn settings() -> insta::Settings {
     s.add_filter(r#""end": "[^"]*""#, r#""end": "[time]""#);
     s.add_filter(r#""delta": "[^"]*""#, r#""delta": "[time]""#);
     s.add_filter(r#"The error was: [^"]*"#, "The error was: [engine message]");
+    s.add_filter(r"Origin: \S*/tests/fixtures/", "Origin: [fixtures]/");
     s
 }
 
@@ -152,12 +153,8 @@ fn a_failing_task_stops_the_host_and_exits_2() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
-/// Measured on ansible-core 2.19.12 at verbosity 0: an assert that is not `quiet` shows its
-/// result, `changed` included, and a `quiet` one or a `no_log` one shows `ok:` alone. The
-/// reference spreads the body over several lines; this engine prints every body on one.
-///
-/// What would make this red: `success_msg` never shown, `quiet` changing nothing, the body
-/// cleaned the way a `debug` result is, or a `no_log` message printed.
+/// An assert that is not `quiet` shows its result indented, `changed` included; a `quiet` one or
+/// a `no_log` one shows `ok:` alone (ansible-core 2.19.12).
 #[test]
 fn an_assert_shows_its_result_unless_quiet() {
     let out = volant(&["playbook", &fixture("controller/assert-display.yml")]);
@@ -166,11 +163,13 @@ fn an_assert_shows_its_result_unless_quiet() {
     let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("ok:")).collect();
     assert_eq!(
         lines,
-        [
-            r#"ok: [localhost] => {"changed": false, "msg": "looks good"}"#,
-            "ok: [localhost]",
-            "ok: [localhost]",
-        ],
+        ["ok: [localhost] => {", "ok: [localhost]", "ok: [localhost]",],
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "ok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"looks good\"\n}"
+        ),
         "{text}"
     );
 }
@@ -211,8 +210,12 @@ fn a_pause_runs_once_for_the_first_host() {
     assert_eq!(
         task("seen"),
         [
-            r#"ok: [h1] => {"msg": true}"#,
-            r#"ok: [h2] => {"msg": false}"#
+            "ok: [h1] => {",
+            "    \"msg\": true",
+            "}",
+            "ok: [h2] => {",
+            "    \"msg\": false",
+            "}"
         ],
         "{text}"
     );
@@ -316,7 +319,7 @@ fn retries_are_rendered_per_item() {
         }
         assert_eq!(
             text.matches(
-                r#""changed": false, "msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be converted to 'int'.""#
+                r#""msg": "Task failed: Error processing keyword 'retries': The value 'x' could not be converted to 'int'.""#
             )
             .count(),
             tasks.len(),
@@ -384,8 +387,7 @@ fn retries_and_delay_are_converted_as_the_reference_does() {
         "Task failed: Error processing keyword 'retries': The value '2.5' could not be converted to 'int'.",
     ] {
         assert_eq!(
-            text.matches(&format!(r#""changed": false, "msg": "{msg}""#))
-                .count(),
+            text.matches(&format!(r#""msg": "{msg}""#)).count(),
             2,
             "{msg}: {text}"
         );
@@ -486,11 +488,11 @@ fn changed_when_and_failed_when_apply_to_controller_side_tasks() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(
         text.contains("changed: [localhost]\n")
-            && text.contains(r#"changed: [localhost] => {"msg": "changed"}"#),
+            && text.contains("changed: [localhost] => {\n    \"msg\": \"changed\"\n}"),
         "changed_when marks set_fact and debug as changed: {text}"
     );
     assert!(
-        text.contains(r#"fatal: [localhost]: FAILED! => {"msg": "assert"}"#),
+        text.contains("fatal: [localhost]: FAILED! => {\n    \"msg\": \"assert\"\n}"),
         "failed_when fails a debug task: {text}"
     );
     assert!(
@@ -569,12 +571,12 @@ fn a_variable_naming_a_later_bound_variable_still_renders() {
         "a task name renders against the task's own vars: {text}"
     );
     assert!(
-        text.contains(r#"(item=a) => {"msg": "greet a"}"#)
-            && text.contains(r#"(item=b) => {"msg": "greet b"}"#),
+        text.contains("(item=a) => {\n    \"msg\": \"greet a\"\n}")
+            && text.contains("(item=b) => {\n    \"msg\": \"greet b\"\n}"),
         "a play var naming the loop variable renders per item: {text}"
     );
     assert!(
-        text.contains(r#"ok: [alpha] => {"msg": "hello there"}"#),
+        text.contains("ok: [alpha] => {\n    \"msg\": \"hello there\"\n}"),
         "a templated value read through hostvars renders: {text}"
     );
 }
@@ -590,8 +592,8 @@ fn vars_files_are_resolved_for_each_host() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains(r#"ok: [one] => {"msg": "one is red"}"#)
-            && text.contains(r#"ok: [two] => {"msg": "two is blue"}"#),
+        text.contains("ok: [one] => {\n    \"msg\": \"one is red\"\n}")
+            && text.contains("ok: [two] => {\n    \"msg\": \"two is blue\"\n}"),
         "each host reads the file its own variables name: {text}"
     );
 }
@@ -611,7 +613,7 @@ fn each_playbook_resolves_paths_against_its_own_directory() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        text.contains(r#"ok: [localhost] => {"msg": "kept here"}"#),
+        text.contains("ok: [localhost] => {\n    \"msg\": \"kept here\"\n}"),
         "the second playbook reads its own vars_files and keeps the first one's facts: {text}"
     );
 }
@@ -684,7 +686,13 @@ fn extra_vars_and_limit_apply() {
     ]);
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains(r#"ok: [two] => {"msg": "two blue"#), "{text}");
+    assert!(
+        text.contains(
+            "ok: [two] => {
+    \"msg\": \"two blue"
+        ),
+        "{text}"
+    );
     assert!(!text.contains("[one]"), "limit must exclude one: {text}");
     let reference = include_str!("golden/ANSIBLE_VERSION").trim();
     assert!(
@@ -888,8 +896,10 @@ fn the_three_sources_of_a_tag_list_add_up() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// An `ansible_connection` naming no plugin fails that host's task, as ansible-core 2.19.12 does,
+/// and the other hosts run on.
 #[test]
-fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
+fn an_unknown_connection_fails_that_host_s_task_not_the_run() {
     let out = volant(&[
         "playbook",
         "-i",
@@ -897,16 +907,20 @@ fn an_unknown_connection_makes_that_host_unreachable_not_the_run() {
         &fixture("all-fail.yml"),
     ]);
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("fatal: [bad]: UNREACHABLE!"), "{text}");
-    assert!(text.contains("carrier_pigeon"), "{text}");
+    assert!(
+        text.contains(
+            r#"fatal: [bad]: FAILED! => {"changed": false, "msg": "Task failed: the connection plugin 'carrier_pigeon' was not found"}"#
+        ),
+        "{text}"
+    );
     assert!(
         text.contains("PLAY RECAP"),
         "the run must finish with a recap: {text}"
     );
     assert_eq!(
         out.status.code(),
-        Some(6),
-        "failed good host (2) and unreachable bad host (4): {text}"
+        Some(2),
+        "both hosts failed a task: {text}"
     );
 }
 
@@ -1898,12 +1912,12 @@ fn a_host_reading_hostvars_waits_for_the_others() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        text.contains(r#"ok: [beta] => {"msg": "stamped-alpha"}"#),
+        text.contains("ok: [beta] => {\n    \"msg\": \"stamped-alpha\"\n}"),
         "{text}"
     );
     assert!(
-        text.contains(r#"ok: [alpha] => {"msg": "alpha,beta of alpha,beta"}"#)
-            && text.contains(r#"ok: [beta] => {"msg": "alpha,beta of alpha,beta"}"#),
+        text.contains("ok: [alpha] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}")
+            && text.contains("ok: [beta] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}"),
         "both hosts are still in the play: {text}"
     );
 }
@@ -1937,12 +1951,12 @@ fn a_host_reading_hostvars_waits_for_the_others_with_batching() {
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(
-            text.contains(r#"ok: [beta] => {"msg": "stamped-alpha"}"#),
+            text.contains("ok: [beta] => {\n    \"msg\": \"stamped-alpha\"\n}"),
             "{text}"
         );
         assert!(
-            text.contains(r#"ok: [alpha] => {"msg": "alpha,beta of alpha,beta"}"#)
-                && text.contains(r#"ok: [beta] => {"msg": "alpha,beta of alpha,beta"}"#),
+            text.contains("ok: [alpha] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}")
+                && text.contains("ok: [beta] => {\n    \"msg\": \"alpha,beta of alpha,beta\"\n}"),
             "both hosts are still in the play: {text}"
         );
     }
@@ -1970,7 +1984,7 @@ fn play_hosts_shrink_when_a_host_fails_but_all_stays() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
-        text.contains(r#"ok: [beta] => {"msg": "beta of alpha,beta"}"#),
+        text.contains("ok: [beta] => {\n    \"msg\": \"beta of alpha,beta\"\n}"),
         "{text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1999,7 +2013,10 @@ fn a_waiting_host_is_released_when_the_others_die() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(text.contains(r#"ok: [beta] => {"msg": "beta"}"#), "{text}");
+    assert!(
+        text.contains("ok: [beta] => {\n    \"msg\": \"beta\"\n}"),
+        "{text}"
+    );
     assert!(
         started.elapsed().as_secs() < 5,
         "beta must not wait for a dead alpha"
@@ -2016,7 +2033,7 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("hosts.ini"),
-        "[web]\nalpha ansible_connection=carrier_pigeon\nbeta ansible_connection=local\n",
+        "[web]\nalpha ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1\nbeta ansible_connection=local\n",
     )
     .unwrap();
     std::fs::write(
@@ -2035,7 +2052,10 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("fatal: [alpha]: UNREACHABLE!"), "{text}");
-    assert!(text.contains(r#"ok: [beta] => {"msg": "beta"}"#), "{text}");
+    assert!(
+        text.contains("ok: [beta] => {\n    \"msg\": \"beta\"\n}"),
+        "{text}"
+    );
     assert_eq!(out.status.code(), Some(4), "unreachable alpha: {text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2084,13 +2104,14 @@ fn an_empty_loop_is_skipped_and_registers_no_items() {
         "an empty loop must not report as ok: {text}"
     );
     assert!(
-        section(&text, "What the empty loop registered")
-            .contains(r#"ok: [localhost] => {"msg": "reason=No items in the list items=0"}"#),
+        section(&text, "What the empty loop registered").contains(
+            "ok: [localhost] => {\n    \"msg\": \"reason=No items in the list items=0\"\n}"
+        ),
         "the registered value carries the reference's reason and no items: {text}"
     );
     assert!(
         section(&text, "The empty loop registered a skip")
-            .contains(r#"ok: [localhost] => {"msg": "the empty loop was skipped"}"#),
+            .contains("ok: [localhost] => {\n    \"msg\": \"the empty loop was skipped\"\n}"),
         "`when: empty.skipped` holds: {text}"
     );
 }
@@ -2354,7 +2375,9 @@ fn a_registered_debug_carries_changed_and_failed() {
         "failed is defined and skipped is not",
     ] {
         assert!(
-            text.contains(&format!(r#"ok: [localhost] => {{"msg": "{msg}"}}"#)),
+            text.contains(&format!(
+                "ok: [localhost] => {{\n    \"msg\": \"{msg}\"\n}}"
+            )),
             "`{msg}` must be reached: {text}"
         );
     }
@@ -2363,7 +2386,7 @@ fn a_registered_debug_carries_changed_and_failed() {
         "nothing about the registered debug is undefined: {text}"
     );
     assert!(
-        text.contains(r#"ok: [localhost] => {"msg": "hello"}"#),
+        text.contains("ok: [localhost] => {\n    \"msg\": \"hello\"\n}"),
         "the debug itself still prints only its message: {text}"
     );
 }
@@ -2452,8 +2475,8 @@ fn a_missing_vars_files_entry_is_skipped() {
     );
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains(r#"ok: [alpha] => {"msg": "reached on alpha"}"#)
-            && text.contains(r#"ok: [beta] => {"msg": "reached on beta"}"#),
+        text.contains("ok: [alpha] => {\n    \"msg\": \"reached on alpha\"\n}")
+            && text.contains("ok: [beta] => {\n    \"msg\": \"reached on beta\"\n}"),
         "both hosts run the play: {text}"
     );
     assert!(
@@ -3993,7 +4016,9 @@ fn a_templated_task_name_renders_in_the_retry_line() {
         "{text}"
     );
     assert!(
-        !text.contains("{{"),
+        !text
+            .lines()
+            .any(|line| line.contains("RETRYING") && line.contains("{{")),
         "the retry line must not show the template's braces: {text}"
     );
 }
@@ -4031,7 +4056,7 @@ fn a_controller_side_task_retries_like_any_other() {
         );
     }
     assert!(
-        retried.contains(r#"fatal: [localhost]: FAILED! => {"msg": "probe"}"#)
+        retried.contains("fatal: [localhost]: FAILED! => {\n    \"msg\": \"probe\"\n}")
             && retried.contains("...ignoring"),
         "{retried}"
     );
@@ -4126,15 +4151,8 @@ fn the_delay_is_waited_between_two_attempts() {
     );
 }
 
-/// Every path a `no_log` result can reach the operator by, measured on ansible-core 2.19.12 with
-/// this fixture at verbosity 0, `-v` and `-vvv`.
-///
-/// The one that is **not** censored is the registered variable: `debug: var=s` behind the task
-/// shows the real `stdout`, and censoring it too would look safer and be wrong - a playbook
-/// reading `s.rc` would stop working.
-///
-/// What would make this red: a secret on any line of a censored task at any verbosity, or the
-/// registered value censored along with the display.
+/// Every line of a `no_log` task is censored at verbosity 0, `-v` and `-vvv`, and the registered
+/// value is not (ansible-core 2.19.12).
 #[test]
 fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
     const CENSORED: &str = "the output has been hidden due to the fact that 'no_log: true' was specified for this result";
@@ -4178,10 +4196,18 @@ fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
             text.contains(r#""stdout": "secret""#),
             "{at}: the register must keep the real value: {text}"
         );
-        assert!(
-            failed.contains(&format!(
+        // From `-vvv` on every body is indented, a censored one too.
+        let censored_line = if verbosity == "-vvv" {
+            format!(
+                "fatal: [localhost]: FAILED! => {{\n    \"censored\": \"{CENSORED}\",\n    \"changed\": true\n}}"
+            )
+        } else {
+            format!(
                 r#"fatal: [localhost]: FAILED! => {{"censored": "{CENSORED}", "changed": true}}"#
-            )) && failed.contains("...ignoring"),
+            )
+        };
+        assert!(
+            failed.contains(&censored_line) && failed.contains("...ignoring"),
             "{at}: {failed}"
         );
         assert_eq!(
@@ -4205,6 +4231,19 @@ fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
         if verbosity.is_empty() {
             assert_eq!(body(ok), "changed: [localhost]", "{ok}");
             assert_eq!(body(shown), "ok: [localhost]", "{shown}");
+        } else if verbosity == "-vvv" {
+            assert!(
+                ok.contains(&format!(
+                    "changed: [localhost] => {{\n    \"censored\": \"{CENSORED}\",\n    \"changed\": true\n}}"
+                )),
+                "{at}: {ok}"
+            );
+            assert!(
+                shown.contains(&format!(
+                    "ok: [localhost] => {{\n    \"censored\": \"{CENSORED}\"\n}}"
+                )),
+                "{at}: {shown}"
+            );
         } else {
             assert!(
                 ok.contains(&format!(
@@ -4468,7 +4507,12 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         // The found file is the loop's first and only item, straight under the banner: a loop
         // over the terms themselves would show `nosuch.yml` on that line.
-        "*\nok: [localhost] => (item=one) => {\"msg\": \"task-with_first_found.yml\"}\n\n",
+        "*
+ok: [localhost] => (item=one) => {
+    \"msg\": \"task-with_first_found.yml\"
+}
+
+",
     ),
     runs(
         "play",
@@ -6029,16 +6073,16 @@ fn serial_plays_one_batch_at_a_time_with_its_own_handlers() {
         "one banner and one handler run per batch: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h1] => {"msg": "h1,h2 / h1,h2,h3 / h1,h2,h3"}"#),
+        text.contains("ok: [h1] => {\n    \"msg\": \"h1,h2 / h1,h2,h3 / h1,h2,h3\"\n}"),
         "the first batch is h1 and h2 and nobody has failed yet: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h3] => {"msg": "h3 / h2,h3 / h1,h2,h3"}"#),
+        text.contains("ok: [h3] => {\n    \"msg\": \"h3 / h2,h3 / h1,h2,h3\"\n}"),
         "the second batch is h3 alone, and the play has lost h1: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h2] => {"msg": "handler on h2"}"#)
-            && text.contains(r#"ok: [h3] => {"msg": "handler on h3"}"#),
+        text.contains("ok: [h2] => {\n    \"msg\": \"handler on h2\"\n}")
+            && text.contains("ok: [h3] => {\n    \"msg\": \"handler on h3\"\n}"),
         "each batch runs the handler its own hosts notified: {text}"
     );
     assert!(
@@ -6089,7 +6133,7 @@ fn one_host_batch_that_fails_stops_everything(name: &str) {
         "{name}: the batch that failed is the last one: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h1] => {"msg": "h1 / h1,h2,h3 / h1,h2,h3"}"#),
+        text.contains("ok: [h1] => {\n    \"msg\": \"h1 / h1,h2,h3 / h1,h2,h3\"\n}"),
         "{name}: the batch is one host: {text}"
     );
     assert!(
@@ -6213,12 +6257,15 @@ fn a_batch_of_already_failed_hosts_does_not_end_the_run() {
         "one banner for the first play, three for the batches, one for the third: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h2] => {"msg": "h2 / h2,h3 / h1,h2,h3"}"#)
-            && text.contains(r#"ok: [h3] => {"msg": "h3 / h2,h3 / h1,h2,h3"}"#),
+        text.contains("ok: [h2] => {\n    \"msg\": \"h2 / h2,h3 / h1,h2,h3\"\n}")
+            && text.contains("ok: [h3] => {\n    \"msg\": \"h3 / h2,h3 / h1,h2,h3\"\n}"),
         "the batches of the surviving hosts run, one host each: {text}"
     );
     assert!(
-        !text.contains(r#"[h1] => {"msg""#),
+        !text.contains(
+            "[h1] => {
+    \"msg\""
+        ),
         "the failed host runs nothing: {text}"
     );
     assert!(
@@ -6254,11 +6301,11 @@ fn vars_files_is_read_per_batch_not_per_play() {
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(
-        text.contains(r#"ok: [h2] => {"msg": "batch=h2 marker=from-h2"}"#),
+        text.contains("ok: [h2] => {\n    \"msg\": \"batch=h2 marker=from-h2\"\n}"),
         "h2's own batch reads h2's own vars_files: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h3] => {"msg": "batch=h3 marker=from-h3"}"#),
+        text.contains("ok: [h3] => {\n    \"msg\": \"batch=h3 marker=from-h3\"\n}"),
         "h3's own batch reads h3's own vars_files, not h2's: {text}"
     );
 }
@@ -6327,7 +6374,7 @@ fn limit_narrows_before_the_batches_are_cut() {
         "one batch, not two: {text}"
     );
     assert!(
-        text.contains(r#"ok: [h2] => {"msg": "h2,h3 / h2,h3 / h2,h3"}"#),
+        text.contains("ok: [h2] => {\n    \"msg\": \"h2,h3 / h2,h3 / h2,h3\"\n}"),
         "ansible_play_hosts_all is the limited set, not the inventory's full one: {text}"
     );
 }
@@ -6726,7 +6773,7 @@ fn an_unreachable_delegate_is_the_delegating_hosts_failure() {
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(out.status.code(), Some(4), "{text}");
     assert!(text.contains("fatal: [h1 -> gone]: UNREACHABLE!"), "{text}");
-    assert!(text.contains("carrier_pigeon"), "{text}");
+    assert!(text.contains("Connection refused"), "{text}");
     assert!(
         text.contains("h1                         : ok=0    changed=0    unreachable=1"),
         "{text}"
@@ -7078,8 +7125,8 @@ fn a_variable_named_by_a_result_is_never_evaluated() {
         stdout
             .matches("Encountered untrusted template or expression")
             .count(),
-        2,
-        "both the plain form and the loop form should be refused:\n{stdout}"
+        4,
+        "both the plain form and the loop form should be refused, each in its error block and its line:\n{stdout}"
     );
     assert_eq!(out.status.code(), Some(0), "{stdout}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -8146,7 +8193,7 @@ fn a_comment_only_vars_file_is_an_empty_mapping_not_a_refusal() {
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
     assert_eq!(out.status.code(), Some(0), "stdout={text}\nstderr={err}");
     assert!(
-        text.contains(r#"ok: [localhost] => {"msg": "ok"}"#),
+        text.contains("ok: [localhost] => {\n    \"msg\": \"ok\"\n}"),
         "{text}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
@@ -8556,8 +8603,8 @@ fn a_warning_repeated_by_two_items_prints_once() {
         1,
         "{stderr}"
     );
-    assert!(stdout.contains(r#""msg": 2}"#), "{stdout}");
-    assert!(stdout.contains(r#""msg": 1}"#), "{stdout}");
+    assert!(stdout.contains("\"msg\": 2\n}"), "{stdout}");
+    assert!(stdout.contains("\"msg\": 1\n}"), "{stdout}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 

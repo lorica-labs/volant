@@ -1,0 +1,2 @@
+# force_handlers in ansible.cfg forces handlers as the flag does.
+args: [-i, inv.ini, handlers.yml]

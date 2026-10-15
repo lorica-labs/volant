@@ -1,0 +1,3 @@
+# A remote module's facts under delegate_facts land on the delegate.
+args: [-i, inv.ini, delegate-facts-remote.yml]
+needs: ["ansible-core"]

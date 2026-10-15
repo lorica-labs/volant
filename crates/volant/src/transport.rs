@@ -157,6 +157,24 @@ fn bootstrap_probe_ran(probe: &Captured) -> bool {
     )
 }
 
+/// The connection plugins ansible-core 2.19.12 ships besides `local` and `ssh`, with the alias it
+/// routes to one of them: names that exist, which this release refuses rather than misreports.
+const KNOWN_CONNECTIONS: &[&str] = &["paramiko", "paramiko_ssh", "psrp", "winrm"];
+
+/// An `ansible_connection` naming no plugin at all. Measured on ansible-core 2.19.12: the task
+/// fails with this message, for a host's own connection, a delegate's and a `run_once`
+/// runner's alike, and nobody is unreachable.
+#[derive(Debug)]
+pub struct ConnectionNotFound(pub String);
+
+impl std::fmt::Display for ConnectionNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the connection plugin '{}' was not found", self.0)
+    }
+}
+
+impl std::error::Error for ConnectionNotFound {}
+
 impl Transport {
     /// The connection one host uses, read from its effective variables: the merged view under
     /// the full precedence rather than the inventory object. `ansible_connection` and its
@@ -210,7 +228,12 @@ impl Transport {
                 },
                 control_path: None,
             })),
-            other => bail!("host '{host_name}': connection '{other}' is not supported"),
+            // ansible-core's own plugins this release does not drive, and a collection's, are
+            // refused; any other name is no plugin at all, which the reference fails the task for.
+            other if KNOWN_CONNECTIONS.contains(&other) || other.contains('.') => {
+                bail!("host '{host_name}': connection '{other}' is not supported")
+            }
+            other => Err(ConnectionNotFound(other.to_string()).into()),
         }
     }
 

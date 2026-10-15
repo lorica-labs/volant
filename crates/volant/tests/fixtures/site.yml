@@ -6,7 +6,7 @@
       command: echo hello
 
     - name: Fail but keep going
-      command: false
+      command: "false"
       ignore_errors: true
 
     - name: Skip because the path exists

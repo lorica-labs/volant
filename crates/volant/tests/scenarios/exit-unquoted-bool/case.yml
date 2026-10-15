@@ -1,0 +1,6 @@
+# A boolean as a module's argument stops the load: run, syntax check and listing all exit 4.
+runs:
+  - args: [bool.yml]
+  - args: [--syntax-check, bool.yml]
+  - args: [--list-tasks, bool.yml]
+  - args: [number.yml]

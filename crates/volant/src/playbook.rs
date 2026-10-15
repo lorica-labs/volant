@@ -1409,13 +1409,6 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::Value(Scalar::String(s)) if is_free_form(module) => {
             args.insert("_raw_params".into(), Value::String(s.to_string()));
         }
-        // A deliberate divergence: YAML's core schema resolves an unquoted `true`/`false` as a
-        // boolean, and ansible-playbook refuses it with "unexpected parameter type in action".
-        // Volant takes the value back to the text it was written as and runs it, so
-        // `command: false` runs `/bin/false` where Ansible would stop on an error.
-        Yaml::Value(Scalar::Boolean(b)) if is_free_form(module) => {
-            args.insert("_raw_params".into(), Value::String(b.to_string()));
-        }
         // A collection's module, or a name a `library/` may hold, read as the reference's
         // `parse_kv` reads it: a word without `=` is kept in `_raw_params`, and a string that
         // does not split is kept whole, for the pre-flight to refuse once the name resolved.
@@ -1444,6 +1437,19 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
             }
         }
         Yaml::Value(Scalar::Null) => {}
+        // The class names are the reference's own words for what a task's argument was.
+        Yaml::Value(Scalar::Boolean(_)) => {
+            bail!("unexpected parameter type in action: <class 'bool'>")
+        }
+        Yaml::Value(Scalar::Integer(_)) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>"
+        ),
+        Yaml::Value(Scalar::FloatingPoint(_)) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedFloat'>"
+        ),
+        Yaml::Sequence(_) => bail!(
+            "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>"
+        ),
         other => bail!("module arguments must be a mapping or a string, found {other:?}"),
     }
     Ok(args)
@@ -1624,7 +1630,7 @@ mod tests {
     )]
     #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
     #[case::when_scalar(
-        "- hosts: all\n  tasks:\n    - command: true\n      when: 3\n",
+        "- hosts: all\n  tasks:\n    - command: \"true\"\n      when: 3\n",
         &["when"]
     )]
     #[case::loop_and_with_items(
@@ -1708,11 +1714,11 @@ mod tests {
         &["'always' keyword cannot be used without 'block'"]
     )]
     #[case::notify_element(
-        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      notify: [3]\n",
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      notify: [3]\n",
         &["task 't': 'notify' must be a name or a list of names"]
     )]
     #[case::when_element(
-        "- hosts: all\n  tasks:\n    - name: t\n      command: true\n      when: [3]\n",
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      when: [3]\n",
         &["task 't': 'when' must be an expression or a list of expressions"]
     )]
     fn the_load_refuses(#[case] text: &str, #[case] needles: &[&str]) {
@@ -1782,7 +1788,6 @@ mod tests {
     #[case::template_words("ns.coll.mod: port={{ x }} {{ a b }}", "ns.coll.mod", &[("_raw_params", "{{ a b }}"), ("port", "{{ x }}")])]
     #[case::open_quote("ns.coll.mod: a='open", "ns.coll.mod", &[("_raw_params", "a='open")])]
     #[case::builtin_stray_word("ping: data=x foo", "ping", &[("_raw_params", "foo"), ("data", "x")])]
-    #[case::unquoted_boolean("command: false", "command", &[("_raw_params", "false")])]
     #[case::jinja_block_kept_whole(
         "copy: dest={{ base ~ '/x' }} mode=0644 content=u\"v w\"",
         "copy",
@@ -1825,7 +1830,7 @@ mod tests {
         local: 1
       timeout: 5
     - name: Several conditions
-      command: true
+      command: "true"
       when:
         - out is defined
         - out.rc == 0
@@ -1892,7 +1897,7 @@ mod tests {
     #[test]
     fn booleans_are_read_the_way_the_reference_reads_them() {
         let pb = parse(
-            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: true\n      when: false\n      ignore_errors: 0\n",
+            "- hosts: all\n  gather_facts: 1\n  tasks:\n    - command: \"true\"\n      when: false\n      ignore_errors: 0\n",
             "x.yml",
         )
         .unwrap();

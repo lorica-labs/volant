@@ -136,7 +136,10 @@ pub(super) fn resolve_include(
             label: item.label,
             result,
             failed: true,
-            ignored: item.ignore_errors,
+            // The strategy fails the host when the file cannot be loaded, and `ignore_errors`
+            // belongs to the executor: measured on ansible-core 2.19.12, a missing file or a
+            // mapping instead of a list ends the host at exit 2 whatever the keyword says.
+            ignored: Some(false),
         });
     }
     (groups, shown)

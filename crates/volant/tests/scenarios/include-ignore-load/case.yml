@@ -1,0 +1,5 @@
+# A file an include cannot load ends the host at exit 2, whatever ignore_errors says.
+runs:
+  - args: [-i, inv.ini, templated.yml, -e, "lenient=true"]
+  - args: [-i, inv.ini, templated.yml, -e, "lenient=false"]
+  - args: [-i, inv.ini, literal.yml]

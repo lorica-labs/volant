@@ -1153,7 +1153,7 @@ fn unsupported_become_methods_are_refused_by_name() {
     let path = dir.join("su.yml");
     std::fs::write(
         &path,
-        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_method: su\n  tasks:\n    - command: true\n",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_method: su\n  tasks:\n    - command: \"true\"\n",
     )
     .unwrap();
     let out = volant(&["playbook", &path.display().to_string()]);
@@ -2556,8 +2556,8 @@ fn an_unknown_handler_is_refused_with_exit_1() {
     assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
 }
 
-/// A templated `ignore_errors`, rendered per host, decides on an ordinary task and on an include
-/// statement alike.
+/// A templated `ignore_errors`, rendered per host, decides on an ordinary task; an include whose
+/// file cannot be loaded fails the host whatever it says.
 #[test]
 fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     let run = |cmd: &str, inc: &str| {
@@ -2575,9 +2575,12 @@ fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
         (out.status.code(), String::from_utf8(out.stdout).unwrap())
     };
     let (code, text) = run("true", "true");
-    assert_eq!(code, Some(0), "{text}");
-    assert!(text.contains("\"msg\": \"after\""), "{text}");
-    assert!(text.contains("ignored=2"), "{text}");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(!text.contains("\"msg\": \"after\""), "{text}");
+    assert!(
+        text.contains("failed=1") && text.contains("ignored=1"),
+        "{text}"
+    );
 
     let (code, text) = run("false", "true");
     assert_eq!(code, Some(2), "{text}");

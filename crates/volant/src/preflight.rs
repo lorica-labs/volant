@@ -603,16 +603,10 @@ mod tests {
     use super::*;
     use crate::playbook::parse;
     use crate::stats::error_code;
+    use rstest::rstest;
 
     /// A `pause` that would wait for an answer on a terminal is refused before anything connects
-    /// when the step is sure to run, and left to the run when something may leave it out. A timed
-    /// one, or any on a pipe, is never refused here.
-    ///
-    /// What would make this red: the shape left to the task, which refuses it once the tasks
-    /// before it have changed the hosts; a timed pause refused, which stops a playbook that runs
-    /// the same under both engines; or a pause that may never run refused, which stops a playbook
-    /// the reference runs to its end (`when: confirm | default(false)`, a `never` tag, a `loop` over nothing, an
-    /// unreached `rescue`).
+    /// when the step is sure to run, and left to the run when something may leave it out.
     #[test]
     fn a_pause_that_would_prompt_on_a_terminal_is_refused_only_when_sure_to_run() {
         let verdict_under = |tasks: &str, interactive: bool, run: Vec<String>| {
@@ -674,62 +668,157 @@ mod tests {
         format!("{err:#}")
     }
 
-    /// The three module states, each in its own words. What would make this red: the builtin
-    /// arm answering with the typo sentence or the other way round, which is what a collapsed
-    /// `is_builtin` produces.
-    ///
-    /// A builtin this release does not run itself is no longer refused at all: it has a path now,
-    /// through the payload the controller builds for it. The three states are "this release runs
-    /// it", "the reference runs it through an action plugin" and "nobody has that name".
-    #[test]
-    fn the_three_module_states_are_told_apart() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Later\n      lineinfile: path=/tmp/x\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert!(
-            check(&pb).is_ok(),
-            "a builtin this release does not run itself has a payload path now"
-        );
-        // A name no builtin has is the controller's to answer: a `library/` may hold it. What
-        // it says when nothing does is the reference's typo sentence.
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Later\n      nosuchmodule: x\n",
-            "x.yml",
-        )
-        .unwrap();
-        check(&pb).expect("set aside for the controller");
-        let text = format!(
-            "{:#}",
-            check_resolved(
-                "Later",
-                "nosuchmodule",
-                &crate::python::Resolved::Missing { collection: None }
-            )
-            .unwrap_err()
-        );
-        assert!(
-            text.contains("couldn't resolve module/action 'nosuchmodule'"),
-            "{text}"
-        );
-        assert!(
-            text.contains("This often indicates a misspelling"),
-            "{text}"
-        );
-        let pb = parse("- hosts: all\n  tasks:\n    - command: echo hi\n", "x.yml").unwrap();
-        assert!(check(&pb).is_ok(), "an implemented module passes");
+    /// A one-task play around `body`, for the rows that only differ in the task.
+    fn task_play(body: &str) -> String {
+        format!("- hosts: all\n  tasks:\n    - name: T\n{body}")
     }
 
-    /// A collection's module passes both passes and is collected for the controller to resolve;
-    /// a name in the namespace ansible-core owns whole is still the reference's typo.
-    ///
-    /// What would make this red: the collection arm left out, which refuses
-    /// `ansible.posix.sysctl` with "couldn't resolve" before anything has looked for it; or the
-    /// arm taking `ansible.builtin.nosuch`, which no collection can ever supply; or a handler's
-    /// module left out of what is collected, which would reach a host unresolved.
+    /// Everything the pre-flight refuses is refused at exit 4, naming what it refuses.
+    #[rstest]
+    #[case::async_(task_play("      command: echo hi\n      async: x\n"), &["keyword 'async' is not supported yet", "play 1", "'T'"])]
+    #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
+    #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
+    #[case::remote_user(task_play("      command: echo hi\n      remote_user: x\n"), &["keyword 'remote_user' is not supported yet", "play 1", "'T'"])]
+    #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
+    #[case::play_any_errors_fatal("- hosts: all\n  any_errors_fatal: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'any_errors_fatal' is not supported yet"])]
+    #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
+    #[case::play_max_fail_percentage("- hosts: all\n  max_fail_percentage: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'max_fail_percentage' is not supported yet"])]
+    #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
+    #[case::parked_in_a_block_body(
+        "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
+        &["task 'Deep': keyword 'throttle' is not supported yet"]
+    )]
+    #[case::parked_in_a_rescue(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      rescue:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
+        &["task 'Deep': keyword 'throttle' is not supported yet"]
+    )]
+    #[case::parked_in_an_always(
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      always:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
+        &["task 'Deep': keyword 'throttle' is not supported yet"]
+    )]
+    #[case::until_on_include_tasks(task_play("      include_tasks: inc.yml\n      until: false\n"), &["keyword 'until' is not supported yet on 'include_tasks'"])]
+    #[case::retries_on_include_tasks(task_play("      include_tasks: inc.yml\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_tasks'"])]
+    #[case::delay_on_include_tasks(task_play("      include_tasks: inc.yml\n      delay: 1\n"), &["keyword 'delay' is not supported yet on 'include_tasks'"])]
+    #[case::until_on_include_role(task_play("      include_role:\n        name: r\n      until: false\n"), &["keyword 'until' is not supported yet on 'include_role'"])]
+    #[case::retries_on_include_role(task_play("      include_role:\n        name: r\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_role'"])]
+    #[case::delay_on_include_role(task_play("      include_role:\n        name: r\n      delay: 1\n"), &["keyword 'delay' is not supported yet on 'include_role'"])]
+    #[case::check_mode_on_a_task(task_play("      command: echo hi\n      check_mode: true\n"), &["'check_mode' is not supported yet with 'true'"])]
+    #[case::check_mode_on_a_play("- hosts: all\n  check_mode: true\n  tasks:\n    - command: echo hi\n".to_string(), &["'check_mode' is not supported yet with 'true'"])]
+    #[case::check_mode_on_a_block("- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n".to_string(), &["'check_mode' is not supported yet with 'true'"])]
+    #[case::expand_argument_vars_true(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: true\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
+    #[case::expand_argument_vars_yes(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"yes\"\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
+    #[case::expand_argument_vars_one(task_play("      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: 1\n"), &["argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"])]
+    #[case::shell_true(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: true\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
+    #[case::shell_false(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
+    #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
+    #[case::strategy_free("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'free' is not supported yet"])]
+    #[case::with_dict(task_play("      debug: msg=hi\n      with_dict: {a: 1}\n"), &["keyword 'with_dict' is not supported yet"])]
+    #[case::action_plugin_assemble(task_play("      assemble: src=a dest=b\n"), &["module 'assemble' needs an action plugin"])]
+    #[case::action_plugin_script(task_play("      script: src=a dest=b\n"), &["module 'script' needs an action plugin"])]
+    #[case::action_plugin_builtin_script(task_play("      ansible.builtin.script: src=a dest=b\n"), &["module 'ansible.builtin.script' needs an action plugin"])]
+    #[case::collection_splat(task_play("      ns.coll.mod: \"{{ d }}\"\n"), &["task 'T': module 'ns.coll.mod' takes its arguments from one template"])]
+    #[case::builtin_splat(task_play("      ping: \"{{ d }}\"\n"), &["task 'T': module 'ping' takes its arguments from one template"])]
+    #[case::builtin_no_collection_can_supply(task_play("      ansible.builtin.nosuch: x=1\n"), &["couldn't resolve module/action 'ansible.builtin.nosuch'"])]
+    fn the_preflight_refuses_by_name(#[case] text: String, #[case] needles: &[&str]) {
+        let got = refusal(&text);
+        for needle in needles {
+            assert!(got.contains(needle), "{needle:?} not in {got}");
+        }
+    }
+
+    /// What the pre-flight lets through where the value or the module decides, or the controller
+    /// answers.
+    #[rstest]
+    #[case::check_mode_false_on_a_task(task_play(
+        "      command: echo hi\n      check_mode: false\n"
+    ))]
+    #[case::check_mode_false_on_a_play("- hosts: all\n  check_mode: false\n  tasks:\n    - command: echo hi\n".to_string())]
+    #[case::retry_on_an_ordinary_task(task_play(
+        "      command: echo hi\n      until: false\n      retries: 2\n      delay: 1\n"
+    ))]
+    #[case::retry_on_include_vars(task_play("      include_vars: v.yml\n      retries: 2\n"))]
+    #[case::linear("- hosts: all\n  strategy: linear\n  tasks:\n    - command: echo hi\n".to_string())]
+    #[case::unknown_argument_is_the_agents(task_play(
+        "      command: /bin/true\n      args:\n        no_such_arg: 1\n"
+    ))]
+    #[case::arguments_this_release_honours(task_play(
+        "      command: /bin/true\n      args:\n        chdir: /tmp\n        stdin_add_newline: false\n"
+    ))]
+    #[case::raw_takes_no_such_check(task_play(
+        "      raw: /bin/true\n      args:\n        expand_argument_vars: true\n"
+    ))]
+    #[case::expansion_off(task_play(
+        "      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"
+    ))]
+    #[case::shell_without_the_argument(task_play(
+        "      shell: /bin/echo $HOME\n      args:\n        chdir: /tmp\n"
+    ))]
+    #[case::omitted_argument(task_play(
+        "      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"{{ omit }}\"\n"
+    ))]
+    #[case::builtin_run_through_a_payload(task_play("      lineinfile: path=/tmp/x\n"))]
+    #[case::implemented_module(task_play("      command: echo hi\n"))]
+    #[case::controller_side_module(task_play("      debug: msg=hi\n"))]
+    #[case::name_left_to_the_controller(task_play("      nosuchmodule: x\n"))]
+    #[case::builtin_stray_word(task_play("      ping: foo\n"))]
+    #[case::retry_on_a_plugin(
+        "- hosts: all\n  tasks:\n    - name: Copy k3s.yaml to second file\n      copy:\n        src: /etc/rancher/k3s/k3s.yaml\n        dest: /etc/rancher/k3s/k3s-copy.yaml\n        mode: \"0600\"\n        remote_src: true\n      retries: 3\n      register: k3s_server_copy_yaml\n    - name: Again\n      package: name=bash\n      until: false\n      delay: 1\n".to_string()
+    )]
+    #[case::static_with_lookups(
+        "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{ item }}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{ airgap_dir }}/k3s\"\n          skip: true\n    - name: Distribute K3s images\n      copy:\n        src: \"{{ item }}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n    - name: Execute OS related tasks on the Raspberry Pi\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"setup/{{ ansible_distribution }}.yml\"\n        - setup/default.yml\n".to_string()
+    )]
+    fn the_preflight_lets_through(#[case] text: String) {
+        let pb = parse(&text, "x.yml").unwrap();
+        check(&pb).unwrap_or_else(|e| panic!("{text}: {e:#}"));
+    }
+
+    /// The plugins and fact modules this release runs are admitted with their arguments read.
+    #[rstest]
+    fn the_modules_this_release_runs_are_admitted(
+        #[values(
+            "package",
+            "service",
+            "copy",
+            "template",
+            "unarchive",
+            "fetch",
+            "reboot",
+            "ansible.builtin.package",
+            "setup",
+            "package_facts",
+            "service_facts",
+            "mount_facts",
+            "getent"
+        )]
+        module: &str,
+    ) {
+        let pb = parse(
+            &format!("- hosts: all\n  tasks:\n    - name: Now\n      {module}: name=bash\n"),
+            "x.yml",
+        )
+        .unwrap();
+        check(&pb).unwrap_or_else(|e| panic!("{module}: {e:#}"));
+        let TaskOrBlock::Task(task) = &pb.plays[0].tasks[0] else {
+            panic!("a task");
+        };
+        assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
+        if [
+            "setup",
+            "package_facts",
+            "service_facts",
+            "mount_facts",
+            "getent",
+        ]
+        .contains(&module)
+        {
+            assert!(crate::python::is_python_module(module), "{module}");
+        }
+    }
+
+    /// A collection's module passes both passes and is collected for the controller to resolve; a
+    /// stray word fails the task when it runs; the controller's answers are refused in its words.
     #[test]
-    fn a_collection_module_is_set_aside_for_the_controller() {
+    fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
         let text = "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Forward\n      ansible.posix.sysctl: name=net.ipv4.ip_forward value=1\n    - debug: msg=x\n  handlers:\n    - name: Reload\n      community.general.ufw: state=reloaded\n";
         let pb = parse(text, "x.yml").unwrap();
         check(&pb).expect("a collection's module waits for the controller's answer");
@@ -747,12 +836,6 @@ mod tests {
                 ("Reload".to_string(), "community.general.ufw".to_string()),
             ]
         );
-        // A word that is not `key=value` is kept by the loader and fails the task when it runs,
-        // as in the reference, whether the name is a collection's or a `library/` module's; a
-        // string that is one template, the reference's argument splat, is refused here, where a
-        // task is checked. Red if the loader refuses either (a role's Windows file would refuse
-        // a Linux run), if the stray word stops the run before it starts, or if nothing refuses
-        // the splat (the module runs with an argument it never declared).
         let stray = |module: &str| {
             let pb = parse(
                 &format!("- hosts: all\n  tasks:\n    - name: Stray\n      {module}: a=1 stray\n"),
@@ -789,39 +872,9 @@ mod tests {
         ] {
             stray(module).expect("a stray word fails the task at run time");
         }
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Splat\n      ns.coll.mod: \"{{ d }}\"\n");
-        assert!(
-            text.contains(
-                "task 'Splat': module 'ns.coll.mod' takes its arguments from one template"
-            ),
-            "{text}"
-        );
-        // A builtin's splat too, and a builtin's stray word is left to the run.
-        let text = refusal("- hosts: all\n  tasks:\n    - name: Splat\n      ping: \"{{ d }}\"\n");
-        assert!(
-            text.contains("task 'Splat': module 'ping' takes its arguments from one template"),
-            "{text}"
-        );
-        let pb = parse("- hosts: all\n  tasks:\n    - ping: foo\n", "x.yml").unwrap();
-        check(&pb).expect("a builtin's stray word fails the task at run time");
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: T\n      ansible.builtin.nosuch: x=1\n");
-        assert!(
-            text.contains("couldn't resolve module/action 'ansible.builtin.nosuch'"),
-            "{text}"
-        );
-    }
 
-    /// What the controller made of a collection's module, in the refusal the operator reads.
-    ///
-    /// What would make this red: a missing collection answered with the typo sentence alone,
-    /// which sends the operator hunting for a misspelling when the fix is one install; the
-    /// install hint on a collection that is installed, which is wrong advice; an action plugin
-    /// let through, which runs the module without the controller half the playbook relies on;
-    /// or any of them at another code than the pre-flight's 4.
-    #[test]
-    fn a_collection_module_is_refused_by_what_the_controller_made_of_it() {
+        // What the controller made of a collection's module, and what a built union holds,
+        // refused in words the operator reads, all at the pre-flight's exit 4.
         use crate::python::Resolved;
         let verdict = |answer: Resolved| {
             check_resolved("T", "ns.coll.mod", &answer).map_err(|err| {
@@ -855,17 +908,8 @@ mod tests {
                 "{typo} The collection 'ns.coll' is not installed on the controller: install it with ansible-galaxy collection install ns.coll"
             ))
         );
-    }
 
-    /// A collection's module an include brings in runs only if the union holds it, and the
-    /// include fails naming it otherwise.
-    ///
-    /// What would make this red: the check left out, which runs the included tasks in front of
-    /// the collection's module and only then fails the host on a missing payload - the half-run
-    /// the pre-flight exists to prevent; or a lookup by a key other than `payload_key`, which
-    /// refuses a module the union holds.
-    #[test]
-    fn an_included_collection_module_needs_its_payload_built() {
+        // A collection's module an include brings in runs only if the union holds it.
         let pb = parse(
             "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Forward\n      ansible.posix.sysctl: name=x value=1\n",
             "x.yml",
@@ -908,9 +952,6 @@ mod tests {
                 "{text}"
             );
         }
-        // A name the controller set aside says why, in the controller's words. Red if the
-        // reason is dropped for the sentence above, which sends the operator to install a
-        // collection that is installed.
         let mut set_aside = union(&["ping"]);
         set_aside
             .refused
@@ -924,283 +965,7 @@ mod tests {
         );
     }
 
-    /// A module whose only product is facts reaches a host now, and the pre-flight reads that
-    /// from `python::is_python_module` rather than deciding it again.
-    ///
-    /// They were held back while nothing merged a result's `ansible_facts` into the variable
-    /// store: `setup` would have reported `ok` on every host and left the next task reading
-    /// `ansible_facts.*` undefined - a run the pre-flight accepted, broken halfway through.
-    ///
-    /// What would make this red: the two expressions drifting. A name `is_python_module` holds
-    /// back and this arm still admits fails per host for want of a payload, which is a startup
-    /// refusal turned into a failure on every host; a name this arm refuses and
-    /// `is_python_module` admits is a module the run builds a payload nobody asks for.
-    #[test]
-    fn a_module_that_only_gathers_facts_reaches_its_host() {
-        for module in [
-            "setup",
-            "package_facts",
-            "service_facts",
-            "mount_facts",
-            "getent",
-        ] {
-            assert!(
-                crate::python::is_python_module(module),
-                "{module} runs through the payload path now that its facts are merged"
-            );
-            let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - name: Later\n      {module}: a=b\n"),
-                "x.yml",
-            )
-            .unwrap();
-            assert!(check(&pb).is_ok(), "{module} is admitted by the pre-flight");
-        }
-    }
-
-    /// A module the reference runs through an action plugin is refused by that name, before the
-    /// first connection, and not as a module this release has merely not written yet.
-    ///
-    /// What would make this red: the arm placed after `is_builtin`, which sends `copy` through
-    /// `is_python_module` - false, because the plugin backs it - and so answers it with the "not
-    /// available in this release" sentence the arm below prints, losing the one word that tells
-    /// the operator where the behaviour lives. The plugin reads the source on the controller, and
-    /// the module alone does not.
-    #[test]
-    fn a_module_backed_by_an_action_plugin_is_refused_by_that_name() {
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      assemble: src=a dest=b\n");
-        assert!(
-            text.contains("module 'assemble' needs an action plugin"),
-            "{text}"
-        );
-        let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Later\n      ansible.builtin.script: src=a dest=b\n",
-        );
-        assert!(
-            text.contains("module 'ansible.builtin.script' needs an action plugin"),
-            "{text}"
-        );
-        let pb = parse("- hosts: all\n  tasks:\n    - debug: msg=hi\n", "x.yml").unwrap();
-        assert!(check(&pb).is_ok(), "a controller-side module still runs");
-    }
-
-    /// The plugins this release runs are admitted under every builtin spelling, with their
-    /// arguments read, and with `until`, `retries` and `delay` on them; the ones it does not run
-    /// stay refused.
-    ///
-    /// What would make this red: `package` still refused, or admitted with its arguments left
-    /// unread - the loader reads them only for a module it knows it can run, so a plugin it did
-    /// not count would install nothing and report `ok`. Or a retry on a plugin still refused,
-    /// which stops `k3s_server`'s `Copy k3s.yaml to second file` before the first connection.
-    #[test]
-    fn the_plugins_this_release_runs_are_admitted_with_their_retries() {
-        for module in [
-            "package",
-            "service",
-            "copy",
-            "template",
-            "unarchive",
-            "fetch",
-            "reboot",
-            "ansible.builtin.package",
-        ] {
-            let pb = parse(
-                &format!("- hosts: all\n  tasks:\n    - name: Now\n      {module}: name=bash\n"),
-                "x.yml",
-            )
-            .unwrap();
-            assert!(check(&pb).is_ok(), "{module} is admitted");
-            let TaskOrBlock::Task(task) = &pb.plays[0].tasks[0] else {
-                panic!("a task");
-            };
-            assert_eq!(task.args.get("name"), Some(&serde_json::json!("bash")));
-        }
-        let text =
-            refusal("- hosts: all\n  tasks:\n    - name: Later\n      script: src=a dest=b\n");
-        assert!(
-            text.contains("module 'script' needs an action plugin"),
-            "{text}"
-        );
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Copy k3s.yaml to second file\n      copy:\n        src: /etc/rancher/k3s/k3s.yaml\n        dest: /etc/rancher/k3s/k3s-copy.yaml\n        mode: \"0600\"\n        remote_src: true\n      retries: 3\n      register: k3s_server_copy_yaml\n    - name: Again\n      package: name=bash\n      until: false\n      delay: 1\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert!(check(&pb).is_ok(), "a retry on a plugin runs");
-    }
-
-    /// The loops `site.yml` of k3s-ansible lists statically, which the pre-flight sees on every
-    /// host whatever OS it runs: `airgap`'s `copy` over `with_first_found` and over
-    /// `with_fileglob`, and `raspberrypi`'s `include_tasks` over `with_first_found`. Measured on
-    /// ansible-core 2.19.12 against this release before it ran them: the first refusal was
-    /// `task 'Distribute K3s binary': keyword 'with_first_found' is not supported yet`. A
-    /// `with_<lookup>` this release has no lookup for stays refused by that sentence.
-    ///
-    /// What would make this red: either row still refused, or a `with_*` whose lookup does not
-    /// exist admitted, which the run would then fail on every host instead of refusing it once.
-    #[test]
-    fn the_static_with_lookup_loops_of_site_yml_pass_the_pre_flight() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{ item }}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{ airgap_dir }}/k3s\"\n          skip: true\n    - name: Distribute K3s images\n      copy:\n        src: \"{{ item }}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n    - name: Execute OS related tasks on the Raspberry Pi\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"setup/{{ ansible_distribution }}.yml\"\n        - setup/default.yml\n",
-            "x.yml",
-        )
-        .unwrap();
-        check(&pb).expect("the three loops pass");
-        let text = refusal(
-            "- hosts: all\n  tasks:\n    - name: Dict\n      debug: msg=hi\n      with_dict: {a: 1}\n",
-        );
-        assert!(
-            text.contains("keyword 'with_dict' is not supported yet"),
-            "{text}"
-        );
-    }
-
-    /// `until`, `retries` and `delay` are refused on the two dynamic statements, and still run on
-    /// an ordinary task.
-    ///
-    /// They cannot do anything on a statement this engine expands: the step loop resolves an
-    /// include and splices behind it before `prepare`, which is where the retry plan is built. The
-    /// reference refuses them too - measured on ansible-core 2.19.12,
-    /// `'until' is not a valid attribute for a TaskInclude` at exit 4, and the same sentence
-    /// naming `IncludeRole`, because `VALID_INCLUDE_KEYWORDS` holds sixteen names and none of
-    /// these three.
-    ///
-    /// `include_vars` is not one of them: it is an ordinary controller-side module on both sides
-    /// and both retry it - measured, two `FAILED - RETRYING` lines and `attempts: 2` each.
-    ///
-    /// What would make this red: any of the three accepted on a statement that expands, which is
-    /// a retry the operator wrote, the engine dropped and the run never attempted; the refusal
-    /// widened to ordinary tasks, which refuses the playbooks task 7 measured; or it widened to
-    /// `include_vars`, which refuses a retry both engines perform.
-    #[test]
-    fn a_retry_on_a_dynamic_statement_is_refused_by_name() {
-        for (kw, value) in [("until", "false"), ("retries", "2"), ("delay", "1")] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      include_tasks: inc.yml\n      {kw}: {value}\n"
-            ));
-            assert!(
-                text.contains(&format!(
-                    "keyword '{kw}' is not supported yet on 'include_tasks'"
-                )),
-                "{text}"
-            );
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      include_role:\n        name: r\n      {kw}: {value}\n"
-            ));
-            assert!(
-                text.contains(&format!(
-                    "keyword '{kw}' is not supported yet on 'include_role'"
-                )),
-                "{text}"
-            );
-        }
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      until: false\n      retries: 2\n      delay: 1\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert!(check(&pb).is_ok(), "an ordinary task still retries");
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: T\n      include_vars: v.yml\n      retries: 2\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert!(check(&pb).is_ok(), "and so does include_vars");
-    }
-
-    /// Every keyword the loader parked is refused by its own name, and the play it belongs to
-    /// is named too. What would make this red: a keyword loaded into `unsupported` and then
-    /// dropped here, which is exactly the silent skip this module exists to stop.
-    #[test]
-    fn a_parked_keyword_is_refused_by_name() {
-        for kw in ["async", "diff", "poll", "remote_user", "throttle"] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      {kw}: x\n"
-            ));
-            assert!(
-                text.contains(&format!("keyword '{kw}' is not supported yet")),
-                "{text}"
-            );
-            assert!(text.contains("play 1") && text.contains("'T'"), "{text}");
-        }
-        for kw in [
-            "any_errors_fatal",
-            "vars_prompt",
-            "max_fail_percentage",
-            "order",
-        ] {
-            let text = refusal(&format!(
-                "- hosts: all\n  {kw}: 1\n  tasks:\n    - command: echo hi\n"
-            ));
-            assert!(
-                text.contains(&format!("play keyword '{kw}' is not supported yet")),
-                "{text}"
-            );
-        }
-    }
-
-    /// Every section of a block is walked. A keyword this release cannot execute has to be
-    /// refused wherever it was written; one sitting inside a block would otherwise only stop
-    /// the run once the block was reached, with half the playbook applied.
-    ///
-    #[test]
-    fn a_keyword_parked_inside_any_section_of_a_block_is_refused() {
-        let parked = "- name: Deep\n          command: echo hi\n          throttle: probe";
-        for (section, body) in [
-            ("block", format!("- block:\n        {parked}\n")),
-            (
-                "rescue",
-                format!("- block:\n        - command: echo hi\n      rescue:\n        {parked}\n"),
-            ),
-            (
-                "always",
-                format!("- block:\n        - command: echo hi\n      always:\n        {parked}\n"),
-            ),
-        ] {
-            let text = refusal(&format!("- hosts: all\n  tasks:\n    {body}"));
-            assert!(
-                text.contains("task 'Deep': keyword 'throttle' is not supported yet"),
-                "{section}: {text}"
-            );
-        }
-    }
-
-    /// `meta` asks the engine for something rather than naming a module, so it is refused by the
-    /// action it asked for and never for a module nobody wrote.
-    ///
-    /// What would make this red: `meta` falling through to the module check, which would tell
-    /// the operator that a module they never named is missing; or an action this release cannot
-    /// honour running as a no-op, which is the silent skip the pre-flight exists to stop.
-    #[test]
-    fn a_meta_action_is_honoured_or_refused_by_its_own_name() {
-        let play =
-            |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
-        for (action, supported) in META_ACTIONS {
-            let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
-            let checked = check(&pb);
-            if *supported {
-                assert!(checked.is_ok(), "{action} runs");
-            } else {
-                let err = checked.unwrap_err();
-                assert_eq!(error_code(&err), 4, "{err:#}");
-                assert!(
-                    format!("{err:#}").contains(&format!("meta '{action}' is not supported yet")),
-                    "{err:#}"
-                );
-            }
-        }
-        // Measured on ansible-core 2.19.12: `invalid meta action requested: nosuchaction`,
-        // exit 1 - not the 4 an unloadable playbook gets.
-        let pb = parse(&play("nosuchaction"), "x.yml").unwrap();
-        let err = check(&pb).unwrap_err();
-        assert_eq!(error_code(&err), 1, "{err:#}");
-        assert!(
-            format!("{err:#}").contains("invalid meta action requested: nosuchaction"),
-            "{err:#}"
-        );
-    }
-
-    /// One probe playbook per `Preflight` row of the three tables, built from the row's own
+    /// One probe playbook per `Preflight` row of the keyword tables, built from the row's own
     /// name. The value is never read - a parked keyword is kept, not parsed - so one
     /// placeholder serves every row, and a keyword that starts being read will say so by
     /// failing to load.
@@ -1222,9 +987,6 @@ mod tests {
         };
         let mut probes: Vec<(&'static str, String)> =
             parked(TASK_KEYWORDS).map(|kw| (kw, task(kw))).collect();
-        // A block has a grammar of its own, so it has a table of its own and the same rule one
-        // level in: a keyword the reference lets a block carry and this release cannot honour
-        // is refused by its name rather than inherited by every task underneath and ignored.
         probes.extend(parked(BLOCK_KEYWORDS).map(|kw| {
             // A parked section keyword takes a task list; every other value is kept and never
             // parsed, so the one placeholder serves the rest.
@@ -1256,8 +1018,6 @@ mod tests {
                 ),
             )
         }));
-        // A handler has a grammar of its own too, one name wide today. It is walked here so that
-        // a row added to it is probed by the same rule as every other table's.
         probes.extend(parked(HANDLER_KEYWORDS).map(|kw| {
             (
                 kw,
@@ -1269,20 +1029,10 @@ mod tests {
         probes
     }
 
-    /// Every keyword the tables mark `Preflight` stops the run, before the first connection,
-    /// naming itself while doing it. Adding a `Preflight` row to any of the three tables adds a
-    /// case here on its own, so the gap cannot be opened silently.
-    ///
-    /// The count is pinned rather than bounded: it is the number this release's record carries,
-    /// and a floor let a wrong one stand once already. A table that grows moves it by hand, in
-    /// the same change.
-    ///
-    /// What would make this red: a keyword the loader accepts and the pre-flight forgets, which
-    /// would run the playbook without it and report success; or a refusal that stops naming the
-    /// keyword, leaving the operator to guess which line to fix. That nothing runs before the
-    /// refusal is the process fixture's half of the proof, in `playbook_cli.rs`.
+    /// Every keyword the tables mark `Preflight` stops the run, naming itself, and every `meta`
+    /// action is honoured or refused by its own name.
     #[test]
-    fn every_preflight_keyword_is_refused_by_its_own_name() {
+    fn every_table_row_is_refused_by_its_own_name() {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
@@ -1296,105 +1046,30 @@ mod tests {
                 "{kw} must name itself: {text}"
             );
         }
-    }
-
-    /// `check_mode` is the one `Runs` row whose value decides: `false` is what this release
-    /// does, `true` is refused by name wherever it is written.
-    ///
-    /// What would make this red: `check_mode: true` accepted, which would run for real every
-    /// task the operator asked to have only described; or `check_mode: false` refused, which
-    /// would refuse a playbook that asked for exactly what this engine does.
-    #[test]
-    fn check_mode_runs_for_false_and_is_refused_for_true() {
-        for body in [
-            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      check_mode: true\n",
-            "- hosts: all\n  check_mode: true\n  tasks:\n    - command: echo hi\n",
-            "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      check_mode: true\n",
-        ] {
-            let text = refusal(body);
-            assert!(
-                text.contains("'check_mode' is not supported yet with 'true'"),
-                "{text}"
-            );
+        let play =
+            |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
+        for (action, supported) in META_ACTIONS {
+            let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
+            let checked = check(&pb);
+            if *supported {
+                assert!(checked.is_ok(), "{action} runs");
+            } else {
+                let err = checked.unwrap_err();
+                assert_eq!(error_code(&err), 4, "{err:#}");
+                assert!(
+                    format!("{err:#}").contains(&format!("meta '{action}' is not supported yet")),
+                    "{err:#}"
+                );
+            }
         }
-        for body in [
-            "- hosts: all\n  tasks:\n    - name: T\n      command: echo hi\n      check_mode: false\n",
-            "- hosts: all\n  check_mode: false\n  tasks:\n    - command: echo hi\n",
-        ] {
-            let pb = parse(body, "x.yml").unwrap();
-            assert!(check(&pb).is_ok(), "check_mode: false is what we do");
-        }
-    }
-
-    /// An argument the reference has and this release does not act on is refused by its own name,
-    /// on every module whose registry carries it, and an argument neither engine has is left
-    /// alone here so the agent can answer it with the reference's words.
-    ///
-    /// What would make this red: the refusal widened to every unknown name, which gives a typo
-    /// this engine's message and this engine's code where the reference has its own; the refusal
-    /// dropped, which lets the task reach an agent that ignores the argument and reports success;
-    /// or `_raw_params` refused, which refuses every free-form task there is.
-    ///
-    /// The value decides where the reference leaves a value to decide, and `expand_argument_vars`
-    /// on `command` is the one argument where it does. `false` asks for the expansion this
-    /// release does not do, so the task runs; `true` asks for the one it cannot do, so the task
-    /// is refused. Reading the name alone refused a playbook the two engines agreed on, and
-    /// `"yes"` is here because the reference reads that spelling too.
-    ///
-    /// `shell` is the other half of the same argument and answers differently, because the
-    /// reference does: measured on ansible-core 2.19.12, a `shell` task carrying the argument at
-    /// all fails with `Unsupported parameters for (shell) module: expand_argument_vars`, whatever
-    /// the value. So the name is refused there for every value, which is a playbook the reference
-    /// refuses too, told sooner.
-    #[test]
-    fn a_module_argument_this_release_does_not_honour_is_refused_by_name() {
-        for value in ["true", "\"yes\"", "1"] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: {value}\n"
-            ));
-            assert!(
-                text.contains(
-                    "argument 'expand_argument_vars' is not supported yet with 'true' on 'command'"
-                ),
-                "{value}: {text}"
-            );
-        }
-        for value in ["true", "false", "\"no\""] {
-            let text = refusal(&format!(
-                "- hosts: all\n  tasks:\n    - name: T\n      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: {value}\n"
-            ));
-            assert!(
-                text.contains(
-                    "argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"
-                ),
-                "{value}: {text}"
-            );
-        }
-        for body in [
-            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        no_such_arg: 1\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/true\n      args:\n        chdir: /tmp\n        stdin_add_newline: false\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      raw: /bin/true\n      args:\n        expand_argument_vars: true\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      shell: /bin/echo $HOME\n      args:\n        chdir: /tmp\n",
-            "- hosts: all\n  tasks:\n    - name: T\n      command: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"{{ omit }}\"\n",
-        ] {
-            let pb = parse(body, "x.yml").unwrap();
-            assert!(check(&pb).is_ok(), "{body}");
-        }
-    }
-
-    #[test]
-    fn only_the_linear_strategy_runs() {
-        let text = refusal("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n");
+        // Measured on ansible-core 2.19.12: `invalid meta action requested: nosuchaction`,
+        // exit 1 - not the 4 an unloadable playbook gets.
+        let pb = parse(&play("nosuchaction"), "x.yml").unwrap();
+        let err = check(&pb).unwrap_err();
+        assert_eq!(error_code(&err), 1, "{err:#}");
         assert!(
-            text.contains("strategy 'free' is not supported yet"),
-            "{text}"
+            format!("{err:#}").contains("invalid meta action requested: nosuchaction"),
+            "{err:#}"
         );
-        let pb = parse(
-            "- hosts: all\n  strategy: linear\n  tasks:\n    - command: echo hi\n",
-            "x.yml",
-        )
-        .unwrap();
-        assert!(check(&pb).is_ok(), "linear is what the engine does");
     }
 }

@@ -116,12 +116,18 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
         );
     }
     let run = match MODULES.iter().find(|m| m.spec.name == name) {
-        Some(module) => match unsupported_parameters(module.spec, &task.args)
-            .or_else(|| refused_argument(module.spec, &task.args))
-        {
-            Some(msg) => Run::Done(TaskResult::failed_with(msg)),
-            None => (module.run)(&task.args, &context, cancelled),
-        },
+        Some(module) => {
+            if let Some(msg) = unsupported_parameters(module.spec, &task.args) {
+                // `AnsibleModule` fails it with `changed: false`, measured.
+                let mut failed = TaskResult::failed_with(msg);
+                failed.0.insert("changed".into(), Value::Bool(false));
+                Run::Done(failed)
+            } else if let Some(msg) = refused_argument(module.spec, &task.args) {
+                Run::Done(TaskResult::failed_with(msg))
+            } else {
+                (module.run)(&task.args, &context, cancelled)
+            }
+        }
         None => Run::Done(TaskResult::failed_with(format!(
             "The module {name} is not available on the agent yet"
         ))),

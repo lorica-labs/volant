@@ -9,17 +9,40 @@ use volant_protocol::TaskResult;
 
 use crate::stats::{Outcome, Stats};
 
-/// Whether a result's body goes on its line at verbosity 0, the reference's
-/// `_ansible_verbose_always`, and how it is cleaned first.
+/// How a task's result lines are cleaned before they are shown. Whether a body goes on the line
+/// at verbosity 0 is the result's own [`VERBOSE_ALWAYS`], not the task's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dump {
-    /// Shown from `-v` on, like any task's.
+    /// Shown as it is.
     No,
-    /// A `debug`: always shown, stripped to the message the way the reference's callback
-    /// strips a `debug` result.
+    /// A `debug`'s: cleaned the way the reference's callback cleans one (`_clean_results`).
     Debug,
-    /// Always shown as it is: an `assert` that is not `quiet`.
-    Whole,
+}
+
+/// The key a `debug` or a non-`quiet` `assert` puts on its own result, as the reference's action
+/// plugins do: its body is shown at verbosity 0, indented. A failure the executor raised instead
+/// (a keyword that does not convert, a timeout out of range) carries none, so it prints on one
+/// line whatever the module. Never shown, never registered: every `_ansible_` key is internal.
+pub const VERBOSE_ALWAYS: &str = "_ansible_verbose_always";
+
+/// What the reference's callback shows of a `no_log` result: [`CENSORED`] and the keys its
+/// `_PRESERVE` keeps (`attempts`, `changed`, `retries`), `changed` always present here.
+fn censored_body(result: &TaskResult) -> serde_json::Map<String, serde_json::Value> {
+    let mut body = serde_json::Map::new();
+    body.insert("censored".into(), serde_json::json!(CENSORED));
+    body.insert("changed".into(), serde_json::json!(result.changed()));
+    for key in ["attempts", "retries"] {
+        if let Some(value) = result.0.get(key) {
+            body.insert(key.into(), value.clone());
+        }
+    }
+    body
+}
+
+/// Whether the reference shows this result's body at every verbosity: it carries
+/// [`VERBOSE_ALWAYS`] and is not censored, which drops the key.
+fn verbose_always(result: &TaskResult, censored: bool) -> bool {
+    !censored && result.0.get(VERBOSE_ALWAYS) == Some(&serde_json::Value::Bool(true))
 }
 
 /// What the reference's callback prints in front of a failure's line: `[ERROR]: ` and the
@@ -184,6 +207,8 @@ pub struct Renderer {
     verbosity: u8,
     /// Every `[WARNING]:` line written so far, which is never written twice.
     warned: std::collections::HashSet<String>,
+    /// Every `[ERROR]:` block written so far, which is never written twice either.
+    errored: std::collections::HashSet<String>,
 }
 
 const HOST_COLUMN: usize = 26;
@@ -220,6 +245,7 @@ impl Renderer {
             width,
             verbosity,
             warned: std::collections::HashSet::new(),
+            errored: std::collections::HashSet::new(),
         }
     }
 
@@ -231,6 +257,7 @@ impl Renderer {
             width,
             verbosity,
             warned: std::collections::HashSet::new(),
+            errored: std::collections::HashSet::new(),
         }
     }
 
@@ -313,11 +340,47 @@ impl Renderer {
     /// The line a failed attempt prints before the task is reported, measured on ansible-core
     /// 2.19.12: it goes to stdout from verbosity 0, it names the task rather than the module,
     /// and it is printed after **every** failed attempt, the last one included.
-    pub fn retrying(&mut self, host: &str, name: &str, left: u32) {
-        let _ = writeln!(
-            self.out,
-            "FAILED - RETRYING: [{host}]: {name} ({left} retries left)."
-        );
+    ///
+    /// `result` is that attempt's, `attempts` and `retries` on it. Its body follows on the same
+    /// line, `Result was: {...}` indented, from `-vvv` on or when it carries [`VERBOSE_ALWAYS`]
+    /// (`v2_runner_retry`): measured with a `debug` and an `assert` at verbosity 0, a `command`
+    /// at `-vv` (nothing) and at `-vvv`. It is the raw attempt, never cleaned as a `debug`; a
+    /// `no_log` one shows its censored body, and only from `-vvv` on.
+    pub fn retrying(
+        &mut self,
+        host: &str,
+        name: &str,
+        left: u32,
+        result: &TaskResult,
+        censored: bool,
+    ) {
+        let mut line = format!("FAILED - RETRYING: [{host}]: {name} ({left} retries left).");
+        if self.verbosity > 2 || verbose_always(result, censored) {
+            let body = if censored {
+                censored_body(result)
+            } else {
+                let mut body = result.0.clone();
+                body.retain(|k, _| !k.starts_with("_ansible_"));
+                for key in [
+                    "failed",
+                    "skipped",
+                    "exception",
+                    "warnings",
+                    "deprecations",
+                    ERROR_KEY,
+                ] {
+                    body.remove(key);
+                }
+                if self.verbosity < 3 {
+                    body.remove("invocation");
+                    body.remove("diff");
+                }
+                body
+            };
+            line.push_str("Result was: ");
+            line.push_str(&ansible_json_indented(&serde_json::Value::Object(body), 0));
+        }
+        let _ = writeln!(self.out, "{line}");
     }
 
     /// `label` is the loop item's display text, present only for a loop item result. `dump`
@@ -342,22 +405,18 @@ impl Renderer {
         censored: bool,
         delegate: Option<&str>,
     ) {
-        let censored_body = || {
-            let mut body = serde_json::Map::new();
-            body.insert("censored".into(), serde_json::json!(CENSORED));
-            body.insert("changed".into(), serde_json::json!(result.changed()));
-            body
-        };
         let label = if censored {
             label.map(|_| CENSORED_ITEM)
         } else {
             label
         };
+        let verbose = verbose_always(result, censored);
         let mut body = if censored {
-            censored_body()
+            censored_body(result)
         } else {
             result.0.clone()
         };
+        body.retain(|k, _| !k.starts_with("_ansible_"));
         // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
         // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
         // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
@@ -380,27 +439,36 @@ impl Renderer {
         body.remove("exception");
         body.remove(ERROR_KEY);
         if dump == Dump::Debug {
-            // Ansible cleans a `debug` result before showing it, so the message stands alone:
-            // whatever `changed_when` and `failed_when` decided is counted, never printed, and
-            // neither is the attempt count - measured on ansible-core 2.19.12, a `debug` retried
-            // twice shows `fatal: [localhost]: FAILED! => {"msg": "probe"}` while its registered
-            // value keeps `attempts: 2`.
-            body.retain(|k, _| {
-                !matches!(
-                    k.as_str(),
-                    "changed"
-                        | "failed"
-                        | "skipped"
-                        | "failed_when_result"
-                        | "invocation"
-                        | "attempts"
-                )
-            });
+            // The reference's `_clean_results` for a `debug`, ansible-core 2.19.12: a result with
+            // a `msg` keeps it alone, whatever `changed_when`, `failed_when` and `until` added
+            // (measured: a `debug` retried twice shows `{"msg": "probe"}` and registers
+            // `attempts: 2`); a `var` one loses `changed`, `failed`, `skipped`, `invocation`,
+            // `skip_reason` and the loop's own keys, but keeps the item (measured with a loop).
+            if body.contains_key("msg") {
+                body.retain(|k, _| {
+                    matches!(
+                        k.as_str(),
+                        "msg" | "exception" | "warnings" | "deprecations"
+                    )
+                });
+            } else {
+                for key in [
+                    "changed",
+                    "failed",
+                    "skipped",
+                    "invocation",
+                    "skip_reason",
+                    "ansible_loop_var",
+                    "ansible_index_var",
+                    "ansible_loop",
+                ] {
+                    body.remove(key);
+                }
+            }
         }
-        // `_dump_results` indents by 4 for a result carrying `_ansible_verbose_always` (a `debug`,
-        // an `assert` that is not `quiet`) and for every result from `-vvv` on. A censored result
-        // carries no such key.
-        let pretty = (dump != Dump::No && !censored) || self.verbosity > 2;
+        // `_dump_results` indents by 4 for a result carrying [`VERBOSE_ALWAYS`] and for every
+        // result from `-vvv` on.
+        let pretty = verbose || self.verbosity > 2;
         let json = if pretty {
             ansible_json_indented(&serde_json::Value::Object(body), 0)
         } else {
@@ -410,7 +478,7 @@ impl Renderer {
         // A censored `debug` still goes through the cleanup above - which is what leaves its
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
         // measured, `ok: [h1]` alone there and the censored body from `-v` on.
-        let show = (dump != Dump::No && !censored) || self.verbosity > 0;
+        let show = verbose || self.verbosity > 0;
         let tail = if show {
             format!(" => {json}")
         } else {
@@ -428,11 +496,13 @@ impl Renderer {
             Outcome::Ok => self.paint(OK, &format!("ok: [{who}]{item}{tail}")),
             Outcome::Changed => self.paint(CHANGED, &format!("changed: [{who}]{item}{tail}")),
             // Measured on ansible-core 2.19.12: a loop item's own `skipping:` line ends with a
-            // trailing space before the newline (`skipping: [h] => (item=x) `); the task's own
-            // `skipping: [h]`, with no item, carries none.
+            // trailing space (`skipping: [h] => (item=x) `); the task's own `skipping: [h]`, with
+            // no item, carries none. From `-v` on the body follows: `skipping: [h] => (item=2)  =>
+            // {...}` for an item, `skipping: [h] => {...}` for the task, measured for a `when`,
+            // an empty loop and a loop whose every item was skipped.
             Outcome::Skipped => {
                 let trailer = if label.is_some() { " " } else { "" };
-                self.paint(SKIPPED, &format!("skipping: [{host}]{item}{trailer}"))
+                self.paint(SKIPPED, &format!("skipping: [{host}]{item}{trailer}{tail}"))
             }
             // A rescued failure shows exactly like one nothing catches: measured on
             // ansible-core 2.19.12, the line is the same `fatal: ... FAILED!` and the only
@@ -457,11 +527,18 @@ impl Renderer {
 
     /// The block a failure's line is preceded by. Censored lines have none: a censored result
     /// carries no `exception` for the reference's callback to show.
+    ///
+    /// A block already written is not written again, for the whole run: `Display.error` keeps
+    /// every one in `_errors`, as `_warning` does. Measured on ansible-core 2.19.12: two hosts, or
+    /// two items, failing one task with one message print one block and two `fatal:` lines.
     pub fn error(&mut self, block: &ErrorBlock) {
         let mut text = format!("[ERROR]: {}", block.message);
         if let Some(origin) = &block.origin {
             text.push('\n');
             text.push_str(&source_context(origin));
+        }
+        if !self.errored.insert(text.clone()) {
+            return;
         }
         // `format_event`: a message of several lines ends with a blank one.
         if text.contains('\n') {
@@ -685,12 +762,23 @@ mod tests {
             r.unreachable("db1", "agent binary not found", false, None);
             r.no_hosts();
             r.unreachable("h1", "starting ssh: secret-host", true, None);
-            r.retrying("h1", "retry until file", 3);
+            r.retrying(
+                "h1",
+                "retry until file",
+                3,
+                &result(json!({"rc": 1})),
+                false,
+            );
+            let debug = result(
+                json!({"_ansible_verbose_always": true, "attempts": 1, "failed": true, "msg": "probe", "retries": 3}),
+            );
+            r.retrying("h1", "probe", 2, &debug, false);
+            r.retrying("h1", "hushed", 2, &debug, true);
         });
         assert_eq!(
             out,
             format!(
-                "fatal: [db1]: UNREACHABLE! => {{\"changed\": false, \"msg\": \"agent binary not found\", \"unreachable\": true}}\nskipping: no hosts matched\nfatal: [h1]: UNREACHABLE! => {{\"censored\": \"{CENSORED}\", \"changed\": false}}\nFAILED - RETRYING: [h1]: retry until file (3 retries left).\n"
+                "fatal: [db1]: UNREACHABLE! => {{\"changed\": false, \"msg\": \"agent binary not found\", \"unreachable\": true}}\nskipping: no hosts matched\nfatal: [h1]: UNREACHABLE! => {{\"censored\": \"{CENSORED}\", \"changed\": false}}\nFAILED - RETRYING: [h1]: retry until file (3 retries left).\nFAILED - RETRYING: [h1]: probe (2 retries left).Result was: {{\n    \"attempts\": 1,\n    \"msg\": \"probe\",\n    \"retries\": 3\n}}\nFAILED - RETRYING: [h1]: hushed (2 retries left).\n"
             )
         );
 
@@ -743,11 +831,27 @@ mod tests {
     )]
     #[case::changed_item(0, Outcome::Changed, json!({"changed": true}), Some("one"), Dump::No, false, "changed: [h] => (item=one)\n")]
     #[case::skipped_item(0, Outcome::Skipped, json!({"skipped": true}), Some("two"), Dump::No, false, "skipping: [h] => (item=two) \n")]
+    #[case::skipped_item_verbose(
+        1, Outcome::Skipped, json!({"changed": false, "item": 2, "skipped": true}), Some("2"), Dump::No, false,
+        "skipping: [h] => (item=2)  => {\"changed\": false, \"item\": 2}\n"
+    )]
     #[case::failed_item(
         0, Outcome::Failed, json!({"failed": true, "rc": 1}), Some("three"), Dump::No, false,
         "failed: [h] (item=three) => {\"rc\": 1}\n"
     )]
-    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\n    \"msg\": \"shown\"\n}\n")]
+    #[case::forced_dump(0, Outcome::Ok, json!({"_ansible_verbose_always": true, "msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\n    \"msg\": \"shown\"\n}\n")]
+    #[case::debug_var_keeps_its_item(
+        0, Outcome::Ok, json!({"_ansible_verbose_always": true, "ansible_loop_var": "item", "changed": false, "item": "a"}), Some("a"), Dump::Debug, false,
+        "ok: [h] => (item=a) => {\n    \"item\": \"a\"\n}\n"
+    )]
+    #[case::raised_failure_on_one_line(
+        0, Outcome::Failed, json!({"changed": false, "failed": true, "msg": "Task failed: x"}), None, Dump::Debug, false,
+        "fatal: [h]: FAILED! => {\"msg\": \"Task failed: x\"}\n"
+    )]
+    #[case::censored_keeps_attempts(
+        0, Outcome::Failed, json!({"attempts": 2, "changed": false, "failed": true, "msg": "secret"}), None, Dump::No, true,
+        "fatal: [h]: FAILED! => {\"attempts\": 2, \"censored\": \"<CENSORED>\", \"changed\": false}\n"
+    )]
     #[case::censored_changed(0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true, "changed: [h]\n")]
     #[case::censored_ignored(
         0, Outcome::Ignored, json!({"changed": true, "failed": true, "stdout": "secret"}), None, Dump::No, true,
@@ -757,13 +861,13 @@ mod tests {
         0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), Some("a"), Dump::No, true,
         "changed: [h] => (item=(censored due to no_log))\n"
     )]
-    #[case::censored_debug(0, Outcome::Ok, json!({"changed": false, "msg": "hush"}), None, Dump::Debug, true, "ok: [h]\n")]
+    #[case::censored_debug(0, Outcome::Ok, json!({"_ansible_verbose_always": true, "changed": false, "msg": "hush"}), None, Dump::Debug, true, "ok: [h]\n")]
     #[case::censored_changed_verbose(
         1, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true,
         "changed: [h] => {\"censored\": \"<CENSORED>\", \"changed\": true}\n"
     )]
     #[case::censored_debug_verbose(
-        1, Outcome::Ok, json!({"changed": false, "msg": "hush"}), None, Dump::Debug, true,
+        1, Outcome::Ok, json!({"_ansible_verbose_always": true, "changed": false, "msg": "hush"}), None, Dump::Debug, true,
         "ok: [h] => {\"censored\": \"<CENSORED>\"}\n"
     )]
     fn a_result_prints_the_reference_line(

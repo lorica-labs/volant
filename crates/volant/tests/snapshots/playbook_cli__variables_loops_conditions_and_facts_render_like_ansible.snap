@@ -22,10 +22,10 @@ ok: [beta] => {
 }
 
 TASK [Loop over servers] *******************************************************
-changed: [alpha] => (item={"name": "one"})
-changed: [alpha] => (item={"name": "two"})
-changed: [beta] => (item={"name": "one"})
-changed: [beta] => (item={"name": "two"})
+changed: [alpha] => (item={'name': 'one'})
+changed: [alpha] => (item={'name': 'two'})
+changed: [beta] => (item={'name': 'one'})
+changed: [beta] => (item={'name': 'two'})
 
 TASK [Loop summary] ************************************************************
 ok: [alpha] => {
@@ -69,7 +69,7 @@ fatal: [beta]: FAILED! => {"changed": true, "cmd": ["echo", "2"], "delta": "[tim
 TASK [Undefined variable] ******************************************************
 [ERROR]: Task failed: The task includes an option with an undefined variable. The error was: [engine message]"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
-[ERROR]: Task failed: The task includes an option with an undefined variable. The error was: [engine message]"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
+fatal: [beta]: FAILED! => {"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
 
 PLAY RECAP *********************************************************************

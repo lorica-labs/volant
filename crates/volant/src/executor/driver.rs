@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
-use volant_protocol::modules::{arg_bool, is_builtin, short_name};
+use volant_protocol::modules::{is_builtin, short_name};
 use volant_protocol::{BatchOutcome, TaskResult};
 
 use crate::action_plugins::Kind;
@@ -30,11 +30,11 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, ItemRetry, PluginStart, Relinker, any_retried, chosen_interpreter, fact_targets,
-    failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal, record_facts,
-    record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
-    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, step_tasks, take_warnings,
-    unresolved_notify, wait_or_stop,
+    Attempt, ItemRetry, PluginStart, Relinker, RetryLine, any_retried, chosen_interpreter,
+    fact_targets, failed_task_value, finish, judge_attempt, notify, python_for, raw_params_refusal,
+    record_facts, record_local_facts, record_registered, requested_interpreter, retry_plans,
+    reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts, running_host_vars,
+    step_tasks, take_warnings, unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1056,7 +1056,7 @@ pub(super) async fn drive_host(
                     let plans = retry_plans(task, &items, &templar);
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
-                    let mut lefts: Vec<Vec<u32>> = Vec::new();
+                    let mut lefts: Vec<Vec<RetryLine>> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
                     for (item, plan) in items.iter().zip(&plans) {
                         names.push(retry_name(task, &item.vars, &templar));
@@ -1101,7 +1101,7 @@ pub(super) async fn drive_host(
                                 };
                                 match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
-                                    Attempt::Again(left) => mine.push(left),
+                                    Attempt::Again(left, failed) => mine.push((left, failed)),
                                 }
                                 if let Some(failed) = retry.sleep_failure() {
                                     break failed;
@@ -1143,21 +1143,12 @@ pub(super) async fn drive_host(
                         );
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
-                    // A censored `debug` shows nothing at all at verbosity 0 and its censored
-                    // body from `-v` on, measured: the dump is what puts the body on the line,
-                    // so it is the dump that goes. An `assert` dumps its whole result unless it
-                    // is `quiet`, measured on ansible-core 2.19.12, and `quiet` is the one
-                    // thing that argument does.
-                    let dump = match short_name(&task.module) {
-                        "debug" if !(task.censors() && verbosity == 0) => Dump::Debug,
-                        "assert"
-                            if !items.first().is_some_and(|i| {
-                                i.args.get("quiet").and_then(arg_bool) == Some(true)
-                            }) =>
-                        {
-                            Dump::Whole
-                        }
-                        _ => Dump::No,
+                    // Whether a body shows at verbosity 0 is each result's own: see
+                    // `VERBOSE_ALWAYS`. The task only says how a `debug`'s is cleaned.
+                    let dump = if short_name(&task.module) == "debug" {
+                        Dump::Debug
+                    } else {
+                        Dump::No
                     };
                     if let Some(result) = report_task(
                         &tx,
@@ -1460,8 +1451,8 @@ pub(super) async fn drive_host(
                 .iter()
                 .map(|(_, items)| vec![None; items.len()])
                 .collect();
-            // The retry counts of each item of the retried task, empty for every other batch.
-            let mut lefts: Vec<Vec<u32>> = batch
+            // The retry lines of each item of the retried task, empty for every other batch.
+            let mut lefts: Vec<Vec<RetryLine>> = batch
                 .first()
                 .map(|(_, items)| vec![Vec::new(); items.len()])
                 .unwrap_or_default();
@@ -1710,7 +1701,7 @@ pub(super) async fn drive_host(
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
-                            Attempt::Again(left) => lefts[ii].push(left),
+                            Attempt::Again(left, failed) => lefts[ii].push((left, failed)),
                         }
                         if let Some(failed) = retry.sleep_failure() {
                             received[0][ii] = Some(failed);
@@ -1876,7 +1867,7 @@ pub(super) async fn drive_host(
                         .await;
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
-                let retried: &[Vec<u32>] = if bi == 0 { &lefts } else { &[] };
+                let retried: &[Vec<RetryLine>] = if bi == 0 { &lefts } else { &[] };
                 let retried_names: &[String] = if bi == 0 { &names } else { &[] };
                 if let Some(result) = report_task(
                     &tx,

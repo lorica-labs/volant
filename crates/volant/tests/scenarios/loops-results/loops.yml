@@ -1,0 +1,88 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: fail loop
+      fail:
+        msg: "bad {{ item }}"
+      loop: [1, 2]
+      ignore_errors: true
+
+    - name: assert loop over dicts
+      assert:
+        that: item.r == 1
+      loop:
+        - {r: 1, d: nan}
+        - {r: 2, d: [1, "it's"]}
+      ignore_errors: true
+
+    - name: command over a dict and a list
+      command: "false"
+      loop:
+        - {r: 1, d: nan}
+        - [1, "a", true, null]
+      ignore_errors: true
+
+    - name: set_fact loop failing
+      set_fact:
+        x: "{{ item }}"
+      failed_when: item == 2
+      loop: [1, 2]
+      register: facts
+      ignore_errors: true
+
+    - name: what the failed loop registered
+      debug:
+        msg: "{{ facts.msg }} {{ facts.results | map(attribute='ansible_loop_var') | join(',') }}"
+
+    - name: loop_var names the item
+      fail:
+        msg: x
+      loop: [1]
+      loop_control:
+        loop_var: thing
+      ignore_errors: true
+
+    - name: skipped item
+      command: "true"
+      when: item == 1
+      loop: [1, 2]
+
+    - name: every item skipped
+      command: "true"
+      when: item == 1
+      loop: [2]
+      register: skips
+
+    - name: what the skipped loop registered
+      debug:
+        msg: "{{ skips.msg }}"
+
+    - name: debug loop
+      debug:
+        msg: "{{ item }}"
+      loop: [a]
+
+    - name: debug var loop
+      debug:
+        var: item
+      loop: [a]
+
+    - name: debug loop failed_when
+      debug:
+        msg: "{{ item }}"
+      failed_when: item == "b"
+      loop: [a, b]
+      ignore_errors: true
+
+    - name: debug var loop failed_when
+      debug:
+        var: item
+      failed_when: true
+      loop: [a]
+      ignore_errors: true
+
+    - name: debug loop failing for good
+      debug:
+        msg: "{{ item }}"
+      failed_when: true
+      loop: [a]

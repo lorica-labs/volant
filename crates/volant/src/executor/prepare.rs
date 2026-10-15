@@ -868,11 +868,13 @@ fn is_local(module: &str) -> bool {
     volant_protocol::modules::local(module).is_some()
 }
 
-/// Ansible prints a string item as is and anything else as JSON.
+/// The `(item=...)` label: Python's `str` of the item, which is a string as it is and anything
+/// else as its `repr`. Measured on ansible-core 2.19.12: `(item={'r': 1, 'd': 'nan'})` in the
+/// playbook's key order, `(item=[1, 'a', True, None])`.
 pub(super) fn display(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
-        other => ansible_json(other),
+        other => python_repr(other),
     }
 }
 
@@ -1639,9 +1641,17 @@ mod tests {
     }
 
     #[test]
-    fn labels_show_strings_bare_and_the_rest_as_json() {
+    fn labels_show_strings_bare_and_the_rest_as_python_does() {
         assert_eq!(display(&json!("one")), "one");
-        assert_eq!(display(&json!({"name": "one"})), r#"{"name": "one"}"#);
+        assert_eq!(
+            display(&json!({"r": 1, "d": "nan"})),
+            "{'r': 1, 'd': 'nan'}"
+        );
+        assert_eq!(
+            display(&json!([1, "a", true, null])),
+            "[1, 'a', True, None]"
+        );
+        assert_eq!(display(&json!(["it's", "a\\b\n"])), r#"["it's", 'a\\b\n']"#);
         assert_eq!(display(&json!(3)), "3");
     }
 

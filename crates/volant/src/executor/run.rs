@@ -244,7 +244,7 @@ fn local_result(
         "fail" => {
             let unknown = unknown_args(&FAIL, &item.args);
             if !unknown.is_empty() {
-                return TaskResult::failed_with(format!(
+                return unchanged_failure(format!(
                     "Invalid options for ansible.builtin.fail: {}",
                     unknown.join(", ")
                 ));
@@ -319,6 +319,7 @@ fn local_result(
             // renderer drops them again on the way out.
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
+            r.insert(crate::render::VERBOSE_ALWAYS.into(), json!(true));
         }
         "validate_argument_spec" => return validate_argument_spec(item),
         other => {
@@ -326,6 +327,14 @@ fn local_result(
         }
     }
     TaskResult(r)
+}
+
+/// An action's refusal of its arguments, which the reference reports with `changed: false`:
+/// measured on ansible-core 2.19.12 for `assert`, `fail` and `pause`.
+fn unchanged_failure(msg: impl Into<String>) -> TaskResult {
+    let mut failed = TaskResult::failed_with(msg);
+    failed.0.insert("changed".into(), json!(false));
+    failed
 }
 
 /// The names a task wrote that the module does not have, sorted.
@@ -376,7 +385,7 @@ fn unsupported(spec: &ModuleSpec, aliases: &[&str], args: &Map<String, Value>) -
 /// list. A list a managed host wrote is data, so its strings are refused rather than compiled.
 fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult {
     if let Some(refusal) = unsupported(&ASSERT, &["msg"], &item.args) {
-        return TaskResult::failed_with(refusal);
+        return unchanged_failure(refusal);
     }
     let Some(that) = task.args.get("that").filter(|v| !v.is_null()) else {
         return TaskResult::failed_with("missing required arguments: that");
@@ -400,6 +409,15 @@ fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> TaskResult 
     };
     let mut r = Map::new();
     r.insert("changed".into(), json!(false));
+    // `quiet` is the one thing that argument does: measured on ansible-core 2.19.12.
+    if item
+        .args
+        .get("quiet")
+        .and_then(volant_protocol::modules::arg_bool)
+        != Some(true)
+    {
+        r.insert(crate::render::VERBOSE_ALWAYS.into(), json!(true));
+    }
     for condition in &conditions {
         // A YAML boolean reaches `condition` spelled the way `when` spells one.
         let text = match condition {
@@ -447,7 +465,7 @@ async fn pause(
     stop: &mut watch::Receiver<bool>,
 ) -> Option<TaskResult> {
     if let Some(refusal) = unsupported(&PAUSE, &[], &item.args) {
-        return Some(TaskResult::failed_with(refusal));
+        return Some(unchanged_failure(refusal));
     }
     let whole = |v: &Value| match v {
         Value::Number(n) => n.as_f64().map(|f| f.trunc() as i64),
@@ -956,8 +974,7 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
     for (element, r) in results {
         let mut m = super::report::without_error(r).0;
         if let Some(el) = element {
-            m.insert(task.loop_var.clone(), el.clone());
-            m.insert("ansible_loop_var".into(), json!(task.loop_var));
+            super::report::item_keys(task, &mut m, el);
         }
         list.push(Value::Object(m));
     }
@@ -967,14 +984,22 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
         "changed".into(),
         json!(results.iter().any(|(_, r)| r.changed())),
     );
-    if results.iter().any(|(_, r)| r.failed()) {
+    // Measured on ansible-core 2.19.12: a loop with a failed item registers `One or more items
+    // failed`, `ignore_errors` or not, and one whose every item was skipped `All items skipped`.
+    let failed = results.iter().any(|(_, r)| r.failed());
+    if failed {
         agg.insert("failed".into(), json!(true));
     }
-    agg.insert(
-        "skipped".into(),
-        json!(results.iter().all(|(_, r)| r.skipped())),
-    );
-    agg.insert("msg".into(), json!("All items completed"));
+    let skipped = results.iter().all(|(_, r)| r.skipped());
+    agg.insert("skipped".into(), json!(skipped));
+    let msg = if skipped {
+        "All items skipped"
+    } else if failed {
+        "One or more items failed"
+    } else {
+        "All items completed"
+    };
+    agg.insert("msg".into(), json!(msg));
     Value::Object(agg)
 }
 
@@ -1317,12 +1342,16 @@ pub(super) fn until_holds(
     )
 }
 
+/// One `FAILED - RETRYING` line: the count it shows and the attempt that failed.
+pub(super) type RetryLine = (u32, TaskResult);
+
 /// What one run of a retried task decides.
 pub(super) enum Attempt {
     /// The loop ends with this result.
     Done(TaskResult),
-    /// Another run follows, after a retry line showing this count and the `delay`.
-    Again(u32),
+    /// Another run follows, after a retry line showing this count, then the `delay`. The result
+    /// is the failed attempt's, with `attempts` and `retries` on it, for that line's `Result was:`.
+    Again(u32, TaskResult),
 }
 
 /// Run `attempt` (from 1) of a retried task, judged: `changed_when` and `failed_when` first,
@@ -1365,7 +1394,9 @@ pub(super) fn judge_attempt(
         settle_failure(&mut r, task);
         return Attempt::Done(r);
     }
-    Attempt::Again(retry.retries + 1 - attempt)
+    // `retries` is the reference's count of runs, R + 1, measured in its `Result was:`.
+    r.0.insert("retries".into(), json!(retry.retries + 1));
+    Attempt::Again(retry.retries + 1 - attempt, r)
 }
 
 /// What an `until` that cannot be evaluated reports.
@@ -1871,8 +1902,8 @@ pub(super) struct PluginStart<'a> {
 ///
 /// With no `retry`, one attempt, and the result comes back unjudged, the way the plugin path
 /// has always handed it to the reporting loop. `Ok(None)` is a run stopped while it waited
-/// between two attempts: nothing more runs, and the item has no result. `lefts` receives the
-/// count each retry line shows.
+/// between two attempts: nothing more runs, and the item has no result. `lefts` receives each
+/// retry line.
 #[expect(
     clippy::too_many_arguments,
     reason = "run_plugin_item's arguments, plus the retry plan and the lines it prints"
@@ -1893,7 +1924,7 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
     warnings: &mut Vec<String>,
-    lefts: &mut Vec<u32>,
+    lefts: &mut Vec<RetryLine>,
 ) -> Result<Option<TaskResult>, Result<BatchOutcome, String>> {
     let mut attempt = 0;
     loop {
@@ -1939,7 +1970,7 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
         };
         match judge_attempt(task, item, raw, attempt, retry, start.templar) {
             Attempt::Done(r) => return Ok(Some(r)),
-            Attempt::Again(left) => lefts.push(left),
+            Attempt::Again(left, failed) => lefts.push((left, failed)),
         }
         if let Some(failed) = retry.sleep_failure() {
             return Ok(Some(failed));
@@ -3108,10 +3139,13 @@ mod tests {
         let r = local("assert", json!({"that": ["1 == 1", "2 > 1"]})).await;
         assert_eq!(
             Value::Object(r.0),
-            json!({"changed": false, "msg": "All assertions passed"})
+            json!({"_ansible_verbose_always": true, "changed": false, "msg": "All assertions passed"})
         );
         let r = local("assert", json!({"that": "1 == 1", "success_msg": "fine"})).await;
-        assert_eq!(Value::Object(r.0), json!({"changed": false, "msg": "fine"}));
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"_ansible_verbose_always": true, "changed": false, "msg": "fine"})
+        );
     }
 
     /// Measured on ansible-core 2.19.12: the failing element comes back as written, a string for
@@ -3121,7 +3155,7 @@ mod tests {
         let r = local("assert", json!({"that": "1 == 2"})).await;
         assert_eq!(
             Value::Object(r.0),
-            json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "Assertion failed"})
+            json!({"_ansible_verbose_always": true, "assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "Assertion failed"})
         );
         let r = local("assert", json!({"that": false})).await;
         assert_eq!(r.0["assertion"], json!(false));
@@ -3133,17 +3167,22 @@ mod tests {
     /// Measured on ansible-core 2.19.12: `fail_msg`, or its alias `msg`, replaces `msg` and leaves
     /// `assertion` and `evaluated_to` in place.
     #[tokio::test]
-    async fn fail_msg_and_its_alias_replace_the_message_and_quiet_leaves_the_result_alone() {
+    async fn fail_msg_and_its_alias_replace_the_message_and_quiet_only_hides_the_body() {
         for key in ["fail_msg", "msg"] {
             let r = local("assert", json!({"that": "1 == 2", key: "custom"})).await;
             assert_eq!(
                 Value::Object(r.0),
-                json!({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "custom"}),
+                json!({"_ansible_verbose_always": true, "assertion": "1 == 2", "changed": false, "evaluated_to": false, "exception": "(traceback unavailable)", "failed": true, "msg": "custom"}),
                 "{key}"
             );
         }
-        let loud = local("assert", json!({"that": "1 == 2"})).await;
+        // `quiet` only keeps the body off the line at verbosity 0.
+        let mut loud = local("assert", json!({"that": "1 == 2"})).await;
         let quiet = local("assert", json!({"that": "1 == 2", "quiet": true})).await;
+        assert_eq!(
+            loud.0.remove(crate::render::VERBOSE_ALWAYS),
+            Some(json!(true))
+        );
         assert_eq!(loud.0, quiet.0);
     }
 
@@ -3161,6 +3200,11 @@ mod tests {
             json!(
                 "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: nosucharg. Supported parameters include: fail_msg, quiet, success_msg, that (msg)."
             )
+        );
+        assert_eq!(
+            r.0["changed"],
+            json!(false),
+            "the reference's refusal is unchanged"
         );
         // The reference ends this one with `'some_undefined_thing' is undefined`. The prefix is
         // the one every conditional here shares; the sentence behind it is the templar's.
@@ -3194,7 +3238,7 @@ mod tests {
             let r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
             assert_eq!(
                 Value::Object(r.0),
-                json!({"changed": false, "msg": "All assertions passed"}),
+                json!({"_ansible_verbose_always": true, "changed": false, "msg": "All assertions passed"}),
                 "{that}"
             );
         }
@@ -3672,7 +3716,7 @@ mod tests {
         assert_eq!(agg["changed"], json!(true));
         assert_eq!(agg["failed"], json!(true));
         assert_eq!(agg["skipped"], json!(false));
-        assert_eq!(agg["msg"], json!("All items completed"));
+        assert_eq!(agg["msg"], json!("One or more items failed"));
         assert_eq!(agg["results"][1]["item"], json!(2));
         assert_eq!(agg["results"][1]["ansible_loop_var"], json!("item"));
     }
@@ -3975,7 +4019,7 @@ mod tests {
         let pong = || result(json!({"changed": false, "ping": "pong"}));
         assert!(matches!(
             judge_attempt(&t, &item, pong(), 1, &retry, &templar),
-            Attempt::Again(_)
+            Attempt::Again(..)
         ));
         let Attempt::Done(r) = judge_attempt(&t, &item, pong(), 2, &retry, &templar) else {
             panic!("the last attempt ends the loop");
@@ -6143,7 +6187,7 @@ mod tests {
             &mut lefts,
         )
         .await;
-        (ran, lefts)
+        (ran, lefts.into_iter().map(|(left, _)| left).collect())
     }
 
     fn retried_copy(retries: u64) -> PlayTask {
@@ -6249,7 +6293,15 @@ mod tests {
             attempt += 1;
             match judge_attempt(&t, &item, failing(), attempt, &retry, &templar) {
                 Attempt::Done(r) => break r,
-                Attempt::Again(left) => lefts.push(left),
+                Attempt::Again(left, failed) => {
+                    assert_eq!(failed.0["attempts"], json!(attempt));
+                    assert_eq!(
+                        failed.0["retries"],
+                        json!(3),
+                        "R + 1, as the reference counts"
+                    );
+                    lefts.push(left);
+                }
             }
         };
         assert_eq!(attempt, 3, "three runs");
@@ -6282,7 +6334,7 @@ mod tests {
         let rc = |rc: i64| TaskResult(vars(json!({"rc": rc, "changed": true})));
         assert!(matches!(
             judge_attempt(&t, &item, rc(1), 1, &retry, &templar),
-            Attempt::Again(3)
+            Attempt::Again(3, _)
         ));
         let Attempt::Done(r) = judge_attempt(&t, &item, rc(0), 2, &retry, &templar) else {
             panic!("rc 0 ends the loop");

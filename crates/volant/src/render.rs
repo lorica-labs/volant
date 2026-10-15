@@ -714,7 +714,7 @@ mod tests {
         0, Outcome::Failed, json!({"failed": true, "rc": 1}), Some("three"), Dump::No, false,
         "failed: [h] (item=three) => {\"rc\": 1}\n"
     )]
-    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\"msg\": \"shown\"}\n")]
+    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\n    \"msg\": \"shown\"\n}\n")]
     #[case::censored_changed(0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true, "changed: [h]\n")]
     #[case::censored_ignored(
         0, Outcome::Ignored, json!({"changed": true, "failed": true, "stdout": "secret"}), None, Dump::No, true,

@@ -2500,20 +2500,6 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
 }
 
 /// An escalation the host refuses hands its fork back before the driver carries on.
-///
-/// The refusal is a task failure, so the host stays in the run and walks to the block's
-/// `rescue`, stepping over a flush point on the way and waiting there for the splice. With
-/// `-f 1` the fork it still held would be the only one, and the other host could never reach
-/// that same flush to open it.
-///
-/// Measured on ansible-core 2.19.12 on this fixture, with a `sudo` that refuses and `-f 1`:
-/// `fatal:` for both hosts under `escalates`, then `recovered` for both, then
-/// `RUNNING HANDLER [the handler]` for both at the flush that closes `tasks`; recap
-/// `ok=3 changed=1 rescued=1` each, exit 0. The flush written in the body shows no banner: both
-/// hosts stepped over it.
-///
-/// What would make this red: a permit held across the wait that follows the refusal. Only
-/// `volant_within` can see it, since the run hangs rather than printing anything wrong.
 #[test]
 fn a_refused_escalation_hands_its_fork_back_before_waiting() {
     let dir = fake_sudo(

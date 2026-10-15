@@ -15,6 +15,7 @@
 //! `~/.ansible/tmp` itself and says why.
 #![cfg(unix)]
 
+use rstest::rstest;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -179,118 +180,78 @@ fn ssh_an_outdated_cached_agent_is_replaced() {
     }
 }
 
-#[test]
+/// What makes a host unreachable over a real `ssh`, each with its reason on the line and exit 4:
+/// a refused port, an unknown host key, no agent for the architecture, an agent that cannot run.
+#[rstest]
+#[case::a_refused_connection(
+    Unreachable::RefusedPort,
+    &["fatal: [dead]: UNREACHABLE!", "\"msg\": \"Task failed: Failed to connect to the host via ssh:", "ok: [box]", "PLAY RECAP"]
+)]
+#[case::an_unknown_host_key(Unreachable::UnknownHostKey, &["UNREACHABLE!", "Host key verification failed"])]
+#[case::no_agent_for_the_architecture(Unreachable::NoAgent, &["UNREACHABLE!", "no agent binary for"])]
+#[case::a_cached_agent_that_cannot_run(Unreachable::AgentCannotRun, &["UNREACHABLE!", "cannot be run"])]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
-fn ssh_refused_connection_is_unreachable_with_a_recap() {
-    let dir = tmp("refused");
-    let inv = inventory(&dir, &[("dead", "ansible_port=1"), ("box", "")]);
-    let out = volant(&["playbook", "-i", &inv, &fixture("ssh/e2e.yml")]);
-    let text = both(&out);
-    assert!(text.contains("fatal: [dead]: UNREACHABLE!"), "{text}");
-    // The reference opens the `msg` of an UNREACHABLE with `Task failed: `, measured against
-    // ansible-core 2.19.12, and a playbook of the operator's testing
-    // `'Task failed' in result.msg` has to keep working here. What would make this red: the
-    // prefix being dropped again, which is what two separate local decisions did before.
-    assert!(
-        text.contains("\"msg\": \"Task failed: Failed to connect to the host via ssh:"),
-        "the unreachable message keeps the reference's prefix: {text}"
-    );
-    assert!(
-        text.contains("ok: [box]"),
-        "the other host still runs: {text}"
-    );
-    assert!(text.contains("PLAY RECAP"), "{text}");
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[ignore = "needs sshd on localhost, run through just ssh-test"]
-fn ssh_unknown_host_key_is_refused_when_checking_is_on() {
-    let dir = tmp("hostkey");
-    let inv = inventory_with_ssh_args(
-        &dir,
-        &[("box", "")],
-        &format!("-o UserKnownHostsFile={}/empty_known_hosts", dir.display()),
-    );
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
+fn ssh_a_host_that_cannot_be_reached_says_why(#[case] why: Unreachable, #[case] says: &[&str]) {
+    let dir = tmp(&format!("unreachable-{why:?}"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
         .env("NO_COLOR", "1")
-        .env("ANSIBLE_HOST_KEY_CHECKING", "True")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False");
+    let inv = match why {
+        Unreachable::RefusedPort => inventory(&dir, &[("dead", "ansible_port=1"), ("box", "")]),
+        Unreachable::UnknownHostKey => {
+            command.env("ANSIBLE_HOST_KEY_CHECKING", "True");
+            inventory_with_ssh_args(
+                &dir,
+                &[("box", "")],
+                &format!("-o UserKnownHostsFile={}/empty_known_hosts", dir.display()),
+            )
+        }
+        Unreachable::NoAgent => {
+            let empty = dir.join("agents");
+            std::fs::create_dir_all(&empty).unwrap();
+            command.env("VOLANT_AGENT_DIR", empty.display().to_string());
+            inventory(&dir, &[("box", "")])
+        }
+        Unreachable::AgentCannotRun => {
+            let triple = volant::transport::triple_for(std::env::consts::ARCH)
+                .expect("this architecture has an agent triple");
+            let agents = dir.join("agents");
+            write_executable(
+                &agents.join(format!("volant-agent-{triple}")),
+                "#!/bin/sh\nexit 3\n",
+            );
+            command.env("VOLANT_AGENT_DIR", agents.display().to_string());
+            inventory(&dir, &[("box", "")])
+        }
+    };
+    let out = command
+        .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
         .output()
         .unwrap();
     let text = both(&out);
-    assert!(
-        text.contains("UNREACHABLE!") && text.contains("Host key verification failed"),
-        "{text}"
-    );
+    for words in says {
+        assert!(text.contains(words), "{words}: {text}");
+    }
     assert_eq!(out.status.code(), Some(4), "{text}");
+    if why == Unreachable::AgentCannotRun {
+        // The upload landed, so the fault is the host's: the message names the cached file and
+        // is not a version mismatch.
+        let cached = cache_dir(&dir).join("volant-agent");
+        assert!(text.contains(&cached.display().to_string()), "{text}");
+        assert!(!text.contains("version mismatch"), "{text}");
+        assert!(cached.exists(), "the upload did not land");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-#[ignore = "needs sshd on localhost, run through just ssh-test"]
-fn ssh_missing_agent_for_the_architecture_is_unreachable() {
-    let dir = tmp("noagent");
-    let inv = inventory(&dir, &[("box", "")]);
-    let empty = dir.join("agents");
-    std::fs::create_dir_all(&empty).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
-        .env("VOLANT_AGENT_DIR", empty.display().to_string())
-        .output()
-        .unwrap();
-    let text = both(&out);
-    assert!(
-        text.contains("UNREACHABLE!") && text.contains("no agent binary for"),
-        "{text}"
-    );
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The one path that cannot be reached without a real host: the cached agent still refuses to
-/// run after a fresh upload, so trying again would not help and the message has to name the
-/// file rather than blame a version mismatch. The uploaded agent is a script that exits
-/// non-zero, which is what a `noexec` mount, SELinux or a foreign binary looks like from here.
-#[test]
-#[ignore = "needs sshd on localhost, run through just ssh-test"]
-fn ssh_a_cached_agent_that_cannot_run_is_named() {
-    let dir = tmp("unrunnable");
-    let inv = inventory(&dir, &[("box", "")]);
-    let triple = volant::transport::triple_for(std::env::consts::ARCH)
-        .expect("this architecture has an agent triple");
-    let agents = dir.join("agents");
-    write_executable(
-        &agents.join(format!("volant-agent-{triple}")),
-        "#!/bin/sh\nexit 3\n",
-    );
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
-        .env("VOLANT_AGENT_DIR", agents.display().to_string())
-        .output()
-        .unwrap();
-    let text = both(&out);
-    assert!(text.contains("UNREACHABLE!"), "{text}");
-    assert!(text.contains("cannot be run"), "{text}");
-    assert!(
-        text.contains(&cache_dir(&dir).join("volant-agent").display().to_string()),
-        "the message names the cached file: {text}"
-    );
-    assert!(
-        !text.contains("version mismatch"),
-        "a copy that cannot run is not a version mismatch: {text}"
-    );
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    assert!(
-        cache_dir(&dir).join("volant-agent").exists(),
-        "the upload landed, so the fault is the host's and not a missing file"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
+/// The ways `ssh_a_host_that_cannot_be_reached_says_why` makes a host unreachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unreachable {
+    RefusedPort,
+    UnknownHostKey,
+    NoAgent,
+    AgentCannotRun,
 }
 
 /// Escalation to an account that cannot read the connecting user's home directory. This is the
@@ -1508,22 +1469,9 @@ true",
     );
 }
 
-/// Every native an agent of this release declares, `systemd_service` being `systemd`'s alias.
+/// Every native an agent of this release declares, aliases included: the protocol's own list.
 #[cfg(target_os = "linux")]
-const EXPECTED_NATIVES: &[&str] = &[
-    "setup",
-    "stat",
-    "file",
-    "copy",
-    "lineinfile",
-    "apt",
-    "systemd",
-    "systemd_service",
-    "package_facts",
-    "service_facts",
-    "user",
-    "group",
-];
+const EXPECTED_NATIVES: &[&str] = volant_protocol::modules::NATIVE_ENABLED;
 
 /// The cases of `ssh/natives.yml` that have no recording, each with the recorded case of the same
 /// module whose index entry it is read under (what may move between two runs, what matches a

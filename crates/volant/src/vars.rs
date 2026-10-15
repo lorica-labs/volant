@@ -1331,16 +1331,8 @@ mod tests {
         }
     }
 
-    /// Every host variable the engine reads to decide where, as whom or under what a task runs
-    /// is one a managed host cannot set through `ansible_facts`. The names are read off the
-    /// source rather than listed here: every call of `host_setting` and of the transport's two
-    /// readers built on it, in every file of the crate outside its tests. And no other code may
-    /// read an `ansible_*` variable by name, so a reader cannot sit outside the scan.
-    ///
-    /// What would make this red: a connection, escalation or interpreter setting that
-    /// `restricted_fact` keeps. It was red on `ansible_remote_tmp`, which the reference keeps
-    /// and this engine derives the escalated agent's path from; or a new reader that goes
-    /// around `host_setting`.
+    /// Every host variable the engine reads to decide where, as whom or under what a task runs is
+    /// one a managed host cannot set through `ansible_facts`.
     #[test]
     fn every_host_setting_is_stripped_from_gathered_facts() {
         let reader = regex::Regex::new(
@@ -1595,16 +1587,7 @@ mod tests {
         }
     }
 
-    /// `ansible_run_tags` and `ansible_skip_tags`, read by the condition of the `k3s_server`
-    /// role's `Apply K3S kubeconfig to control node` block, with `kubectl` present and the copy
-    /// before it unchanged. Measured on ansible-core 2.19.12: `run=['all'] skip=[]` with no tag
-    /// option, `run=['kubeconfig']` under `--tags kubeconfig`, `skip=['foo']` under
-    /// `--skip-tags foo`. Both are the engine's own words, so a host fact of either name loses.
-    ///
-    /// What would make this red: either name left unset, which fails the condition on an
-    /// undefined name on every host that has `kubectl`; the lists the run asked for not reaching
-    /// it, which leaves the block skipped under `--tags kubeconfig`; or the names taken from the
-    /// facts layer, which lets a host decide what the run was asked to do.
+    /// The run's own tag lists decide the kubeconfig block; a host fact of either name loses.
     #[test]
     fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
         let inventory = Inventory::parse_ini("h1\n").unwrap();
@@ -1632,12 +1615,8 @@ mod tests {
         assert_eq!(holds(&mut store), (false, json!(["all"]), json!(["foo"])));
     }
 
-    /// The view `hostvars` reads: one shared map for every host of the inventory, and a
-    /// completed one for a host the inventory does not carry.
-    ///
-    /// What would make this red: a host's own identity dropped from its view, a view that
-    /// nests `hostvars` inside itself, an implicit `localhost` left out of the map it is about
-    /// to render against, or two hosts of the inventory handed two different maps.
+    /// The view `hostvars` reads: one shared map for every host of the inventory, and a completed
+    /// one for a host the inventory does not carry.
     #[test]
     fn the_shared_hostvars_view_answers_for_every_host() {
         let tmp = tree();
@@ -1764,17 +1743,7 @@ mod tests {
         }
     }
 
-    /// The three layers `layered_for_host` hands out read, name for name, like the one merged
-    /// map the store used to build for every task, laid under the inventory-wide values. 500
-    /// random stores and scopes, every layer drawing its names from one small pool so that they
-    /// collide with each other, with the magic variables and with the restricted names a gather
-    /// strips. Each case reads every host twice around more writes, with the same scope, so a
-    /// kept facts layer that should have been rebuilt is read.
-    ///
-    /// What would make this red: two layers merged in the wrong order; a gathered name left in
-    /// the facts layer although a layer above it answers, the host's own magic variables among
-    /// those layers, so a fact named `inventory_hostname` would win; the facts read over the
-    /// inventory-wide values; a kept facts layer served after the host gathered again.
+    /// The layers `layered_for_host` hands out read, name for name, like the one merged map.
     #[test]
     fn the_layered_view_reads_like_the_merged_one() {
         let seed = 0x5eed_1a7e_u64;
@@ -1926,18 +1895,7 @@ mod tests {
         }
     }
 
-    /// One name per layer, each holding `{{ 1 + 1 }}`, rendered through the view the engine now
-    /// builds and through the merged map it used to build: the same answer and the same set of
-    /// names that are data, for every layer. The gathered name and the untrusted fact stay text;
-    /// a play variable over a gathered name, and one built from a gathered name, behave as
-    /// before.
-    ///
-    /// A fact named `groups` loses to the inventory's own, as it did when it sat in the map
-    /// under the inventory-wide values.
-    ///
-    /// What would make this red: a gathered name reaching a template without its taint, which
-    /// renders it to `2`; a shadowed gathered name still answering from the facts layer; a
-    /// template reading the facts before the inventory-wide values.
+    /// Every layer keeps its trust through the layered view: gathered and untrusted names stay text.
     #[test]
     fn every_layer_keeps_its_trust_through_the_layered_view() {
         let inventory = Inventory::parse_ini("h1 i=\"{{ 1 + 1 }}\"\n").unwrap();
@@ -2045,12 +2003,7 @@ mod tests {
         );
     }
 
-    /// `lookup('template', ...)` renders its file against the host's variables, the gathered
-    /// facts included, and the two names it writes itself still beat a fact of the same name:
-    /// the same text as through the merged map.
-    ///
-    /// What would make this red: the lookup rebuilding its variables without the facts layer
-    /// (the fact is undefined); a fact named `template_path` answering over the lookup's own.
+    /// A gathered fact reaches a template lookup, with the same text as through the merged map.
     #[test]
     fn a_gathered_fact_reaches_a_template_lookup() {
         let tmp = scratch();

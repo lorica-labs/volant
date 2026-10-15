@@ -893,9 +893,8 @@ env=prod
         assert_eq!(names(&inv.resolve(pattern).hosts), want, "{pattern}");
     }
 
-    /// The controller is an implicit local host, outside `all`; `::1` is a known divergence: `:`
-    /// is the pattern separator, so it is cut before `is_localhost` sees it (the reference runs
-    /// the play on the controller; delete the last block when `split_terms` keeps it whole).
+    /// The controller is an implicit local host outside `all`; `::1` is cut by the pattern
+    /// separator, a known divergence (the reference runs it on the controller).
     #[test]
     fn the_controller_is_an_implicit_local_host() {
         let inv = Inventory::empty();
@@ -947,9 +946,7 @@ env=prod
         assert_eq!(inv.resolve("h").hosts[0].vars[key], want, "{words}");
     }
 
-    /// Group listings, and cycles: a circular group resolves instead of hanging, and a host
-    /// inside the cycle still reaches `all` (no member is a root, so `all` must fall back to
-    /// every host the inventory knows).
+    /// Groups are listed; a circular group resolves, and a host inside the cycle reaches `all`.
     #[test]
     fn groups_are_listed_and_cycles_terminate() {
         let inv = Inventory::parse_ini(SAMPLE).unwrap();

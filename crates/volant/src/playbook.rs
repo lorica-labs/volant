@@ -1694,9 +1694,8 @@ mod tests {
         assert!(t.unsupported.is_empty());
     }
 
-    /// A module's argument string is read as the reference's `parse_kv` reads it: `key=value`
-    /// words become options and the rest is kept in `_raw_params`. A name nothing can supply keeps
-    /// no arguments, so the pre-flight refuses it by name.
+    /// A module's argument string is read as the reference's `parse_kv` reads it: `key=value` words
+    /// become options and the rest is kept in `_raw_params`.
     #[rstest]
     #[case::set_fact("set_fact: owner=root state=here", "set_fact", &[("owner", "root"), ("state", "here")])]
     #[case::free_form_alias("ansible.legacy.shell: echo a=b", "ansible.legacy.shell", &[("_raw_params", "echo a=b")])]

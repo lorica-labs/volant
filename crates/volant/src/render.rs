@@ -491,10 +491,8 @@ mod tests {
         );
     }
 
-    /// The line a result prints, in the reference's own words: `exception`, `failed`,
-    /// `invocation` and `diff` stay off a fatal line, a `no_log` result shows one censored body
-    /// whatever line it prints on, a loop item and a forced dump follow the reference's shapes.
-    /// `<CENSORED>` stands for the censored sentence.
+    /// The line a result prints, in the reference's words; `<CENSORED>` stands for the
+    /// censored sentence.
     #[rstest]
     #[case::changed(0, Outcome::Changed, json!({"changed": true, "stdout": "hi"}), None, Dump::No, false, "changed: [h]\n")]
     #[case::ok(0, Outcome::Ok, json!({"changed": false}), None, Dump::No, false, "ok: [h]\n")]

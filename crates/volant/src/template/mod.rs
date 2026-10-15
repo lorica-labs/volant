@@ -1504,9 +1504,6 @@ mod unit {
     }
 
     /// The idioms roles write around undefined values, each measured on ansible-core 2.19.12.
-    /// Red if the short-circuit reaches one of them: an argument checked where the reference
-    /// does not (`ternary`, `default`), a list's contents checked where only the result is
-    /// (`length`), or a test that exists to see undefined values catching them.
     #[test]
     fn the_idioms_around_undefined_values_answer_as_the_reference() {
         let t = templar();

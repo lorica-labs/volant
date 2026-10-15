@@ -606,8 +606,7 @@ mod tests {
     use rstest::rstest;
 
     /// A `pause` that would wait for an answer on a terminal is refused before anything connects
-    /// when the step is sure to run, and left to the run when something may leave it out. A timed
-    /// one, or any on a pipe, is never refused here.
+    /// when the step is sure to run, and left to the run when something may leave it out.
     #[test]
     fn a_pause_that_would_prompt_on_a_terminal_is_refused_only_when_sure_to_run() {
         let verdict_under = |tasks: &str, interactive: bool, run: Vec<String>| {
@@ -674,10 +673,7 @@ mod tests {
         format!("- hosts: all\n  tasks:\n    - name: T\n{body}")
     }
 
-    /// Everything the pre-flight refuses, at exit 4, naming what it refuses: parked keywords at
-    /// every level and in every section of a block, `until`/`retries`/`delay` on a dynamic
-    /// statement, `check_mode: true`, the module arguments this release does not act on, a
-    /// non-linear strategy, the action-plugin modules, an argument splat, a name nobody has.
+    /// Everything the pre-flight refuses is refused at exit 4, naming what it refuses.
     #[rstest]
     #[case::async_(task_play("      command: echo hi\n      async: x\n"), &["keyword 'async' is not supported yet", "play 1", "'T'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
@@ -730,9 +726,8 @@ mod tests {
         }
     }
 
-    /// What the pre-flight lets through: the same words where the value or the module decides,
-    /// the plugins this release runs under every builtin spelling, a collection's or unknown
-    /// module (the controller answers), and the static `with_*` loops of `site.yml`.
+    /// What the pre-flight lets through where the value or the module decides, or the controller
+    /// answers.
     #[rstest]
     #[case::check_mode_false_on_a_task(task_play(
         "      command: echo hi\n      check_mode: false\n"
@@ -777,9 +772,7 @@ mod tests {
         check(&pb).unwrap_or_else(|e| panic!("{text}: {e:#}"));
     }
 
-    /// The plugins this release runs are admitted under every builtin spelling with their
-    /// arguments read (the loader reads them only for a module it knows it can run), and the
-    /// modules whose only product is facts reach a host through `python::is_python_module`.
+    /// The plugins and fact modules this release runs are admitted with their arguments read.
     #[rstest]
     fn the_modules_this_release_runs_are_admitted(
         #[values(
@@ -1037,8 +1030,7 @@ mod tests {
     }
 
     /// Every keyword the tables mark `Preflight` stops the run, naming itself, and every `meta`
-    /// action is honoured or refused by its own name. Adding a row to a table adds a case here
-    /// on its own; the keyword count is pinned so a table that grows moves it in the same change.
+    /// action is honoured or refused by its own name.
     #[test]
     fn every_table_row_is_refused_by_its_own_name() {
         let probes = preflight_probes();

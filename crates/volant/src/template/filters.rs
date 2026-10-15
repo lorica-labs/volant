@@ -1499,11 +1499,7 @@ mod tests {
         }
     }
 
-    /// `extract`'s vectors, each produced by ansible-core 2.19.12 on localhost. What would make
-    /// a row red: `morekeys` not walked in order (the list) or iterated when it is one string
-    /// key (`'xy'` read as `'xy'` itself, not as `'x'` then `'y'`), a list container not indexed by
-    /// position, or a missing key answered with something other than an undefined value, which
-    /// `default` and `is defined` see and a bare render refuses.
+    /// `extract`'s vectors, each produced by ansible-core 2.19.12 on localhost.
     #[test]
     fn extract_reads_container_item_then_each_more_key() {
         use serde_json::json;

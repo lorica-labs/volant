@@ -1815,14 +1815,7 @@ mod tests {
     use crate::playbook::parse;
     use crate::testing::{compiled, play, scratch};
 
-    /// The three states the doc comment on [`beside_or_in_role`] measures against
-    /// UBUNTU22-CIS: only beside the importer, only in the role's own `tasks/`, and both -
-    /// the one beside the importer winning whenever it is there.
-    ///
-    /// What would make this red: the role fallback never taking over even when nothing sits
-    /// beside the importer, which is the one behaviour every automated test before this one
-    /// left to a doc comment and a full third-party role in `bench-compile` - a recipe outside
-    /// this crate's own test gate.
+    /// A file beside the importer wins; the role's own `tasks/` is the fallback.
     #[test]
     fn beside_or_in_role_prefers_beside_and_falls_back_to_the_role() {
         let dir_guard = scratch();
@@ -1887,9 +1880,8 @@ mod tests {
             .collect())
     }
 
-    /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same
-    /// way it cuts them, and the ones nobody can read, refused by keyword. A percentage is taken
-    /// of the whole host list and truncates, and never to nobody.
+    /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same way
+    /// it cuts them, and the ones nobody can read, refused by keyword.
     #[rstest]
     #[case::two(json!(2), Some(vec![2, 1]))]
     #[case::one(json!(1), Some(vec![1, 1, 1]))]
@@ -2070,12 +2062,8 @@ mod tests {
         }
     }
 
-    /// How a host walks a compiled play: `happy` is the order from the first step when nothing
-    /// fails (no rescue is entered, each block is left through its `always`); `failed` is, for a
-    /// failure at the named step, the cleanup it then runs (empty when the failure ends the
-    /// section it was raised in); `rescued` is the step that takes a failure raised at the named
-    /// step. A rescue never takes its own failure; a child's `always` failure goes to the parent's
-    /// rescue.
+    /// How a host walks a compiled play: with no failure, after a failure at a step, and where
+    /// a rescue takes it.
     #[rstest]
     #[case::nested(
         NESTED,
@@ -2321,9 +2309,6 @@ mod tests {
 
     /// Every keyword a block carries reaches the tasks under it, and a task that says something
     /// itself keeps its own answer.
-    ///
-    /// What would make this red: an inherited keyword dropped in the merge, which runs the task
-    /// without the `become`, the `when` or the timeout the operator wrote around it.
     #[test]
     fn a_block_s_keywords_reach_the_tasks_under_it() {
         let c = compiled(
@@ -2425,12 +2410,8 @@ mod tests {
         assert!(!sel.selects(&["untagged".to_string()]));
     }
 
-    /// A block whose tasks the selection all drops leaves a span with nothing in it, and the
-    /// spans of everything around it still cover exactly the steps they hold.
-    ///
-    /// What would make this red: filtering the finished list instead of never pushing the
-    /// dropped steps. Every span after the first dropped step would then be off by one, which
-    /// sends a host into a section it never entered.
+    /// A block whose tasks the selection all drops leaves a span with nothing in it, and the spans
+    /// of everything around it still cover exactly the steps they hold.
     #[test]
     fn filtering_leaves_every_span_covering_its_own_steps() {
         let c = selected(
@@ -2517,28 +2498,6 @@ mod tests {
 
     /// The tags the layers around a dynamic include gave the statement reach the tasks it brings
     /// in, and the tags written on the statement itself stop there.
-    ///
-    /// Measured on ansible-core 2.19.12, `connection: local`, one row per line of the table below:
-    /// a role applied with `tags: [t]` whose `main.yml` is one `include_tasks` runs the included
-    /// task under `--tags t` (`included:`, then the task, `ok=2`); so does a block tagged `b`
-    /// around an `include_tasks` or an `include_role` under `--tags b`, a role tagged `t` whose
-    /// tasks `include_role` another under `--tags t`, a role tagged `always` under `--tags
-    /// other`, and a role tagged `[never, n]` under `--tags n`. An `include_tasks` or an
-    /// `include_role` tagged `i` itself shows `included:` under `--tags i` and runs nothing
-    /// behind it (`ok=1`). `--skip-tags t`, `--tags zz` and an untagged run of a role tagged
-    /// `never` show no line at all. ansible-core's source says the same: a block read by a
-    /// dynamic include skips the statement and asks the statement's own parent for what it
-    /// inherits (`Block._get_parent_attribute`, "defer to the grandparent").
-    ///
-    /// The same source rule covers every keyword that source extends or inherits, which is what
-    /// the last four assertions check (unmeasured): a role entry's `become`, a block's `no_log`,
-    /// `when` and `check_mode`.
-    ///
-    /// What would make this red: the included file compiled against the play's layer alone,
-    /// which drops everything a role or a block gave the statement, so the rows expecting
-    /// `[in]` get `[]` and the run succeeds having done nothing, an included `apt` runs
-    /// unescalated and an included task's arguments are printed; or the statement's own tags
-    /// handed down as well, which fills the two `[i]` rows.
     #[test]
     fn a_dynamic_include_hands_down_what_the_layers_above_it_gave_it() {
         // The play, `--tags`, `--skip-tags`, and what the include at the bottom brings in.
@@ -2646,13 +2605,8 @@ mod tests {
         assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
     }
 
-    /// Inserting steps one past the last step of a block's body grows that body and shifts the
-    /// two sections behind it, and inserting past the block moves nothing.
-    ///
-    /// What would make this red: `range.end > at` instead of `>=`. The body would not grow, so
-    /// the steps spliced in would sit in a range that says they belong to nothing - and the
-    /// handler steps a flush point inserts are exactly that shape, since a flush written last in
-    /// a body ends it one index before them.
+    /// Inserting steps one past the last step of a block's body grows that body and shifts the two
+    /// sections behind it, and inserting past the block moves nothing.
     #[test]
     fn a_splice_grows_the_section_it_lands_at_the_end_of() {
         let mut c = compiled(
@@ -2723,9 +2677,8 @@ mod tests {
         assert_eq!(c.blocks[0].always, before.always);
     }
 
-    /// Measured on ansible-core 2.19.12: two handlers with one name run the first alone; a
-    /// handler listening for a name runs beside it; a block's `notify` reaches its tasks and a
-    /// task's own notify keeps both.
+    /// A notify takes the first handler of a name and every listener; a block's notify reaches
+    /// its tasks.
     #[test]
     fn a_notify_takes_the_first_handler_of_that_name_and_every_listener() {
         let c = compiled(
@@ -2763,17 +2716,7 @@ mod tests {
         assert_eq!(c.steps[2].task.notify, ["own", "h"]);
     }
 
-    /// A play that gathers facts opens with the reference's `setup`, and that step is listed
-    /// nowhere.
-    ///
-    /// What would make this red: no step at all, which is the release that warned and gathered
-    /// nothing - a playbook reading `ansible_facts.*` then fails per host on an undefined
-    /// variable. Red the other way if the step is listed: measured on ansible-core 2.19.12,
-    /// `--list-tasks` on a play that gathers shows no `Gathering Facts` line and `TASK TAGS`
-    /// carries no `always` from it.
-    ///
-    /// `always` is what makes `--tags deploy` still gather, and `--skip-tags always` the one way
-    /// to drop it, which is the pair the two selections below pin.
+    /// A play that gathers facts opens with an unlisted `setup` step, kept by `always` tags.
     #[test]
     fn a_play_that_gathers_facts_opens_with_the_setup_module() {
         let text = "- hosts: all\n  tasks:\n    - name: body\n      command: \"true\"\n";
@@ -2803,12 +2746,8 @@ mod tests {
         assert_eq!(c.steps[0].task.name, "body");
     }
 
-    /// The three flush points close the three sections, and neither they nor a handler are
-    /// listed anywhere.
-    ///
-    /// Measured on ansible-core 2.19.12: `--list-tasks` on a playbook full of handlers shows the
-    /// `meta` the playbook wrote and not one handler, and the implicit flushes are the
-    /// reference's own structure rather than anything it prints.
+    /// The three flush points close the three sections, and neither they nor a handler are listed
+    /// anywhere.
     #[test]
     fn each_section_ends_with_a_flush_point_that_nothing_lists() {
         let c = compiled(
@@ -2857,15 +2796,6 @@ mod tests {
     }
 
     /// `public` is judged by what it is worth, not by being written.
-    ///
-    /// Measured on ansible-core 2.19.12: `public: false` is the default and keeps the role's
-    /// `defaults` and `vars` behind the include, which is what this release does whether the
-    /// statement says so or not. Refusing every `public` by presence turned a statement asking
-    /// for the engine's own behaviour into an error at exit 4.
-    ///
-    /// What would make this red: `public: false` refused again, so a real role that spells the
-    /// default out cannot be included at all; or a truthy or unresolved `public` accepted, which
-    /// exports nothing and says nothing about it.
     #[test]
     fn public_is_refused_by_value_and_not_by_presence() {
         let asked = |value: Value| {

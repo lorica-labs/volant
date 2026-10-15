@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A fix pass on a pull request replaces the run it supersedes; a push to main is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,7 +53,8 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: nextest
-      - run: cargo nextest run --workspace
+      # Includes `reference.rs`: the template, inventory and scenario goldens, which need no host.
+      - run: cargo nextest run --workspace --no-tests=fail
 
   coverage:
     runs-on: ubuntu-latest

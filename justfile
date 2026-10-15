@@ -136,8 +136,8 @@ ci-local:
 
 # Copy the working tree to the machine named by VOLANT_DEV_HOST and run a recipe there. The file
 # list comes from git, so tracked and new files travel while everything git ignores stays behind.
-# The copy adds and overwrites but never deletes, so a file you removed here still exists over
-# there and can still be compiled; remove it by hand when that matters.
+# The copy adds and overwrites, then deletes over there every file the list does not name (except
+# under `target/`), so a removed scenario, fixture or test file never lingers and gets compiled.
 #
 # VOLANT_REMOTE_DIR names the directory over there, defaulting to `volant`. Set it to work on
 # several branches at once without them sharing a target directory or overwriting each other's
@@ -147,10 +147,12 @@ ci-local:
 # (`bench`, `bench-k3s`) has no `git describe` of its own to name the tree it measured. `.volant-
 # describe` is written here, on the side that still has `.git`, from this same commit the tar is
 # about to carry over, and travels as one more file in that same tar stream (added to the file list
-# by hand, since it is gitignored and `--exclude-standard` would otherwise leave it behind).
+# by hand, since it is gitignored and `--exclude-standard` would otherwise leave it behind). The list
+# itself travels as `.volant-files`, which the deletion pass reads.
 remote +recipe:
     git describe --always --dirty > .volant-describe
-    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; { git ls-files -z --cached --others --exclude-standard; printf '.volant-describe\0'; } | tar -C . --null --files-from=- -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir'"
+    git ls-files -z --cached --others --exclude-standard > .volant-files; printf '.volant-describe\0.volant-files\0' >> .volant-files
+    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; prune='cd "$1" && find . -path ./target -prune -o -type f -print0 | sed -z "s|^\./||" | LC_ALL=C sort -z | LC_ALL=C comm -z -23 - <(LC_ALL=C sort -z .volant-files) | grep -zv -e "^\.volant-describe\$" -e "^\.volant-files\$" | xargs -0 -r rm -f --; find . -mindepth 1 -type d -empty -not -path ./target -not -path "./target/*" -delete'; tar -C . --null --files-from=.volant-files -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir' && bash -c '$prune' _ '$dir'"
     dir="${VOLANT_REMOTE_DIR:-volant}"; ssh "$VOLANT_DEV_HOST" ". ~/.profile && cd '$dir' && just {{recipe}}"
 
 # Build the agent as a static musl binary, the only form that can be uploaded to another host

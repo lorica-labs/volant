@@ -254,20 +254,8 @@ enum Unreachable {
     AgentCannotRun,
 }
 
-/// Escalation to an account that cannot read the connecting user's home directory. This is the
-/// case every other `become` test misses: they all escalate to `root`, which traverses anything.
-///
-/// A home directory at mode 0700 - the default wherever `HOME_MODE` says so, which includes RHEL
-/// and Fedora - hides the connecting user's agent cache from everybody else, so an agent cached
-/// there and then run through `sudo -u someone-else` cannot be reached at all, and every
-/// escalated task on the host failed with whatever the remote shell said about the file. The
-/// agent for an escalated link is cached under the target user's own home instead.
-///
-/// The test makes its own throwaway account and removes it again, because there is no ordinary
-/// unprivileged account on a machine whose home directory an agent can be written to: the
-/// service accounts that exist have `/nonexistent` or `/` for a home. It needs the same
-/// passwordless `sudo` the escalation tests beside it already need, and it fails loudly if it
-/// cannot have it rather than passing while proving nothing.
+/// Escalation to an account that cannot read the connecting user's home directory. This is the case
+/// every other `become` test misses: they all escalate to `root`, which traverses anything.
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_become_to_an_unprivileged_user_reaches_the_agent() {
@@ -398,13 +386,8 @@ fn home_of(name: &str) -> PathBuf {
     PathBuf::from(home)
 }
 
-/// Escalation over a real `ssh`, which is the only place the second link is actually a second
-/// `ssh` process running the same cached agent under `sudo`. The play escalates and one task
-/// declines, so the run proves both directions on one host: a `become` that quietly did nothing
-/// would print the invoking account where `root` is expected.
-///
-/// Needs passwordless sudo for the account these tests log in as, as on the development machine
-/// and on the CI runner.
+/// Escalation over a real `ssh`, which is the only place the second link is actually a second `ssh`
+/// process running the same cached agent under `sudo`.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_become_over_ssh() {
@@ -423,19 +406,6 @@ fn ssh_become_over_ssh() {
 }
 
 /// A delegated task travels over the **delegate's** connection, never the delegating host's.
-///
-/// Two inventory names for the same localhost, each with an `ansible_remote_tmp` of its own.
-/// The play runs on `a` and its only task is delegated to `b`, so the agent has to be probed
-/// and cached under `b`'s directory and `a`'s must stay empty: `a`'s own link is never opened
-/// at all. Measured on ansible-core 2.19.12, that is exactly what the reference does - a task
-/// delegated away from a host nothing can reach still runs.
-///
-/// This lives in the ssh suite because the local suite cannot see it: with every host on the
-/// local connection there is no per-host connection state to tell the two apart.
-///
-/// What would make this red: the transport built from the delegating host's variables, which
-/// puts the agent under `a`'s directory and leaves `b`'s empty; or the arrow missing from the
-/// line, which hides which host actually ran the task.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_delegate_to_another_inventory_name() {
@@ -534,9 +504,7 @@ fn assert_host_and_controller_pythons_are_distinct() {
     }
 }
 
-/// A python module runs over a real ssh and changes the disk. `ping` proves the path, `file`
-/// proves the effect - a module that reported `changed` without touching the filesystem would
-/// pass a ping-only test.
+/// A python module runs over a real ssh and changes the disk.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_runs_a_python_module_and_changes_the_disk() {
@@ -571,14 +539,8 @@ fn ssh_runs_a_python_module_and_changes_the_disk() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A python module's own result is untrusted like any other module's, all the way to the CLI a
-/// user actually runs. The lower-level proof lives in `executor::run`'s own tests, against a
-/// `VarStore` built by hand; nothing before this ran the claim through a real ssh, a real agent
-/// and a real warm python server.
-///
-/// What would make this red: `register` losing the untrusted mark for a python task
-/// specifically, which nothing below the CLI would catch if the mark were applied by module
-/// kind rather than uniformly to every result a managed host returns.
+/// A python module's own result is untrusted like any other module's, all the way to the CLI a user
+/// actually runs.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_a_python_module_s_result_is_never_evaluated() {
@@ -618,18 +580,8 @@ fn ssh_a_python_module_s_result_is_never_evaluated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Ctrl-C during a real ssh run exits 99 and leaves the host with no surviving task, which
-/// nothing else proves at the CLI level.
-///
-/// It does **not** isolate `AgentLink::stop_batch`'s own forward to `cancel`: the CLI process
-/// exiting drops the link, and `local_transport.rs::dropping_the_link_lets_the_agent_stop_its_task`
-/// proves the agent kills its process group on a dropped connection alone, so this test would
-/// still pass even if `stop_batch`'s forward did nothing at all.
-/// `executor::run::tests::a_real_link_s_stop_batch_forward_reaches_the_agent` is the one that
-/// isolates the forward, against a real agent, with the link kept open until after the check.
-///
-/// What would make this red: exit 99 not printed, or the task surviving on the host after
-/// Ctrl-C - either is a regression this test catches, whichever piece caused it.
+/// Ctrl-C during a real ssh run exits 99 and leaves the host with no surviving task, which nothing
+/// else proves at the CLI level.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
@@ -852,23 +804,8 @@ fn remove_as_root(dir: &Path) {
         .status();
 }
 
-/// Every action plugin over a real ssh link, twice. The first pass writes five files and finds
-/// the package and the unit already as asked; the second finds everything in place. Each file is
-/// read back and compared byte for byte, and its mode, which the play sets so the host's umask
-/// cannot decide it.
-///
-/// Measured on ansible-core 2.19.12, `-c local`, on the reference-comparable subset of the play:
-/// eight tasks, seven backed by an action plugin and a `debug` reading the search path through
-/// `first_found`: `ok=8 changed=5` then `ok=8 changed=0`. The play's ninth task, a `shell` reading
-/// this engine's own agent cache, has no reference equivalent and does not run under it; it never
-/// changes anything (`changed_when: false`) so it does not move either count under Volant either.
-/// The `rendered.txt` template renders as `secret=<secret>\nline 1\nline 2\n` (`trim_blocks`, one
-/// trailing newline kept); `notes.txt` renders as quoted below.
-///
-/// What would make this red: a plugin that reports success without its last sub-task having
-/// written anything (a file missing or holding other bytes), a plugin that rewrites what is
-/// already there (a second pass with `changed` above 0), or a sub-task's result lost between two
-/// turns (a failed or unreachable count, or the deadline).
+/// Every action plugin over a real ssh link, twice. The first pass writes five files and finds the
+/// package and the unit already as asked; the second finds everything in place.
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_copy_and_template_converge_on_a_real_host() {
@@ -933,19 +870,8 @@ fn ssh_copy_and_template_converge_on_a_real_host() {
     remove_as_root(&dir);
 }
 
-/// After the play, the agents' caches on the host hold the union and nothing else: no file a
-/// task staged, taken or not, and no connection's staging directory. A rendered template often
-/// carries a secret, and a staged copy of it outliving its task is a copy nobody would ever
-/// remove; the rendered value is also looked for anywhere under `remote_tmp`.
-///
-/// The escalated tasks run an agent as root with a cache of its own, so there are two caches,
-/// and both are read. A file kept past its own task but removed with its connection's directory
-/// would not show here; the play's own `No staged file outlives its task` looks for that while
-/// the link is still open, and fails the run.
-///
-/// What would make this red: the agent keeping a staged file after its module ran (that task
-/// fails), or keeping a connection's staging directory after the controller left (a `stage-*`
-/// entry beside the union).
+/// After the play, the agents' caches on the host hold the union and nothing else: no file a task
+/// staged, taken or not, and no connection's staging directory.
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_a_rendered_file_leaves_nothing_in_the_agent_cache() {
@@ -988,19 +914,8 @@ fn ssh_a_rendered_file_leaves_nothing_in_the_agent_cache() {
     remove_as_root(&dir);
 }
 
-/// Two inventory names for the one sshd, so two links, and two more for the escalated tasks,
-/// all on one account's caches. Both hosts copy the same file, which is the same staged blob on
-/// two links at once: each link stages its own copy, and both tasks succeed.
-///
-/// There is no trace of the wire to read, so this reads what the host keeps. The union's inode
-/// and mtime are taken after a first run and again after a second one: a union that either
-/// link's end, or the other agent's start, removed would come back as a new file, and so would
-/// one written again. A `put_blob` of the bytes already there is not visible here, since `store`
-/// returns before writing when the file already matches; `a_payload_travels_once_per_link` in
-/// `executor::run` counts those against a scripted agent.
-///
-/// What would make this red: a copy that fails on one of the two links, or the union written
-/// again, or removed and re-sent, on the second run.
+/// Two inventory names for the one sshd, so two links, and two more for the escalated tasks, all on
+/// one account's caches.
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_two_links_reuse_the_union_the_host_holds() {
@@ -1062,19 +977,8 @@ fn assert_the_pinned_collections_are_installed() {
     );
 }
 
-/// Two collection modules over a real ssh link, twice: `ansible.posix.sysctl` writing its file
-/// only (`sysctl_set` and `reload` both false) and `community.general.ini_file`. The host's
-/// pythons have no ansible-core, so both modules and every `module_utils` they import came in the
-/// run's union; the first pass changes both files and the second finds them in place.
-///
-/// The value written is the opposite of the kernel's own, so a `sysctl -w` that ran anyway would
-/// either fail the task (this account cannot write `/proc/sys`) or move the value read back.
-/// `test.ini` is 23 bytes: the size recorded for the same section, option and value by the
-/// collection golden, measured on ansible-core 2.19.12 with community.general 13.4.0.
-///
-/// What would make this red: a collection module reached by its short name, or missing from the
-/// union (a failed task, since no host python could import it); a module that reports `changed`
-/// without writing (a file missing or holding something else); a second pass above 0.
+/// Two collection modules over a real ssh link, twice: `ansible.posix.sysctl` writing its file only
+/// (`sysctl_set` and `reload` both false) and `community.general.ini_file`.
 #[test]
 #[ignore = "needs sshd on localhost and the pinned collections, run through just ssh-test"]
 fn ssh_a_collection_module_runs_from_the_union() {
@@ -1160,20 +1064,6 @@ fn files_under(root: &Path) -> Vec<String> {
 
 /// `fetch` over a real ssh link, with and without `flat`, with and without `become`, twice, then
 /// the relative `src` that climbs out of `dest`, with and without `become`, refused both times.
-///
-/// Measured on ansible-core 2.19.12 against a separate host: `src:
-/// ../../../../../../../../tmp/<path>` without `flat` was written on the controller at
-/// `/tmp/<path>`, outside `dest`, because the reference checks containment before it has built
-/// the path. Here the host is the controller, so the file the host would send and the place the
-/// reference would write are the same file: the marker. It is planted root-only, so the escalated
-/// task can read it and this account cannot: a fetch that climbed out would find no local sum to
-/// compare, write its copy beside the marker and rename it over, and the marker would no longer
-/// be root's. The two escalated fetches of a root-only file are what prove `become` took effect.
-///
-/// What would make this red: the climbing path written (the marker replaced, or a temporary file
-/// beside it), or refused for another reason (the sentence); a file written anywhere under `dest`
-/// but where the reference puts it; a fetch that reports `changed` without writing the host's
-/// bytes; a second pass above 0.
 #[test]
 #[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
 fn ssh_fetch_writes_under_dest_and_nowhere_else() {
@@ -1403,10 +1293,8 @@ impl Drop for Cleanup<'_> {
     }
 }
 
-/// A cleanup whose `ssh` cannot even start returns from its drop, saying so, rather than
-/// panicking, which during a panic's unwind would abort the test before its message is shown.
-///
-/// What would make this red: any `unwrap` or `expect` back on the cleanup's path.
+/// A cleanup whose `ssh` cannot even start returns from its drop, saying so, rather than panicking,
+/// which during a panic's unwind would abort the test before its message is shown.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_cleanup_that_cannot_run_returns_from_its_drop() {
@@ -1915,11 +1803,6 @@ fn compare_native_runs(tag: &str) -> Vec<String> {
 
 /// Every native answers inside its subset what its Python module answers, on a real host, under
 /// `become`: `ssh/natives.yml`'s `native` cases, run once natives on and once off.
-///
-/// What would make this red: a native answering a key, a value, a message or a mode the Python
-/// module does not, or leaving a file, a unit or an account otherwise; a native disabled, or
-/// handing back where its index says it answers (the path); an agent that answers natively a
-/// task the controller told it to run in Python (`force_python`, natives off).
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
@@ -1933,15 +1816,8 @@ fn ssh_natives_match_python_on_a_real_host() {
     );
 }
 
-/// Just outside its subset, each native hands the task back and the Python module answers, with
-/// the host in the state Python alone leaves it: `ssh/natives.yml`'s `fallback` cases (a link, a
-/// package no archive has, `remote_src`, `backrefs`, a password, ...), run once natives on and
-/// once off, their read-backs compared. `service_facts` has no case: it takes no argument, and
-/// hands back only on a host outside its subset.
-///
-/// What would make this red: a native answering outside its subset (the path, or a result that
-/// differs), or changing the host before it hands back, so that the Python module meets another
-/// state and answers or leaves something else.
+/// Just outside its subset each native hands the task back, and the Python module leaves the host
+/// as Python alone would.
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
@@ -1974,9 +1850,6 @@ const TWENTY_COPIES: &str = r#"- hosts: all
 
 /// Twenty `copy` tasks that each change a file are twenty native `copy` sub-tasks on a real host.
 /// The time the profile gives them is printed, not asserted.
-///
-/// What would make this red: the native `copy` disabled, or handing back where the plugin stages
-/// its source on this host (a staging directory on another file system, for instance).
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
@@ -2039,13 +1912,8 @@ fn ssh_twenty_copies_take_the_native_path() {
     );
 }
 
-/// Two inventory names for one machine are two hosts, each with a shared connection of its own:
-/// one control master per name, left in the control directory for `ControlPersist` after the run.
-/// `XDG_RUNTIME_DIR` points that directory under a short `/tmp` path of this test's own, where a
-/// socket path stays under the 104 bytes a Unix socket allows.
-///
-/// What would make this red: no sharing (no socket), or one master keyed by the address alone and
-/// shared by both names (one socket).
+/// Two inventory names for one machine are two hosts, each with a shared connection of its own: one
+/// control master per name, left in the control directory for `ControlPersist` after the run.
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]

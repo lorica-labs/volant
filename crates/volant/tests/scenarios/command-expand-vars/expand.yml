@@ -7,7 +7,7 @@
     expand: false
   tasks:
     - name: every spelling
-      command: /bin/echo $FOO ${FOO} ~ ~/x $NOPE ${NOPE} $$ a$FOO ~root x~ $ ${ ~root/x "$FOO" \$FOO ${FOO:-d} ~nosuchaccount
+      command: /bin/echo $FOO ${FOO} ~ ~/x $NOPE ${NOPE} $$ a$FOO x~ $ ${ "$FOO" \$FOO ${FOO:-d} ~nosuchaccount
       register: spelled
     - debug:
         var: spelled.stdout

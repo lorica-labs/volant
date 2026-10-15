@@ -9,7 +9,7 @@ use crate::playbook::PlayTask;
 use crate::render::{Dump, ERROR_KEY, ErrorBlock};
 
 use super::coordinator::Event;
-use super::run::{classify, empty_loop_result, loops, registered_value};
+use super::run::{RetryLine, classify, empty_loop_result, loops, registered_value};
 
 /// Sends the result lines of one task and its `TaskDone`. Returns the result a rescue would be
 /// given as `ansible_failed_result` when the task failed for good, and `None` when it did not:
@@ -20,8 +20,8 @@ use super::run::{classify, empty_loop_result, loops, registered_value};
 /// `rescue` around this step takes a failure here, which is what tells a `fatal:` line that
 /// counts `failed` from one that counts `rescued`.
 ///
-/// `retries` is parallel to `results` too: the `retries left` counts of the attempts that item
-/// needed, in order. They are sent from here rather than as they happen because the reference
+/// `retries` is parallel to `results` too: the retry lines of the attempts that item needed, in
+/// order. They are sent from here rather than as they happen because the reference
 /// prints each item's retry lines directly in front of that item's own result line - measured
 /// with a loop whose first item passed and whose second needed two attempts.
 ///
@@ -44,7 +44,7 @@ pub(super) async fn report_task(
     results: &[(Option<Value>, TaskResult)],
     labels: &[Option<String>],
     ignored: &[Option<bool>],
-    retries: &[Vec<u32>],
+    retries: &[Vec<RetryLine>],
     names: &[String],
     dump: Dump,
     rescuable: bool,
@@ -63,14 +63,16 @@ pub(super) async fn report_task(
     let mut failure_stands = false;
     let mut any_failed = false;
     let mut first_failure: Option<TaskResult> = None;
-    for (i, (_element, r)) in results.iter().enumerate() {
-        for left in retries.get(i).into_iter().flatten() {
+    for (i, (element, r)) in results.iter().enumerate() {
+        for (left, attempt) in retries.get(i).into_iter().flatten() {
             let _ = tx
                 .send(Event::Retrying {
                     host: host.to_string(),
                     index,
                     name: names.get(i).cloned().unwrap_or_else(|| task.name.clone()),
                     left: *left,
+                    result: attempt.clone(),
+                    censored,
                 })
                 .await;
         }
@@ -84,13 +86,21 @@ pub(super) async fn report_task(
         let error = r
             .failed()
             .then(|| ErrorBlock::of(r, task.origin.as_ref(), censored));
+        // A loop item's line shows the loop's own keys, as its registered result holds them:
+        // measured on ansible-core 2.19.12 for a failed item and an `assert`'s, on the agent path
+        // and the controller side alike. The `_ansible_` keys stay for the renderer to read.
+        let mut shown = r.clone();
+        shown.0.remove(ERROR_KEY);
+        if is_loop && let Some(element) = element {
+            item_keys(task, &mut shown.0, element);
+        }
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),
                 index,
                 label,
                 outcome,
-                result: without_error(r),
+                result: shown,
                 dump,
                 show: true,
                 counts: !is_loop,
@@ -120,7 +130,12 @@ pub(super) async fn report_task(
             // skipped - measured, `geerlingguy.git : Build git.` with a false `when` prints its
             // two item lines and then `skipping: [host]`. An ok, changed or failed loop still
             // shows nothing here: the item lines (and `...ignoring`) carry the message alone.
-            let show = aggregate.skipped();
+            //
+            // A failed `debug` loop is the exception, measured: `_clean_results` strips a `debug`
+            // result with a `msg` down to that `msg`, `results` included, so the callback no
+            // longer sees a loop and prints `fatal: [h]: FAILED! => {"msg": "One or more items
+            // failed"}` after the items. A `no_log` one has no `msg` left to keep, and no line.
+            let show = aggregate.skipped() || (dump == Dump::Debug && any_failed && !censored);
             (aggregate, show)
         };
         let outcome = classify(&aggregate, !failure_stands, rescuable);
@@ -138,7 +153,7 @@ pub(super) async fn report_task(
                 label: None,
                 outcome,
                 result: aggregate,
-                dump: Dump::No,
+                dump,
                 show,
                 counts: true,
                 censored,
@@ -160,11 +175,28 @@ pub(super) async fn report_task(
     }
 }
 
-/// `r` without the error block's message the executor left on it: nobody registers or rescues it.
+/// `r` as it is registered or handed to a rescue: without the error block's message the executor
+/// left on it, and without the `_ansible_` keys, which the reference strips on the way too
+/// (measured: a registered `debug` holds `msg`, `failed` and `changed` alone).
 pub(super) fn without_error(r: &TaskResult) -> TaskResult {
     let mut r = r.clone();
     r.0.remove(ERROR_KEY);
+    r.0.retain(|k, _| !k.starts_with("_ansible_"));
     r
+}
+
+/// The keys the reference adds to a loop item's result: the item under the loop's variable name,
+/// and that name under `ansible_loop_var`.
+pub(super) fn item_keys(
+    task: &PlayTask,
+    result: &mut serde_json::Map<String, Value>,
+    element: &Value,
+) {
+    result.insert(task.loop_var.clone(), element.clone());
+    result.insert(
+        "ansible_loop_var".into(),
+        Value::from(task.loop_var.clone()),
+    );
 }
 
 #[cfg(test)]

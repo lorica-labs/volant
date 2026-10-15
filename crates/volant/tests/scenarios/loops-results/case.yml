@@ -1,0 +1,3 @@
+# A loop item's line carries the loop's keys and a Python label, and a failed debug loop ends with
+# the reference's aggregate line.
+args: [loops.yml]

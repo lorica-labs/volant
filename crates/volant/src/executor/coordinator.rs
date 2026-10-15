@@ -107,6 +107,10 @@ pub(super) enum Event {
         index: usize,
         name: String,
         left: u32,
+        /// The attempt that failed, for the `Result was:` the line may carry.
+        result: TaskResult,
+        /// The task's `no_log`.
+        censored: bool,
     },
     /// One `[WARNING]` a step produced: an `environment` layer that did not render to a mapping,
     /// or a line the agent asked to show while the step's batch was running. Queued behind the
@@ -743,10 +747,15 @@ fn header(step: &Step, name: &str, out: &mut Renderer) {
 /// ignored, so both event loops can hand it whatever they hold.
 fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     if let Event::Retrying {
-        host, name, left, ..
+        host,
+        name,
+        left,
+        result,
+        censored,
+        ..
     } = &event
     {
-        out.retrying(host, name, *left);
+        out.retrying(host, name, *left, result, *censored);
         return;
     }
     if let Event::Warning {

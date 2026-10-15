@@ -1,0 +1,3 @@
+# Every item of a loop runs after one fails, an empty loop is skipped, and a registered debug
+# carries changed and failed.
+args: [loops-edge.yml]

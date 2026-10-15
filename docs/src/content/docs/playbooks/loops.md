@@ -75,6 +75,5 @@ A looping task retries each item on its own and finishes one item's attempts bef
 
 ## Differences from Ansible
 
-- A retried controller-side task prints the ordinary result and failure message. Ansible uses a format of its own there: `Action failed:`, a `Result was:` line per retry and a `retries` key in the result.
 - An `until` expression that cannot be evaluated is reported with the reference's prefix and Volant's own message, the same way a failing `when` is.
 - `FAILED - RETRYING` for a task inside a role shows the task's own name rather than `role : name`.

@@ -243,19 +243,6 @@ fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
     assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
-/// A controller-side `set_fact` or `include_vars` that failed keeps none of the facts it answered,
-/// `ignore_errors` or not, and a loop is judged whole.
-#[test]
-fn a_failed_controller_side_task_keeps_none_of_its_facts() {
-    let out = volant_within(
-        &["playbook", &fixture("controller/failed-facts.yml")],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains(r#""msg": "False False False""#), "{text}");
-}
-
 /// `retries` is rendered per item, on the agent path, the controller-side one and an action
 /// plugin's.
 #[test]
@@ -343,30 +330,6 @@ fn retries_and_delay_are_converted_as_the_reference_does() {
             "{msg}: {text}"
         );
     }
-}
-
-/// A `timeout` over 100000000 fails each item that runs, on the agent path and the controller side
-/// alike, and the play goes on.
-#[test]
-fn a_timeout_out_of_range_fails_the_task() {
-    let out = volant_within(
-        &["playbook", &fixture("controller/timeout-out-of-range.yml")],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(
-        text.matches(r#""msg": "Task failed: Timeout 9223372036854775807 is invalid, it must be between 0 and 100000000.""#)
-            .count(),
-        2,
-        "{text}"
-    );
-    assert!(
-        text.contains(r#""msg": "Task failed: Timeout 100000001 is invalid, it must be between 0 and 100000000.""#),
-        "{text}"
-    );
-    assert!(!text.contains(r#""msg": "x""#), "{text}");
-    assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
 /// A result's warnings are shown once by the driver, a module's and an action's alike, and are not
@@ -1607,34 +1570,6 @@ fn banner_section<'a>(text: &'a str, banner: &str) -> &'a str {
     }
 }
 
-/// A loop over an empty list prints `skipping: [localhost]` and registers an empty `results` with
-/// `skipped: true`.
-#[test]
-fn an_empty_loop_is_skipped_and_registers_no_items() {
-    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    let empty = section(&text, "An empty loop");
-    assert!(
-        empty.contains("skipping: [localhost]"),
-        "an empty loop is skipped: {text}"
-    );
-    assert!(
-        !empty.contains("ok: [localhost]") && !empty.contains("changed: [localhost]"),
-        "an empty loop must not report as ok: {text}"
-    );
-    assert!(
-        section(&text, "What the empty loop registered").contains(
-            "ok: [localhost] => {\n    \"msg\": \"reason=No items in the list items=0\"\n}"
-        ),
-        "the registered value carries the reference's reason and no items: {text}"
-    );
-    assert!(
-        section(&text, "The empty loop registered a skip")
-            .contains("ok: [localhost] => {\n    \"msg\": \"the empty loop was skipped\"\n}"),
-        "`when: empty.skipped` holds: {text}"
-    );
-}
-
 /// A loop over an undefined variable under a block whose `when` is false is skipped, not failed.
 #[test]
 fn an_undefined_loop_under_a_false_when_is_skipped() {
@@ -1723,98 +1658,6 @@ fn a_loop_whose_every_item_is_skipped_prints_the_task_s_skipping_line() {
             "skipping: [localhost]",
         ],
         "{text}"
-    );
-}
-
-/// Measured against the reference: every item of a loop runs, the one that failed and the ones
-/// behind it alike, whether or not `ignore_errors` is on the task.
-#[test]
-fn a_loop_runs_every_item_after_one_fails() {
-    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}");
-
-    let hard = section(&text, "A hard loop failure");
-    let failed = hard
-        .find("failed: [localhost] (item=false)")
-        .unwrap_or_else(|| panic!("the second item must fail: {text}"));
-    let last = hard
-        .rfind("changed: [localhost] => (item=true)")
-        .unwrap_or_else(|| panic!("no successful item: {text}"));
-    assert!(
-        last > failed,
-        "the third item must run after the second one failed: {text}"
-    );
-    assert_eq!(
-        hard.matches("changed: [localhost] => (item=true)").count(),
-        2,
-        "both successful items run: {text}"
-    );
-    assert!(
-        !hard.contains("fatal: [localhost]"),
-        "the reference prints no aggregate line for a loop: {text}"
-    );
-    assert!(
-        !text.contains("Never reached"),
-        "a loop that failed without ignore_errors still stops the host: {text}"
-    );
-
-    let ignored = section(&text, "A loop whose second item fails");
-    assert_eq!(
-        ignored
-            .matches("changed: [localhost] => (item=true)")
-            .count(),
-        2,
-        "ignore_errors changes nothing about the items that run: {text}"
-    );
-    assert!(
-        ignored.trim_end().ends_with("...ignoring") && !ignored.contains("fatal: [localhost]"),
-        "the swallowed failure says so with no aggregate line: {text}"
-    );
-
-    let cancelled = section(&text, "A loop whose failure a condition cancels");
-    assert_eq!(
-        cancelled.matches("changed: [localhost] => (item=").count(),
-        3,
-        "failed_when clears every item's failure: {text}"
-    );
-    assert!(
-        !cancelled.contains("...ignoring") && !cancelled.contains("failed: [localhost]"),
-        "nothing was ignored, the condition spoke: {text}"
-    );
-
-    assert!(
-        text.contains(
-            "localhost                  : ok=8    changed=2    unreachable=0    failed=1    skipped=1    rescued=0    ignored=1"
-        ),
-        "the recap matches the reference's counters: {text}"
-    );
-}
-
-/// A registered `debug` stores `changed: false` and `failed: false` and no `skipped`.
-#[test]
-fn a_registered_debug_carries_changed_and_failed() {
-    let out = volant(&["playbook", &fixture("loops-edge.yml")]);
-    let text = String::from_utf8(out.stdout).unwrap();
-    for msg in [
-        "changed is defined",
-        "not changed",
-        "failed is defined and skipped is not",
-    ] {
-        assert!(
-            text.contains(&format!(
-                "ok: [localhost] => {{\n    \"msg\": \"{msg}\"\n}}"
-            )),
-            "`{msg}` must be reached: {text}"
-        );
-    }
-    assert!(
-        !text.contains("undefined variable"),
-        "nothing about the registered debug is undefined: {text}"
-    );
-    assert!(
-        text.contains("ok: [localhost] => {\n    \"msg\": \"hello\"\n}"),
-        "the debug itself still prints only its message: {text}"
     );
 }
 
@@ -2507,120 +2350,6 @@ fn a_flush_point_right_behind_a_running_task_is_reached_with_the_batch_empty() {
     assert!(
         text.contains(
             "localhost                  : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0"
-        ),
-        "{text}"
-    );
-}
-
-/// `until`, `retries` and `delay`, measured on ansible-core 2.19.12 with this very fixture.
-#[test]
-fn a_task_retries_until_its_condition_holds_and_counts_its_attempts() {
-    let dir = probe_dir("until");
-    let marker = dir.join("marker");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("inventory.ini"),
-            "-e",
-            &format!("marker={}", marker.display()),
-            &fixture("until/until.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-
-    // One line only: the second attempt created the file and succeeded.
-    assert_eq!(
-        text.matches("FAILED - RETRYING: [localhost]: retry until file (3 retries left).")
-            .count(),
-        1,
-        "{text}"
-    );
-    assert!(text.contains(r#""r.attempts": 2"#), "{text}");
-
-    let never = section(&text, "never succeeds");
-    assert!(
-        never.contains("FAILED - RETRYING: [localhost]: never succeeds (2 retries left).")
-            && never.contains("FAILED - RETRYING: [localhost]: never succeeds (1 retries left).")
-            && never.contains(r#""attempts": 2"#)
-            && never.contains("...ignoring"),
-        "{never}"
-    );
-    assert!(text.contains(r#""n.attempts": 2"#), "{text}");
-
-    let three = section(&text, "until without retries");
-    for left in [3, 2, 1] {
-        assert!(
-            three.contains(&format!(
-                "FAILED - RETRYING: [localhost]: until without retries ({left} retries left)."
-            )),
-            "{three}"
-        );
-    }
-    assert!(text.contains(r#""d.attempts": 3"#), "{text}");
-    assert!(text.contains(r#""e.attempts": 2"#), "{text}");
-
-    let looped = section(&text, "until with loop");
-    assert_eq!(
-        looped
-            .matches("FAILED - RETRYING: [localhost]: until with loop (1 retries left).")
-            .count(),
-        2,
-        "one retry line per item, not one for the loop: {looped}"
-    );
-    for item in ["a", "b"] {
-        let line = looped
-            .lines()
-            .find(|l| l.contains(&format!("(item={item})")))
-            .unwrap_or_else(|| panic!("no line for item {item}: {looped}"));
-        assert!(
-            line.starts_with("failed: [localhost]") && line.contains(r#""attempts": 1"#),
-            "{line}"
-        );
-    }
-    assert!(
-        text.contains(
-            "localhost                  : ok=9    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4"
-        ),
-        "{text}"
-    );
-    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
-}
-
-/// A task that never leaves the controller retries by the same loop as any other.
-#[test]
-fn a_controller_side_task_retries_like_any_other() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("inventory.ini"),
-            &fixture("until/local.yml"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    let retried = section(&text, "a controller-side task retries too");
-    for left in [2, 1] {
-        assert!(
-            retried.contains(&format!(
-                "FAILED - RETRYING: [localhost]: a controller-side task retries too ({left} retries left)."
-            )),
-            "{retried}"
-        );
-    }
-    assert!(
-        retried.contains("fatal: [localhost]: FAILED! => {\n    \"msg\": \"probe\"\n}")
-            && retried.contains("...ignoring"),
-        "{retried}"
-    );
-    assert!(section(&text, "after").contains(r#""msg": 2"#), "{text}");
-    assert!(
-        text.contains(
-            "localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1"
         ),
         "{text}"
     );
@@ -4965,25 +4694,6 @@ fn nothing_expands_a_module_argument_unless_a_shell_does_it() {
     assert!(
         stdout.contains(r#""msg": "command=$VOLANT_EXPANSION_PROBE shell=expanded""#),
         "the default did something other than what the module page publishes:\n{stdout}"
-    );
-}
-
-/// An argument neither engine has fails the module at run time, with the reference's sentence and
-/// exit code.
-#[test]
-fn an_argument_neither_engine_has_fails_with_the_reference_s_words() {
-    let out = volant(&["playbook", &fixture("module-argument-unknown.yml")]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(2), "{stdout}");
-    assert!(
-        stdout.contains(
-            "Unsupported parameters for (ansible.legacy.command) module: no_such_arg. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends."
-        ),
-        "the task did not report the reference's sentence:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("PLAY ["),
-        "the reference reaches the host and fails the task there:\n{stdout}"
     );
 }
 

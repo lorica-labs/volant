@@ -81,7 +81,9 @@ pub(super) async fn report_task(
         }
         any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
-        let error = r.failed().then(|| ErrorBlock::of(r, task.origin.as_ref()));
+        let error = r
+            .failed()
+            .then(|| ErrorBlock::of(r, task.origin.as_ref(), censored));
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),

@@ -26,6 +26,8 @@ Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true
 
 `no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on every line it would have shown and at every verbosity level. That covers the `ok:` and `changed:` lines, `fatal:`, `UNREACHABLE!`, each loop item's line, and `debug` output. A loop item's label becomes `(censored due to no_log)`.
 
+The `[ERROR]:` block printed above a failure keeps its prefix, such as `Task failed: Action failed:`, and shows `<error censored due to no log>` in place of the message. Here Volant differs from `ansible-playbook` 2.19.12, which censors only an unreachable host's reason and prints a failed task's message in full, so a secret in a `fail` message reaches the terminal.
+
 The task banner and the task's name are not hidden. The registered variable and the recap keep the real result, so a later task can still read it.
 
 ## Differences from Ansible

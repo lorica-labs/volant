@@ -2994,14 +2994,6 @@ fn a_refused_escalation_hands_its_fork_back_before_waiting() {
 }
 
 /// A `notify` naming nothing stops the run with the reference's own sentence and exit 1.
-///
-/// Measured on ansible-core 2.19.12: that text, exit **1** and no recap. The one divergence is
-/// the moment - the reference prints the notifying task's banner first and refuses while running
-/// it, this refuses before the first connection, so nothing has run at all.
-///
-/// What would make this red: exit 4, which is what an unloadable playbook gets and what a
-/// refusal raised without its own code would be; or the run going ahead with a `notify` nobody
-/// answers, which is a playbook asking for work that never happens.
 #[test]
 fn an_unknown_handler_is_refused_with_exit_1() {
     let out = volant_within(
@@ -3056,16 +3048,8 @@ fn a_templated_ignore_errors_decides_on_tasks_and_include_statements() {
     );
 }
 
-/// A `notify` in an included file naming a handler the play does not have ends the run, in the
-/// words the pre-flight uses for the same typo in the play itself: exit 1, no recap, and the
-/// task's `ignore_errors: true` or a `rescue:` around the statement changes nothing. The included
-/// file is read once the host reaches the statement, so the pre-flight never saw it. Read off
-/// ansible-core 2.19.12's strategy, which raises the sentence as an `AnsibleError` with
-/// `ERROR_ON_MISSING_HANDLER` on, its default.
-///
-/// What would make this red: the name resolved to nothing and dropped, which runs no handler and
-/// exits 0; or the typo reported as a failure of the task, which `ignore_errors` and a `rescue`
-/// then swallow, and the run exits 0 all the same.
+/// A `notify` in an included file naming no handler ends the run at exit 1, whatever
+/// `ignore_errors` or a `rescue` says.
 #[test]
 fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
     for playbook in ["include/notify-typo.yml", "include/notify-typo-rescue.yml"] {
@@ -3095,12 +3079,7 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
 }
 
 /// A task that failed notifies nothing, so its misspelt handler is never looked up: the reference
-/// searches for a handler in the ok branch of `_process_pending_results` alone. A failing
-/// `command` under `ignore_errors: true` in an included file prints `...ignoring` and the play
-/// goes on to exit 0.
-///
-/// What would make this red: the lookup made for a changed result whatever else it says, which
-/// ends a run the reference finishes, at exit 1.
+/// searches for a handler in the ok branch of `_process_pending_results` alone.
 #[test]
 fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
     let out = volant_within(
@@ -3120,12 +3099,8 @@ fn a_failed_task_s_misspelt_notify_does_not_end_the_run() {
     assert!(!text.contains("reloaded"), "{text}");
 }
 
-/// A templated `notify` in an included file is refused by name, as it is in the play, rather
-/// than looked up as a handler called `restart {{ svc }}`: the statement fails for the host that
-/// reached it, and nothing in the file runs.
-///
-/// What would make this red: the template-shape check missing from what an include is checked
-/// with, which ends the run as a missing handler once the task changes.
+/// A templated `notify` in an included file is refused by name, as it is in the play, rather than
+/// looked up as a handler called `restart {{ svc }}`: the statement fails for the host that...
 #[test]
 fn a_templated_notify_in_an_include_is_refused_by_name() {
     let out = volant_within(

@@ -2078,20 +2078,55 @@ mod tests {
         }
     }
 
+    /// Every `ansible_*` name this file reads is on the connections page, and the page lists no other.
+    #[test]
+    fn the_published_host_variables_are_the_ones_this_module_reads() {
+        let source = include_str!("transport.rs");
+        let mut read: Vec<&str> = source
+            .split("\"ansible_")
+            .skip(1)
+            .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
+            .filter(|name| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            })
+            .collect();
+        read.sort_unstable();
+        read.dedup();
+
+        let page = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/src/content/docs/hosts/connections.md"),
+        )
+        .expect("the connections page is in the repository");
+        let mut published: Vec<&str> = page
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `ansible_"))
+            .filter_map(|rest| rest.split_once('`').map(|(name, _)| name))
+            .filter(|name| !name.starts_with("become"))
+            .collect();
+        published.sort_unstable();
+        published.dedup();
+        assert_eq!(
+            published, read,
+            "the connections page and Transport::for_vars disagree about the host variables"
+        );
+    }
+
     /// What the host says, or the defaults when it says nothing, shapes the ssh command line.
     #[rstest]
     #[case::host_key_checking_off(json!({}), |d: &mut ConnectionDefaults| d.host_key_checking = false,
-        "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")]
+        &["-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"], None)]
     #[case::defaults_apply(json!({}), |d: &mut ConnectionDefaults| {
         d.remote_user = Some("ops".into());
         d.private_key = Some("/k".into());
-    }, "-l ops -i /k")]
-    #[case::host_beats_defaults(json!({"ansible_user": "me"}), |d: &mut ConnectionDefaults| d.remote_user = Some("ops".into()), "-l me")]
-    #[case::quoted_port(json!({"ansible_port": "2222"}), |_: &mut ConnectionDefaults| {}, "-p 2222")]
+    }, &["-l ops", "-i /k"], None)]
+    #[case::host_beats_defaults(json!({"ansible_user": "me"}), |d: &mut ConnectionDefaults| d.remote_user = Some("ops".into()), &["-l me"], None)]
+    #[case::quoted_port(json!({"ansible_port": "2222"}), |_: &mut ConnectionDefaults| {}, &["-p 2222"], Some(2222))]
     fn the_host_and_the_defaults_shape_the_ssh_command(
         #[case] vars: Value,
         #[case] tweak: fn(&mut ConnectionDefaults),
-        #[case] expected: &str,
+        #[case] fragments: &[&str],
+        #[case] port: Option<u16>,
     ) {
         let mut d = defaults();
         tweak(&mut d);
@@ -2099,10 +2134,10 @@ mod tests {
             panic!("expected ssh")
         };
         let text = target.ssh_argv("true").join(" ");
-        assert!(
-            expected.split(' ').all(|w| text.contains(w)),
-            "{expected}: {text}"
-        );
+        for fragment in fragments {
+            assert!(text.contains(fragment), "{fragment}: {text}");
+        }
+        assert_eq!(target.port, port);
         assert!(
             text.ends_with("web1 -- true"),
             "the inventory name is the address by default: {text}"

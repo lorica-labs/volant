@@ -5080,6 +5080,120 @@ mod tests {
         result.0.get("msg").and_then(Value::as_str).unwrap_or("")
     }
 
+    /// The order the package manager is picked in, and the reference's sentences when it cannot be.
+    #[tokio::test]
+    async fn the_package_manager_is_picked_in_the_reference_s_order_and_words() {
+        use crate::action_plugins::Kind;
+        let mut stop = watch::channel(false).1;
+        for (args, running, name) in [
+            (
+                json!({"name": "bash", "use": "nosuchmgr"}),
+                json!({}),
+                "nosuchmgr",
+            ),
+            (
+                json!({"name": "bash"}),
+                json!({"ansible_facts": {"pkg_mgr": "pacman"}}),
+                "pacman",
+            ),
+        ] {
+            let mut agent = FakeAgent::answering(Vec::new());
+            let (ran, _) = plugin_item(
+                Kind::Package,
+                args,
+                running,
+                &mut agent,
+                &python3(),
+                &mut stop,
+            )
+            .await;
+            let result = ran.expect("the item finished");
+            assert!(result.failed(), "{result:?}");
+            assert_eq!(
+                msg(&result),
+                format!("Could not find a matching action for the \"{name}\" package manager.")
+            );
+            assert!(agent.sent.is_empty(), "nothing is sent: {:?}", agent.sent);
+        }
+
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({"ansible_package_use": "dnf", "ansible_facts": {"pkg_mgr": "apt"}}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        assert!(!ran.expect("the item finished").failed());
+        let sent = batches_sent(&agent);
+        assert_eq!(sent.len(), 1, "{:?}", agent.sent);
+        assert_eq!(sent[0][0].module, "dnf", "the variable beats the facts");
+
+        let setup_failed = json!({
+            "failed": true,
+            "msg": "boom",
+            "ansible_facts": {"ansible_pkg_mgr": "apt"},
+        });
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, setup_failed).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert!(result.failed(), "{result:?}");
+        assert_eq!(
+            msg(&result),
+            "Failed to fetch ansible_pkg_mgr to determine the package action backend: boom"
+        );
+        assert!(
+            !result.0.contains_key("ansible_facts"),
+            "a filtered setup is never kept, failed or not: {result:?}"
+        );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+
+        let mut agent = FakeAgent::answering(
+            [
+                vec![state("ab", true)],
+                one_result(1, json!({"ansible_facts": {}, "changed": false})).to_vec(),
+            ]
+            .concat(),
+        );
+        let (ran, _) = plugin_item(
+            Kind::Package,
+            json!({"name": "bash"}),
+            json!({}),
+            &mut agent,
+            &python3(),
+            &mut stop,
+        )
+        .await;
+        let result = ran.expect("the item finished");
+        assert_eq!(
+            msg(&result),
+            "Could not detect a package manager. Try using the \"use\" option."
+        );
+        assert_eq!(batches_sent(&agent).len(), 1, "{:?}", agent.sent);
+    }
+
     /// A dnf task asks setup then runs its backend, or fails in the reference's words without dnf.
     #[tokio::test]
     async fn a_dnf_task_runs_the_backend_it_names_or_fails_in_the_reference_s_words() {
@@ -5650,13 +5764,6 @@ mod tests {
 
     /// A payload that could not be stored fails every task of the batch and leaves the host
     /// where it was.
-    ///
-    /// Driven through `run_agent_batch` itself, because the shape of the answer is the whole
-    /// finding: what would make this red is the storing error handed back as a batch error, which
-    /// the driver reads as the host being unreachable - no task line at all, no `rescue:`, no
-    /// `ignore_errors`, and a recap counting `unreachable` for a host whose native tasks would
-    /// have run perfectly well. The batch must also not go out: a host that could not be given
-    /// the payload has nothing to run.
     #[tokio::test]
     async fn a_payload_that_could_not_be_stored_fails_the_tasks_and_not_the_host() {
         let (_stop_tx, mut stop) = watch::channel(false);
@@ -5799,9 +5906,6 @@ mod tests {
 
     /// A task whose payload names a blob this link never confirmed is a controller bug, and it
     /// fails naming the hash rather than being sent for the host to fail on.
-    ///
-    /// What would make this red: the batch sent anyway, which asks the agent to run a module
-    /// out of a payload it was never given - a failure that reads as the module's.
     #[test]
     fn a_payload_naming_an_unsent_blob_fails_before_the_batch() {
         let mut memory = BlobMemory::default();
@@ -5829,10 +5933,6 @@ mod tests {
     }
 
     /// A batch refused for its payload puts none of its files on the host.
-    ///
-    /// What would make this red: the files staged before the payload is checked, which leaves a
-    /// staged file, a rendered template's secret among them, on a host that never runs the
-    /// module that would have consumed it.
     #[tokio::test]
     async fn a_batch_refused_for_its_payload_stages_nothing() {
         let blob = hello_blob();
@@ -6300,12 +6400,6 @@ mod tests {
 
     /// `attempts` is on the result before `changed_when` and `failed_when` read it, and still on
     /// it when a condition could not be evaluated. ansible-core 2.19.12 `task_executor.py` sets
-    /// it right after `failed` ("Make attempts and retries available early to allow their use in
-    /// changed/failed_when"), then binds the registered name, then applies the conditions.
-    ///
-    /// What would make this red: `attempts` set only after the conditions, which leaves
-    /// `r.attempts` undefined under `changed_when` and fails a task whose command passed on its
-    /// second run; or the failure a broken condition reports losing the count.
     #[test]
     fn changed_when_reads_the_attempt_it_judges() {
         let mut t = task("command");
@@ -6358,11 +6452,6 @@ mod tests {
 
     /// A run that hit the `timeout` keyword ends the task as it stands: no second run, no
     /// `attempts`, and `failed_when` never consulted. In ansible-core 2.19.12 the timeout is an
-    /// exception raised out of the whole attempt loop (`_task_timeout.TaskTimeoutError`, a
-    /// `BaseException`), so nothing after the handler's run executes.
-    ///
-    /// What would make this red: a timed-out run judged like any failure, which retries a task
-    /// the reference gives up on at once, or lets `failed_when: false` turn a timeout into a pass.
     #[test]
     fn a_timed_out_run_is_never_retried_nor_judged() {
         let mut t = task("command");
@@ -6769,13 +6858,6 @@ mod tests {
 
     /// A module's warnings are shown and stay on the registered result, a loop's gathered on the
     /// aggregate in item order; `pause` registers none. Measured on ansible-core 2.19.12 with a
-    /// `library/` module calling `module.warn("probe warning")`: `[WARNING]: probe warning` above
-    /// `ok:`, and `w` is `{"changed": false, "failed": false, "msg": "done", "warnings":
-    /// ["probe warning"]}`; over `loop: [1, 2]`, one `[WARNING]` line, `w.warnings` holds the
-    /// warning twice and no item has the key.
-    ///
-    /// What would make this red: the warnings left off the registered value, or left on each
-    /// item of a loop instead of the aggregate, or registered for `pause`.
     #[test]
     fn a_module_s_warnings_stay_on_its_registered_result() {
         let warned = || {
@@ -6826,14 +6908,7 @@ mod tests {
         assert!(w.get("warnings").is_none(), "{w}");
     }
 
-    /// A module's `WarningSummary` is registered and shown as the reference's brief message.
     /// Measured on ansible-core 2.19.12: `module.warn("probe warning")` arrives as
-    /// `{"event": {"msg": "probe warning", ...}, "__ansible_type": "WarningSummary"}` and is
-    /// registered as the string `probe warning` (`type_debug` says `str`). The chain rule is
-    /// read off `format_event_brief_message` and `concat_message`.
-    ///
-    /// What would make this red: the object shown and registered as its JSON, which prints
-    /// `[WARNING]: {"event":...}`; or a followed cause dropped, or one that is not followed kept.
     #[test]
     fn a_warning_summary_is_its_brief_message() {
         let summary = json!({
@@ -6913,13 +6988,6 @@ mod tests {
     }
 
     /// Gathered facts are untrusted, and they land under `ansible_facts` as well as flat.
-    ///
-    /// What would make this red: facts entered through `set_fact`, which trusts a managed
-    /// host's own words; or only the flat names written, which breaks
-    /// `ansible_facts['hostname']` - measurement 10 of plan 1.5, where `gather_facts: true`
-    /// followed by a `set_fact` of the same name leaves both readable: the flat name is masked
-    /// and the entry under `ansible_facts` is not. Or the namespace keyed by the name `setup`
-    /// returned, which keeps its `ansible_` prefix where ansible-core strips it.
     #[test]
     fn gathered_facts_are_untrusted_and_land_under_both_names() {
         let templar = Templar::new(PathBuf::from("."));

@@ -2419,21 +2419,20 @@ mod tests {
 
     /// A boundary is declared by the keyword table or found in the text, and neither covers the other.
     #[rstest]
-    #[case::plain(|_: &mut PlayTask| {}, false)]
-    #[case::run_once(|t: &mut PlayTask| t.run_once = Some(true), true)]
-    #[case::run_once_false(|t: &mut PlayTask| t.run_once = Some(false), false)]
-    #[case::delegated(|t: &mut PlayTask| t.delegate_to = Some("h3".into()), false)]
+    #[case::plain(|_: &mut PlayTask| {}, false, false)]
+    #[case::run_once(|t: &mut PlayTask| t.run_once = Some(true), true, false)]
+    #[case::run_once_false(|t: &mut PlayTask| t.run_once = Some(false), false, false)]
+    #[case::delegated(|t: &mut PlayTask| t.delegate_to = Some("h3".into()), false, false)]
+    #[case::hostvars_read(|t: &mut PlayTask| { t.args.insert("cmd".into(), json!("echo {{ hostvars['a'].x }}")); }, false, true)]
     fn a_keyword_declares_a_barrier_the_text_does_not(
         #[case] edit: fn(&mut PlayTask),
         #[case] barrier: bool,
+        #[case] reads: bool,
     ) {
         let mut t = task("command");
         edit(&mut t);
         assert_eq!(t.barrier(), barrier);
-        assert!(
-            !reads_across_hosts(&t),
-            "no keyword spells a cross-host name"
-        );
+        assert_eq!(reads_across_hosts(&t), reads);
     }
 
     /// A task that can write facts ends its batch; a module this release cannot vouch for does too.

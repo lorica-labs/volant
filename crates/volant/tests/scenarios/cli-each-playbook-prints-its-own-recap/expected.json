@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [The second playbook] *****************************************************\n\nTASK [Say it once more] ********************************************************\nchanged: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n\nPLAY [The second playbook] *****************************************************\n\nTASK [Say it once more] ********************************************************\nchanged: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

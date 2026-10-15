@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [Per host vars files] *****************************************************\n\nTASK [Show the colour] *********************************************************\nok: [one] => {\n    \"msg\": \"one is red\"\n}\nok: [two] => {\n    \"msg\": \"two is blue\"\n}\n\nPLAY RECAP *********************************************************************\none                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \ntwo                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

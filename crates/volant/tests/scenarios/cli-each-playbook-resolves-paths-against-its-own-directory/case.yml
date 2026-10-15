@@ -1,0 +1,2 @@
+# Each playbook resolves paths against its own directory.
+args: ["multi/first.yml", "multi/sub/second.yml"]

@@ -1,0 +1,9 @@
+- name: Per host vars files
+  hosts: web
+  gather_facts: false
+  vars_files:
+    - "vars/{{ tier }}.yml"
+  tasks:
+    - name: Show the colour
+      debug:
+        msg: "{{ inventory_hostname }} is {{ colour }}"

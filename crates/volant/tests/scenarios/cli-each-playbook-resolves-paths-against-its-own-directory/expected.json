@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [First] *******************************************************************\n\nTASK [Remember] ****************************************************************\nok: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n\nPLAY [Second] ******************************************************************\n\nTASK [Show both] ***************************************************************\nok: [localhost] => {\n    \"msg\": \"kept here\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

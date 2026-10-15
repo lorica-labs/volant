@@ -1,0 +1,2 @@
+# Extra vars and limit apply.
+args: ["-i", "cfg/hosts.ini", "-e", "colour=blue", "-l", "two", "cfg/site.yml"]

@@ -1,0 +1,15 @@
+- hosts: h1,h2
+  gather_facts: false
+  handlers:
+    - name: the handler
+      debug: msg="handler for {{ inventory_hostname }}"
+  tasks:
+    - name: both notify
+      command: "true"
+      changed_when: true
+      notify: the handler
+    - name: only h1 includes
+      include_tasks: flush-inc.yml
+      when: inventory_hostname == 'h1'
+    - name: after
+      debug: msg="after on {{ inventory_hostname }}"

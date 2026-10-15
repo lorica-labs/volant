@@ -112,6 +112,53 @@ pub struct Block {
 /// The task with nothing written on it, which is the outermost layer of every merge. It is
 /// `PlayTask::empty` and not a derived zero: `loop_var` defaults to `item` and a derived
 /// `Default` would leave it empty, which is a loop whose variable answers to no name.
+/// Where a task was written: its file and the line and column its mapping starts at, both counted
+/// from 1, as ansible-core's `Origin` names a task in a failure's error block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Origin {
+    pub path: std::sync::Arc<str>,
+    pub line: usize,
+    pub col: usize,
+}
+
+thread_local! {
+    /// The file being parsed and where its mappings start, while one is.
+    static ORIGINS: std::cell::RefCell<Option<(std::sync::Arc<str>, crate::yaml::Origins)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keeps a file's origins readable by [`task_origin`] until dropped, then puts back those of
+/// the file that was being parsed before, if any: an import parses inside its importer.
+struct OriginScope(Option<(std::sync::Arc<str>, crate::yaml::Origins)>);
+
+impl OriginScope {
+    fn enter(source: &str, origins: crate::yaml::Origins) -> Self {
+        let path = std::path::absolute(source)
+            .map_or_else(|_| source.to_string(), |p| p.display().to_string());
+        Self(ORIGINS.with(|o| o.replace(Some((path.into(), origins)))))
+    }
+}
+
+impl Drop for OriginScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        ORIGINS.with(|o| *o.borrow_mut() = previous);
+    }
+}
+
+/// Where `map` was written, when it comes from the file being parsed.
+fn task_origin(map: &saphyr::Mapping<'_>) -> Option<Origin> {
+    ORIGINS.with(|o| {
+        o.borrow().as_ref().and_then(|(path, origins)| {
+            origins.of(map).map(|(line, col)| Origin {
+                path: path.clone(),
+                line,
+                col,
+            })
+        })
+    })
+}
+
 impl Default for PlayTask {
     fn default() -> Self {
         PlayTask::empty()
@@ -195,6 +242,8 @@ pub struct PlayTask {
     /// order the YAML happened to yield: a task carrying two of them would otherwise blame
     /// whichever came first in the file.
     pub unsupported: Vec<&'static str>,
+    /// Where the task was written, for the `Origin:` of a failure's error block.
+    pub origin: Option<Origin>,
 }
 
 impl PlayTask {
@@ -244,6 +293,7 @@ impl PlayTask {
             delegate_facts: None,
             delegate_to: None,
             unsupported: Vec::new(),
+            origin: None,
         }
     }
 
@@ -569,7 +619,8 @@ pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
 /// roles and its `vars_files` are looked for beside that file and not beside the playbook the
 /// operator typed.
 fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Result<Playbook> {
-    let docs = crate::yaml::load(text, source)?;
+    let (docs, origins) = crate::yaml::load_with_origins(text, source)?;
+    let _origins = OriginScope::enter(source, origins);
     let Some(Yaml::Sequence(entries)) = docs.first() else {
         bail!("{source}: a playbook must be a list of plays");
     };
@@ -867,7 +918,8 @@ pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> 
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
-    let docs = crate::yaml::load(&text, &source)?;
+    let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
+    let _origins = OriginScope::enter(&source, origins);
     match docs.first() {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
         Some(node @ Yaml::Sequence(_)) => {
@@ -882,7 +934,8 @@ pub(crate) fn parse_handlers_file(path: &Path) -> anyhow::Result<Vec<HandlerTask
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
-    let docs = crate::yaml::load(&text, &source)?;
+    let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
+    let _origins = OriginScope::enter(&source, origins);
     match docs.first() {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
         Some(node @ Yaml::Sequence(_)) => {
@@ -1178,6 +1231,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         delegate_facts,
         delegate_to,
         unsupported,
+        origin: task_origin(map),
     })
 }
 
@@ -1415,6 +1469,27 @@ mod tests {
     /// The first task of the first play.
     fn first(pb: &Playbook) -> &PlayTask {
         tasks(&pb.plays[0])[0]
+    }
+
+    /// A task keeps where its mapping starts, as ansible-core's `Origin` gives it: measured,
+    /// `- name: plain fail` on line 5 is `p.yml:5:7`.
+    #[test]
+    fn a_task_keeps_the_line_and_column_it_was_written_at() {
+        let pb = parse(
+            "- hosts: h1\n  gather_facts: false\n  tasks:\n    - debug: msg=hello\n    - name: plain fail\n      command: \"false\"\n",
+            "p.yml",
+        )
+        .unwrap();
+        let origins: Vec<(usize, usize)> = tasks(&pb.plays[0])
+            .iter()
+            .map(|t| t.origin.as_ref().map(|o| (o.line, o.col)).unwrap())
+            .collect();
+        assert_eq!(origins, [(4, 7), (5, 7)]);
+        let path = tasks(&pb.plays[0])[0].origin.as_ref().unwrap().path.clone();
+        assert!(
+            path.ends_with("p.yml") && Path::new(&*path).is_absolute(),
+            "{path}"
+        );
     }
 
     const SAMPLE: &str = r"

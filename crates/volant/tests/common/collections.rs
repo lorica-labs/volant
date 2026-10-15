@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The collection version rule `golden.rs` and `ssh_e2e.rs` both apply before they run a
+//! The collection version rule `reference_modules.rs` and `ssh_e2e.rs` both apply before they run a
 //! collection module: what `golden/COLLECTIONS` pins, read back from a controller python.
 
 /// The versions `COLLECTIONS` pins: the three real collections, plus `netaddr`, which is not a
@@ -13,11 +13,11 @@ fn pinned_collections() -> Vec<(String, String)> {
         .collect()
 }
 
-/// What `generate.py`'s own `_installed_collections()` runs, in the interpreter's own words: a
-/// collection's version comes from its `MANIFEST.json`, found on one of `C.COLLECTIONS_PATHS`;
-/// `netaddr` is a plain import next to it. Kept in the interpreter this refuses to run without
-/// (`reference_python()`) rather than reimplemented in Rust, because a manifest's shape and a
-/// collection's path list are ansible-core's own to read.
+/// What the generator's own `_installed_collections()` (`run.py`) runs, in the interpreter's own
+/// words: a collection's version comes from its `MANIFEST.json`, found on one of
+/// `C.COLLECTIONS_PATHS`; `netaddr` is a plain import next to it. Kept in the interpreter this
+/// refuses to run without (`reference_python()`) rather than reimplemented in Rust, because a
+/// manifest's shape and a collection's path list are ansible-core's own to read.
 ///
 /// The tuple of names is built from `pinned_collections()` rather than written out a second time:
 /// `COLLECTIONS` gaining a fourth pin (or losing one) must not also require editing this string

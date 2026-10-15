@@ -14,8 +14,12 @@ changed: [alpha]
 skipping: [beta]
 
 TASK [Show what was said] ******************************************************
-ok: [alpha] => {"msg": "HELLO! on 8081"}
-ok: [beta] => {"msg": "BONJOUR! on 8080"}
+ok: [alpha] => {
+    "msg": "HELLO! on 8081"
+}
+ok: [beta] => {
+    "msg": "BONJOUR! on 8080"
+}
 
 TASK [Loop over servers] *******************************************************
 changed: [alpha] => (item={"name": "one"})
@@ -24,8 +28,18 @@ changed: [beta] => (item={"name": "one"})
 changed: [beta] => (item={"name": "two"})
 
 TASK [Loop summary] ************************************************************
-ok: [alpha] => {"looped.results | map(attribute='stdout') | list": ["one", "two"]}
-ok: [beta] => {"looped.results | map(attribute='stdout') | list": ["one", "two"]}
+ok: [alpha] => {
+    "looped.results | map(attribute='stdout') | list": [
+        "one",
+        "two"
+    ]
+}
+ok: [beta] => {
+    "looped.results | map(attribute='stdout') | list": [
+        "one",
+        "two"
+    ]
+}
 
 TASK [Remember] ****************************************************************
 ok: [alpha]
@@ -41,13 +55,21 @@ ok: [beta]
 
 TASK [Failing only on beta] ****************************************************
 changed: [alpha]
+[ERROR]: Task failed: Action failed.
+Origin: [fixtures]/vars/site.yml:43:7
+
+41       changed_when: false
+42
+43     - name: Failing only on beta
+         ^ column 7
+
 fatal: [beta]: FAILED! => {"changed": true, "cmd": ["echo", "2"], "delta": "[time]", "end": "[time]", "failed_when_result": true, "msg": "", "rc": 0, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "2", "stdout_lines": ["2"]}
 ...ignoring
 
 TASK [Undefined variable] ******************************************************
-fatal: [alpha]: FAILED! => {"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
+[ERROR]: Task failed: The task includes an option with an undefined variable. The error was: [engine message]"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
-fatal: [beta]: FAILED! => {"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
+[ERROR]: Task failed: The task includes an option with an undefined variable. The error was: [engine message]"msg": "Task failed: The task includes an option with an undefined variable. The error was: [engine message]"}
 ...ignoring
 
 PLAY RECAP *********************************************************************

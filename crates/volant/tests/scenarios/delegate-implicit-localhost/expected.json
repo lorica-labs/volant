@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [to an implicit localhost] ************************************************\nchanged: [h1 -> localhost]\n\nTASK [show] ********************************************************************\nok: [h1] => {\n    \"msg\": \"hi\"\n}\n\nTASK [skipped and delegated] ***************************************************\nskipping: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+}

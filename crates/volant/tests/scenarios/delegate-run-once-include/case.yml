@@ -1,0 +1,2 @@
+# A run_once include is read for the elected host alone.
+args: [-i, inv.ini, run-once-include.yml]

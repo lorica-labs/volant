@@ -1,0 +1,2 @@
+# include_tasks splices what each host asked for: static, dynamic, looped and missing files.
+args: [-i, inv.ini, include.yml]

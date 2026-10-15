@@ -1238,15 +1238,15 @@ mod unit {
         {
             let t = templar();
             let loop_text = r"{{
-              (
-                groups[server_group] | default([])
-                + groups[agent_group] | default([])
-              )
-              | map('extract', hostvars)
-              | selectattr('ansible_facts.default_ipv4', 'defined')
-              | map(attribute='ansible_facts.default_ipv4.address')
-              | flatten | unique | list
-            }}";
+          (
+            groups[server_group] | default([])
+            + groups[agent_group] | default([])
+          )
+          | map('extract', hostvars)
+          | selectattr('ansible_facts.default_ipv4', 'defined')
+          | map(attribute='ansible_facts.default_ipv4.address')
+          | flatten | unique | list
+        }}";
             let view = Arc::new(vars(json!({
                 "h1": {"ansible_facts": {"default_ipv4": {"address": "192.0.2.1"}}},
                 "h2": {"ansible_facts": {}},

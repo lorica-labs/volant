@@ -1,0 +1,3 @@
+# ANSIBLE_FORCE_HANDLERS=yes forces handlers as the flag does.
+args: [-i, inv.ini, handlers.yml]
+env: {"ANSIBLE_FORCE_HANDLERS": "yes"}

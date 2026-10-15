@@ -1,0 +1,2 @@
+# A run_once runner is elected among the hosts that reach the step.
+args: [-i, inv.ini, run-once-masked.yml]

@@ -1,0 +1,5 @@
+- name: imported one
+  debug: msg=one
+  tags: [own]
+- name: imported two
+  debug: msg=two

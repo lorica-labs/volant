@@ -1,0 +1,12 @@
+- hosts: localhost
+  gather_facts: false
+  handlers:
+    - name: the first handler
+      command: "true"
+      notify: the second handler
+    - name: the second handler
+      debug: msg=second-ran
+  tasks:
+    - name: notifies the first handler
+      command: "true"
+      notify: the first handler

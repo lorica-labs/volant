@@ -1,8 +1,8 @@
 # A test that hangs must end as a failure, not as a job that runs until the CI timeout. The
 # ssh tests talk to a real sshd and a stuck connection there has no deadline of its own.
 #
-# The goldens that need the recorded ansible-core, sudo, systemd and apt run in the `ssh` job
-# and in `just test-reference`, not on every local check: one of them takes 159 s.
+# The module goldens (`reference_modules`) need the recorded ansible-core, sudo, systemd, apt and
+# cron: they run in the `ssh` job and in `just test-reference`, not on every local check.
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 10 }
-default-filter = "not (test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names))"
+default-filter = "not binary(reference_modules)"

@@ -26,8 +26,12 @@ use std::time::Duration;
 mod collections;
 
 #[cfg(target_os = "linux")]
-#[path = "common/native_compare.rs"]
-mod native_compare;
+#[path = "common/compare.rs"]
+#[expect(dead_code, reason = "the reference tests use the rest")]
+mod compare;
+
+#[path = "common/process.rs"]
+mod process;
 
 /// The reasons the native `setup` hands back for a host outside its subset, the agent's own list.
 #[cfg(target_os = "linux")]
@@ -761,30 +765,14 @@ fn volant_within(args: &[&str], deadline: Duration) -> Output {
 /// process group of its own, and the deadline kills the whole group: its `ssh` children too, so
 /// the host's side of the session ends with it rather than running on.
 fn volant_env_within(args: &[&str], envs: &[(&str, &str)], deadline: Duration) -> Output {
-    use std::os::unix::process::CommandExt as _;
-    let child = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .process_group(0)
-        .args(args)
-        .envs(envs.iter().copied())
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let pid = child.id().to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    rx.recv_timeout(deadline).map_or_else(
-        |_| {
-            let _ = Command::new("kill")
-                .args(["-KILL", "--", &format!("-{pid}")])
-                .status();
-            panic!("volant did not finish within {deadline:?}, so a sub-task never came back");
-        },
-        Result::unwrap,
+    process::run_within(
+        Command::new(env!("CARGO_BIN_EXE_volant"))
+            .args(args)
+            .envs(envs.iter().copied())
+            .env("NO_COLOR", "1")
+            .env("ANSIBLE_HOST_KEY_CHECKING", "False"),
+        deadline,
+        None,
     )
 }
 
@@ -1097,7 +1085,7 @@ fn ssh_two_links_reuse_the_union_the_host_holds() {
 }
 
 /// Fails unless `VOLANT_PYTHON` sees every version `golden/COLLECTIONS` pins, on ansible-core's
-/// own `C.COLLECTIONS_PATHS` (which reads `ANSIBLE_COLLECTIONS_PATH`), the rule `golden.rs`
+/// own `C.COLLECTIONS_PATHS` (which reads `ANSIBLE_COLLECTIONS_PATH`), the rule `reference_modules.rs`
 /// applies to the collection golden. A collection read at another version, or not at all, would
 /// make the play below prove something about a module nobody recorded. `ssh-test` always sets
 /// `VOLANT_PYTHON`, so there is no skip.
@@ -1296,8 +1284,11 @@ fn ssh_fetch_writes_under_dest_and_nowhere_else() {
             ["esc.txt"],
             "{pass} pass, something was written beside the marker:\n{text}"
         );
+        // Each failure shows the refusal twice: in its result and in its `[ERROR]` line.
         assert_eq!(
-            text.matches(&refusal).count(),
+            text.lines()
+                .filter(|l| l.starts_with("[ERROR]: ") && l.contains(&refusal))
+                .count(),
             2,
             "{pass} pass, both climbing fetches are refused by name:\n{text}"
         );
@@ -1621,7 +1612,7 @@ fn native_play_source() -> serde_json::Value {
 fn native_play(tag: &str) -> (serde_json::Value, Vec<(String, serde_json::Value)>) {
     let mut play = native_play_source();
     let index: serde_json::Value =
-        serde_json::from_str(include_str!("golden/native/index.json")).unwrap();
+        serde_json::from_str(include_str!("golden/module/index.json")).unwrap();
     let mut cases = Vec::new();
     registered_cases(
         play[0]["tasks"].as_array_mut().unwrap(),
@@ -1678,7 +1669,7 @@ impl NativeRun<'_> {
         play: &serde_json::Value,
         tag: &str,
         side: Side,
-    ) -> (Output, native_compare::NativeProfile) {
+    ) -> (Output, compare::NativeProfile) {
         let mut line = self.machine.line("box", &self.remote_tmp);
         if side == Side::NoPython {
             line.push_str(" ansible_python_interpreter=/bin/false");
@@ -1710,7 +1701,7 @@ impl NativeRun<'_> {
             ],
             Duration::from_secs(280),
         );
-        (out, native_compare::native_profile(&profile, "box"))
+        (out, compare::native_profile(&profile, "box"))
     }
 }
 
@@ -1795,7 +1786,7 @@ fn check_no_python_run(
     cases: &[(String, serde_json::Value)],
     failures: &mut Vec<String>,
 ) {
-    use native_compare::{NativeProfile, check_native_path, failed_tasks, results_by_task};
+    use compare::{NativeProfile, check_native_path, failed_tasks, results_by_task};
     let (out, profile) = run.run(&no_python_play(raw, tag), tag, Side::NoPython);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let side = Side::NoPython.name();
@@ -1852,14 +1843,14 @@ fn check_no_python_run(
 /// their cleanup.
 #[cfg(target_os = "linux")]
 fn compare_native_runs(tag: &str) -> Vec<String> {
-    use native_compare::{
+    use compare::{
         NativeProfile, check_native_path, compare_native, failed_tasks, keep_live, native_result,
         redact_staged, replace_in_strings, results_by_task, same_names,
     };
     let machine = Machine::from_env();
     // Before the machine checks: another run holding the lock is between creating the accounts
     // and removing them.
-    let _lock = native_compare::native_lock();
+    let _lock = compare::native_lock();
     assert_machine_can_run_the_native_play(&machine);
     let pid = std::process::id();
     let run = NativeRun {
@@ -2071,7 +2062,7 @@ fn ssh_twenty_copies_take_the_native_path() {
     assert_eq!(out.status.code(), Some(0), "{text}");
     // The directory, the loop over the twenty files, and the removal.
     assert_recap(&text, "box", 3);
-    let profile = native_compare::native_profile(&profile, "box");
+    let profile = compare::native_profile(&profile, "box");
     let _ = std::fs::remove_dir_all(&local);
     let copies: Vec<&serde_json::Value> = profile
         .tasks

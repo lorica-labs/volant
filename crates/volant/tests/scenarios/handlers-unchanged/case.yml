@@ -1,0 +1,2 @@
+# A task that did not change notifies nothing.
+args: [unchanged.yml]

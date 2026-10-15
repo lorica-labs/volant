@@ -925,19 +925,19 @@ Architecture: amd64
     fn recorded(name: &str) -> Map<String, Value> {
         let text = match name {
             "apt-update-fresh" => {
-                include_str!("../../../volant/tests/golden/native/apt-update-fresh.json")
+                include_str!("../../../volant/tests/golden/module/apt-update-fresh.json")
             }
             "apt-present-installed" => {
-                include_str!("../../../volant/tests/golden/native/apt-present-installed.json")
+                include_str!("../../../volant/tests/golden/module/apt-present-installed.json")
             }
             "apt-present-list" => {
-                include_str!("../../../volant/tests/golden/native/apt-present-list.json")
+                include_str!("../../../volant/tests/golden/module/apt-present-list.json")
             }
             "apt-present-update-fresh" => {
-                include_str!("../../../volant/tests/golden/native/apt-present-update-fresh.json")
+                include_str!("../../../volant/tests/golden/module/apt-present-update-fresh.json")
             }
             "apt-absent-missing" => {
-                include_str!("../../../volant/tests/golden/native/apt-absent-missing.json")
+                include_str!("../../../volant/tests/golden/module/apt-absent-missing.json")
             }
             _ => unreachable!("{name}"),
         };

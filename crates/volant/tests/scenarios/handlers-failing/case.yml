@@ -1,0 +1,2 @@
+# A failing handler fails the host, and the handlers behind it do not run.
+args: [failing.yml]

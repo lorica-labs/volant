@@ -22,6 +22,128 @@ pub enum Dump {
     Whole,
 }
 
+/// What the reference's callback prints in front of a failure's line: `[ERROR]: ` and the
+/// failure's message, then, when the task's file is known, `Origin: <file>:<line>:<col>` and the
+/// task's lines with a column marker (`_error_utils.SourceContext`, ansible-core 2.19.12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorBlock {
+    pub message: String,
+    pub origin: Option<crate::playbook::Origin>,
+}
+
+impl ErrorBlock {
+    /// The block of a failed result: the message the executor settled on, or `Task failed: ` and
+    /// the result's `msg` for a failure that never went through it.
+    pub fn of(result: &TaskResult, origin: Option<&crate::playbook::Origin>) -> Self {
+        let message = result
+            .0
+            .get(ERROR_KEY)
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| task_failed(&message_of(result)), str::to_string);
+        Self {
+            message,
+            origin: origin.cloned(),
+        }
+    }
+
+    /// The block of a host the task could not reach: its message is the reason, which the
+    /// reference words `Task failed: ...` too.
+    pub fn unreachable(msg: &str, origin: Option<&crate::playbook::Origin>) -> Self {
+        Self {
+            message: task_failed(msg),
+            origin: origin.cloned(),
+        }
+    }
+}
+
+/// The key the executor leaves the error block's message under on a failed result. Taken off
+/// before the result is shown, registered or handed to a `rescue`.
+pub const ERROR_KEY: &str = "_volant_error";
+
+fn message_of(result: &TaskResult) -> String {
+    match result.0.get("msg") {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+        Some(serde_json::Value::String(_)) | None => "Unknown error.".to_string(),
+        Some(other) => ansible_json(other),
+    }
+}
+
+/// `Task failed: <msg>`, unless `msg` already says it: `_text_utils.concat_message`.
+pub fn task_failed(msg: &str) -> String {
+    if msg.starts_with("Task failed: ") {
+        msg.to_string()
+    } else {
+        concat_message("Task failed.", msg)
+    }
+}
+
+/// `left` without its trailing `.` and spaces, `: `, then `right`: `_text_utils.concat_message`.
+pub fn concat_message(left: &str, right: &str) -> String {
+    format!("{}: {right}", left.trim_end_matches(['.', ' ']))
+}
+
+/// `Origin: ...`, a blank line, then the task's line and the two before it, numbered, with a
+/// marker under the column: `SourceContext.from_origin` and its `__str__`.
+fn source_context(origin: &crate::playbook::Origin) -> String {
+    let mut out = format!("Origin: {}:{}:{}", origin.path, origin.line, origin.col);
+    let annotated = annotated_lines(origin);
+    if !annotated.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&annotated.join("\n"));
+    }
+    out
+}
+
+fn annotated_lines(origin: &crate::playbook::Origin) -> Vec<String> {
+    const CONTEXT: usize = 2;
+    const WIDTH: usize = 120;
+    const MARK: &str = "...";
+    let target = origin.line;
+    if target < 1 {
+        return Vec::new();
+    }
+    let start = (target - 1).saturating_sub(CONTEXT);
+    let Ok(text) = std::fs::read_to_string(&*origin.path) else {
+        return vec!["(source not shown: FileNotFoundError)".to_string()];
+    };
+    let lines: Vec<&str> = text
+        .split_inclusive('\n')
+        .skip(start)
+        .take(target - start)
+        .collect();
+    if lines.len() != target - start {
+        return vec!["(source not shown: file truncated)".to_string()];
+    }
+    let label = target.to_string().len();
+    let max_src = WIDTH - label - 1;
+    let mut usable = max_src;
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let mut line = line.trim_end_matches('\n').replace('\t', " ");
+        if line.chars().count() > max_src {
+            line = line.chars().take(max_src - MARK.len()).collect::<String>() + MARK;
+            usable = max_src - MARK.len();
+        }
+        let gap = if line.is_empty() { "" } else { " " };
+        out.push(format!("{:>label$}{gap}{line}", start + i + 1));
+    }
+    let col = origin.col;
+    if col >= 1 && col <= usable {
+        let marker = format!("column {col}");
+        let idx = col - 1;
+        let marker = if idx + 2 + marker.len() > max_src {
+            format!(
+                "{}{marker} ^",
+                " ".repeat(idx.saturating_sub(marker.len() + 1))
+            )
+        } else {
+            format!("{}^ {marker}", " ".repeat(idx))
+        };
+        out.push(format!("{} {marker}", " ".repeat(label)));
+    }
+    out
+}
+
 pub struct Renderer {
     out: Box<dyn Write>,
     color: bool,
@@ -223,6 +345,7 @@ impl Renderer {
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.
         body.remove("exception");
+        body.remove(ERROR_KEY);
         if dump == Dump::Debug {
             // Ansible cleans a `debug` result before showing it, so the message stands alone:
             // whatever `changed_when` and `failed_when` decided is counted, never printed, and
@@ -241,7 +364,15 @@ impl Renderer {
                 )
             });
         }
-        let json = ansible_json(&serde_json::Value::Object(body));
+        // `_dump_results` indents by 4 for a result carrying `_ansible_verbose_always` (a `debug`,
+        // an `assert` that is not `quiet`) and for every result from `-vvv` on. A censored result
+        // carries no such key.
+        let pretty = (dump != Dump::No && !censored) || self.verbosity > 2;
+        let json = if pretty {
+            ansible_json_indented(&serde_json::Value::Object(body), 0)
+        } else {
+            ansible_json(&serde_json::Value::Object(body))
+        };
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
         // A censored `debug` still goes through the cleanup above - which is what leaves its
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
@@ -291,6 +422,21 @@ impl Renderer {
         }
     }
 
+    /// The block a failure's line is preceded by. Censored lines have none: a censored result
+    /// carries no `exception` for the reference's callback to show.
+    pub fn error(&mut self, block: &ErrorBlock) {
+        let mut text = format!("[ERROR]: {}", block.message);
+        if let Some(origin) = &block.origin {
+            text.push('\n');
+            text.push_str(&source_context(origin));
+        }
+        // `format_event`: a message of several lines ends with a blank one.
+        if text.contains('\n') {
+            text.push('\n');
+        }
+        let _ = writeln!(self.out, "{}", self.paint(FAILED, &text));
+    }
+
     /// The line that follows a failure `ignore_errors` swallowed. A looping task prints it on its
     /// own, with no result line before it: the reference shows the items and then this, never an
     /// aggregate line of its own.
@@ -311,7 +457,12 @@ impl Renderer {
             Some(d) => format!("{host} -> {d}"),
             None => host.to_string(),
         };
-        let line = format!("fatal: [{who}]: UNREACHABLE! => {}", ansible_json(&body));
+        let json = if self.verbosity > 2 {
+            ansible_json_indented(&body, 0)
+        } else {
+            ansible_json(&body)
+        };
+        let line = format!("fatal: [{who}]: UNREACHABLE! => {json}");
         let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
     }
 
@@ -383,6 +534,38 @@ pub(crate) fn ansible_json(value: &serde_json::Value) -> String {
                 .join(", ")
         ),
         other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// `json.dumps(value, indent=4, sort_keys=True, ensure_ascii=False)`: one key or item per line,
+/// `,` at the end of each but the last, an empty mapping or list kept as `{}` or `[]`.
+pub(crate) fn ansible_json_indented(value: &serde_json::Value, depth: usize) -> String {
+    let pad = |depth: usize| " ".repeat(4 * depth);
+    match value {
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
+                    format!(
+                        "{}{}: {}",
+                        pad(depth + 1),
+                        serde_json::to_string(k).unwrap_or_default(),
+                        ansible_json_indented(&map[k], depth + 1)
+                    )
+                })
+                .collect();
+            format!("{{\n{}\n{}}}", fields.join(",\n"), pad(depth))
+        }
+        serde_json::Value::Array(items) if !items.is_empty() => {
+            let items: Vec<String> = items
+                .iter()
+                .map(|v| format!("{}{}", pad(depth + 1), ansible_json_indented(v, depth + 1)))
+                .collect();
+            format!("[\n{}\n{}]", items.join(",\n"), pad(depth))
+        }
+        other => ansible_json(other),
     }
 }
 
@@ -531,7 +714,7 @@ mod tests {
         0, Outcome::Failed, json!({"failed": true, "rc": 1}), Some("three"), Dump::No, false,
         "failed: [h] (item=three) => {\"rc\": 1}\n"
     )]
-    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\"msg\": \"shown\"}\n")]
+    #[case::forced_dump(0, Outcome::Ok, json!({"msg": "shown"}), None, Dump::Debug, false, "ok: [h] => {\n    \"msg\": \"shown\"\n}\n")]
     #[case::censored_changed(0, Outcome::Changed, json!({"changed": true, "stdout": "secret"}), None, Dump::No, true, "changed: [h]\n")]
     #[case::censored_ignored(
         0, Outcome::Ignored, json!({"changed": true, "failed": true, "stdout": "secret"}), None, Dump::No, true,

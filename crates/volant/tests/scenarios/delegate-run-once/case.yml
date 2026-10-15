@@ -1,0 +1,2 @@
+# run_once and delegate_to: the runner, the arrow and the facts.
+args: [-i, inv.ini, delegate.yml]

@@ -1,0 +1,2 @@
+# The implicit localhost is a valid delegate, and a skip shows no arrow.
+args: [-i, inv.ini, delegate-localhost.yml]

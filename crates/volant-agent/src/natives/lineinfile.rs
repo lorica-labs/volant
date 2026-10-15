@@ -1059,7 +1059,7 @@ mod tests {
     use super::super::common::golden::{Scratch, differences, within};
     use super::*;
 
-    const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../volant/tests/golden/native");
+    const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../volant/tests/golden/module");
 
     /// The recordings were taken under a `022` umask, which sets the mode of the file `create`
     /// makes. Nextest runs each test in a process of its own.

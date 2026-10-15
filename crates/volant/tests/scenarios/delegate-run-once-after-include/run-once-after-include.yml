@@ -1,0 +1,12 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - name: only h2 includes
+      include_tasks: run-once-inc.yml
+      when: inventory_hostname == 'h2'
+    - name: once behind the include
+      command: echo behind
+      run_once: true
+      register: b
+    - name: show
+      debug: msg="{{ b.stdout }} on {{ inventory_hostname }}"

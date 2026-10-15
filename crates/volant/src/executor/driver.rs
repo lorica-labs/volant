@@ -476,6 +476,7 @@ pub(super) async fn drive_host(
     // whether the task it happened under censors its output.
     let mut unreachable: Option<String> = None;
     let mut unreachable_censored = false;
+    let mut unreachable_origin: Option<crate::playbook::Origin> = None;
     // The delegate of the task whose batch could not be reached, for the `[h2 -> h1]` the
     // `UNREACHABLE!` line carries. Measured on ansible-core 2.19.12: the delegating host is the
     // one the recap counts, and the delegate only shows in the line.
@@ -1212,12 +1213,65 @@ pub(super) async fn drive_host(
                             // one is the next batch's first, where the same failure ends the
                             // host with its own message.
                             Err(_) if !batch.is_empty() => break,
+                            // A plugin nobody has fails the task itself, item by item, through
+                            // the ordinary failure path: a `rescue` takes it, `ignore_errors`
+                            // swallows it, and the host is not unreachable.
+                            Err(ref err)
+                                if let Some(missing) =
+                                    err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
+                            {
+                                let msg = format!("Task failed: {missing}");
+                                let results: Vec<(Option<Value>, TaskResult)> = items
+                                    .iter()
+                                    .map(|item| {
+                                        let mut r = TaskResult::failed_with(msg.clone());
+                                        r.0.insert("changed".into(), Value::Bool(false));
+                                        (item.element.clone(), r)
+                                    })
+                                    .collect();
+                                let labels: Vec<Option<String>> =
+                                    items.iter().map(|i| i.label.clone()).collect();
+                                record_registered(
+                                    &mut store.lock().expect("vars lock"),
+                                    task,
+                                    &register_hosts,
+                                    &results,
+                                    &[],
+                                );
+                                let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
+                                if let Some(result) = report_task(
+                                    &tx,
+                                    &name,
+                                    pos,
+                                    task,
+                                    &results,
+                                    &labels,
+                                    &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
+                                    &[],
+                                    &[],
+                                    Dump::No,
+                                    rescuable,
+                                    delegate_name.as_deref(),
+                                )
+                                .await
+                                {
+                                    failed |= !rescuable;
+                                    failed_at = Some((pos, result));
+                                    break;
+                                }
+                                let Some(next) = driver.advance(pos).await else {
+                                    break 'run;
+                                };
+                                pos = next;
+                                continue;
+                            }
                             // The batch this task would have opened never formed, so the two
                             // fields the `UNREACHABLE!` line reads are set here rather than
                             // below: the arrow names the delegate this task asked for, and
                             // `no_log` censors the reason.
                             Err(err) => {
                                 unreachable_censored = task.censors();
+                                unreachable_origin = task.origin.clone();
                                 unreachable_delegate = delegate_name;
                                 unreachable = Some(format!("{err:#}"));
                                 break 'run;
@@ -1299,6 +1353,7 @@ pub(super) async fn drive_host(
             // below happens with it still unreported. Measured on ansible-core 2.19.12, the
             // reference censors the `UNREACHABLE!` line of a `no_log` task, reason and all.
             unreachable_censored = c.steps[batch[0].0].task.censors();
+            unreachable_origin = c.steps[batch[0].0].task.origin.clone();
             unreachable_delegate = batch_delegate.clone();
             if permit.is_none() {
                 if let Ok(p) = Arc::clone(&forks).acquire_owned().await {
@@ -1937,6 +1992,7 @@ pub(super) async fn drive_host(
                 msg,
                 censored: unreachable_censored,
                 delegate: unreachable_delegate,
+                origin: unreachable_origin,
             })
             .await;
     }

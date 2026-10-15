@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - setup:
+        gather_subset: ["!all", "!min"]
+      delegate_to: h3
+      delegate_facts: true
+      register: s
+    - debug: msg="{{ hostvars['h3'].module_setup | default('none') }} {{ module_setup | default('none') }} {{ s.ansible_facts.module_setup }}"

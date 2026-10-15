@@ -1,0 +1,2 @@
+# An include does not hand its tags to the tasks it brings in; an import does.
+args: [-i, inv.ini, --tags, inc, tags.yml]

@@ -734,7 +734,7 @@ pub(super) fn finish(
         return result;
     }
     let mut r = apply_conditions(task, item, result, templar);
-    settle_failure(&mut r);
+    settle_failure(&mut r, task);
     r
 }
 
@@ -866,17 +866,43 @@ fn condition_vars(
 /// register `msg: "Task failed: Action failed: Unknown error."`; a `debug` keeps its own `msg`
 /// and a `command` its empty one. `until` never sees that `msg`: `until: r.msg is defined` over
 /// `failed_when: true` retries. A module result that already carried a truthy `exception` was
-/// normalised as the module's error, and reads `Module failed` instead.
-fn settle_failure(result: &mut TaskResult) {
+/// normalised as the module's error, and reads `Module failed` instead; a controller-side action
+/// (`fail`, `assert`) is the action's own error whatever it carries, measured too.
+fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
+    let cause = result.0.remove(CAUSE_KEY);
     if result.failed() {
+        let local = volant_protocol::modules::local(&task.module).is_some();
         let by = match result.0.get("exception") {
-            Some(e) if !python_falsy(e) => "Module",
+            Some(e) if !local && !python_falsy(e) => "Module",
             _ => "Action",
         };
         result
             .0
             .entry("msg")
             .or_insert_with(|| json!(format!("Task failed: {by} failed: Unknown error.")));
+        // The block the reference prints over the failure's line: `Task failed: <by> failed: `
+        // and the error's brief message, the module's summary when it sent one.
+        let msg = match result.0.get("msg") {
+            Some(Value::String(s)) => s.clone(),
+            Some(other) => crate::render::ansible_json(other),
+            None => String::new(),
+        };
+        let detail = cause
+            .as_ref()
+            .and_then(Value::as_str)
+            .map_or(msg.clone(), str::to_string);
+        // `AnsibleError`: an empty message is the default one alone, `Action failed.`.
+        let by_failed = format!("{by} failed.");
+        let message = if msg.starts_with("Task failed: ") {
+            msg
+        } else if detail.is_empty() {
+            crate::render::task_failed(&by_failed)
+        } else {
+            crate::render::task_failed(&crate::render::concat_message(&by_failed, &detail))
+        };
+        result
+            .0
+            .insert(crate::render::ERROR_KEY.into(), Value::from(message));
         result
             .0
             .insert("exception".into(), json!("(traceback unavailable)"));
@@ -917,9 +943,9 @@ pub(super) fn loops(task: &PlayTask, first: Option<&Option<Value>>) -> bool {
 /// What `register` stores: the single result, or Ansible's loop aggregate.
 pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskResult)]) -> Value {
     if !loops(task, results.first().map(|(element, _)| element)) {
-        return results
-            .first()
-            .map_or(Value::Null, |(_, r)| Value::Object(r.0.clone()));
+        return results.first().map_or(Value::Null, |(_, r)| {
+            Value::Object(super::report::without_error(r).0)
+        });
     }
     if results.is_empty() {
         let mut agg = empty_loop_result().0;
@@ -928,7 +954,7 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
     }
     let mut list = Vec::new();
     for (element, r) in results {
-        let mut m = r.0.clone();
+        let mut m = super::report::without_error(r).0;
         if let Some(el) = element {
             m.insert(task.loop_var.clone(), el.clone());
             m.insert("ansible_loop_var".into(), json!(task.loop_var));
@@ -1328,7 +1354,7 @@ pub(super) fn judge_attempt(
     match until_holds(task, item, &r, retry, templar) {
         Err(e) => return Attempt::Done(TaskResult::failed_with(conditional_error(&e))),
         Ok(true) => {
-            settle_failure(&mut r);
+            settle_failure(&mut r, task);
             return Attempt::Done(r);
         }
         Ok(false) => {}
@@ -1336,7 +1362,7 @@ pub(super) fn judge_attempt(
     if attempt > retry.retries {
         r.0.insert("attempts".into(), json!(retry.retries));
         r.0.insert("failed".into(), json!(true));
-        settle_failure(&mut r);
+        settle_failure(&mut r, task);
         return Attempt::Done(r);
     }
     Attempt::Again(retry.retries + 1 - attempt)
@@ -2547,11 +2573,44 @@ fn add_output_lines(result: &mut TaskResult) {
 fn summarise_exception(result: &mut TaskResult) {
     let sent = result.0.remove("exception");
     let failed = result.0.get("failed").is_some_and(|v| !python_falsy(v));
+    // What the summary says, causes and all, for the error block `settle_failure` words.
+    if failed && let Some(brief) = sent.as_ref().and_then(brief_message) {
+        result.0.insert(CAUSE_KEY.into(), Value::from(brief));
+    }
     if failed || sent.is_some_and(|e| !python_falsy(&e)) {
         result
             .0
             .insert("exception".into(), Value::from("(traceback unavailable)"));
     }
+}
+
+/// Where `summarise_exception` leaves a failed module's own brief message for `settle_failure`.
+const CAUSE_KEY: &str = "_volant_cause";
+
+/// `format_event_brief_message` of a serialised `ErrorSummary`: the event's message and those of
+/// the causes it follows, each part ending where the next begins, as the reference joins them.
+fn brief_message(summary: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut event = summary.get("event")?;
+    loop {
+        parts.push(event.get("msg")?.as_str()?.to_string());
+        match event.get("chain") {
+            Some(chain) if chain.get("follow") == Some(&Value::Bool(true)) => {
+                event = chain.get("event")?;
+            }
+            _ => break,
+        }
+    }
+    let mut parts = parts.into_iter().rev();
+    let mut message = parts.next()?;
+    for part in parts {
+        message = if part.ends_with(&message) {
+            part
+        } else {
+            crate::render::concat_message(&part, &message)
+        };
+    }
+    Some(message)
 }
 
 /// Whether Python's `bool()` is false for the value a module sent: `None`, `False`, a zero, or
@@ -3979,7 +4038,11 @@ mod tests {
             &templar,
         );
         assert_eq!(
-            r.0,
+            r.0[crate::render::ERROR_KEY],
+            json!("Task failed: Action failed: Unknown error.")
+        );
+        assert_eq!(
+            super::super::report::without_error(&r).0,
             json!({"ansible_facts": {"a": 1}, "changed": false, "exception": "(traceback unavailable)", "failed": true, "failed_when_result": true, "msg": "Task failed: Action failed: Unknown error."})
                 .as_object()
                 .unwrap()
@@ -3992,9 +4055,12 @@ mod tests {
             &templar,
         );
         assert_eq!(r.0["msg"], json!(""), "{:?}", r.0);
-        // A module result that carried a truthy `exception` of its own reads `Module failed`.
+        // A module result that carried a truthy `exception` of its own reads `Module failed`; a
+        // controller-side action's never does.
+        let mut module = task("ping");
+        module.failed_when = vec!["true".into()];
         let r = finish(
-            &t,
+            &module,
             &item,
             result(json!({"changed": false, "exception": "(traceback unavailable)"})),
             &templar,
@@ -6837,7 +6903,10 @@ mod tests {
             None,
         );
         let line = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        assert!(line.contains(r#""invocation": {"module_args""#), "{line}");
+        assert!(
+            line.contains("\"invocation\": {") && line.contains("\"module_args\": {"),
+            "{line}"
+        );
 
         // A loop's items are registered whole.
         t.loop_items = Some(json!(["a"]));

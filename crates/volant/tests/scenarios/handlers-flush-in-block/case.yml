@@ -1,0 +1,2 @@
+# A flush inside a block runs its handlers inside that block.
+args: [flush-in-block.yml]

@@ -1,0 +1,2 @@
+# A run_once step behind an include one host spliced in is elected for afresh.
+args: [-i, inv.ini, run-once-after-include.yml]

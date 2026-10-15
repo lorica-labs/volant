@@ -12,17 +12,92 @@ use serde_json::{Map, Value};
 /// A key written twice in one mapping keeps its last value, as PyYAML does for ansible-core
 /// (which only warns). saphyr refuses it unless told otherwise.
 pub fn load<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
+    let docs = marked(text, source)?;
+    if holds_nothing(text) {
+        return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
+    }
+    Ok(docs.into_iter().map(|doc| lower(doc, text)).collect())
+}
+
+/// Every document of `text` with saphyr's positions, a key written twice keeping its last value.
+fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>> {
     let mut loader = YamlLoader::<MarkedYaml>::default();
     loader.allow_duplicate_keys(true);
     saphyr_parser::Parser::new_from_str(text)
         .load(&mut loader, true)
         .and_then(|()| loader.error().cloned().map_or(Ok(()), Err))
         .with_context(|| format!("{source}: invalid YAML"))?;
-    let docs = loader.into_documents();
-    if holds_nothing(text) {
-        return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
+    Ok(loader.into_documents())
+}
+
+/// Where each mapping of a loaded document starts, as `(line, column)`, both counted from 1:
+/// the position ansible-core's `Origin` gives a task. Keyed by the mapping's address in the
+/// documents [`load_with_origins`] returned, which stay where they are while nothing changes them.
+#[derive(Debug, Default)]
+pub struct Origins(std::collections::HashMap<usize, (usize, usize)>);
+
+impl Origins {
+    /// Where `map` starts, when it is a mapping of the documents these origins came with.
+    pub fn of(&self, map: &Mapping<'_>) -> Option<(usize, usize)> {
+        self.0.get(&std::ptr::from_ref(map).addr()).copied()
     }
-    Ok(docs.into_iter().map(|doc| lower(doc, text)).collect())
+}
+
+/// [`load`], and where each mapping of the documents starts.
+pub fn load_with_origins<'a>(
+    text: &'a str,
+    source: &str,
+) -> anyhow::Result<(Vec<Yaml<'a>>, Origins)> {
+    let marked = marked(text, source)?;
+    if holds_nothing(text) {
+        return Ok((
+            marked.iter().map(|_| Yaml::Value(Scalar::Null)).collect(),
+            Origins::default(),
+        ));
+    }
+    // The mappings in the order a walk meets them, on both trees: the marked one gives the
+    // positions, the lowered one the addresses.
+    let mut starts = Vec::new();
+    for doc in &marked {
+        mapping_starts(doc, &mut starts);
+    }
+    let docs: Vec<Yaml<'a>> = marked.into_iter().map(|doc| lower(doc, text)).collect();
+    let mut addresses = Vec::new();
+    for doc in &docs {
+        mapping_addresses(doc, &mut addresses);
+    }
+    debug_assert_eq!(starts.len(), addresses.len());
+    Ok((docs, Origins(addresses.into_iter().zip(starts).collect())))
+}
+
+fn mapping_starts(node: &MarkedYaml<'_>, out: &mut Vec<(usize, usize)>) {
+    match &node.data {
+        YamlData::Sequence(items) => items.iter().for_each(|n| mapping_starts(n, out)),
+        YamlData::Mapping(map) => {
+            out.push((node.span.start.line(), node.span.start.col() + 1));
+            for (k, v) in map {
+                mapping_starts(k, out);
+                mapping_starts(v, out);
+            }
+        }
+        YamlData::Tagged(_, inner) => mapping_starts(inner, out),
+        _ => {}
+    }
+}
+
+fn mapping_addresses(node: &Yaml<'_>, out: &mut Vec<usize>) {
+    match node {
+        Yaml::Sequence(items) => items.iter().for_each(|n| mapping_addresses(n, out)),
+        Yaml::Mapping(map) => {
+            out.push(std::ptr::from_ref(map).addr());
+            for (k, v) in map {
+                mapping_addresses(k, out);
+                mapping_addresses(v, out);
+            }
+        }
+        Yaml::Tagged(_, inner) => mapping_addresses(inner, out),
+        _ => {}
+    }
 }
 
 /// Whether every line of `text` is blank, a comment or a document marker. Such a stream holds

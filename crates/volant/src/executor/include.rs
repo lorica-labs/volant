@@ -332,6 +332,7 @@ pub(super) async fn report_include(
                 counts: !is_loop,
                 censored,
                 delegate: None,
+                error: None,
             })
             .await;
     }
@@ -374,6 +375,7 @@ pub(super) async fn report_include(
                     counts: true,
                     censored,
                     delegate: None,
+                    error: None,
                 })
                 .await;
         }

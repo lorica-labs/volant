@@ -1,0 +1,2 @@
+- name: from a
+  debug: msg="a on {{ inventory_hostname }}"

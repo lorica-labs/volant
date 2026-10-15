@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The report `natives()` records and golden.rs replays against, without `ansible.posix`.
+"""The report `natives()` records and reference_modules.rs replays against, without `ansible.posix`.
 
 ansible-core 2.19 routes `ansible.builtin.json` to `ansible.posix.json`, a collection a bare
 ansible-core install does not have. This keeps what that callback keeps of a task (the module's

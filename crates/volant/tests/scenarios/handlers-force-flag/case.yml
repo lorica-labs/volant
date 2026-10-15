@@ -1,0 +1,2 @@
+# --force-handlers runs a failed host's handlers, and the host still counts failed.
+args: [-i, inv.ini, handlers.yml, --force-handlers]

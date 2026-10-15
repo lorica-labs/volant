@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      in the body\tTAGS: [outer]\n      deep in a nested block\tTAGS: [inner, outer]\n      outside every block\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      deep in a nested block\tTAGS: [inner, outer]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n    tasks:\n      outside every block\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: blocks.yml\n\n  play #1 (h1): blocks play\tTAGS: []\n      TASK TAGS: [inner, outer]\n"
+  }
+]

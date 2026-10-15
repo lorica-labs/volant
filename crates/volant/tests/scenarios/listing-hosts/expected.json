@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n"
+  },
+  {
+    "code": 1,
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: hosts.yml\n\n  play #1 (h1): one host by name\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n    tasks:\n      t\tTAGS: []\n\n  play #2 (web): one host through a group\tTAGS: []\n    pattern: ['web']\n    hosts (1):\n      h1\n    tasks:\n      t\tTAGS: []\n\n  play #3 (nosuchgroup): a pattern nothing matches\tTAGS: []\n    pattern: ['nosuchgroup']\n    hosts (0):\n    tasks:\n      t\tTAGS: []\n"
+  }
+]

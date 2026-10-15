@@ -1,0 +1,22 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      imported one\tTAGS: [imp, own]\n      imported two\tTAGS: [imp]\n      the include\tTAGS: [inc]\n      base : base task\tTAGS: [ir]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n      a task of the imported play\tTAGS: [sub]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      imported one\tTAGS: [imp, own]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    tasks:\n      the include\tTAGS: [inc]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    tasks:\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n      TASK TAGS: [imp, inc, ir, own]\n\n  play #2 (web): the imported play\tTAGS: [sub]\n      TASK TAGS: [sub]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: imports.yml\n\n  play #1 (h1): imports play\tTAGS: []\n    pattern: ['h1']\n    hosts (1):\n      h1\n\n  play #2 (web): the imported play\tTAGS: [sub]\n    pattern: ['web']\n    hosts (1):\n      h1\n"
+  }
+]

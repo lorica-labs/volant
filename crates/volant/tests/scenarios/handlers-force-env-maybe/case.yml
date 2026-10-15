@@ -1,0 +1,3 @@
+# ANSIBLE_FORCE_HANDLERS=maybe is not a true value: handlers are not forced.
+args: [-i, inv.ini, handlers.yml]
+env: {"ANSIBLE_FORCE_HANDLERS": "maybe"}

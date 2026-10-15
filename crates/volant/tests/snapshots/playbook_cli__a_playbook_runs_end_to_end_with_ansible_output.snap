@@ -9,6 +9,14 @@ TASK [Say hello] ***************************************************************
 changed: [localhost]
 
 TASK [Fail but keep going] *****************************************************
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: [fixtures]/site.yml:8:7
+
+6       command: echo hello
+7
+8     - name: Fail but keep going
+        ^ column 7
+
 fatal: [localhost]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "[time]", "end": "[time]", "msg": "non-zero return code", "rc": 1, "start": "[time]", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
 ...ignoring
 

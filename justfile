@@ -17,13 +17,13 @@ setup:
 insta-accept:
     cargo insta accept --workspace
 
-# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION).
-# Reproducible: running this on a correct tree leaves the three recordings byte for byte as they
-# were, so an empty diff afterwards is a check and not a coincidence. That holds because the
-# generator replaces the temporary directory it writes the play into with a fixed name; without
-# that, two of the reference's messages quote the path they came from and every run differed.
-golden:
-    "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py
+# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION):
+# every kind, or those named (template, inventory, scenario, module). Reproducible: running this on
+# a correct tree leaves the template, inventory and scenario recordings byte for byte as they were,
+# so an empty diff afterwards is a check and not a coincidence. The `module` kind needs sudo,
+# systemd, apt and cron.
+golden *kinds:
+    "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py {{kinds}}
 
 # Regenerate the parity matrix's reference names (tests/parity/reference.json) with the
 # reference ansible-core and the pinned `ansible` package's collections. Needs `uv`.
@@ -66,7 +66,7 @@ test:
 # Run it when a native module, an action plugin or a golden recording changes; CI runs it in `ssh`.
 test-reference:
     "${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" -c 'import ansible' || { echo "no ansible-core"; exit 1; }
-    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys)'
+    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) - test(=a_native_answer_is_held_to_the_path_its_index_names)'
 
 # One crate, one test pattern: the loop while you are iterating. `check` is the gate, not the loop.
 test-one crate pattern:
@@ -211,20 +211,18 @@ ssh-test: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
     VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only --no-tests=fail -E 'test(/^ssh_/)'
-    # The python module, action plugin and collection module goldens, and the two collection
-    # resolution tests of python.rs, here because this is the job that names the recorded
-    # ansible-core in VOLANT_PYTHON, which turns each comparison's skip into a failure. The action
-    # plugin one also needs `sudo -n` and systemd, and fails here without them; the collection ones
-    # need the pinned collections this job installs. Without this line the two python.rs tests run
-    # in no job at all: the `test` job's ansible-core-less pythons skip them. The same holds for
-    # the CLI test of `retries` on an action plugin, which needs ansible-core to run `copy`.
-    # The native module golden needs `sudo -n`, systemd, apt and cron too; its path check runs
-    # against `volant_echo`, a native only an agent built with `test-natives` has, kept apart from
-    # the agent every other test runs.
+    # The module goldens (`reference_modules`) and the two collection resolution tests of
+    # python.rs, here because this is the job that names the recorded ansible-core in
+    # VOLANT_PYTHON, which turns each comparison's skip into a failure. The module play needs
+    # `sudo -n`, systemd, apt, cron and the pinned collections this job installs. Without this
+    # line the two python.rs tests run in no job at all: the `test` job's ansible-core-less
+    # pythons skip them. The same holds for the CLI test of `retries` on an action plugin, which
+    # needs ansible-core to run `copy`. The path check runs against `volant_echo`, a native only
+    # an agent built with `test-natives` has, kept apart from the agent every other test runs.
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'test(=a_python_module_returns_the_reference_s_own_keys) | test(=an_action_plugin_returns_the_reference_s_own_keys) | test(=a_collection_module_returns_the_reference_s_own_keys) | test(=a_native_module_returns_the_reference_s_own_keys) | test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

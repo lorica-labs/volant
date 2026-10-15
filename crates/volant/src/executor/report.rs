@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use volant_protocol::TaskResult;
 
 use crate::playbook::PlayTask;
-use crate::render::Dump;
+use crate::render::{Dump, ERROR_KEY, ErrorBlock};
 
 use super::coordinator::Event;
 use super::run::{classify, empty_loop_result, loops, registered_value};
@@ -81,22 +81,24 @@ pub(super) async fn report_task(
         }
         any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
+        let error = r.failed().then(|| ErrorBlock::of(r, task.origin.as_ref()));
         let _ = tx
             .send(Event::Result {
                 host: host.to_string(),
                 index,
                 label,
                 outcome,
-                result: r.clone(),
+                result: without_error(r),
                 dump,
                 show: true,
                 counts: !is_loop,
                 censored,
                 delegate: delegate.map(str::to_string),
+                error,
             })
             .await;
     }
-    let mut failure = first_failure;
+    let mut failure = first_failure.map(|r| without_error(&r));
     if is_loop {
         // A loop over an empty list has no item lines to carry it, so the aggregate is the whole
         // display: one `skipping` line for the task.
@@ -139,6 +141,7 @@ pub(super) async fn report_task(
                 counts: true,
                 censored,
                 delegate: delegate.map(str::to_string),
+                error: None,
             })
             .await;
     }
@@ -153,6 +156,13 @@ pub(super) async fn report_task(
     } else {
         None
     }
+}
+
+/// `r` without the error block's message the executor left on it: nobody registers or rescues it.
+pub(super) fn without_error(r: &TaskResult) -> TaskResult {
+    let mut r = r.clone();
+    r.0.remove(ERROR_KEY);
+    r
 }
 
 #[cfg(test)]

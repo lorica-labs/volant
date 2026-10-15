@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
@@ -21,6 +21,9 @@ use volant_protocol::facts::NATIVE_FACT_KEYS;
 
 #[path = "../../volant-agent/tests/setup_exits/mod.rs"]
 mod setup_exits;
+
+#[path = "common/process.rs"]
+mod process;
 
 const PLAY: &str = r#"- name: Gather and write the facts
   hosts: all
@@ -118,26 +121,14 @@ fn inventory(dir: &Path) -> (PathBuf, String) {
 }
 
 fn volant_within(args: &[&str], envs: &[(&str, &Path)], deadline: Duration) -> Output {
-    let child = Command::new(env!("CARGO_BIN_EXE_volant"))
-        .args(args)
-        .envs(envs.iter().copied())
-        .env("NO_COLOR", "1")
-        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let pid = child.id().to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    rx.recv_timeout(deadline).map_or_else(
-        |_| {
-            let _ = Command::new("kill").args(["-KILL", &pid]).status();
-            panic!("volant did not finish within {deadline:?}");
-        },
-        Result::unwrap,
+    process::run_within(
+        Command::new(env!("CARGO_BIN_EXE_volant"))
+            .args(args)
+            .envs(envs.iter().copied())
+            .env("NO_COLOR", "1")
+            .env("ANSIBLE_HOST_KEY_CHECKING", "False"),
+        deadline,
+        None,
     )
 }
 

@@ -1,0 +1,2 @@
+# A batch that goes unreachable ends the run at exit 4.
+args: [-i, inv.ini, unreachable_batch.yml]

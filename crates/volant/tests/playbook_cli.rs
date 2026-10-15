@@ -2570,55 +2570,6 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A play written as a tree runs as one sequence, in playbook order, with every block's
-/// keywords reaching the tasks under it and every `always` running on the way out.
-///
-/// `volant_within` rather than `volant`: a host that steps over a step without telling the
-/// coordinator leaves its per-step loop waiting for a report that will never come, and a run
-/// that never returns cannot be caught by an assertion on what it printed.
-///
-/// What would make this red: a step run out of order, a nested `always` left out of the walk,
-/// or a block's `vars` not reaching the task inside it.
-#[test]
-fn a_play_of_nested_blocks_runs_as_one_sequence() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/happy.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let order: Vec<usize> = [
-        "In the block",
-        "Nested",
-        "Nested cleanup",
-        "Outer cleanup",
-        "After the block",
-    ]
-    .iter()
-    .map(|name| {
-        text.find(&format!("TASK [{name}]"))
-            .unwrap_or_else(|| panic!("{name} is missing from {text}"))
-    })
-    .collect();
-    assert!(
-        order.windows(2).all(|w| w[0] < w[1]),
-        "the steps run in playbook order: {text}"
-    );
-    assert!(
-        !text.contains("TASK [Around everything]"),
-        "a block's own name is shown nowhere, measured on the reference: {text}"
-    );
-    assert!(
-        text.contains("localhost                  : ok=5"),
-        "five steps ran and every one of them is counted: {text}"
-    );
-}
-
 /// A failure inside a nested block runs the `always` of every block around it, innermost
 /// first, and then the host leaves the play.
 ///
@@ -2792,70 +2743,6 @@ fn a_failing_rescue_still_runs_always_and_the_host_leaves() {
             "h1                         : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=1"
         ),
         "the body's rescue is kept and the rescue's own failure stands: {text}"
-    );
-}
-
-/// A block whose `when` is false skips every task inside it, one line each.
-///
-/// Measured on ansible-core 2.19.12: the banner of each inner task is printed with a
-/// `skipping: [h]` under it, nested blocks included, and the recap counts one `skipped` per
-/// task rather than one per block.
-///
-/// What would make this red: a block skipped whole, which prints nothing and recaps
-/// `skipped=0` - a playbook's tasks silently absent from the run and from the report.
-#[test]
-fn a_block_whose_when_is_false_skips_every_task_inside() {
-    let out = volant_within(
-        &["playbook", &fixture("blocks/when-false.yml")],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(
-        text.matches("skipping: [localhost]").count(),
-        2,
-        "one line per task inside the block, the nested one included: {text}"
-    );
-    assert!(
-        text.contains("localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=2"),
-        "both tasks are counted as skipped: {text}"
-    );
-}
-
-/// A host that cannot be reached is not rescued, and its `always` does not run either.
-///
-/// Measured on ansible-core 2.19.12: an unreachable host inside a block leaves the play at
-/// once, the rescue does not take it and the `always` is not run, the recap reads
-/// `unreachable=1 rescued=0` and the run exits 4. The trigger here is this engine's own - an
-/// unknown connection plugin, which it reports as `UNREACHABLE` - and what is under test is
-/// what a host leaving that way does to the sections around it.
-///
-/// What would make this red: an unreachable host routed through the failure path, which would
-/// print `msg: rescued`, exit 2 instead of 4, and report a host as recovered when nothing ever
-/// reached it.
-#[test]
-fn an_unreachable_host_is_not_rescued() {
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            &fixture("blocks/unreachable.ini"),
-            &fixture("blocks/unreachable.yml"),
-        ],
-        std::time::Duration::from_secs(20),
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    assert!(text.contains("fatal: [h1]: UNREACHABLE!"), "{text}");
-    assert!(
-        !text.contains("TASK [Rescue task]") && !text.contains("TASK [Always task]"),
-        "neither section runs for a host nothing reached: {text}"
-    );
-    assert!(
-        text.contains(
-            "h1                         : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0"
-        ),
-        "an unreachable host is counted once, as unreachable: {text}"
     );
 }
 

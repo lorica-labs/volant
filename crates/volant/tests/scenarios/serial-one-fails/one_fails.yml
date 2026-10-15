@@ -1,0 +1,15 @@
+- hosts: all
+  gather_facts: false
+  serial: 1
+  handlers:
+    - name: h
+      debug: msg="handler on {{ inventory_hostname }}"
+  tasks:
+    - name: t1
+      command: "true"
+      notify: h
+    - name: batch
+      debug: msg="{{ ansible_play_batch | join(',') }} / {{ ansible_play_hosts | join(',') }} / {{ ansible_play_hosts_all | join(',') }}"
+    - name: fail h1
+      command: "false"
+      when: inventory_hostname == 'h1'

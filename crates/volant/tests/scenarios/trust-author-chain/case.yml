@@ -1,0 +1,2 @@
+# A chain of templates the playbook wrote still renders.
+args: [-i, inv.ini, trusted-chain.yml]

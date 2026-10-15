@@ -1,0 +1,3 @@
+# What a lookup reads at run time is never evaluated.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", lookup-run-time.yml]
+env: {VOLANT_TRUST_PROBE: "{{ lookup('pipe', 'touch marker') }}"}

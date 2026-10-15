@@ -1,0 +1,2 @@
+# A task variable built from a result is never evaluated.
+args: [-i, inv.ini, -e, "payload={{ playbook_dir }}/payload.txt", task-vars.yml]

@@ -1176,6 +1176,7 @@ pub(crate) fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFa
 mod tests {
     use super::*;
     use crate::testing::scratch;
+    use rstest::rstest;
     use std::io::Cursor;
 
     /// Two modules with one short name stay two modules: a collection's module is built under its
@@ -1770,100 +1771,96 @@ mod tests {
         assert_eq!(candidates(None, None), vec!["python3".to_string()]);
     }
 
-    /// An interpreter without ansible-core is refused before the first connection, in words
-    /// that say what to install and which interpreter was tried.
+    /// An interpreter without ansible-core is refused before connecting; a gather-only run is told it can stop gathering.
     #[test]
-    fn an_interpreter_without_ansible_core_is_refused_before_connecting() {
-        let err = refusal_for("/usr/bin/python3");
-        assert!(err.contains("/usr/bin/python3"), "{err}");
-        assert!(err.contains("ansible-core"), "{err}");
-        assert!(err.contains("VOLANT_PYTHON"), "{err}");
+    fn an_interpreter_without_ansible_core_is_refused_in_words_that_help() {
+        {
+            let err = refusal_for("/usr/bin/python3");
+            assert!(err.contains("/usr/bin/python3"), "{err}");
+            assert!(err.contains("ansible-core"), "{err}");
+            assert!(err.contains("VOLANT_PYTHON"), "{err}");
+        }
+        {
+            let base = anyhow::anyhow!("{}", refusal_for("python3"));
+            let only = format!("{:#}", no_builder(&base, &["setup".to_string()]));
+            assert!(only.contains("gather_facts: false"), "{only}");
+            assert!(only.contains("VOLANT_PYTHON"), "{only}");
+            let also = format!(
+                "{:#}",
+                no_builder(&base, &["lineinfile".to_string(), "setup".to_string()])
+            );
+            assert!(!also.contains("gather_facts"), "{also}");
+            assert!(also.contains("ansible-core"), "{also}");
+        }
     }
 
-    /// A run that wanted ansible-core only to gather facts is told the way out that costs
-    /// nothing, and a run that wanted it for a module the playbook named is not.
-    ///
-    /// What would make this red: the sentence left as it was. `gather_facts` is on unless a play
-    /// turns it off, so this refusal is what a playbook of native tasks alone now meets on a
-    /// controller with no ansible-core, and "install ansible-core" is the expensive half of the
-    /// answer. Red the other way if the hint is unconditional: an operator whose playbook names
-    /// `lineinfile` would be sent to write `gather_facts: false` and find the run refused all the
-    /// same.
+    /// An explicit interpreter is never fallen back from; the probe walks the order and refuses when nothing is left.
     #[test]
-    fn a_run_that_only_gathers_is_told_it_can_stop_gathering() {
-        let base = anyhow::anyhow!("{}", refusal_for("python3"));
-        let only = format!("{:#}", no_builder(&base, &["setup".to_string()]));
-        assert!(only.contains("gather_facts: false"), "{only}");
-        assert!(only.contains("VOLANT_PYTHON"), "{only}");
-        let also = format!(
-            "{:#}",
-            no_builder(&base, &["lineinfile".to_string(), "setup".to_string()])
-        );
-        assert!(!also.contains("gather_facts"), "{also}");
-        assert!(also.contains("ansible-core"), "{also}");
+    fn an_explicit_interpreter_stands_alone_and_a_bare_one_is_probed() {
+        {
+            assert_eq!(
+                candidates(Some("/nowhere/python"), Some("/venv")),
+                vec!["/nowhere/python".to_string()]
+            );
+            let err = start_from(Some("/nowhere/python"), None)
+                .map(|_| ())
+                .expect_err("an interpreter that does not exist cannot build a payload")
+                .to_string();
+            assert!(err.contains("/nowhere/python"), "{err}");
+            assert!(err.contains("VOLANT_PYTHON"), "{err}");
+        }
+        {
+            let err = start_from(Some("/nowhere/python"), Some("/venv"))
+                .map(|_| ())
+                .expect_err("no candidate here has ansible-core")
+                .to_string();
+            assert!(
+                err.contains("no Python interpreter with ansible-core"),
+                "{err}"
+            );
+            assert!(
+                !err.contains("/venv"),
+                "an explicit interpreter stands alone: {err}"
+            );
+        }
     }
 
-    /// `VOLANT_PYTHON` is the only candidate when it is set, so a path that does not exist is
-    /// refused by its own name.
-    ///
-    /// What would make this red: appending the usual candidates behind it, which would build
-    /// the payloads under a different interpreter than the operator named and say nothing.
-    #[test]
-    fn an_explicit_interpreter_is_never_fallen_back_from() {
-        assert_eq!(
-            candidates(Some("/nowhere/python"), Some("/venv")),
-            vec!["/nowhere/python".to_string()]
-        );
-        let err = start_from(Some("/nowhere/python"), None)
-            .map(|_| ())
-            .expect_err("an interpreter that does not exist cannot build a payload")
-            .to_string();
-        assert!(err.contains("/nowhere/python"), "{err}");
-        assert!(err.contains("VOLANT_PYTHON"), "{err}");
-    }
-
-    /// The probing itself walks the order and refuses when nothing is left, which is what the
-    /// development machine exercises: its `python3` has no ansible-core.
-    ///
-    /// What would make this red: a candidate accepted because it merely ran - the probe is the
-    /// `import ansible` exiting 0, not the interpreter existing - or a refusal that names
-    /// something other than what was tried.
-    #[test]
-    fn nothing_is_started_under_an_interpreter_without_ansible_core() {
-        let err = start_from(Some("/nowhere/python"), Some("/venv"))
-            .map(|_| ())
-            .expect_err("no candidate here has ansible-core")
-            .to_string();
-        assert!(
-            err.contains("no Python interpreter with ansible-core"),
-            "{err}"
-        );
-        assert!(
-            !err.contains("/venv"),
-            "an explicit interpreter stands alone: {err}"
-        );
-    }
-
-    /// A helper that dies without writing fails the run. What would make this red: reading a
-    /// closed pipe as an empty union, which would ship a blob holding no `module_utils` at all
-    /// and fail every task on the host instead of the run on the controller.
-    #[test]
-    fn a_helper_that_dies_without_answering_fails_the_run() {
-        let err = exchange(Vec::new(), Cursor::new(Vec::new()), &["ping".to_string()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("exited before answering"), "{err}");
-    }
-
-    /// What the helper could not build comes back naming the module. What would make this red:
-    /// dropping the helper's own sentence, which is the only place the module's name appears.
-    #[test]
-    fn a_module_the_helper_cannot_build_comes_back_named() {
-        let answer = br#"{"error": "RuntimeError: ansible-core has no module 'nosuch'"}"#;
-        let err = exchange(Vec::new(), framed(answer), &["nosuch".to_string()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("nosuch"), "{err}");
+    /// An answer the helper cannot stand behind fails the run on the controller, naming what broke.
+    #[rstest]
+    #[case::dies(&["ping"], None, &["exited before answering"])]
+    #[case::cannot_build(
+        &["nosuch"],
+        Some(r#"{"error": "RuntimeError: ansible-core has no module 'nosuch'"}"#),
+        &["nosuch"],
+    )]
+    #[case::leaves_a_module_out(
+        &["ping", "stat", "file", "copy", "setup"],
+        Some(r#"{"zip_b64": "UEsD", "modules": {}}"#),
+        &["ping"],
+    )]
+    #[case::empty_blob(&[], Some(r#"{"zip_b64": "", "modules": {}}"#), &["empty"])]
+    #[case::not_base64(&[], Some(r#"{"zip_b64": "UEsD!BA==", "modules": {}}"#), &["base64"])]
+    #[case::missing_extensions(
+        &["ping"],
+        Some(r#"{"zip_b64": "UEsD", "modules": {"ping": {"module_fqn": "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0}}}"#),
+        &["extensions", "ping"],
+    )]
+    #[case::missing_module_fqn(
+        &["ping"],
+        Some(r#"{"zip_b64": "UEsD", "modules": {"ping": {"profile": "legacy"}}}"#),
+        &["module_fqn", "ping"],
+    )]
+    fn a_helper_answer_that_is_not_whole_is_refused(
+        #[case] asked: &[&str],
+        #[case] answer: Option<&str>,
+        #[case] named: &[&str],
+    ) {
+        let asked: Vec<String> = asked.iter().map(ToString::to_string).collect();
+        let reply = answer.map_or_else(|| Cursor::new(Vec::new()), |a| framed(a.as_bytes()));
+        let err = exchange(Vec::new(), reply, &asked).unwrap_err().to_string();
+        for word in named {
+            assert!(err.contains(word), "{word}: {err}");
+        }
     }
 
     /// The request names the modules asked for, and the facts come back keyed by module.
@@ -1893,19 +1890,6 @@ mod tests {
         );
     }
 
-    /// Every module asked for has to come back. What would make this red: reading the answer's
-    /// module map on its own, which answers five modules asked for and none built with an empty
-    /// union and `Ok` - a run that then sends every host a blob holding nothing it needs.
-    #[test]
-    fn an_answer_that_leaves_a_module_out_is_refused() {
-        let asked = ["ping", "stat", "file", "copy", "setup"].map(str::to_string);
-        let answer = br#"{"zip_b64": "UEsD", "modules": {}}"#;
-        let err = exchange(Vec::new(), framed(answer), &asked)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("ping"), "{err}");
-    }
-
     /// The facts are keyed by the short module name for a bare or `ansible.legacy.` spelling, so
     /// one module asked for under both is one entry; `ansible.builtin.` keeps its own entry.
     ///
@@ -1925,17 +1909,6 @@ mod tests {
             union.modules.keys().collect::<Vec<_>>(),
             ["ansible.builtin.ping", "ping"]
         );
-    }
-
-    /// An empty blob is refused on the controller. What would make this red: letting it through,
-    /// which moves the refusal from before the first connection to every host in the run.
-    #[test]
-    fn an_empty_blob_is_refused_before_it_is_sent() {
-        let answer = br#"{"zip_b64": "", "modules": {}}"#;
-        let err = exchange(Vec::new(), framed(answer), &[])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("empty"), "{err}");
     }
 
     /// Which modules go through the payload path: what ansible-core ships, minus what this
@@ -2139,39 +2112,6 @@ mod tests {
         );
     }
 
-    /// A blob that is not base64 is refused on the controller, naming where it broke.
-    ///
-    /// What would make this red: decoding what decodes and dropping the rest, which names the
-    /// blob by the hash of bytes that are not the zip the agent will be sent.
-    #[test]
-    fn a_blob_that_is_not_base64_is_refused() {
-        let answer = br#"{"zip_b64": "UEsD!BA==", "modules": {}}"#;
-        let err = exchange(Vec::new(), framed(answer), &[])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("base64"), "{err}");
-    }
-
-    /// A truncated set of facts is an error rather than a default. What would make this red:
-    /// filling `profile`, `rlimit_nofile` or `extensions` with a guess, which would run a module
-    /// under a serialisation profile, or without an extension, it was not built for.
-    #[test]
-    fn missing_facts_are_refused_rather_than_guessed() {
-        let answer = br#"{"zip_b64": "UEsD", "modules": {"ping": {"module_fqn":
-            "ansible.modules.ping", "profile": "legacy", "rlimit_nofile": 0}}}"#;
-        let err = exchange(Vec::new(), framed(answer), &["ping".to_string()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("extensions"), "{err}");
-        assert!(err.contains("ping"), "{err}");
-        let answer = br#"{"zip_b64": "UEsD", "modules": {"ping": {"profile": "legacy"}}}"#;
-        let err = exchange(Vec::new(), framed(answer), &["ping".to_string()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("module_fqn"), "{err}");
-        assert!(err.contains("ping"), "{err}");
-    }
-
     /// The helper's own checks, run under whatever `python3` the machine has: no ansible-core
     /// is needed for the merge and the wrapper reading, which is where the union blob is made
     /// or silently spoiled.
@@ -2305,93 +2245,123 @@ mod tests {
         .to_string()
     }
 
-    /// A valid entry starts no helper, not even the `import ansible` probe; a stale one starts
-    /// one and is written again.
-    ///
-    /// What would make this red: the helper started, or `find_python` run, before the cache is
-    /// looked at, which pays the Python start the cache exists to save; or a rebuilt union left
-    /// unwritten, which rebuilds on every run after the first change.
+    /// A valid entry starts no helper and a stale one is rebuilt once; a union without its sources is not kept.
     #[test]
-    fn a_valid_cache_starts_nothing_and_a_stale_one_is_rebuilt_once() {
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let source = root.join("ping.py");
-        std::fs::write(&source, "ping").unwrap();
-        let place = fresh_place(&root);
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let starts = std::cell::Cell::new(0);
-        let run = |answer: &str| {
+    fn a_valid_cache_starts_nothing_and_a_union_without_sources_is_not_kept() {
+        {
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let source = root.join("ping.py");
+            std::fs::write(&source, "ping").unwrap();
+            let place = fresh_place(&root);
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let starts = std::cell::Cell::new(0);
+            let run = |answer: &str| {
+                let start = || {
+                    starts.set(starts.get() + 1);
+                    PythonBuilder::spawn("python3", &["-c", CANNED, answer], &[])
+                };
+                union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap()
+            };
+
+            let first = run(&canned(b"PK first", Some(&source))).unwrap();
+            assert_eq!(starts.get(), 1);
+            let second = run(&canned(b"PK other", Some(&source))).unwrap();
+            assert_eq!(starts.get(), 1, "a valid entry started the helper");
+            assert_eq!(second, first);
+
+            std::fs::write(&source, "pong").unwrap();
+            let file = std::fs::File::options().write(true).open(&source).unwrap();
+            let mtime = file.metadata().unwrap().modified().unwrap();
+            file.set_modified(mtime + std::time::Duration::from_secs(1))
+                .unwrap();
+            let third = run(&canned(b"PK third", Some(&source))).unwrap();
+            assert_eq!(starts.get(), 2);
+            assert_eq!(third.hash, blake3::hash(b"PK third").to_hex().to_string());
+            let kept = crate::union_cache::load(&place.dir, &place.key).expect("written again");
+            assert_eq!(kept.union, third);
+        }
+        {
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let place = fresh_place(&root);
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let answer = canned(b"PK untraced", None);
+            let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+            assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
+            assert!(
+                !std::fs::read_dir(&place.dir).is_ok_and(|mut files| files.next().is_some()),
+                "an entry was written"
+            );
+        }
+    }
+
+    /// An unwritable cache and a file others could write are warned about and the run goes on.
+    #[test]
+    fn a_cache_that_cannot_be_trusted_warns_and_the_run_goes_on() {
+        {
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let source = root.join("ping.py");
+            std::fs::write(&source, "ping").unwrap();
+            std::fs::write(root.join("unions"), "a file where the directory goes").unwrap();
+            let place = fresh_place(&root);
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let answer = canned(b"PK", Some(&source));
+            let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+            let mut warnings = Vec::new();
+            let union = union_from(start, &modules, &[], Some(&place), &mut |w| {
+                warnings.push(w);
+            });
+            assert!(union.unwrap().is_some());
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert!(
+                warnings[0].starts_with(&format!(
+                    "the module cache at {} is not usable: ",
+                    place.dir.display()
+                )) && warnings[0].ends_with("; payloads are rebuilt on every run"),
+                "{}",
+                warnings[0]
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let source = root.join("ping.py");
+            std::fs::write(&source, "ping").unwrap();
+            let place = fresh_place(&root);
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let answer = canned(b"PK kept", Some(&source));
+            let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+            for file in std::fs::read_dir(&place.dir).unwrap() {
+                let path = file.unwrap().path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o620))
+                        .unwrap();
+                }
+            }
+            let starts = std::cell::Cell::new(0);
             let start = || {
                 starts.set(starts.get() + 1);
-                PythonBuilder::spawn("python3", &["-c", CANNED, answer], &[])
+                PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[])
             };
-            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap()
-        };
-
-        let first = run(&canned(b"PK first", Some(&source))).unwrap();
-        assert_eq!(starts.get(), 1);
-        let second = run(&canned(b"PK other", Some(&source))).unwrap();
-        assert_eq!(starts.get(), 1, "a valid entry started the helper");
-        assert_eq!(second, first);
-
-        std::fs::write(&source, "pong").unwrap();
-        let file = std::fs::File::options().write(true).open(&source).unwrap();
-        let mtime = file.metadata().unwrap().modified().unwrap();
-        file.set_modified(mtime + std::time::Duration::from_secs(1))
+            let mut warnings = Vec::new();
+            union_from(start, &modules, &[], Some(&place), &mut |w| {
+                warnings.push(w);
+            })
             .unwrap();
-        let third = run(&canned(b"PK third", Some(&source))).unwrap();
-        assert_eq!(starts.get(), 2);
-        assert_eq!(third.hash, blake3::hash(b"PK third").to_hex().to_string());
-        let kept = crate::union_cache::load(&place.dir, &place.key).expect("written again");
-        assert_eq!(kept.union, third);
-    }
-
-    /// A union the helper could not trace back to its files is never kept.
-    ///
-    /// What would make this red: `"sources": null` stored as an entry with no sources, which is
-    /// valid forever and serves the same zip through every upgrade.
-    #[test]
-    fn a_union_without_its_sources_is_not_kept() {
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let place = fresh_place(&root);
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let answer = canned(b"PK untraced", None);
-        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
-        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
-        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
-        assert!(
-            !std::fs::read_dir(&place.dir).is_ok_and(|mut files| files.next().is_some()),
-            "an entry was written"
-        );
-    }
-
-    /// A cache directory that cannot be written costs one warning and nothing else.
-    #[test]
-    fn an_unwritable_cache_warns_and_the_run_goes_on() {
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let source = root.join("ping.py");
-        std::fs::write(&source, "ping").unwrap();
-        std::fs::write(root.join("unions"), "a file where the directory goes").unwrap();
-        let place = fresh_place(&root);
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let answer = canned(b"PK", Some(&source));
-        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
-        let mut warnings = Vec::new();
-        let union = union_from(start, &modules, &[], Some(&place), &mut |w| {
-            warnings.push(w);
-        });
-        assert!(union.unwrap().is_some());
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(
-            warnings[0].starts_with(&format!(
-                "the module cache at {} is not usable: ",
-                place.dir.display()
-            )) && warnings[0].ends_with("; payloads are rebuilt on every run"),
-            "{}",
-            warnings[0]
-        );
+            assert_eq!(starts.get(), 1, "a file others could write was read");
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert!(
+                warnings[0].contains("writable by nobody else"),
+                "{}",
+                warnings[0]
+            );
+        }
     }
 
     /// A kept answer refuses a task of this run as a fresh one would.
@@ -2433,89 +2403,36 @@ mod tests {
         );
     }
 
-    /// A union built under another interpreter than the one the key names is not kept.
-    ///
-    /// What would make this red: storing whatever `find_python` fell back to under the first
-    /// candidate's key. Installing ansible-core into that first candidate changes none of the
-    /// files the entry lists, and the next run would serve the other interpreter's union.
+    /// An entry is filed under the interpreter that built it and the executable that answered.
     #[test]
-    fn an_entry_is_filed_only_under_the_interpreter_that_built_it() {
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let source = root.join("ping.py");
-        std::fs::write(&source, "ping").unwrap();
-        let place = crate::union_cache::Place {
-            interpreter: root.join("venv/bin/python"),
-            ..fresh_place(&root)
-        };
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let answer = canned(b"PK", Some(&source));
-        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
-        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
-        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
-    }
-
-    /// A union is not kept when the executable that answered is not the one the key's real path
-    /// names.
-    ///
-    /// What would make this red: the candidate's real path trusted as the interpreter. mise's
-    /// shims are links to the `mise` binary, so `mise use -g python@3.12` over a 3.11 keeps the
-    /// key, every 3.11 source is still on disk unchanged, and the old union is served.
-    #[test]
-    fn an_entry_is_filed_only_under_the_executable_that_answered() {
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let source = root.join("ping.py");
-        std::fs::write(&source, "ping").unwrap();
-        let place = fresh_place(&root);
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let answer = canned_under(b"PK", Some(&source), &root.join("python3.12"));
-        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
-        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
-        assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
-    }
-
-    /// A cache file someone else could have written is warned about and never read.
-    ///
-    /// What would make this red: the files read by path after the directory check, which an
-    /// account owning a directory above the cache can swap between the two, with a manifest and
-    /// a zip of its own - Python that then runs on every managed host.
-    #[cfg(unix)]
-    #[test]
-    fn a_cache_file_others_could_write_is_warned_about_and_not_read() {
-        use std::os::unix::fs::PermissionsExt;
-        let root_guard = scratch();
-        let root = root_guard.path().to_path_buf();
-        let source = root.join("ping.py");
-        std::fs::write(&source, "ping").unwrap();
-        let place = fresh_place(&root);
-        let modules = std::collections::BTreeSet::from(["ping".to_string()]);
-        let answer = canned(b"PK kept", Some(&source));
-        let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
-        union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
-        for file in std::fs::read_dir(&place.dir).unwrap() {
-            let path = file.unwrap().path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o620)).unwrap();
-            }
+    fn an_entry_is_filed_only_under_the_interpreter_and_executable_that_built_it() {
+        {
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let source = root.join("ping.py");
+            std::fs::write(&source, "ping").unwrap();
+            let place = crate::union_cache::Place {
+                interpreter: root.join("venv/bin/python"),
+                ..fresh_place(&root)
+            };
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let answer = canned(b"PK", Some(&source));
+            let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+            assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
         }
-        let starts = std::cell::Cell::new(0);
-        let start = || {
-            starts.set(starts.get() + 1);
-            PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[])
-        };
-        let mut warnings = Vec::new();
-        union_from(start, &modules, &[], Some(&place), &mut |w| {
-            warnings.push(w);
-        })
-        .unwrap();
-        assert_eq!(starts.get(), 1, "a file others could write was read");
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(
-            warnings[0].contains("writable by nobody else"),
-            "{}",
-            warnings[0]
-        );
+        {
+            let root_guard = scratch();
+            let root = root_guard.path().to_path_buf();
+            let source = root.join("ping.py");
+            std::fs::write(&source, "ping").unwrap();
+            let place = fresh_place(&root);
+            let modules = std::collections::BTreeSet::from(["ping".to_string()]);
+            let answer = canned_under(b"PK", Some(&source), &root.join("python3.12"));
+            let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
+            union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
+            assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
+        }
     }
 
     /// The helper names the files a union came from: each module and `module_utils` it copied,

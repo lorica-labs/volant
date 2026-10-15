@@ -970,8 +970,7 @@ mod tests {
         );
     }
 
-    /// A module's later children take its spec from the server, which found it while importing the
-    /// module's dependencies, instead of asking the path for it again: Python 3.12's zipimport
+    /// A module's later children take its spec from the server instead of asking the path again.
     #[test]
     fn a_module_s_later_children_take_its_spec_from_the_server() {
         let blob = runpy_blob(&[(
@@ -1021,8 +1020,7 @@ mod tests {
         assert_eq!(results[2].0["finders"][0], "Spy", "{:?}", results[2].0);
     }
 
-    /// Each environment gets a server started with it, so what the server imports ahead is imported
-    /// under the environment the task's child runs with; one server serves every task with the same
+    /// Each environment gets a server started with it, so imports ahead run under the task's environment.
     #[test]
     #[cfg(target_os = "linux")]
     fn each_environment_gets_a_server_started_with_it() {
@@ -1325,8 +1323,7 @@ mod tests {
         }
     }
 
-    /// A loop whose items alternate two environments, all in one batch, runs every item: a server
-    /// replaced because the other environment needed the place was evicted, not stopped, and does
+    /// A loop alternating two environments in one batch runs every item.
     #[test]
     fn a_loop_alternating_two_environments_runs_every_item() {
         let root = scratch();
@@ -1415,8 +1412,7 @@ mod tests {
         assert!(!msg.contains("old server words"), "{msg}");
     }
 
-    /// What the server imports for a module is imported with nothing to read and nowhere to write,
-    /// and leaves the process as it found it: a dependency that changes the environment, the
+    /// What the server imports for a module leaves the process as it found it.
     #[test]
     fn what_the_server_imports_for_a_module_leaves_it_as_it_was() {
         let blob = runpy_blob(&[
@@ -1458,8 +1454,7 @@ mod tests {
         );
     }
 
-    /// An import that fails in the server - a dependency that raises, even `SystemExit`, or a
-    /// module whose source does not parse - leaves the server running, and the module's child fails
+    /// An import that fails in the server leaves it running and fails only the module's child.
     #[test]
     fn an_import_that_fails_in_the_server_fails_only_in_the_child() {
         let blob = runpy_blob(&[
@@ -1497,8 +1492,7 @@ mod tests {
         assert!(server.alive());
     }
 
-    /// A package that appears on the server's path after it imported a module's dependencies is
-    /// seen by that module's next task, as the reference's fresh interpreter sees it: the server
+    /// A package installed after a module's imports is seen by that module's next task.
     #[test]
     fn a_package_installed_after_a_module_s_imports_is_seen_by_its_next_task() {
         let blob = runpy_blob(&[
@@ -1592,8 +1586,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// The oversized-result sentence quotes the bound the server applied, which it sends in the
-    /// frame: the server is the side that enforces it, and a figure kept on this side as well would
+    /// The oversized-result sentence quotes the bound the server sent in its frame.
     #[test]
     fn the_oversized_result_sentence_quotes_the_server_s_own_limit() {
         let result = result(&json!({
@@ -2146,8 +2139,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         set_open_files(soft, hard);
     }
 
-    /// A module that leaves a daemon behind the way `module_utils.service.fork_process` does - fork
-    /// without exec, `setsid`, 0-2 on `/dev/null`, every other descriptor kept - and then outlives
+    /// A daemon left behind by a module that outlives its timeout does not hold the server.
     #[test]
     fn a_daemon_the_module_leaves_behind_does_not_hold_the_server() {
         let blob = stub_blob(
@@ -2195,8 +2187,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A module whose `AnsibleModule(...)` call raises shows the traceback Python itself gives,
-    /// with no frame of the server's timing in it: that traceback is what the task's message
+    /// A module whose `AnsibleModule(...)` call raises shows Python's own traceback, without timing frames.
     #[test]
     fn the_timing_mark_leaves_the_module_s_traceback_alone() {
         let blob = stub_blob(
@@ -2231,8 +2222,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         );
     }
 
-    /// A module that does not deliver a result fails the task carrying what it wrote, and the
-    /// server lives: no result, noise, noise after a result, a signal (before or without a result),
+    /// A module that delivers no usable result fails the task carrying what it wrote, and the server lives.
     #[rstest]
     #[case::no_result("\n    pass\n", "the module wrote no result")]
     #[case::noise(
@@ -2281,8 +2271,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         assert!(server.alive(), "the module's failure is not the server's");
     }
 
-    /// A module's result is reported as it wrote it: its own failure, a silent `changed` filled in
-    /// as false (the reference's fill-in), a change kept, a pipe filled while the other is written,
+    /// A module's result is reported as it wrote it, with `changed` filled in as false when absent.
     #[rstest]
     #[case::own_failure(
         "\n    print(json.dumps({\"failed\": True, \"msg\": \"nothing to do here\"}))\n    raise SystemExit(1)\n",

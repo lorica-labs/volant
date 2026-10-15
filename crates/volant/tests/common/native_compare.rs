@@ -74,11 +74,11 @@ pub fn failed_tasks(stdout: &str) -> std::collections::BTreeSet<String> {
     failed
 }
 
-/// `NATIVE_LOCK` in `generate.py`, taken and held until the returned file is dropped: the
-/// fixture, the accounts, the unit and the package are the machine's, so one run at a time, this
-/// test's or the generator's. Under the account's own home, where no other account can create the
-/// file first and keep it from being opened; the runs that share the state are this account's. Its
-/// messages name the path from `~`, never the expanded home.
+/// `NATIVE_LOCK` in the generator's `run.py`, taken and held until the returned file is dropped:
+/// the fixture, the accounts, the unit and the package are the machine's, so one run at a time,
+/// this test's or the generator's. Under the account's own home, where no other account can
+/// create the file first and keep it from being opened; the runs that share the state are this
+/// account's. Its messages name the path from `~`, never the expanded home.
 #[cfg(target_os = "linux")]
 pub fn native_lock() -> std::fs::File {
     use std::os::fd::AsRawFd as _;
@@ -415,7 +415,7 @@ pub fn keep_live(result: &mut Value) {
 #[cfg(target_os = "linux")]
 pub const STAGED_PLACEHOLDER: &str = "<golden-staged-path>";
 
-/// `STAGED_SRC_MARKERS` in `generate.py`.
+/// `STAGED_MARKERS` in the generator's `redact.py`.
 #[cfg(target_os = "linux")]
 pub const STAGED_MARKERS: &[&str] = &["ansible-tmp-", "/tmp/ansible", ".ansible/tmp"];
 

@@ -1,0 +1,5 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for notaplay.yml.
+runs:
+  # Skipping the pre-flight must not skip the loader: the reference refuses a playbook that is not
+  # a list of plays, at exit 4.
+  - args: [-i, inv.ini, --list-tasks, notaplay.yml]

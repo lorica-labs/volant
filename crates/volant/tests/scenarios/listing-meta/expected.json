@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: meta.yml\n\n  play #1 (h1): meta play\tTAGS: []\n    tasks:\n      first\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: []\n      meta\tTAGS: [m]\n      last\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: meta.yml\n\n  play #1 (h1): meta play\tTAGS: []\n    tasks:\n      meta\tTAGS: [m]\n"
+  }
+]

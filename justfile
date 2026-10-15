@@ -17,13 +17,13 @@ setup:
 insta-accept:
     cargo insta accept --workspace
 
-# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION).
-# Reproducible: running this on a correct tree leaves the three recordings byte for byte as they
-# were, so an empty diff afterwards is a check and not a coincidence. That holds because the
-# generator replaces the temporary directory it writes the play into with a fixed name; without
-# that, two of the reference's messages quote the path they came from and every run differed.
-golden:
-    "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py
+# Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION):
+# every kind, or those named (template, inventory, scenario, module). Reproducible: running this on
+# a correct tree leaves the template, inventory and scenario recordings byte for byte as they were,
+# so an empty diff afterwards is a check and not a coincidence. The `module` kind needs sudo,
+# systemd, apt and cron.
+golden *kinds:
+    "$(uv tool dir)/ansible-core/bin/python" crates/volant/tests/golden/generate.py {{kinds}}
 
 # Regenerate the parity matrix's reference names (tests/parity/reference.json) with the
 # reference ansible-core and the pinned `ansible` package's collections. Needs `uv`.

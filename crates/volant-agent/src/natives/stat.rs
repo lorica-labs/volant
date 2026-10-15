@@ -370,38 +370,38 @@ mod tests {
         let cases = [
             (
                 "stat-file",
-                include_str!("../../../volant/tests/golden/native/stat-file.json"),
+                include_str!("../../../volant/tests/golden/module/stat-file.json"),
                 json!({"path": "<golden-tmp>/f.txt"}),
             ),
             (
                 "stat-dir",
-                include_str!("../../../volant/tests/golden/native/stat-dir.json"),
+                include_str!("../../../volant/tests/golden/module/stat-dir.json"),
                 json!({"path": "<golden-tmp>"}),
             ),
             (
                 "stat-link-follow",
-                include_str!("../../../volant/tests/golden/native/stat-link-follow.json"),
+                include_str!("../../../volant/tests/golden/module/stat-link-follow.json"),
                 json!({"path": "<golden-tmp>/l", "follow": true}),
             ),
             (
                 "stat-link-nofollow",
-                include_str!("../../../volant/tests/golden/native/stat-link-nofollow.json"),
+                include_str!("../../../volant/tests/golden/module/stat-link-nofollow.json"),
                 json!({"path": "<golden-tmp>/l"}),
             ),
             (
                 "stat-missing",
-                include_str!("../../../volant/tests/golden/native/stat-missing.json"),
+                include_str!("../../../volant/tests/golden/module/stat-missing.json"),
                 json!({"path": "<golden-tmp>/nope"}),
             ),
             (
                 "stat-plugin",
-                include_str!("../../../volant/tests/golden/native/stat-plugin.json"),
+                include_str!("../../../volant/tests/golden/module/stat-plugin.json"),
                 json!({"path": "<golden-tmp>/f.txt", "follow": false, "get_checksum": true,
                        "checksum_algorithm": "sha1"}),
             ),
             (
                 "stat-bare",
-                include_str!("../../../volant/tests/golden/native/stat-bare.json"),
+                include_str!("../../../volant/tests/golden/module/stat-bare.json"),
                 json!({"path": "<golden-tmp>/f.txt", "get_checksum": false, "get_mime": false,
                        "get_attributes": false}),
             ),

@@ -1,0 +1,5 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for missing-role.yml.
+runs:
+  # Skipping the pre-flight must not skip the compilation: the reference refuses a role nothing on
+  # the path answers to, at exit 1.
+  - args: [-i, inv.ini, --syntax-check, missing-role.yml]

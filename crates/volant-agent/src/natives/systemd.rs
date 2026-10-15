@@ -828,7 +828,7 @@ esac"#;
             .answer(json!({"name": "cron", "state": "started", "enabled": true}))
             .unwrap();
         assert_like_recording(
-            include_str!("../../../volant/tests/golden/native/systemd-started-same.json"),
+            include_str!("../../../volant/tests/golden/module/systemd-started-same.json"),
             &answer,
         );
         assert_eq!(
@@ -846,7 +846,7 @@ esac"#;
             .answer(json!({"name": "cron.service", "enabled": true}))
             .unwrap();
         assert_like_recording(
-            include_str!("../../../volant/tests/golden/native/systemd-enabled-only.json"),
+            include_str!("../../../volant/tests/golden/module/systemd-enabled-only.json"),
             &answer,
         );
         assert_eq!(
@@ -861,7 +861,7 @@ esac"#;
         let fake = Fake::new("");
         let answer = fake.answer(json!({"daemon_reload": true})).unwrap();
         let mut want: Map<String, Value> = serde_json::from_str(include_str!(
-            "../../../volant/tests/golden/native/systemd-daemon-reload.json"
+            "../../../volant/tests/golden/module/systemd-daemon-reload.json"
         ))
         .unwrap();
         want.remove("action");
@@ -880,7 +880,7 @@ esac"#;
             .answer(json!({"name": "volant-no-such-unit", "state": "started"}))
             .unwrap();
         assert_like_recording(
-            include_str!("../../../volant/tests/golden/native/systemd-missing-unit.json"),
+            include_str!("../../../volant/tests/golden/module/systemd-missing-unit.json"),
             &answer,
         );
         assert_eq!(fake.calls(), ["show volant-no-such-unit"]);

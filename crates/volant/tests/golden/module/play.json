@@ -1787,6 +1787,267 @@
       },
       "register": "last",
       "become": true
+     },
+     {
+      "name": "setup-205",
+      "file": {
+       "path": "/tmp/volant15-golden",
+       "state": "absent"
+      }
+     },
+     {
+      "name": "setup-206",
+      "file": {
+       "path": "/tmp/volant15-golden",
+       "state": "directory",
+       "mode": "0755"
+      }
+     },
+     {
+      "name": "setup-207",
+      "file": {
+       "path": "/tmp/volant16-golden",
+       "state": "absent"
+      }
+     },
+     {
+      "name": "setup-208",
+      "file": {
+       "path": "/tmp/volant16-golden",
+       "state": "directory",
+       "mode": "0755"
+      }
+     },
+     {
+      "name": "setup-209",
+      "file": {
+       "path": "/tmp/volant16-golden-collection",
+       "state": "absent"
+      }
+     },
+     {
+      "name": "setup-210",
+      "file": {
+       "path": "/tmp/volant16-golden-collection",
+       "state": "directory",
+       "mode": "0755"
+      }
+     },
+     {
+      "name": "setup-211",
+      "copy": {
+       "content": "golden stat fixture\n",
+       "dest": "/tmp/volant15-golden/golden-stat-target",
+       "mode": "0644"
+      }
+     },
+     {
+      "name": "python-ping",
+      "ping": {},
+      "register": "last"
+     },
+     {
+      "name": "python-stat",
+      "stat": {
+       "path": "/tmp/volant15-golden/golden-stat-target"
+      },
+      "register": "last"
+     },
+     {
+      "name": "python-file",
+      "file": {
+       "path": "/tmp/volant15-golden/golden-file",
+       "state": "touch",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "python-lineinfile",
+      "lineinfile": {
+       "path": "/tmp/volant15-golden/golden-line",
+       "line": "hello",
+       "create": true
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-copy-new",
+      "copy": {
+       "src": "<golden-action-src>/hello.txt",
+       "dest": "/tmp/volant16-golden/new.txt",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-copy-same",
+      "copy": {
+       "src": "<golden-action-src>/hello.txt",
+       "dest": "/tmp/volant16-golden/new.txt",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-copy-content",
+      "copy": {
+       "content": "x\n",
+       "dest": "/tmp/volant16-golden/content.txt",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-copy-force-false",
+      "copy": {
+       "content": "y\n",
+       "dest": "/tmp/volant16-golden/content.txt",
+       "force": false
+      },
+      "register": "last"
+     },
+     {
+      "name": "setup-220",
+      "file": {
+       "path": "/tmp/volant16-golden/dir",
+       "state": "directory",
+       "mode": "0775"
+      }
+     },
+     {
+      "name": "action-copy-dest-dir",
+      "copy": {
+       "src": "<golden-action-src>/hello.txt",
+       "dest": "/tmp/volant16-golden/dir/",
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-copy-validate-fail",
+      "copy": {
+       "content": "",
+       "dest": "/tmp/volant16-golden/invalid.txt",
+       "validate": "test -s %s"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "action-copy-remote-src",
+      "copy": {
+       "src": "/tmp/volant16-golden/new.txt",
+       "dest": "/tmp/volant16-golden/remote.txt",
+       "remote_src": true,
+       "mode": "0644"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-template-new",
+      "template": {
+       "src": "<golden-action-src>/motd.j2",
+       "dest": "/tmp/volant16-golden/motd",
+       "mode": "0644"
+      },
+      "register": "last",
+      "vars": {
+       "who": "golden",
+       "extra": true
+      }
+     },
+     {
+      "name": "action-template-same",
+      "template": {
+       "src": "<golden-action-src>/motd.j2",
+       "dest": "/tmp/volant16-golden/motd",
+       "mode": "0644"
+      },
+      "register": "last",
+      "vars": {
+       "who": "golden",
+       "extra": true
+      }
+     },
+     {
+      "name": "action-template-lstrip",
+      "template": {
+       "src": "<golden-action-src>/motd.j2",
+       "dest": "/tmp/volant16-golden/motd-lstrip",
+       "mode": "0644",
+       "lstrip_blocks": true
+      },
+      "register": "last",
+      "vars": {
+       "who": "golden",
+       "extra": true
+      }
+     },
+     {
+      "name": "action-package-present",
+      "package": {
+       "name": "bash",
+       "state": "present"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "action-service-started",
+      "service": {
+       "name": "systemd-journald",
+       "state": "started"
+      },
+      "register": "last",
+      "become": true
+     },
+     {
+      "name": "setup-229",
+      "file": {
+       "path": "/tmp/volant16-golden/unpacked",
+       "state": "directory",
+       "mode": "0775"
+      }
+     },
+     {
+      "name": "action-unarchive-local",
+      "unarchive": {
+       "src": "<golden-action-src>/bundle.tar.gz",
+       "dest": "/tmp/volant16-golden/unpacked"
+      },
+      "register": "last"
+     },
+     {
+      "name": "action-unarchive-creates",
+      "unarchive": {
+       "src": "<golden-action-src>/bundle.tar.gz",
+       "dest": "/tmp/volant16-golden/unpacked",
+       "creates": "/tmp/volant16-golden/unpacked/inside.txt"
+      },
+      "register": "last"
+     },
+     {
+      "name": "collection-sysctl",
+      "ansible.posix.sysctl": {
+       "name": "net.ipv4.ip_forward",
+       "value": "1",
+       "sysctl_file": "/tmp/volant16-golden-collection/sysctl.conf",
+       "sysctl_set": false,
+       "reload": false
+      },
+      "register": "last"
+     },
+     {
+      "name": "collection-ini-file",
+      "community.general.ini_file": {
+       "path": "/tmp/volant16-golden-collection/test.ini",
+       "section": "golden",
+       "option": "color",
+       "value": "blue",
+       "mode": "0644"
+      },
+      "register": "last"
      }
     ],
     "always": [

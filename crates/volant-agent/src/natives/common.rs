@@ -1217,7 +1217,7 @@ esac"#,
 }
 
 /// What the natives' tests compare against: the recordings of ansible-core 2.19.12 under
-/// `crates/volant/tests/golden/native/`, taken on a scratch directory like the one the golden
+/// `crates/volant/tests/golden/module/`, taken on a scratch directory like the one the golden
 /// test builds.
 #[cfg(all(test, target_os = "linux"))]
 pub mod golden {

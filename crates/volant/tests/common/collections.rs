@@ -13,11 +13,11 @@ fn pinned_collections() -> Vec<(String, String)> {
         .collect()
 }
 
-/// What `generate.py`'s own `_installed_collections()` runs, in the interpreter's own words: a
-/// collection's version comes from its `MANIFEST.json`, found on one of `C.COLLECTIONS_PATHS`;
-/// `netaddr` is a plain import next to it. Kept in the interpreter this refuses to run without
-/// (`reference_python()`) rather than reimplemented in Rust, because a manifest's shape and a
-/// collection's path list are ansible-core's own to read.
+/// What the generator's own `_installed_collections()` (`run.py`) runs, in the interpreter's own
+/// words: a collection's version comes from its `MANIFEST.json`, found on one of
+/// `C.COLLECTIONS_PATHS`; `netaddr` is a plain import next to it. Kept in the interpreter this
+/// refuses to run without (`reference_python()`) rather than reimplemented in Rust, because a
+/// manifest's shape and a collection's path list are ansible-core's own to read.
 ///
 /// The tuple of names is built from `pinned_collections()` rather than written out a second time:
 /// `COLLECTIONS` gaining a fourth pin (or losing one) must not also require editing this string

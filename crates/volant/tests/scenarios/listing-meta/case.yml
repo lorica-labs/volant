@@ -1,0 +1,4 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for meta.yml.
+runs:
+  - args: [-i, inv.ini, --list-tasks, meta.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, m, meta.yml]

@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: later-modules.yml\n\n  play #1 (h1): later play\tTAGS: []\n    tasks:\n      a line in a file\tTAGS: []\n      fired and forgotten\tTAGS: []\n      run somewhere else\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: later-modules.yml\n"
+  }
+]

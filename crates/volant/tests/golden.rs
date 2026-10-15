@@ -160,72 +160,136 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
     );
 }
 
-/// Every invocation in `tests/golden/listing/args.txt`, compared with ansible-core's own output
-/// byte for byte.
-///
-/// This is the widest gate in the suite and the cheapest. The four listing commands print what
-/// a compiled play *is*, so the recording covers the things behavioural tests reach only
-/// indirectly: the order roles and their dependencies are spliced in, the `role : name` prefix
-/// and its absence on an unnamed task, an `import_tasks` expanded where it stands while an
-/// `include_tasks` stays one task, an `import_playbook` numbering its plays into the file that
-/// read it, the tags a block hands down, and which tasks a `--tags` leaves out.
-///
-/// Two of the cases carry no output at all and exist for their exit code: a listing skips the
-/// pre-flight, and these say it does not thereby skip the loader (`notaplay.yml`, exit 4) or the
-/// compilation (`missing-role.yml`, exit 1). A release that answered a listing before reading
-/// the file would pass every other case here and fail these two.
-///
-/// What would make this red: a space, a tab, a tag out of order, a `never` task listed, an
-/// include expanded, a role prefix on a task that has no name of its own, a `--limit` that
-/// filters nothing, an `import_tasks` inside a role resolved against the wrong directory - and
-/// any of the compilation differences above.
-///
-/// The fixtures avoid the two places the reference is not reproducible: a play with two tags
-/// and a play matching two hosts both print out of a Python set, whose iteration order changes
-/// between processes. `generate.py`'s `listings()` refuses to record either.
+/// Every run of every scenario under `tests/scenarios`: stdout byte for byte, with the scenario's
+/// path read as `<golden-tmp>`, and the exit code, against ansible-core's recording.
 #[test]
 fn every_listing_matches_the_reference_byte_for_byte() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
-    let expected: Map<String, Value> =
-        serde_json::from_str(include_str!("golden/expected_listing.json"))
-            .expect("expected_listing.json parses");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios");
+    let empty_config =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/reference/ansible.cfg");
+    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&root)
+        .expect("tests/scenarios lists")
+        .map(|entry| entry.expect("tests/scenarios lists").path())
+        .filter(|path| path.is_dir())
+        .collect();
+    dirs.sort();
+    assert!(!dirs.is_empty(), "tests/scenarios holds no scenario");
     let mut failures = Vec::new();
-    for (line, want) in &expected {
-        // `shlex`, because `generate.py` recorded the line with `shlex.split`. Splitting on
-        // whitespace here agrees with it until the first quoted argument and then hands the
-        // engine two half-arguments while the recording holds one whole one.
-        let args = shlex::split(line).unwrap_or_else(|| panic!("{line} splits like a shell"));
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
-        command
-            .arg("playbook")
-            .args(["-i", "inv.ini"])
-            .args(&args)
-            .current_dir(&dir)
-            .env("NO_COLOR", "1")
-            .env_remove("COLUMNS");
-        // The recording was made with the whole `ANSIBLE_` prefix cleared, not a chosen few
-        // names: any one of them exported on the machine running the tests would change the
-        // answer for a reason that is not the engine's.
-        for (name, _) in std::env::vars() {
-            if name.starts_with("ANSIBLE_") {
-                command.env_remove(name);
-            }
+    let mut runs = 0;
+    for dir in &dirs {
+        let name = dir
+            .file_name()
+            .expect("a scenario has a name")
+            .to_string_lossy();
+        let text = std::fs::read_to_string(dir.join("case.yml"))
+            .unwrap_or_else(|e| panic!("{name}/case.yml is readable: {e}"));
+        let docs =
+            yaml::load(&text, "case.yml").unwrap_or_else(|e| panic!("{name}/case.yml parses: {e}"));
+        let case = yaml::to_json(&docs[0]).expect("case.yml is JSON-shaped");
+        let case = case.as_object().expect("case.yml is a mapping");
+        for key in case.keys() {
+            assert!(
+                ["args", "runs", "env", "forks", "needs", "unordered"].contains(&key.as_str()),
+                "{name}: `{key}` in case.yml is not supported by this test"
+            );
         }
-        let out = command.output().expect("volant runs");
-        let got = String::from_utf8_lossy(&out.stdout);
-        let wanted = want["stdout"].as_str().expect("a recorded stdout");
-        let code = want["code"].as_i64().map(|c| c as i32);
-        if got != wanted || out.status.code() != code {
-            failures.push(format!(
-                "{line}\n--- reference (exit {code:?})\n{wanted}\n--- volant (exit {:?})\n{got}\n--- stderr\n{}",
-                out.status.code(),
-                String::from_utf8_lossy(&out.stderr)
-            ));
+        for key in ["needs", "unordered"] {
+            assert!(
+                case.get(key)
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty),
+                "{name}: a non-empty `{key}` is not supported by this test"
+            );
+        }
+        let forks = case
+            .get("forks")
+            .map_or(Some(1), Value::as_u64)
+            .unwrap_or_else(|| panic!("{name}: `forks` is not a number"));
+        let env: Vec<(String, String)> = case
+            .get("env")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_str().expect("an env value is a string").into(),
+                )
+            })
+            .collect();
+        let expected: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("expected.json"))
+                .unwrap_or_else(|e| panic!("{name}/expected.json is readable: {e}")),
+        )
+        .unwrap_or_else(|e| panic!("{name}/expected.json parses: {e}"));
+        let (argvs, wanted): (Vec<&Value>, Vec<&Value>) = if let Some(list) = case.get("runs") {
+            let list = list.as_array().expect("`runs` is a list");
+            let recorded = expected
+                .as_array()
+                .expect("expected.json of `runs` is a list");
+            assert_eq!(
+                list.len(),
+                recorded.len(),
+                "{name}: case.yml and expected.json hold as many runs"
+            );
+            (
+                list.iter().map(|run| &run["args"]).collect(),
+                recorded.iter().collect(),
+            )
+        } else {
+            let args = case
+                .get("args")
+                .unwrap_or_else(|| panic!("{name}: case.yml holds neither `args` nor `runs`"));
+            (vec![args], vec![&expected])
+        };
+        let config = if dir.join("ansible.cfg").exists() {
+            dir.join("ansible.cfg")
+        } else {
+            empty_config.clone()
+        };
+        for (argv, want) in argvs.into_iter().zip(wanted) {
+            runs += 1;
+            let args: Vec<&str> = argv
+                .as_array()
+                .unwrap_or_else(|| panic!("{name}: `args` is not a list"))
+                .iter()
+                .map(|arg| arg.as_str().expect("an argument is a string"))
+                .collect();
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
+            command
+                .arg("playbook")
+                .args(&args)
+                .args(["--forks", &forks.to_string()])
+                .current_dir(dir)
+                .env("NO_COLOR", "1")
+                .env_remove("COLUMNS");
+            for (var, _) in std::env::vars() {
+                if var.starts_with("ANSIBLE_") {
+                    command.env_remove(var);
+                }
+            }
+            command
+                .env("ANSIBLE_CONFIG", &config)
+                .env("ANSIBLE_NOCOLOR", "1")
+                .envs(env.clone());
+            let out = command.output().expect("volant runs");
+            let got = String::from_utf8_lossy(&out.stdout)
+                .replace(&dir.display().to_string(), "<golden-tmp>");
+            let wanted = want["stdout"].as_str().expect("a recorded stdout");
+            let code = want["code"].as_i64().and_then(|c| i32::try_from(c).ok());
+            if got != wanted || out.status.code() != code {
+                failures.push(format!(
+                    "{name}: {}\n--- reference (exit {code:?})\n{wanted}\n--- volant (exit {:?})\n{got}\n--- stderr\n{}",
+                    args.join(" "),
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
         }
     }
     assert!(
         failures.is_empty(),
-        "{} listing(s) differ from ansible-core:\n{}",
+        "{} of {runs} scenario run(s) differ from ansible-core:\n{}",
         failures.len(),
         failures.join("\n\n")
     );
@@ -779,17 +843,19 @@ fn finish_within(command: &mut std::process::Command, what: &str) -> std::proces
 #[test]
 fn a_python_module_returns_the_reference_s_own_keys() {
     let fixtures: [(&str, &str); 4] = [
-        ("ping", include_str!("golden/python-modules/ping.json")),
-        ("stat", include_str!("golden/python-modules/stat.json")),
-        ("file", include_str!("golden/python-modules/file.json")),
+        ("ping", include_str!("golden/module/python-ping.json")),
+        ("stat", include_str!("golden/module/python-stat.json")),
+        ("file", include_str!("golden/module/python-file.json")),
         (
             "lineinfile",
-            include_str!("golden/python-modules/lineinfile.json"),
+            include_str!("golden/module/python-lineinfile.json"),
         ),
     ];
     let Some(python) = reference_python() else {
         return;
     };
+    // The module play records these cases in the same directories: one run at a time.
+    let _lock = native_lock();
 
     let dir = std::path::Path::new(PYTHON_MODULES_DIR);
     let _ = std::fs::remove_dir_all(dir);
@@ -928,77 +994,79 @@ fn an_action_plugin_returns_the_reference_s_own_keys() {
         (
             "copy-new",
             "copy",
-            include_str!("golden/action/copy-new.json"),
+            include_str!("golden/module/action-copy-new.json"),
         ),
         (
             "copy-same",
             "copy",
-            include_str!("golden/action/copy-same.json"),
+            include_str!("golden/module/action-copy-same.json"),
         ),
         (
             "copy-content",
             "copy",
-            include_str!("golden/action/copy-content.json"),
+            include_str!("golden/module/action-copy-content.json"),
         ),
         (
             "copy-force-false",
             "copy",
-            include_str!("golden/action/copy-force-false.json"),
+            include_str!("golden/module/action-copy-force-false.json"),
         ),
         (
             "copy-dest-dir",
             "copy",
-            include_str!("golden/action/copy-dest-dir.json"),
+            include_str!("golden/module/action-copy-dest-dir.json"),
         ),
         (
             "copy-validate-fail",
             "copy",
-            include_str!("golden/action/copy-validate-fail.json"),
+            include_str!("golden/module/action-copy-validate-fail.json"),
         ),
         (
             "copy-remote-src",
             "copy",
-            include_str!("golden/action/copy-remote-src.json"),
+            include_str!("golden/module/action-copy-remote-src.json"),
         ),
         (
             "template-new",
             "template",
-            include_str!("golden/action/template-new.json"),
+            include_str!("golden/module/action-template-new.json"),
         ),
         (
             "template-same",
             "template",
-            include_str!("golden/action/template-same.json"),
+            include_str!("golden/module/action-template-same.json"),
         ),
         (
             "template-lstrip",
             "template",
-            include_str!("golden/action/template-lstrip.json"),
+            include_str!("golden/module/action-template-lstrip.json"),
         ),
         (
             "package-present",
             "package",
-            include_str!("golden/action/package-present.json"),
+            include_str!("golden/module/action-package-present.json"),
         ),
         (
             "service-started",
             "service",
-            include_str!("golden/action/service-started.json"),
+            include_str!("golden/module/action-service-started.json"),
         ),
         (
             "unarchive-local",
             "unarchive",
-            include_str!("golden/action/unarchive-local.json"),
+            include_str!("golden/module/action-unarchive-local.json"),
         ),
         (
             "unarchive-creates",
             "unarchive",
-            include_str!("golden/action/unarchive-creates.json"),
+            include_str!("golden/module/action-unarchive-creates.json"),
         ),
     ];
     let Some(python) = reference_python() else {
         return;
     };
+    // The module play records these cases in the same directories: one run at a time.
+    let _lock = native_lock();
     let missing: Vec<&str> = [
         ("sudo -n true", "passwordless `sudo -n`"),
         ("test -d /run/systemd/system", "running systemd"),
@@ -1225,17 +1293,19 @@ fn a_collection_module_returns_the_reference_s_own_keys() {
         (
             "sysctl",
             "ansible.posix.sysctl",
-            include_str!("golden/collection/sysctl.json"),
+            include_str!("golden/module/collection-sysctl.json"),
         ),
         (
             "ini_file",
             "community.general.ini_file",
-            include_str!("golden/collection/ini_file.json"),
+            include_str!("golden/module/collection-ini-file.json"),
         ),
     ];
     let Some(python) = reference_python() else {
         return;
     };
+    // The module play records these cases in the same directories: one run at a time.
+    let _lock = native_lock();
     let mismatched = collections::collection_mismatches(&python);
     if !mismatched.is_empty() {
         let why = format!(
@@ -1312,9 +1382,9 @@ fn a_collection_module_returns_the_reference_s_own_keys() {
     );
 }
 
-/// What `generate.py`'s `natives()` recorded: one file per case, `index.json` saying how each is
+/// What the generator's `module` kind recorded: one file per case, `index.json` saying how each is
 /// compared and which path an enabled native takes, and `play.json`, the play that ran them.
-const NATIVE_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/native");
+const NATIVE_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/module");
 
 fn native_file(name: &str) -> Value {
     let path = std::path::Path::new(NATIVE_GOLDEN).join(name);
@@ -1343,17 +1413,8 @@ fn native_play_tasks(play: &Value) -> Vec<&Value> {
     tasks
 }
 
-/// Every recording in `native/` is indexed, every indexed case has a recording, and the recorded
-/// play runs it: a recording the index does not name is compared by nothing, and a case the play
-/// never runs has nothing to compare.
-///
-/// A floor on the set too: every native candidate, `setup` and each alias included, has a case
-/// that expects the native to answer, and the two `cron` cases are there. `natives()` leaves out
-/// every `become` case on a machine without `sudo -n` and the `cron` ones without cron, and index,
-/// recordings and play would still agree with each other.
-///
-/// What would make this red: a recording left behind by a renamed case, an index entry added by
-/// hand, or a regeneration on a machine that could not record a module's cases.
+/// Every recording in `module/` is indexed and run by the recorded play, and every native candidate
+/// and both `cron` cases have an indexed case.
 #[test]
 fn every_native_recording_is_indexed() {
     let index = native_file("index.json");
@@ -1381,10 +1442,10 @@ fn every_native_recording_is_indexed() {
         .filter_map(|task| task["name"].as_str())
         .collect();
     let recorded: std::collections::BTreeSet<String> = std::fs::read_dir(NATIVE_GOLDEN)
-        .expect("native/ is readable")
+        .expect("module/ is readable")
         .map(|entry| {
             entry
-                .expect("native/ lists")
+                .expect("module/ lists")
                 .file_name()
                 .to_string_lossy()
                 .into_owned()
@@ -1397,7 +1458,7 @@ fn every_native_recording_is_indexed() {
             .is_some_and(|case| index.contains_key(case))
         {
             failures.push(format!(
-                "native/{file}: every recorded case is indexed, and index.json does not name this \
+                "module/{file}: every recorded case is indexed, and index.json does not name this \
                  one"
             ));
         }
@@ -1599,7 +1660,8 @@ fn reference_results(
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/callback_plugins"),
         )
         .env("ANSIBLE_STDOUT_CALLBACK", "golden_json")
-        .env("ANSIBLE_NOCOLOR", "1");
+        .env("ANSIBLE_NOCOLOR", "1")
+        .envs(collections_path_env());
     let out = finish_within(&mut command, "the reference");
     assert!(
         out.status.success(),
@@ -1631,32 +1693,8 @@ fn succeeds(probe: &str) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// A native module answers what the reference answered, and only where its index entry says it
-/// may.
-///
-/// `play.json`, the play `natives()` recorded, runs under Volant at `-vvv` on the recorded
-/// directory, with `--facts native` so `setup` goes to its native whenever the agent has one.
-/// Each case's result is its registered value plus the `invocation` of its `-vvv` line (the
-/// reference registers none) and the `_after` read back after it, masked as the generator masks
-/// the recording. It is compared key by key with `native/<case>.json`, or, for a `live` case, with
-/// the reference's own answer: the reference replays the whole play just after, on this machine,
-/// since `package_facts`, `service_facts` and a unit's `systemctl show` are the machine's, not the
-/// recording's. Both runs get the same scrubbed environment and an empty `ANSIBLE_CONFIG`.
-///
-/// The path comes from `VOLANT_PROFILE_JSON`. A module among the natives the agent declared must
-/// take the index's path (`native` inside the subset, `fallback` outside it); any other takes
-/// `python`. So on a build with no native enabled every case is held to `python`, and enabling a
-/// native holds each of its cases to the index. A declared native with no case expecting it to
-/// answer fails, as does a run that exits non-zero or skips its `always` cleanup.
-///
-/// Needs an account other than root, `sudo -n`, systemd, apt, cron active and enabled, and no
-/// `hello` installed, as the recording did. Without `VOLANT_PYTHON` a missing one skips the test
-/// loudly; with it, it fails. Takes the generator's lock for the machine-wide state it changes.
-///
-/// What would make this red: a native answering a key, a value, a message or a mode the
-/// reference does not; a native leaving the file behind differently (`_after`); a native that
-/// hands back where the index says it answers, or answers where the index says it hands back; a
-/// native that never changes anything (the unit and package cases ask for changes).
+/// `module/play.json` under Volant at `-vvv`: each non-`shape` case against its recording or a live
+/// reference run, and on the path its index entry names.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_native_module_returns_the_reference_s_own_keys() {
@@ -1706,6 +1744,7 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     let index = index.as_object().expect("index.json is a mapping");
     let mut recorded = native_file("play.json");
     replace_in_strings(&mut recorded, "<golden-tmp>", NATIVE_DIR);
+    replace_in_strings(&mut recorded, "<golden-action-src>", ACTION_SRC);
     let mut play = recorded.clone();
     // Volant refuses the `connection` play keyword; the inventory `run_recorded_play` writes
     // says `local` instead.
@@ -1755,18 +1794,19 @@ fn a_native_module_returns_the_reference_s_own_keys() {
     )
     .expect("the play is written");
     let profile = work.join("profile.jsonl");
+    // The play's collection cases need the pinned collections wherever the job installed them.
+    let mut env = collections_path_env();
+    env.push(("VOLANT_PROFILE_JSON", profile.display().to_string()));
+    env.push((
+        "ANSIBLE_CONFIG",
+        work.join("ansible.cfg").display().to_string(),
+    ));
     let out = run_recorded_play(
         &work,
         "natives.yml",
         &python,
         &["-vvv", "--facts", "native"],
-        &[
-            ("VOLANT_PROFILE_JSON", profile.display().to_string()),
-            (
-                "ANSIBLE_CONFIG",
-                work.join("ansible.cfg").display().to_string(),
-            ),
-        ],
+        &env,
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let results = results_by_task(&stdout);
@@ -1829,6 +1869,11 @@ fn a_native_module_returns_the_reference_s_own_keys() {
         }
     }
     for (case, spec) in index {
+        // Compared by their keys and value types in the python module, action plugin and
+        // collection tests, which read the same recordings.
+        if spec["compare"] == "shape" {
+            continue;
+        }
         let mut ours = match native_result(case, spec, &results) {
             Ok(ours) => ours,
             Err(why) => {

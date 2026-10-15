@@ -4,9 +4,9 @@
 //! The four of them read a playbook and print what running it would do, without connecting to
 //! anything. That makes them the cheapest check an operator has, and the widest one this engine
 //! has of its own compilation: the text below is compared to ansible-core's, byte for byte, over
-//! a corpus of playbooks in `tests/golden/listing`, so a role spliced in the wrong order or a
-//! tag inherited from the wrong place shows up as a diff rather than as a behaviour nobody
-//! looked at.
+//! the `listing-*` playbooks in `tests/scenarios`, so a role spliced in the wrong order or a tag
+//! inherited from the wrong place shows up as a diff rather than as a behaviour nobody looked
+//! at.
 //!
 //! The layout is not invented. It is ansible-core 2.19.12's own, measured down to the
 //! whitespace: a blank line before each `playbook:` header, a tab before every `TAGS:`, six

@@ -873,7 +873,7 @@ fn the_three_sources_of_a_tag_list_add_up() {
     std::fs::create_dir_all(&dir).unwrap();
     let cfg = dir.join("ansible.cfg");
     std::fs::write(&cfg, "[tags]\nrun = x\n").unwrap();
-    let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/listing");
+    let listing = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios/listing-tags");
     let config = cfg.display().to_string();
     let list = |run_tags: Option<&str>, args: &[&str]| -> String {
         let mut argv = vec!["playbook", "-i", "inv.ini", "--list-tasks"];

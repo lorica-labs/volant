@@ -1,0 +1,6 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: limit.yml\n\n  play #1 (all): every host\tTAGS: []\n    pattern: ['all']\n    hosts (1):\n      h2\n"
+  }
+]

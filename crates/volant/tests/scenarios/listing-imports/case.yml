@@ -1,0 +1,7 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for imports.yml.
+runs:
+  - args: [-i, inv.ini, --list-tasks, imports.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, own, imports.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, inc, imports.yml]
+  - args: [-i, inv.ini, --list-tags, imports.yml]
+  - args: [-i, inv.ini, --list-hosts, imports.yml]

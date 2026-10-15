@@ -1,0 +1,5 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for limit.yml.
+runs:
+  # Three hosts narrowed to one. `--limit h1 roles.yml` used to stand here and asserted nothing:
+  # that play already names a single host, so limiting it printed the line above it again.
+  - args: [-i, inv.ini, --list-hosts, --limit, h2, limit.yml]

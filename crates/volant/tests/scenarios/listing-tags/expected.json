@@ -1,0 +1,74 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      d-never\tTAGS: [never]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n      f-untagged\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      c-always\tTAGS: [always]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      f-untagged\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      c-always\tTAGS: [always]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n      TASK TAGS: [always, blk, never, x, y]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n      TASK TAGS: [always, x]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      a\tTAGS: [x]\n      b\tTAGS: [y]\n      c-always\tTAGS: [always]\n      d-never\tTAGS: [never]\n      e-in-block\tTAGS: [blk]\n      f-untagged\tTAGS: []\n      TASK TAGS: [always, blk, never, x, y]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: tags.yml\n"
+  }
+]

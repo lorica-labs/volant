@@ -1,0 +1,4 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for later-modules.yml.
+runs:
+  - args: [-i, inv.ini, --list-tasks, later-modules.yml]
+  - args: [-i, inv.ini, --syntax-check, later-modules.yml]

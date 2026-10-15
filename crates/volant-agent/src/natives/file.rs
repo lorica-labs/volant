@@ -601,13 +601,13 @@ mod tests {
         let cases: [(&str, &str, Value, Setup); 12] = [
             (
                 "file-absent-missing",
-                include_str!("../../../volant/tests/golden/native/file-absent-missing.json"),
+                include_str!("../../../volant/tests/golden/module/file-absent-missing.json"),
                 json!({"path": "<golden-tmp>/gone", "state": "absent"}),
                 |_| {},
             ),
             (
                 "file-absent-present",
-                include_str!("../../../volant/tests/golden/native/file-absent-present.json"),
+                include_str!("../../../volant/tests/golden/module/file-absent-present.json"),
                 json!({"path": "<golden-tmp>/d0", "state": "absent"}),
                 |s| {
                     mkdir(&s.path("d0/inner"), 0o755);
@@ -616,61 +616,61 @@ mod tests {
             ),
             (
                 "file-chown-denied",
-                include_str!("../../../volant/tests/golden/native/file-chown-denied.json"),
+                include_str!("../../../volant/tests/golden/module/file-chown-denied.json"),
                 json!({"owner": "root", "path": "<golden-tmp>/f.txt"}),
                 |s| chmod(&s.path("f.txt"), 0o600),
             ),
             (
                 "file-dest-alias",
-                include_str!("../../../volant/tests/golden/native/file-dest-alias.json"),
+                include_str!("../../../volant/tests/golden/module/file-dest-alias.json"),
                 json!({"dest": "<golden-tmp>/a/b", "state": "directory"}),
                 |s| mkdir(&s.path("a/b"), 0o750),
             ),
             (
                 "file-dir-created",
-                include_str!("../../../volant/tests/golden/native/file-dir-created.json"),
+                include_str!("../../../volant/tests/golden/module/file-dir-created.json"),
                 json!({"mode": "0755", "path": "<golden-tmp>/a/b", "state": "directory"}),
                 |_| {},
             ),
             (
                 "file-dir-over-file",
-                include_str!("../../../volant/tests/golden/native/file-dir-over-file.json"),
+                include_str!("../../../volant/tests/golden/module/file-dir-over-file.json"),
                 json!({"path": "<golden-tmp>/f.txt", "state": "directory"}),
                 |s| chmod(&s.path("f.txt"), 0o600),
             ),
             (
                 "file-dir-same",
-                include_str!("../../../volant/tests/golden/native/file-dir-same.json"),
+                include_str!("../../../volant/tests/golden/module/file-dir-same.json"),
                 json!({"mode": 493, "path": "<golden-tmp>/a/b", "state": "directory"}),
                 |s| mkdir(&s.path("a/b"), 0o755),
             ),
             (
                 "file-dir-symbolic",
-                include_str!("../../../volant/tests/golden/native/file-dir-symbolic.json"),
+                include_str!("../../../volant/tests/golden/module/file-dir-symbolic.json"),
                 json!({"mode": "u=rwx,g=rx,o=", "path": "<golden-tmp>/a/b", "state": "directory"}),
                 |s| mkdir(&s.path("a/b"), 0o755),
             ),
             (
                 "file-owner-unknown",
-                include_str!("../../../volant/tests/golden/native/file-owner-unknown.json"),
+                include_str!("../../../volant/tests/golden/module/file-owner-unknown.json"),
                 json!({"owner": "volant-no-such-user", "path": "<golden-tmp>/f.txt"}),
                 |s| chmod(&s.path("f.txt"), 0o600),
             ),
             (
                 "file-state-file-missing",
-                include_str!("../../../volant/tests/golden/native/file-state-file-missing.json"),
+                include_str!("../../../volant/tests/golden/module/file-state-file-missing.json"),
                 json!({"path": "<golden-tmp>/missing", "state": "file"}),
                 |_| {},
             ),
             (
                 "file-state-file-mode",
-                include_str!("../../../volant/tests/golden/native/file-state-file-mode.json"),
+                include_str!("../../../volant/tests/golden/module/file-state-file-mode.json"),
                 json!({"mode": "0600", "path": "<golden-tmp>/f.txt", "state": "file"}),
                 |_| {},
             ),
             (
                 "file-state-file-same",
-                include_str!("../../../volant/tests/golden/native/file-state-file-same.json"),
+                include_str!("../../../volant/tests/golden/module/file-state-file-same.json"),
                 json!({"path": "<golden-tmp>/f.txt", "state": "file"}),
                 |_| {},
             ),

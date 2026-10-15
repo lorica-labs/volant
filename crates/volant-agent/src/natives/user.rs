@@ -1091,7 +1091,7 @@ mod linux {
         #[test]
         fn the_invocation_is_the_module_s() {
             let recorded: Value = serde_json::from_str(include_str!(
-                "../../../volant/tests/golden/native/user-absent-missing.json"
+                "../../../volant/tests/golden/module/user-absent-missing.json"
             ))
             .unwrap();
             let mut want = recorded["invocation"].clone();

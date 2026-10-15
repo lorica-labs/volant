@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n    tasks:\n      the named include\tTAGS: [inc]\n      include_tasks\tTAGS: []\n      the named role include\tTAGS: []\n      include_role\tTAGS: []\n      include_vars\tTAGS: []\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n    tasks:\n      the named include\tTAGS: [inc]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n\n  play #1 (h1): includes play\tTAGS: []\n      TASK TAGS: [inc]\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: includes.yml\n"
+  }
+]

@@ -1,0 +1,6 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for hosts.yml.
+runs:
+  - args: [-i, inv.ini, --list-hosts, hosts.yml]
+  - args: [-i, inv.ini, --list-hosts, --limit, h1, hosts.yml]
+  - args: [-i, inv.ini, --list-hosts, --limit, nosuchhost, hosts.yml]
+  - args: [-i, inv.ini, --list-hosts, --list-tasks, hosts.yml]

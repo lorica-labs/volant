@@ -1,0 +1,9 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for roles.yml.
+runs:
+  - args: [-i, inv.ini, --list-tasks, roles.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, rt, roles.yml]
+  - args: [-i, inv.ini, --list-tags, roles.yml]
+  - args: [-i, inv.ini, --list-hosts, roles.yml]
+  - args: [-i, inv.ini, --syntax-check, roles.yml]
+  - args: [-i, inv.ini, --syntax-check, tags.yml, roles.yml]
+  - args: [-i, inv.ini, --list-tasks, tags.yml, roles.yml]

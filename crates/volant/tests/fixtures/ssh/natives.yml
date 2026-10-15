@@ -1,6 +1,6 @@
 # Every native module, inside its subset (tag `native`) and just outside it (tag `fallback`), for
 # `ssh_natives_match_python_on_a_real_host` and `ssh_a_native_falls_back_before_touching_the_host`.
-# A case is a task registered as `last`, named after its entry in `tests/golden/native/index.json`
+# A case is a task registered as `last`, named after its entry in `tests/golden/module/index.json`
 # (or in `EXTRA_CASES` in ssh_e2e.rs), whose arguments it keeps, with `dir` in place of the
 # recording's directory. The `after-*` tasks read back what the case left, as the recording does.
 #

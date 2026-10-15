@@ -1621,7 +1621,7 @@ fn native_play_source() -> serde_json::Value {
 fn native_play(tag: &str) -> (serde_json::Value, Vec<(String, serde_json::Value)>) {
     let mut play = native_play_source();
     let index: serde_json::Value =
-        serde_json::from_str(include_str!("golden/native/index.json")).unwrap();
+        serde_json::from_str(include_str!("golden/module/index.json")).unwrap();
     let mut cases = Vec::new();
     registered_cases(
         play[0]["tasks"].as_array_mut().unwrap(),

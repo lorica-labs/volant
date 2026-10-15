@@ -1,4 +1,257 @@
 {
+  "action-copy-content": {
+    "args": {
+      "content": "x\n",
+      "dest": "/tmp/volant16-golden/content.txt",
+      "mode": "0644"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-dest-dir": {
+    "args": {
+      "dest": "/tmp/volant16-golden/dir/",
+      "mode": "0644",
+      "src": "<golden-action-src>/hello.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-force-false": {
+    "args": {
+      "content": "y\n",
+      "dest": "/tmp/volant16-golden/content.txt",
+      "force": false
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-new": {
+    "args": {
+      "dest": "/tmp/volant16-golden/new.txt",
+      "mode": "0644",
+      "src": "<golden-action-src>/hello.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-remote-src": {
+    "args": {
+      "dest": "/tmp/volant16-golden/remote.txt",
+      "mode": "0644",
+      "remote_src": true,
+      "src": "/tmp/volant16-golden/new.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-same": {
+    "args": {
+      "dest": "/tmp/volant16-golden/new.txt",
+      "mode": "0644",
+      "src": "<golden-action-src>/hello.txt"
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-copy-validate-fail": {
+    "args": {
+      "content": "",
+      "dest": "/tmp/volant16-golden/invalid.txt",
+      "validate": "test -s %s"
+    },
+    "become": false,
+    "branch": {
+      "changed": false,
+      "failed": true,
+      "msg": "failed to validate"
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "copy",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-package-present": {
+    "args": {
+      "name": "bash",
+      "state": "present"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "package",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-service-started": {
+    "args": {
+      "name": "systemd-journald",
+      "state": "started"
+    },
+    "become": true,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "service",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-template-lstrip": {
+    "args": {
+      "dest": "/tmp/volant16-golden/motd-lstrip",
+      "lstrip_blocks": true,
+      "mode": "0644",
+      "src": "<golden-action-src>/motd.j2"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "template",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-template-new": {
+    "args": {
+      "dest": "/tmp/volant16-golden/motd",
+      "mode": "0644",
+      "src": "<golden-action-src>/motd.j2"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "template",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-template-same": {
+    "args": {
+      "dest": "/tmp/volant16-golden/motd",
+      "mode": "0644",
+      "src": "<golden-action-src>/motd.j2"
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "template",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-unarchive-creates": {
+    "args": {
+      "creates": "/tmp/volant16-golden/unpacked/inside.txt",
+      "dest": "/tmp/volant16-golden/unpacked",
+      "src": "<golden-action-src>/bundle.tar.gz"
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "unarchive",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "action-unarchive-local": {
+    "args": {
+      "dest": "/tmp/volant16-golden/unpacked",
+      "src": "<golden-action-src>/bundle.tar.gz"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "unarchive",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
   "apt-absent-missing": {
     "args": {
       "name": "volant-no-such-package",
@@ -202,6 +455,47 @@
       "cache_update_time"
     ],
     "why": ""
+  },
+  "collection-ini-file": {
+    "args": {
+      "mode": "0644",
+      "option": "color",
+      "path": "/tmp/volant16-golden-collection/test.ini",
+      "section": "golden",
+      "value": "blue"
+    },
+    "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "section and option added"
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "community.general.ini_file",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "collection-sysctl": {
+    "args": {
+      "name": "net.ipv4.ip_forward",
+      "reload": false,
+      "sysctl_file": "/tmp/volant16-golden-collection/sysctl.conf",
+      "sysctl_set": false,
+      "value": "1"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "ansible.posix.sysctl",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
   },
   "copy-module-checksum": {
     "args": {
@@ -1084,6 +1378,73 @@
     "unordered": [],
     "volatile": [],
     "why": ""
+  },
+  "python-file": {
+    "args": {
+      "mode": "0644",
+      "path": "/tmp/volant15-golden/golden-file",
+      "state": "touch"
+    },
+    "become": false,
+    "branch": {
+      "changed": true
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "file",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "python-lineinfile": {
+    "args": {
+      "create": true,
+      "line": "hello",
+      "path": "/tmp/volant15-golden/golden-line"
+    },
+    "become": false,
+    "branch": {
+      "changed": true,
+      "msg": "line added"
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "lineinfile",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "python-ping": {
+    "args": {},
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "ping",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
+  },
+  "python-stat": {
+    "args": {
+      "path": "/tmp/volant15-golden/golden-stat-target"
+    },
+    "become": false,
+    "branch": {
+      "changed": false
+    },
+    "compare": "shape",
+    "expect": "python",
+    "module": "stat",
+    "patterns": {},
+    "unordered": [],
+    "volatile": [],
+    "why": "no native: compared by its keys and the type of each value"
   },
   "service-facts": {
     "args": {},

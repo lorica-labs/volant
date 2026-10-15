@@ -1,0 +1,6 @@
+# What --list-tasks, --list-tags, --list-hosts and --syntax-check print for blocks.yml.
+runs:
+  - args: [-i, inv.ini, --list-tasks, blocks.yml]
+  - args: [-i, inv.ini, --list-tasks, --tags, inner, blocks.yml]
+  - args: [-i, inv.ini, --list-tasks, --skip-tags, outer, blocks.yml]
+  - args: [-i, inv.ini, --list-tags, blocks.yml]

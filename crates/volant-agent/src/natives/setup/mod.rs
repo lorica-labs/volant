@@ -1398,7 +1398,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// read as given.
     #[test]
     fn arguments_outside_the_native_are_handed_back() {
-        let args = |v: Value| v.as_object().unwrap().clone();
+        use crate::testing::args;
         let ok = request(&args(
             json!({"gather_subset": ["min"], "filter": [], "gather_timeout": 5}),
         ))

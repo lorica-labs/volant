@@ -719,6 +719,8 @@ fn spawn_signal_watcher(stop: Arc<Abort>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::testing::scratch;
 
     /// `--facts` takes one of its three words and nothing else, `auto` when it is not given, and
     /// `--profile` is a plain flag.
@@ -792,7 +794,8 @@ mod tests {
     fn stdout_of(f: impl FnOnce()) -> String {
         use std::io::Write as _;
         use std::os::fd::AsRawFd as _;
-        let path = std::env::temp_dir().join(format!("volant-stdout-{}", std::process::id()));
+        let dir = scratch();
+        let path = dir.path().join("stdout");
         let file = std::fs::File::create(&path).unwrap();
         std::io::stdout().flush().unwrap();
         let saved = unsafe { libc::dup(1) };
@@ -819,8 +822,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_profile_stays_off_stdout_and_lands_in_its_file() {
-        let dir = std::env::temp_dir().join(format!("volant-cli-profile-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let playbook = dir.join("site.yml");
         std::fs::write(
@@ -859,7 +862,6 @@ mod tests {
         let args = PlaybookArgs::try_parse_from(["volant", missing.as_str()]).unwrap();
         assert_ne!(run(args), 0);
         let written = std::fs::read_to_string(&json).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(
             written.lines().next(),
             Some(r#"{"natives":{}}"#),

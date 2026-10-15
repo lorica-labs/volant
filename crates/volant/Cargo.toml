@@ -36,6 +36,8 @@ volant-protocol.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+rstest.workspace = true
+tempfile.workspace = true
 
 [[bin]]
 name = "volant-playbook"

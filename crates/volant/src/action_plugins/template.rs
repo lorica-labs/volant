@@ -176,7 +176,7 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use serde_json::json;
     use volant_protocol::TaskResult;
@@ -185,30 +185,22 @@ mod tests {
     use super::*;
     use crate::action_plugins::files::MAX_FILE_LEN;
     use crate::action_plugins::{Step, Sub};
+    use crate::testing::{scratch, write};
 
-    /// A scratch playbook directory, removed when the test ends, a failed assertion included.
-    struct Scratch(PathBuf);
+    struct Scratch(tempfile::TempDir);
 
     impl std::ops::Deref for Scratch {
         type Target = Path;
 
         fn deref(&self) -> &Path {
-            &self.0
+            self.0.path()
         }
     }
 
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    /// A playbook directory of this test process's own, holding `templates/<name>` with `text`.
-    fn with_template(dir: &str, name: &str, text: &str) -> Scratch {
-        let dir =
-            std::env::temp_dir().join(format!("volant-template-{}-{dir}", std::process::id()));
-        std::fs::create_dir_all(dir.join("templates")).unwrap();
-        std::fs::write(dir.join("templates").join(name), text).unwrap();
+    /// A playbook directory holding `templates/<name>` with `text`.
+    fn with_template(name: &str, text: &str) -> Scratch {
+        let dir = scratch();
+        write(dir.path(), &format!("templates/{name}"), text);
         Scratch(dir)
     }
 
@@ -322,7 +314,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_host_value_reaches_the_rendered_file_as_text() {
-        let dir = with_template("trust", "motd.j2", "banner: {{ motd }}\n");
+        let dir = with_template("motd.j2", "banner: {{ motd }}\n");
         let marker = dir.join("marker");
         let _ = std::fs::remove_file(&marker);
         let payload = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
@@ -363,7 +355,7 @@ mod tests {
     /// exists.
     #[test]
     fn a_template_a_host_named_is_never_read() {
-        let dir = with_template("host-named", "secret.j2", "secret\n");
+        let dir = with_template("secret.j2", "secret\n");
         let untrusted: BTreeSet<String> = ["src".to_string()].into();
         for named in [dir.join("templates/secret.j2"), dir.join("no-such.j2")] {
             let args = json!({"src": named.display().to_string(), "dest": "/tmp/x"});
@@ -392,7 +384,7 @@ mod tests {
     /// or a variable set from the wrong path.
     #[test]
     fn the_options_and_variables_are_the_reference_s() {
-        let dir = with_template("opts", "opts.j2", OPTS);
+        let dir = with_template("opts.j2", OPTS);
         let full = dir.join("templates/opts.j2").display().to_string();
         let tail = |dest: &str| format!("path=opts.j2 dest={dest}\nfull={full}\n");
         for (extra, want) in [
@@ -423,7 +415,7 @@ mod tests {
     /// what the reference refrains from doing.
     #[test]
     fn ansible_managed_is_set_only_when_absent() {
-        let dir = with_template("managed", "m.j2", "{{ ansible_managed }}\n");
+        let dir = with_template("m.j2", "{{ ansible_managed }}\n");
         let args = json!({"src": "m.j2", "dest": "/tmp/m"});
         let mut plugin = start_plain(&dir, args.clone());
         assert_eq!(staged(&sent(plugin.as_mut())), "Ansible managed\n");
@@ -445,7 +437,7 @@ mod tests {
     #[test]
     fn copy_gets_the_template_s_name_and_none_of_its_options() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = with_template("handoff", "opts.j2", "x\n");
+        let dir = with_template("opts.j2", "x\n");
         let path = dir.join("templates/opts.j2");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
         let args = json!({"src": "opts.j2", "dest": "/tmp/o", "mode": "preserve", "owner": "root",
@@ -469,7 +461,7 @@ mod tests {
     /// on it, which the reference's `template` does not.
     #[test]
     fn what_cannot_be_rendered_is_refused_before_the_host_is_asked() {
-        let dir = with_template("refused", "t.j2", "x\n");
+        let dir = with_template("t.j2", "x\n");
         std::fs::write(dir.join("templates/undefined.j2"), "{{ nope }}\n").unwrap();
         std::fs::write(
             dir.join("templates/include.j2"),
@@ -561,7 +553,7 @@ mod tests {
     #[test]
     fn a_render_bigger_than_a_frame_is_refused() {
         let len = MAX_FILE_LEN + 1;
-        let dir = with_template("big", "big.j2", &"x".repeat(len));
+        let dir = with_template("big.j2", &"x".repeat(len));
         let mut plugin = start_plain(&dir, json!({"src": "big.j2", "dest": "/x"}));
         plugin.next(None);
         let absent = TaskResult(map(json!({"stat": {"exists": false}})));

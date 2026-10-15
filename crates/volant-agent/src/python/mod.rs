@@ -816,9 +816,10 @@ fn excerpt(text: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::testing::{args, done, scratch};
+    use std::sync::atomic::Ordering;
 
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU32, Ordering};
 
     use serde_json::json;
 
@@ -832,7 +833,7 @@ mod tests {
     /// dropped, which sends an operator looking in the wrong place.
     #[test]
     fn an_interpreter_that_cannot_start_fails_the_task_with_its_own_message() {
-        let dir = tempdir();
+        let dir = scratch();
         let fake = program(
             dir.path(),
             "python3",
@@ -977,7 +978,7 @@ mod tests {
     #[test]
     fn a_module_s_imports_are_done_in_the_server_once_its_first_child_runs() {
         let blob = runpy_blob(&[]);
-        let logs = tempdir();
+        let logs = scratch();
         let log = logs.path().join("imports.log");
         let log_literal = format!("{:?}", log.to_str().unwrap());
         std::fs::write(
@@ -1036,10 +1037,10 @@ mod tests {
             "ansible/modules/probe.py",
             "import json, os, sys\nprint(json.dumps({\"pid\": os.getpid(), \"finders\": [type(f).__name__ for f in sys.meta_path]}))\n",
         )]);
-        let site = tempdir();
+        let site = scratch();
         // Outside the path: a file written into a directory on `sys.path` is a package moving
         // under the server, which replaces it.
-        let logs = tempdir();
+        let logs = scratch();
         let log = logs.path().join("lookups");
         let log_literal = format!("{:?}", log.to_str().unwrap());
         std::fs::write(
@@ -1092,7 +1093,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn each_environment_gets_a_server_started_with_it() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(
             root.path(),
@@ -1165,8 +1166,8 @@ mod tests {
                 "import json, os\nfrom ansible.module_utils import maybe_third\nprint(json.dumps({\"value\": maybe_third.VALUE, \"parent\": os.getppid()}))\n",
             ),
         ]);
-        let site = tempdir();
-        let data = tempdir();
+        let site = scratch();
+        let data = scratch();
         let state = data.path().join("state");
         std::fs::write(&state, "one").unwrap();
         let state_literal = format!("{:?}", state.to_str().unwrap());
@@ -1217,7 +1218,7 @@ mod tests {
     /// ansible's lists left out of the state (the `reader` task returns the deprecation).
     #[test]
     fn a_dependency_that_sets_itself_up_as_it_loads_stays_cold() {
-        let vendor = tempdir();
+        let vendor = scratch();
         std::fs::write(
             vendor.path().join("volant_vendored.py"),
             "VALUE = \"vendored\"\n",
@@ -1283,7 +1284,7 @@ mod tests {
     /// What would make this red: any of those followed (the log names the server).
     #[test]
     fn the_server_imports_only_what_the_module_always_imports() {
-        let logs = tempdir();
+        let logs = scratch();
         let log = logs.path().join("imports");
         let log_literal = format!("{:?}", log.to_str().unwrap());
         let logged = format!(
@@ -1316,7 +1317,7 @@ mod tests {
     /// for them, and the first task times out).
     #[test]
     fn the_server_imports_ahead_only_once_the_result_is_sent() {
-        let gates = tempdir();
+        let gates = scratch();
         let gate = gates.path().join("open");
         let gate_literal = format!("{:?}", gate.to_str().unwrap());
         let blob = runpy_blob(&[(
@@ -1390,7 +1391,7 @@ print(json.dumps([
     /// item, the third start of `p1`, is refused as "stopped twice in one batch").
     #[test]
     fn a_loop_alternating_two_environments_runs_every_item() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
         batch_started();
@@ -1425,8 +1426,8 @@ print(json.dumps([
                 "import json\nfrom ansible.module_utils.uses_elsewhere import VALUE\nprint(json.dumps({\"value\": VALUE}))\n",
             ),
         ]);
-        let site = tempdir();
-        let elsewhere = tempdir();
+        let site = scratch();
+        let elsewhere = scratch();
         let state = elsewhere.path().join("state");
         std::fs::write(&state, "one").unwrap();
         let state_literal = format!("{:?}", state.to_str().unwrap());
@@ -1512,7 +1513,7 @@ print(json.dumps([
 
     /// A payload whose `probe` imports a dependency that, in the server alone, blocks until the
     /// returned gate file exists. The module reports the server it ran under.
-    fn gated_blob() -> (TempDir, PathBuf) {
+    fn gated_blob() -> (tempfile::TempDir, PathBuf) {
         let blob = runpy_blob(&[(
             "ansible/modules/probe.py",
             "import json, os\nimport ansible.module_utils.gated\nprint(json.dumps({\"parent\": os.getppid()}))\n",
@@ -1543,7 +1544,7 @@ print(json.dumps([
             "ansible/modules/probe.py",
             "import json, os\nwith open(\"/proc/%d/fd/2\" % os.getppid(), \"w\") as err:\n    err.write(\"old server words\\n\")\nprint(json.dumps({}))\n",
         )]);
-        let site = tempdir();
+        let site = scratch();
         let environment = BTreeMap::from([(
             "PYTHONPATH".to_string(),
             site.path().to_str().unwrap().to_string(),
@@ -1683,7 +1684,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
 ",
             ),
         ]);
-        let site = tempdir();
+        let site = scratch();
         let environment = BTreeMap::from([(
             "PYTHONPATH".to_string(),
             site.path().to_str().unwrap().to_string(),
@@ -1717,13 +1718,13 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// after the interpreter has read it, so the module cannot import what the path holds.
     #[test]
     fn a_task_that_sets_pythonpath_gets_an_interpreter_started_with_it() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(
             root.path(),
             "\n    import os\n    try:\n        import volant_task_path_probe\n        found = volant_task_path_probe.VALUE\n    except ImportError:\n        found = None\n    print(json.dumps({\"found\": found, \"parent\": os.getppid()}))\n",
         );
-        let path = tempdir();
+        let path = scratch();
         std::fs::write(
             path.path().join("volant_task_path_probe.py"),
             "VALUE = \"from the task path\"\n",
@@ -1919,7 +1920,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// instead of a cancel.
     #[test]
     fn a_cancel_while_the_server_starts_is_a_cancel() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n\nimport time\ntime.sleep(120)\n");
         batch_started();
@@ -1949,7 +1950,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// What would make this red: `holds` called for every task again.
     #[test]
     fn a_payload_is_hashed_once_while_its_server_lives() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
         batch_started();
@@ -1984,7 +1985,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_payload_replaced_under_a_live_server_is_verified_again() {
         for renamed in [true, false] {
-            let root = tempdir();
+            let root = scratch();
             let tmp = root.path().to_str().unwrap().to_string();
             let payload = cached_payload(root.path(), "\n    print(json.dumps({}))\n");
             batch_started();
@@ -2307,7 +2308,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// this agent does not understand.
     #[test]
     fn a_payload_no_server_can_start_against_refuses_the_rest_of_the_batch() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         let zip = b"not a payload at all";
         let hash = blake3::hash(zip).to_hex().to_string();
@@ -2370,7 +2371,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// paying a quarter of a second per task for a server that will not stay up.
     #[test]
     fn the_server_is_reused_across_the_tasks_of_a_batch() {
-        let root = tempdir();
+        let root = scratch();
         let tmp = root.path().to_str().unwrap().to_string();
         // The module reports the server it ran under, and can take that server down with it -
         // which is how the death is made to happen at a moment the test knows, rather than
@@ -2517,7 +2518,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// would run as root before the server ever read the payload.
     #[test]
     fn the_agents_working_directory_is_not_on_the_servers_path() {
-        let root = tempdir();
+        let root = scratch();
         std::fs::write(
             root.path().join("selectors.py"),
             "raise SystemExit('a file in the working directory was imported')\n",
@@ -2651,7 +2652,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         let blob = stub_blob(
             "\n    import os, time\n    if args.get(\"pidfile\"):\n        if os.fork() == 0:\n            null = os.open(os.devnull, os.O_RDWR)\n            for n in range(3):\n                os.dup2(null, n)\n            os.setsid()\n            with open(args[\"pidfile\"], \"w\") as f:\n                f.write(str(os.getpid()))\n            time.sleep(60)\n            os._exit(0)\n        time.sleep(30)\n    print(json.dumps({\"parent\": os.getppid()}))\n",
         );
-        let dir = tempdir();
+        let dir = scratch();
         let pidfile = dir.path().join("daemon.pid");
         let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
         let task = |server: &mut Server, args_: Value, context: &Context| {
@@ -2742,7 +2743,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// which sends the first task into a pipe nobody is reading.
     #[test]
     fn an_interpreter_that_says_nothing_at_all_says_that() {
-        let dir = tempdir();
+        let dir = scratch();
         let fake = program(dir.path(), "python3", "#!/bin/sh\nexit 0\n");
         let err = Server::start(
             fake.to_str().unwrap(),
@@ -2763,7 +2764,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// task behind it, one task out of step for the rest of the batch.
     #[test]
     fn a_server_that_does_not_name_the_process_it_started_fails_the_task() {
-        let dir = tempdir();
+        let dir = scratch();
         let fake = program(
             dir.path(),
             "python3",
@@ -2795,7 +2796,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// which reports a module that never ran as a task that did nothing.
     #[test]
     fn a_server_that_ends_in_the_middle_of_a_task_fails_it() {
-        let dir = tempdir();
+        let dir = scratch();
         let fake = program(
             dir.path(),
             "python3",
@@ -2822,7 +2823,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     #[test]
     fn a_server_that_never_answers_fails_the_task_instead_of_waiting_for_ever() {
         let asked = Instant::now();
-        let dir = tempdir();
+        let dir = scratch();
         let fake = program(
             dir.path(),
             "python3",
@@ -2894,13 +2895,6 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
     /// the blob the only place the module_utils can come from.
     const HOST_PYTHON: &str = "/usr/bin/python3";
 
-    fn done(run: Run) -> TaskResult {
-        match run {
-            Run::Done(result) => result,
-            Run::Cancelled => panic!("the task was cancelled"),
-        }
-    }
-
     /// One task of `fqn`, without arguments, on `server`.
     fn call(server: &mut Server, fqn: &str) -> TaskResult {
         done(server.run(
@@ -2922,17 +2916,13 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
         }
     }
 
-    fn args(value: Value) -> Map<String, Value> {
-        value.as_object().unwrap().clone()
-    }
-
     /// A payload directory holding a stub `_loader` whose `run_module` runs `body`.
     ///
     /// A directory rather than a zip: `sys.path` takes either, the Rust side hands over a path
     /// either way, and writing a zip by hand here would buy nothing the golden suite does not
     /// already cover with the real thing.
-    fn stub_blob(body: &str) -> TempDir {
-        let dir = tempdir();
+    fn stub_blob(body: &str) -> tempfile::TempDir {
+        let dir = scratch();
         let package = dir.path().join("ansible/module_utils/_internal/_ansiballz");
         std::fs::create_dir_all(&package).unwrap();
         for level in [
@@ -2957,7 +2947,7 @@ print(json.dumps({\"has\": HAS, \"parent\": os.getppid()}))
 
     /// A payload whose `_loader` runs the module as the reference's does, through `runpy` as
     /// `__main__`, with `files` written into it and an empty `ansible/modules` package.
-    fn runpy_blob(files: &[(&str, &str)]) -> TempDir {
+    fn runpy_blob(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = stub_blob(
             "\n    import runpy\n    runpy.run_module(module_fqn, run_name=\"__main__\", alter_sys=True)\n",
         );
@@ -3055,32 +3045,5 @@ sys.stdout.write(base64.b64encode(buf.getvalue()).decode())
         std::fs::write(&at, source).unwrap();
         std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o755)).unwrap();
         at
-    }
-
-    /// A directory of this process's own, removed when the test ends. The agent carries no
-    /// temporary-directory dependency, for the reason `blobs.rs` gives.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn tempdir() -> TempDir {
-        static COUNT: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "volant-python-test-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("the test directory is created");
-        TempDir(dir)
     }
 }

@@ -447,34 +447,6 @@ fn python_type(value: &Value) -> &'static str {
     }
 }
 
-/// Shapes more than one module's tests build.
-#[cfg(test)]
-mod testing {
-    use super::*;
-    use crate::playbook::PlayTask;
-    use crate::vars::HostVars;
-
-    pub(super) fn task(module: &str) -> PlayTask {
-        PlayTask {
-            name: "t".into(),
-            module: module.into(),
-            ..PlayTask::empty()
-        }
-    }
-
-    /// A host's variables as the render path carries them: the map, and an empty shared view.
-    pub(super) fn hvars(v: Value) -> HostVars {
-        HostVars {
-            map: vars(v),
-            ..HostVars::default()
-        }
-    }
-
-    pub(super) fn vars(v: Value) -> Map<String, Value> {
-        v.as_object().cloned().unwrap_or_default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,25 +148,14 @@ fn class(p: &[char], c: char) -> Option<(usize, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tempdir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "volant-glob-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::testing::scratch;
 
     /// What would make this red: a `*` implemented with a plain wildcard scan across the whole
     /// path string instead of one path component at a time.
     #[test]
     fn star_does_not_cross_a_slash() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub").join("marker"), b"").unwrap();
         // `*` alone must not reach into `sub/marker` from the top.
@@ -179,7 +168,8 @@ mod tests {
     /// spelling of `*`, either of which would let `a??` match the two-character `ab`.
     #[test]
     fn question_mark_is_exactly_one_character() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("ab"), b"").unwrap();
         assert!(matches_any(Some(&dir), "a?"));
         assert!(!matches_any(Some(&dir), "a??"));
@@ -191,7 +181,8 @@ mod tests {
     /// and would not match `b`.
     #[test]
     fn a_bracket_class_matches_a_range_and_its_negation() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("b"), b"").unwrap();
         assert!(matches_any(Some(&dir), "[a-c]"));
         assert!(!matches_any(Some(&dir), "[!a-c]"));
@@ -208,7 +199,8 @@ mod tests {
     /// skips.
     #[test]
     fn a_caret_in_a_class_is_a_member_not_a_negation() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("a"), b"").unwrap();
         assert!(matches_any(Some(&dir), "[^a]"));
         assert!(!matches_any(Some(&dir), "[^b]"));
@@ -226,7 +218,8 @@ mod tests {
     /// `[` and makes `[!]` an empty negated body that matches any single character.
     #[test]
     fn a_class_that_did_not_match_is_not_re_read_as_a_literal() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("[ab]"), b"").unwrap();
         std::fs::write(dir.join("]"), b"").unwrap();
         std::fs::write(dir.join("[!]"), b"").unwrap();
@@ -244,7 +237,8 @@ mod tests {
     /// a command the reference runs.
     #[test]
     fn a_metacharacter_does_not_match_a_hidden_name() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join(".keep"), b"").unwrap();
         assert!(!matches_any(Some(&dir), "*"));
         assert!(!matches_any(Some(&dir), "?keep"));
@@ -260,7 +254,8 @@ mod tests {
     /// satisfied by a stray regular file named `output`.
     #[test]
     fn a_trailing_separator_requires_a_directory() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("data"), b"").unwrap();
         std::fs::create_dir_all(dir.join("deep")).unwrap();
         assert!(!matches_any(Some(&dir), "data/"));
@@ -279,7 +274,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn a_dangling_symlink_matches() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::os::unix::fs::symlink("/definitely/not/here", dir.join(".initialized")).unwrap();
         assert!(matches_any(Some(&dir), ".initialized"));
         assert!(matches_any(Some(&dir), ".init*"));
@@ -293,7 +289,8 @@ mod tests {
     /// a `chdir` would read the `chdir` itself and let a migration run on every deploy.
     #[test]
     fn a_parent_component_is_not_normalised_away() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let deep = dir.join("deep");
         std::fs::create_dir_all(&deep).unwrap();
         std::fs::write(dir.join("x-1"), b"").unwrap();
@@ -311,7 +308,8 @@ mod tests {
     /// existence, which is `true` for every `chdir` that exists.
     #[test]
     fn an_empty_pattern_matches_nothing() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         assert!(!matches_any(Some(&dir), ""));
         assert!(!matches_any(None, ""));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -328,7 +326,8 @@ mod tests {
     /// forever.
     #[test]
     fn a_pattern_with_no_base_reads_the_process_directory() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("x-1"), b"").unwrap();
         let previous = std::env::current_dir().unwrap();
         std::env::set_current_dir(&dir).unwrap();
@@ -344,7 +343,8 @@ mod tests {
     /// of a literal character, which is what `fnmatch` does with it.
     #[test]
     fn an_unterminated_bracket_is_literal() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("[a"), b"").unwrap();
         assert!(matches_any(Some(&dir), "[a"));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -356,7 +356,8 @@ mod tests {
     #[cfg(unix)]
     fn an_unreadable_directory_matches_nothing() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(dir.join("locked")).unwrap();
         std::fs::write(dir.join("locked").join("marker"), b"").unwrap();
         std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o000))
@@ -374,7 +375,8 @@ mod tests {
     /// parent cannot be listed into a miss.
     #[test]
     fn no_metacharacter_reduces_to_exists() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         assert!(!matches_any(Some(&dir), "marker"));
         std::fs::write(dir.join("marker"), b"").unwrap();
         assert!(matches_any(Some(&dir), "marker"));
@@ -387,7 +389,8 @@ mod tests {
     /// an absolute `creates` under the `chdir` and makes it miss.
     #[test]
     fn an_absolute_pattern_ignores_base() {
-        let dir = tempdir();
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::write(dir.join("marker"), b"").unwrap();
         let pattern = format!("{}/marker", dir.display());
         assert!(matches_any(Some(Path::new("/does/not/exist")), &pattern));

@@ -2920,9 +2920,9 @@ async fn connect(
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{hvars, task, vars};
     use super::*;
     use crate::compile::StepKind;
+    use crate::testing::{hvars, scratch, task, templar, vars};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -3317,8 +3317,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_set_fact_key_that_renders_anew_keeps_its_value_data() {
-        let dir = std::env::temp_dir().join(format!("volant-keyonce-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let counter = dir.join("runs");
         let templar = Templar::new(PathBuf::from("."));
@@ -3362,7 +3362,6 @@ mod tests {
             1,
             "the key's lookup ran once"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A failed controller-side task registers `exception: "(traceback unavailable)"`, as an
@@ -3737,7 +3736,7 @@ mod tests {
     /// that failed and reads as a success.
     #[test]
     fn a_result_that_ran_says_whether_it_failed() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let t = task("command");
         let item = Item {
             element: None,
@@ -3789,7 +3788,7 @@ mod tests {
     /// to it; or a failure that stopped the host counted as a change.
     #[test]
     fn the_recap_counts_changed_the_way_the_reference_does() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let item = Item {
             element: None,
             label: None,
@@ -3840,7 +3839,7 @@ mod tests {
 
     #[test]
     fn failed_when_false_rescues_a_non_zero_rc() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let mut t = task("command");
         t.failed_when = vec!["result.rc == 99".into()];
         let item = Item {
@@ -3882,7 +3881,7 @@ mod tests {
     /// fact written after the registered name, which hides it.
     #[test]
     fn failed_when_changed_when_and_until_read_the_facts_the_task_returned() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let item = bare_item();
         let returned = || {
             result(
@@ -3927,7 +3926,7 @@ mod tests {
     /// evaluated behind a broken `changed_when`, or the syntax prefix lost.
     #[test]
     fn a_condition_that_cannot_be_evaluated_keeps_the_result() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let item = bare_item();
         let ran = || result(json!({"changed": true, "msg": "", "rc": 0}));
         let mut t = task("command");
@@ -3983,7 +3982,7 @@ mod tests {
     /// `exception`, or the `msg` settled before `until` reads the result.
     #[test]
     fn a_failed_when_failure_with_no_msg_is_an_unknown_error() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let item = bare_item();
         let mut t = task("set_fact");
         t.failed_when = vec!["true".into()];
@@ -4070,7 +4069,7 @@ mod tests {
     /// refusal.
     #[test]
     fn a_raw_argument_on_a_collection_module_fails_the_task_when_it_runs() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let mut t = task("ns.coll.m");
         t.args.insert("v".into(), json!("1"));
         t.args.insert("_raw_params".into(), json!("stray"));
@@ -6257,8 +6256,8 @@ mod tests {
 
     /// A `hello\n` on the controller, copied to `dest`: the arguments `prepare` hands the plugin.
     fn copy_args(dest: &str) -> Value {
-        let dir = std::env::temp_dir().join(format!("volant-run-copy-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        // The caller reads the file after this returns, so the directory is kept.
+        let dir = scratch().keep();
         let src = dir.join("hello.txt");
         std::fs::write(&src, "hello\n").expect("the source");
         json!({"src": src.display().to_string(), "dest": dest})
@@ -7260,7 +7259,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_template_returned_by_a_python_module_is_never_rendered() {
-        let dir = std::env::temp_dir().join(format!("volant-untrusted-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let templar = Templar::new(PathBuf::from("."));
         let render = |store: &mut VarStore| {
@@ -7552,7 +7552,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_template_in_a_gathered_fact_is_never_rendered() {
-        let dir = std::env::temp_dir().join(format!("volant-gathered-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let marker = dir.join("gathered-marker");
         let _ = std::fs::remove_file(&marker);
@@ -8257,7 +8258,6 @@ mod tests {
     async fn a_failed_check_stops_the_master_and_retires_the_hosts_other_links() {
         use std::sync::atomic::Ordering::SeqCst;
         let dir = Path::new("/tmp").join(format!("volant-cm-kept-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let transport = shared_to_h1(&dir);
         let socket = socket_of(&transport)
@@ -8301,7 +8301,6 @@ mod tests {
             links.contains_key(&escalated),
             "the reopened escalated link is kept"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The same two links, one step earlier: after the first reboot the plain link fails its
@@ -8318,7 +8317,6 @@ mod tests {
     async fn a_key_with_no_kept_link_does_not_ride_a_master_older_than_the_last_reboot() {
         use std::sync::atomic::Ordering::SeqCst;
         let dir = Path::new("/tmp").join(format!("volant-cm-unproven-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let transport = shared_to_h1(&dir);
         let socket = socket_of(&transport)
@@ -8370,7 +8368,6 @@ mod tests {
             2,
             "the master the escalated key opened is left alone"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The `timeout` keyword bounds the whole item, waits for the host included: a `reboot`

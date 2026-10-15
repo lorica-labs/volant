@@ -666,14 +666,13 @@ impl Emitter {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::templar;
     use serde_json::{Map, Value, json};
-
-    use super::super::Templar;
 
     fn dump(filter: &str, value: Value) -> String {
         let mut vars = Map::new();
         vars.insert("v".into(), value);
-        match Templar::new(std::env::temp_dir())
+        match templar()
             .render(&format!("{{{{ v | {filter} }}}}"), &vars)
             .unwrap()
         {
@@ -829,10 +828,7 @@ mod tests {
     }
 
     fn render(text: &str, vars: Value) -> String {
-        match Templar::new(std::env::temp_dir())
-            .render(text, vars.as_object().unwrap())
-            .unwrap()
-        {
+        match templar().render(text, vars.as_object().unwrap()).unwrap() {
             Value::String(s) => s,
             other => panic!("not a string: {other}"),
         }

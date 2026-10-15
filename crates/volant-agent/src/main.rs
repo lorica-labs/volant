@@ -8,6 +8,8 @@ mod modules;
 mod natives;
 mod python;
 mod runner;
+#[cfg(test)]
+mod testing;
 
 use std::io::{self, BufReader, BufWriter};
 use std::sync::mpsc;

@@ -1091,6 +1091,7 @@ fn ipwrap_scalar(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::templar;
 
     #[test]
     fn python_back_references_become_regex_crate_references() {
@@ -1135,7 +1136,7 @@ mod tests {
     }
 
     fn render(text: &str, vars: serde_json::Value) -> Result<serde_json::Value, String> {
-        super::super::Templar::new(std::env::temp_dir())
+        templar()
             .render(text, vars.as_object().unwrap())
             .map_err(|e| e.0)
     }
@@ -1311,7 +1312,7 @@ mod tests {
 
     #[test]
     fn an_unknown_filter_names_itself() {
-        let t = super::super::Templar::new(std::env::temp_dir());
+        let t = templar();
         let err = t
             .render("{{ 1 | some_unknown_filter }}", &serde_json::Map::new())
             .unwrap_err();
@@ -1568,10 +1569,11 @@ mod tests {
 
 #[cfg(test)]
 mod reference_parity {
+    use crate::testing::templar;
     use serde_json::json;
 
     fn render(text: &str) -> Result<serde_json::Value, String> {
-        super::super::Templar::new(std::env::temp_dir())
+        templar()
             .render(text, &serde_json::Map::new())
             .map_err(|e| e.0)
     }

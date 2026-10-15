@@ -2353,8 +2353,8 @@ fn first_batch_id() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::task;
     use super::*;
+    use crate::testing::{scratch, task, write};
 
     /// Each host's run of each play numbers its batches in a range of its own.
     ///
@@ -2631,58 +2631,33 @@ mod tests {
             .collect()
     }
 
-    /// A scratch tree for one test, removed when it goes out of scope.
-    struct Tree(std::path::PathBuf);
-
-    impl Tree {
-        fn new(name: &str) -> Tree {
-            let dir =
-                std::env::temp_dir().join(format!("volant-barrier-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            Tree(dir)
-        }
-
-        fn file(&self, path: &str, text: &str) -> &Self {
-            let path = self.0.join(path);
-            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
-            std::fs::write(path, text).expect("a file");
-            self
-        }
-
-        /// `site.yml` compiled with `roles/` beside it, gathering nothing, and marked against
-        /// `base`: the task names in order, each with its answer under `batching`.
-        fn marked(&self, base: &Definitions) -> Vec<(String, bool)> {
-            let site = self.0.join("site.yml");
-            let mut pb = crate::playbook::load(&site).unwrap_or_else(|e| panic!("{e:#}"));
-            pb.plays[0].gather_facts = false;
-            let search = crate::roles::RoleSearch {
-                paths: vec![self.0.join("roles")],
-                collections: Vec::new(),
-            };
-            let mut c = crate::compile::compile(
-                &pb.plays[0],
-                &search,
-                &crate::compile::TagSelection::default(),
-            )
-            .unwrap_or_else(|e| panic!("{e:#}"));
-            mark_boundaries(&mut c, base, &self.0);
-            (0..c.steps.len())
-                .filter(|&pos| c.steps[pos].kind == StepKind::Task)
-                .map(|pos| (c.steps[pos].task.name.clone(), is_boundary(&c, pos, false)))
-                .collect()
-        }
-    }
-
-    impl Drop for Tree {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
+    /// `site.yml` under `dir` compiled with `roles/` beside it, gathering nothing, and marked
+    /// against `base`: the task names in order, each with its answer under `batching`.
+    fn marked_in(dir: &Path, base: &Definitions) -> Vec<(String, bool)> {
+        let site = dir.join("site.yml");
+        let mut pb = crate::playbook::load(&site).unwrap_or_else(|e| panic!("{e:#}"));
+        pb.plays[0].gather_facts = false;
+        let search = crate::roles::RoleSearch {
+            paths: vec![dir.join("roles")],
+            collections: Vec::new(),
+        };
+        let mut c = crate::compile::compile(
+            &pb.plays[0],
+            &search,
+            &crate::compile::TagSelection::default(),
+        )
+        .unwrap_or_else(|e| panic!("{e:#}"));
+        mark_boundaries(&mut c, base, dir);
+        (0..c.steps.len())
+            .filter(|&pos| c.steps[pos].kind == StepKind::Task)
+            .map(|pos| (c.steps[pos].task.name.clone(), is_boundary(&c, pos, false)))
+            .collect()
     }
 
     /// A role with one task file, the tasks written as a YAML list under it.
-    fn role(tree: &Tree, tasks: &str) {
-        tree.file("site.yml", "- hosts: all\n  roles:\n    - prereq\n")
-            .file("roles/prereq/tasks/main.yml", tasks);
+    fn role(dir: &Path, tasks: &str) {
+        write(dir, "site.yml", "- hosts: all\n  roles:\n    - prereq\n");
+        write(dir, "roles/prereq/tasks/main.yml", tasks);
     }
 
     fn named(marks: &[(String, bool)], name: &str) -> bool {
@@ -2703,16 +2678,17 @@ mod tests {
     /// did before - the task's own text is clean.
     #[test]
     fn a_template_body_reading_hostvars_is_a_boundary() {
-        let tree = Tree::new("template");
+        let tree = scratch();
         role(
-            &tree,
+            tree.path(),
             "- name: plain\n  template:\n    src: plain.j2\n    dest: /etc/plain\n\
              - name: nft\n  ansible.builtin.template:\n    src: k3s.nft.j2\n    dest: /etc/nftables.d/k3s.nft\n\
              - name: missing\n  template:\n    src: missing.j2\n    dest: /etc/missing\n\
              - name: rendered src\n  template:\n    src: \"{{ flavour }}.j2\"\n    dest: /etc/x\n\
              - name: pulls another in\n  template:\n    src: pulls.j2\n    dest: /etc/y\n",
         );
-        tree.file(
+        write(
+            tree.path(),
             "roles/prereq/templates/k3s.nft.j2",
             "# Allow inter-node communication (server + agent nodes)\n\
              {% for host in (groups[server_group] | default([]) + groups[agent_group] | default([])) | unique %}\n\
@@ -2721,13 +2697,18 @@ mod tests {
              {% endif %}\n\
              {% endfor %}\n\
              insert rule inet filter input tcp dport {{ api_port | default(6443) }} accept\n",
-        )
-        .file(
+        );
+        write(
+            tree.path(),
             "roles/prereq/templates/plain.j2",
             "# loaded via an include in nftables.conf\nport {{ api_port | default(6443) }}\n",
-        )
-        .file("roles/prereq/templates/pulls.j2", "{% include 'k3s.nft.j2' %}\n");
-        let marks = tree.marked(&Definitions::default());
+        );
+        write(
+            tree.path(),
+            "roles/prereq/templates/pulls.j2",
+            "{% include 'k3s.nft.j2' %}\n",
+        );
+        let marks = marked_in(tree.path(), &Definitions::default());
         assert!(named(&marks, "nft"), "{marks:?}");
         assert!(!named(&marks, "plain"), "{marks:?}");
         assert!(named(&marks, "missing"), "a file the scan cannot read");
@@ -2753,9 +2734,9 @@ mod tests {
     /// names deep and a chain of two would not tell.
     #[test]
     fn a_variable_defined_from_hostvars_is_a_boundary() {
-        let tree = Tree::new("definition");
+        let tree = scratch();
         role(
-            &tree,
+            tree.path(),
             "- name: plain\n  debug:\n    msg: \"{{ plain }}\"\n\
              - name: direct\n  debug:\n    msg: \"{{ api_url }}\"\n\
              - name: gap 1\n  debug:\n    msg: gap\n\
@@ -2767,20 +2748,25 @@ mod tests {
              - name: gap 4\n  debug:\n    msg: gap\n\
              - name: in a template\n  template:\n    src: conf.j2\n    dest: /etc/conf\n",
         );
-        tree.file(
+        write(
+            tree.path(),
             "roles/prereq/defaults/main.yml",
             "api_url: \"{{ hostvars[groups['server'][0]].ansible_host }}\"\n\
              a: \"{{ b }}\"\n\
              b: \"{{ c }}/v1\"\n\
              c: \"https://{{ api_url }}:6443\"\n\
              plain: \"{{ a_local_value | default('x') }}\"\n",
-        )
-        .file("roles/prereq/templates/conf.j2", "server: {{ a }}\n");
+        );
+        write(
+            tree.path(),
+            "roles/prereq/templates/conf.j2",
+            "server: {{ a }}\n",
+        );
         let mut inventory = Definitions::default();
         inventory.add(&serde_json::from_value(json!({
             "api_endpoint": "{{ hostvars[groups['server'][0]]['ansible_host'] | default(groups['server'][0]) }}",
         })).expect("a map"));
-        let marks = tree.marked(&inventory);
+        let marks = marked_in(tree.path(), &inventory);
         assert!(named(&marks, "direct"), "{marks:?}");
         assert!(named(&marks, "chained"), "three names deep: {marks:?}");
         assert!(named(&marks, "bare"), "a bare condition: {marks:?}");
@@ -2864,22 +2850,27 @@ mod tests {
     /// wait again, which is the strict `linear` under another name.
     #[test]
     fn a_host_local_task_is_not_a_boundary() {
-        let tree = Tree::new("local");
+        let tree = scratch();
         role(
-            &tree,
+            tree.path(),
             "- name: Include OS-specific vars\n  include_vars: Debian.yml\n\
              - name: Install {{ package }}\n  apt:\n    name: \"{{ package }}\"\n\
              - name: conf\n  template:\n    src: local.j2\n    dest: /etc/local\n\
              - name: remember\n  set_fact:\n    seen: \"{{ ansible_facts.hostname }}:{{ port }}\"\n\
              - name: all hosts\n  debug:\n    msg: \"{{ ansible_play_hosts_all | length }}\"\n",
         );
-        tree.file("roles/prereq/vars/main.yml", "port: 80\n")
-            .file("roles/prereq/vars/Debian.yml", "package: nginx\n")
-            .file(
-                "roles/prereq/templates/local.j2",
-                "listen {{ port }} on {{ inventory_hostname }}\n",
-            );
-        let marks = tree.marked(&Definitions::default());
+        write(tree.path(), "roles/prereq/vars/main.yml", "port: 80\n");
+        write(
+            tree.path(),
+            "roles/prereq/vars/Debian.yml",
+            "package: nginx\n",
+        );
+        write(
+            tree.path(),
+            "roles/prereq/templates/local.j2",
+            "listen {{ port }} on {{ inventory_hostname }}\n",
+        );
+        let marks = marked_in(tree.path(), &Definitions::default());
         assert!(marks.iter().all(|(_, b)| !b), "{marks:?}");
         assert_eq!(marks.len(), 5, "{marks:?}");
     }
@@ -2933,9 +2924,9 @@ mod tests {
         let c = marked(vec![standby, reader, active, task("debug")]);
         assert_eq!(boundaries(&c), [false, true, true, false]);
 
-        let tree = Tree::new("fence");
+        let tree = scratch();
         role(
-            &tree,
+            tree.path(),
             "- block:\n\
              \x20   - name: reader\n      debug:\n        msg: \"{{ hostvars['n1'].state }}\"\n\
              \x20 rescue:\n\
@@ -2943,7 +2934,7 @@ mod tests {
              - name: past the block\n  debug:\n    msg: p\n\
              - name: further on\n  debug:\n    msg: f\n",
         );
-        let marks = tree.marked(&Definitions::default());
+        let marks = marked_in(tree.path(), &Definitions::default());
         assert!(named(&marks, "reader"), "{marks:?}");
         assert!(named(&marks, "rescued"), "where a failure goes: {marks:?}");
         assert!(

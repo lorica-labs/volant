@@ -878,10 +878,9 @@ pub(super) fn display(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{hvars, task};
     use super::*;
+    use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
 
     /// Each shape below was run through `ansible-core 2.19.12` as a `debug: msg=` argument
     /// first, and the expectations are what it printed: a key nested three levels down goes,
@@ -1473,9 +1472,8 @@ mod tests {
     /// unevaluated call stored where a later, one-pass read can no longer template it.
     #[test]
     fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
-        let play =
-            std::env::temp_dir().join(format!("volant-prepare-searchpath-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&play);
+        let play_guard = scratch();
+        let play = play_guard.path().to_path_buf();
         let role = play.join("roles/probe");
         std::fs::create_dir_all(role.join("templates")).expect("role dir");
         std::fs::write(role.join("templates/t.j2"), "{{ '{{ 1 + 1 }}' }}").expect("template file");
@@ -1519,8 +1517,6 @@ mod tests {
             "{:?}",
             vars.untrusted
         );
-
-        let _ = std::fs::remove_dir_all(&play);
     }
 
     fn plan() -> PlayPlan {
@@ -1536,25 +1532,11 @@ mod tests {
         }
     }
 
-    fn defaults() -> ConnectionDefaults {
-        ConnectionDefaults {
-            remote_user: None,
-            private_key: None,
-            host_key_checking: true,
-            remote_tmp: "~/.ansible/tmp".into(),
-            connect_timeout: Duration::from_secs(10),
-            r#become: false,
-            become_user: "root".into(),
-            become_method: "sudo".into(),
-            become_password: None,
-        }
-    }
-
     /// The order measured against `ansible-core 2.19.12`: `ansible_become` wins over both
     /// keywords, in both directions, and the task keyword wins over the play's.
     #[test]
     fn a_host_variable_beats_both_become_keywords() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let escalate = |task_become, play_become, host: Value| {
             let mut t = task("command");
             t.r#become = task_become;
@@ -1590,7 +1572,7 @@ mod tests {
 
     #[test]
     fn the_target_user_follows_the_same_order_and_defaults_to_root() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let mut t = task("command");
         t.r#become = Some(true);
         let mut p = plan();
@@ -1649,7 +1631,7 @@ mod tests {
     /// variable.
     #[test]
     fn a_become_user_that_changes_per_loop_item_says_why_it_cannot() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let mut t = task("command");
         t.r#become = Some(true);
         t.become_user = Some("{{ item }}".into());
@@ -1666,7 +1648,7 @@ mod tests {
     /// with `sudo`: running the task under rules nobody wrote is worse than not running it.
     #[test]
     fn an_unsupported_become_method_variable_fails_the_task() {
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let mut t = task("command");
         t.r#become = Some(true);
         let err = become_for(
@@ -1768,7 +1750,7 @@ mod tests {
         let store = Mutex::new(
             VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
         );
-        let templar = Templar::new(std::env::temp_dir());
+        let templar = templar();
         let live = Progress::default();
         let plan = plan();
         let of = |name: &str| {
@@ -1806,37 +1788,9 @@ mod tests {
         );
     }
 
-    /// A directory of fixture files, removed when the test ends however it ends.
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(tag: &str) -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("volant-with-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("the scratch directory");
-            // Canonical, so a path the lookup prints compares equal on a machine whose temporary
-            // directory is a symlink.
-            Scratch(dir.canonicalize().expect("the scratch directory resolves"))
-        }
-
-        fn write(&self, rel: &str) -> String {
-            let path = self.0.join(rel);
-            std::fs::create_dir_all(path.parent().expect("a parent")).expect("the parent");
-            std::fs::write(&path, "x").expect("the fixture file");
-            path.display().to_string()
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     /// The one task of `yaml`, read by the loader, as a step written in `origin`.
     fn loaded(yaml: &str, origin: Origin) -> Step {
-        let pb = crate::playbook::parse(yaml, "x.yml").expect("the playbook loads");
+        let pb = play(yaml);
         let Some(crate::playbook::TaskOrBlock::Task(t)) = pb.plays[0].tasks.first() else {
             panic!("one task");
         };
@@ -1868,21 +1822,21 @@ mod tests {
     /// loop that is not a list), `skip` read as a failure, or the order of the candidates lost.
     #[test]
     fn with_first_found_walks_the_file_it_found_and_nothing_under_skip() {
-        let dir = Scratch::new("first-found");
+        let dir = scratch();
         let task = |skip: &str| {
             format!(
                 "- hosts: all\n  tasks:\n    - name: Distribute K3s binary\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /usr/local/bin/k3s\n      with_first_found:\n        - files:\n            - \"{{{{ airgap_dir }}}}/k3s-{{{{ k3s_arch }}}}\"\n            - \"{{{{ airgap_dir }}}}/k3s\"\n{skip}      vars:\n        airgap_dir: {}\n        k3s_arch: arm64\n",
-                dir.0.display()
+                dir.path().display()
             )
         };
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let step = loaded(&task("          skip: true\n"), Origin::default());
         assert_eq!(step.task.loop_with.as_deref(), Some("first_found"));
 
         assert_eq!(bound(&step, &store).unwrap(), []);
-        let plain = dir.write("k3s");
+        let plain = write(dir.path(), "k3s", "x").display().to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(plain), false)]);
-        let arch = dir.write("k3s-arm64");
+        let arch = write(dir.path(), "k3s-arm64", "x").display().to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(arch), false)]);
 
         std::fs::remove_file(&arch).expect("the file goes");
@@ -1905,24 +1859,28 @@ mod tests {
     /// rather than for `first_found` alone.
     #[test]
     fn with_fileglob_walks_every_match_and_one_match_is_a_list_of_one() {
-        let dir = Scratch::new("fileglob");
+        let dir = scratch();
         let task = |pattern: &str| {
             format!(
                 "- hosts: all\n  tasks:\n    - name: Distribute K3s images\n      copy:\n        src: \"{{{{ item }}}}\"\n        dest: /var/lib/rancher/k3s/agent/images/\n      with_fileglob:\n        - \"{pattern}\"\n      vars:\n        airgap_dir: {}\n",
-                dir.0.display()
+                dir.path().display()
             )
         };
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let step = loaded(&task("{{ airgap_dir }}/*.tar.gz"), Origin::default());
         assert_eq!(step.task.loop_with.as_deref(), Some("fileglob"));
         assert_eq!(bound(&step, &store).unwrap(), []);
 
-        let one = dir.write("images-2.tar.gz");
+        let one = write(dir.path(), "images-2.tar.gz", "x")
+            .display()
+            .to_string();
         assert_eq!(bound(&step, &store).unwrap(), [(json!(one), false)]);
-        let first = dir.write("images-1.tar.gz");
-        dir.write("images.txt");
+        let first = write(dir.path(), "images-1.tar.gz", "x")
+            .display()
+            .to_string();
+        write(dir.path(), "images.txt", "x").display().to_string();
         // Directory-listing order, as `glob.glob` answers: no sort.
-        let listed: Vec<(Value, bool)> = std::fs::read_dir(&dir.0)
+        let listed: Vec<(Value, bool)> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().path().display().to_string())
             .filter(|path| *path == first || *path == one)
@@ -1952,10 +1910,14 @@ mod tests {
     #[test]
     fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_choice_as_data()
     {
-        let dir = Scratch::new("raspberrypi");
-        let role = dir.0.join("roles/raspberrypi");
-        let default = dir.write("roles/raspberrypi/tasks/setup/default.yml");
-        let ubuntu = dir.write("roles/raspberrypi/tasks/setup/Ubuntu.yml");
+        let dir = scratch();
+        let role = dir.path().join("roles/raspberrypi");
+        let default = write(dir.path(), "roles/raspberrypi/tasks/setup/default.yml", "x")
+            .display()
+            .to_string();
+        let ubuntu = write(dir.path(), "roles/raspberrypi/tasks/setup/Ubuntu.yml", "x")
+            .display()
+            .to_string();
         let yaml = "- hosts: all\n  tasks:\n    - name: Execute OS related tasks on the Raspberry Pi - {{ action_ }}\n      include_tasks: \"{{ item }}\"\n      with_first_found:\n        - \"{{ action_ }}/{{ detected_distribution }}-{{ detected_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ detected_distribution }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml\"\n        - \"{{ action_ }}/{{ ansible_distribution }}.yml\"\n        - \"{{ action_ }}/default.yml\"\n      vars:\n        state: present\n        action_: >-\n          {% if state == 'present' %}setup{% else %}teardown{% endif %}\n      when:\n        - raspberry_pi | default(false)\n";
         let step = loaded(
             yaml,
@@ -1966,7 +1928,7 @@ mod tests {
                 inherited: None,
             },
         );
-        let store = store_at(&dir.0);
+        let store = store_at(dir.path());
         let items = prepared(&step, &store).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].vars.map["item"], json!(default));
@@ -1994,16 +1956,18 @@ mod tests {
     /// one chosen for the action; or `skip: true` failing when `vars/` holds nothing.
     #[test]
     fn with_first_found_searches_the_directory_its_action_names() {
-        let dir = Scratch::new("first-found-subdir");
-        let role = dir.0.join("roles/probe");
+        let dir = scratch();
+        let role = dir.path().join("roles/probe");
         let in_role = || Origin {
             file_dir: role.join("tasks"),
             role_dir: Some(role.clone()),
             depth: 0,
             inherited: None,
         };
-        let store = store_at(&dir.0);
-        let template = dir.write("roles/probe/templates/t.j2");
+        let store = store_at(dir.path());
+        let template = write(dir.path(), "roles/probe/templates/t.j2", "x")
+            .display()
+            .to_string();
         let step = loaded(
             "- hosts: all\n  tasks:\n    - template:\n        src: \"{{ item }}\"\n        dest: /tmp/t\n      with_first_found:\n        - t.j2\n",
             in_role(),
@@ -2015,7 +1979,9 @@ mod tests {
             in_role(),
         );
         assert_eq!(bound(&vars, &store).unwrap(), []);
-        let found = dir.write("roles/probe/vars/a.yml");
+        let found = write(dir.path(), "roles/probe/vars/a.yml", "x")
+            .display()
+            .to_string();
         assert_eq!(bound(&vars, &store).unwrap(), [(json!(found), false)]);
     }
 
@@ -2029,11 +1995,17 @@ mod tests {
     /// `pipe` touches; or it placed in the `with_` path alone, which leaves `loop:` open.
     #[test]
     fn a_found_path_that_looks_like_a_template_is_refused_and_never_rendered() {
-        let dir = Scratch::new("found-template");
-        let marker = PathBuf::from(format!("{}.marker", dir.0.display()));
-        let _ = std::fs::remove_file(&marker);
-        let named = dir.write("{{ lookup('pipe', 'touch ' ~ airgap_dir ~ '.marker') }}.tar.gz");
-        let store = store_at(&dir.0);
+        let root = scratch();
+        let dir = root.path().join("files");
+        let marker = root.path().join("files.marker");
+        let named = write(
+            &dir,
+            "{{ lookup('pipe', 'touch ' ~ airgap_dir ~ '.marker') }}.tar.gz",
+            "x",
+        )
+        .display()
+        .to_string();
+        let store = store_at(&dir);
         for looping in [
             "with_fileglob:\n        - \"{{ airgap_dir }}/*.tar.gz\"\n",
             "loop: \"{{ [lookup('fileglob', airgap_dir ~ '/*.tar.gz')] }}\"\n",
@@ -2041,7 +2013,7 @@ mod tests {
             let step = loaded(
                 &format!(
                     "- hosts: all\n  tasks:\n    - copy:\n        src: \"{{{{ item }}}}\"\n        dest: /tmp/images/\n      {looping}      vars:\n        airgap_dir: {}\n",
-                    dir.0.display()
+                    dir.display()
                 ),
                 Origin::default(),
             );
@@ -2055,6 +2027,5 @@ mod tests {
             );
             assert!(!marker.exists(), "{looping}: the name's command ran");
         }
-        let _ = std::fs::remove_file(&marker);
     }
 }

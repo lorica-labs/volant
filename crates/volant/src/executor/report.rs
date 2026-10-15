@@ -157,9 +157,9 @@ pub(super) async fn report_task(
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::task;
     use super::*;
     use crate::stats::Outcome;
+    use crate::testing::task;
     use serde_json::json;
 
     /// The task's verdict and each line's outcome, for two failed items of a loop.

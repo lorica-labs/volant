@@ -257,6 +257,7 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::scratch;
 
     fn ran(path: ExecPath, micros: u64) -> Ran {
         Ran {
@@ -354,12 +355,12 @@ tasks by path: fallback=3 native=3 python=1 unreported=1
     /// flattened, which moves `path` out of the place a reader looks for it.
     #[test]
     fn the_json_starts_with_the_natives_and_has_a_line_per_task() {
-        let dir = std::env::temp_dir().join(format!("volant-profile-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("profile.jsonl");
         filled().write_json(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
         let lines: Vec<Value> = text
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())

@@ -87,15 +87,12 @@ fn trailing_newlines(s: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::{scratch, templar};
     use std::collections::BTreeSet;
 
     use serde_json::{Map, Value};
 
     use super::*;
-
-    fn templar() -> Templar {
-        Templar::new(std::env::temp_dir())
-    }
 
     /// A managed host's value lands in the file as text and is never rendered again.
     ///
@@ -105,8 +102,8 @@ mod tests {
     /// the controller, while writing the file.
     #[test]
     fn a_host_value_in_a_template_is_written_as_text() {
-        let marker =
-            std::env::temp_dir().join(format!("volant-render-file-{}", std::process::id()));
+        let marker_guard = scratch();
+        let marker = marker_guard.path().join("marker");
         let payload = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
         let mut map = Map::new();
         map.insert("motd".into(), Value::String(payload.clone()));

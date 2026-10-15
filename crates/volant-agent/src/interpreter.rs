@@ -103,6 +103,8 @@ fn executable(_at: &Path) -> Option<(PathBuf, File)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::testing::scratch;
 
     /// The candidate order is the reference's own fallback list, and a bare name is resolved
     /// against `PATH` while an absolute one is taken as it stands.
@@ -164,7 +166,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn de_duplication_keeps_the_first_name_a_file_was_found_under() {
-        let root = tempdir();
+        let root = scratch();
         // `b` before `a` on the path, and the better interpreter in `b`: sorting the answer
         // would put `a`'s ahead of it, so the assertion below can tell the two apart.
         let first = root.path().join("b");
@@ -209,7 +211,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_symlinked_interpreter_is_reported_where_it_was_found() {
-        let root = tempdir();
+        let root = scratch();
         let system = root.path().join("usr");
         let venv = root.path().join("venv");
         let real = program(&system, "python3.12");
@@ -239,7 +241,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn hardlinked_names_for_one_interpreter_collapse() {
-        let dir = tempdir();
+        let dir = scratch();
         let real = program(dir.path(), "python3.12");
         std::fs::hard_link(&real, dir.path().join("python3")).unwrap();
         assert_eq!(
@@ -257,7 +259,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_candidate_that_cannot_be_executed_falls_through_to_the_next_path_entry() {
-        let root = tempdir();
+        let root = scratch();
         let first = root.path().join("a");
         let second = root.path().join("b");
         std::fs::create_dir_all(&first).unwrap();
@@ -282,7 +284,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_relative_path_entry_is_not_searched() {
-        let root = tempdir();
+        let root = scratch();
         program(&root.path().join("bin"), "python3.12");
         // nextest runs each test in its own process, so this reaches no other test.
         std::env::set_current_dir(root.path()).unwrap();
@@ -302,7 +304,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_host_without_python_reports_nothing() {
-        let dir = tempdir();
+        let dir = scratch();
         assert!(discover_in(&[], "").is_empty());
         assert!(
             discover_in(&["python3", "python3.12"], dir.path().to_str().unwrap()).is_empty(),
@@ -331,38 +333,5 @@ mod tests {
     #[cfg(unix)]
     fn shown(at: &Path) -> String {
         at.to_string_lossy().into_owned()
-    }
-
-    /// A directory of this process's own, removed when the test ends. The agent carries no
-    /// temporary-directory dependency, for the reason `blobs.rs` gives.
-    #[cfg(unix)]
-    struct TempDir(PathBuf);
-
-    #[cfg(unix)]
-    impl TempDir {
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[cfg(unix)]
-    fn tempdir() -> TempDir {
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        static COUNT: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "volant-interpreter-test-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("the test directory is created");
-        TempDir(dir)
     }
 }

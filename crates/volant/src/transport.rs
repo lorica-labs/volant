@@ -1405,6 +1405,7 @@ pub fn space_needed_kib(size: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{defaults, scratch};
     use serde_json::json;
 
     fn host(vars: Value) -> Host {
@@ -1416,20 +1417,6 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-        }
-    }
-
-    fn defaults() -> ConnectionDefaults {
-        ConnectionDefaults {
-            remote_user: None,
-            private_key: None,
-            host_key_checking: true,
-            remote_tmp: "~/.ansible/tmp".into(),
-            connect_timeout: Duration::from_secs(10),
-            r#become: false,
-            become_user: "root".into(),
-            become_method: "sudo".into(),
-            become_password: None,
         }
     }
 
@@ -2082,8 +2069,8 @@ mod tests {
         use std::io::Write;
         use std::process::{Command as SyncCommand, Stdio};
 
-        let base = std::env::temp_dir().join(format!("volant quoting {}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let guard = scratch();
+        let base = guard.path().join("volant quoting");
         std::fs::create_dir_all(&base).unwrap();
         let Transport::Ssh(target) = Transport::for_host(
             &host(json!({ "ansible_remote_tmp": base.to_str().unwrap() })),
@@ -2126,7 +2113,6 @@ mod tests {
             "a cached agent exiting 255 must not look like a connection failure: {}",
             String::from_utf8_lossy(&probe.stderr)
         );
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// A cached agent is reused only when it is the very binary this controller would upload.
@@ -2151,8 +2137,8 @@ mod tests {
             .join("volant-agent");
         let ours = std::fs::read(&local).expect("the agent is built beside the tests");
         let ours_hash = blake3::hash(&ours).to_hex().to_string();
-        let base = std::env::temp_dir().join(format!("volant-cache-hash-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let guard = scratch();
+        let base = guard.path().to_path_buf();
         std::fs::create_dir_all(&base).unwrap();
         let Transport::Ssh(target) = Transport::for_host(
             &host(json!({ "ansible_remote_tmp": base.to_str().unwrap() })),
@@ -2210,7 +2196,6 @@ mod tests {
             is_this_agent(&probe, &ours_hash),
             "the controller's own agent is reused: {probe:?}"
         );
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// The other direction, and the one that says the rule is not simply "refuse every tilde":
@@ -2328,13 +2313,6 @@ mod tests {
         }
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = Path::new("/tmp").join(format!("volant-cm-test-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        dir
-    }
-
     /// The three options come as one block, in the order the reference writes them, ahead of
     /// every word the operator wrote.
     #[test]
@@ -2439,7 +2417,8 @@ mod tests {
     /// which it then reports back, so the empty configuration would read as set.
     #[tokio::test]
     async fn a_control_path_in_the_ssh_configuration_is_left_alone() {
-        let dir = scratch("config");
+        let guard = scratch();
+        let dir = guard.path().to_path_buf();
         let file = dir.join("config");
         let target = ssh_target(
             "web1",
@@ -2460,7 +2439,6 @@ mod tests {
             std::fs::write(&file, text).expect("the configuration file");
             assert_eq!(target.resolved().await.control_path, None, "{text:?}");
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// What `ssh` resolves from its configuration is not on Volant's command line, so it goes
@@ -2470,7 +2448,8 @@ mod tests {
     /// What would make this red: the resolved name hashing Volant's options alone.
     #[tokio::test]
     async fn a_host_moved_in_the_ssh_configuration_gets_a_new_socket() {
-        let dir = scratch("resolved");
+        let guard = scratch();
+        let dir = guard.path().to_path_buf();
         let file = dir.join("config");
         let target = ssh_target(
             "web1",
@@ -2503,7 +2482,6 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), paths.len(), "{paths:?}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A delegated link is kept by the delegating host's driver until the end of the play, so
@@ -2555,7 +2533,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn stopping_a_shared_connection_speaks_to_its_socket() {
-        let dir = scratch("stop");
+        let guard = scratch();
+        let dir = guard.path().to_path_buf();
         let mut target = ssh_target(
             "web1",
             json!({"ansible_ssh_common_args": "-F /dev/null"}),
@@ -2584,7 +2563,6 @@ mod tests {
             }),
         );
         assert_eq!(accepted, Ok(true), "ssh -O exit never came to {socket:?}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Measured: fifty inventory aliases of one machine sharing one master ran past the
@@ -2640,7 +2618,8 @@ mod tests {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
         // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
         let uid = unsafe { libc::geteuid() };
-        let tmp = scratch("dir");
+        let guard = scratch();
+        let tmp = guard.path().to_path_buf();
         // Whatever the umask made of it: a parent the group can write to is refused below.
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
@@ -2707,7 +2686,6 @@ mod tests {
             Ok(open.join(format!("volant-cm-{uid}"))),
             "a sticky parent, as /tmp is"
         );
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(unix)]

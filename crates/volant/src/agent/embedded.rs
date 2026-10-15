@@ -196,29 +196,11 @@ pub(crate) fn check_private(_dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(all(test, unix))]
-pub(super) mod tests {
+mod tests {
     use super::*;
+    use crate::testing::scratch;
 
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-    pub(in crate::agent) struct TempDir(pub(in crate::agent) PathBuf);
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    pub(in crate::agent) fn tempdir() -> TempDir {
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "volant-embedded-test-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).expect("the test directory is created");
-        TempDir(dir)
-    }
 
     const AGENT: &[u8] = b"#!/bin/sh\necho embedded\n";
 
@@ -229,8 +211,8 @@ pub(super) mod tests {
     /// through a temporary name always changes, whatever the bytes are.
     #[test]
     fn extracting_an_agent_already_in_place_writes_nothing() {
-        let root = tempdir();
-        let dir = root.0.join("cache");
+        let root = scratch();
+        let dir = root.path().join("cache");
         let first = extract(&dir, "volant-agent", AGENT).unwrap();
         let inode = fs::metadata(&first).unwrap().ino();
 
@@ -251,8 +233,8 @@ pub(super) mod tests {
     /// or upload whatever is sitting in its cache.
     #[test]
     fn a_short_or_altered_copy_is_written_again() {
-        let root = tempdir();
-        let dir = root.0.join("cache");
+        let root = scratch();
+        let dir = root.path().join("cache");
         extract(&dir, "volant-agent", AGENT).unwrap();
         let path = dir.join("volant-agent");
 
@@ -274,8 +256,8 @@ pub(super) mod tests {
     /// non-executable copy is kept).
     #[test]
     fn the_extracted_agent_is_executable() {
-        let root = tempdir();
-        let dir = root.0.join("cache");
+        let root = scratch();
+        let dir = root.path().join("cache");
         let path = extract(&dir, "volant-agent", AGENT).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o755);
 
@@ -291,8 +273,8 @@ pub(super) mod tests {
     /// already exists, which is exactly the one somebody else could have prepared.
     #[test]
     fn a_cache_directory_others_can_write_is_refused() {
-        let root = tempdir();
-        let dir = root.0.join("cache");
+        let root = scratch();
+        let dir = root.path().join("cache");
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
 
@@ -309,8 +291,8 @@ pub(super) mod tests {
     /// controller's own cache on its first run.
     #[test]
     fn a_new_cache_directory_is_private() {
-        let root = tempdir();
-        let dir = root.0.join("a").join("cache");
+        let root = scratch();
+        let dir = root.path().join("a").join("cache");
         // SAFETY: `umask` only swaps this process's file mode mask; nextest runs each test in a
         // process of its own, so no other thread is creating files meanwhile.
         let previous = unsafe { libc::umask(0o002) };

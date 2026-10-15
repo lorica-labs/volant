@@ -377,6 +377,7 @@ mod linux {
 
     #[cfg(all(test, target_os = "linux"))]
     pub mod tests {
+        pub(crate) use crate::testing::args;
         use serde_json::json;
 
         use super::*;
@@ -476,10 +477,6 @@ mod linux {
 
         fn bin_of(context: &Context, name: &str) -> String {
             bin(context, name).unwrap().display().to_string()
-        }
-
-        pub fn args(value: Value) -> Map<String, Value> {
-            value.as_object().unwrap().clone()
         }
 
         pub fn scratch_name(prefix: &str) -> String {

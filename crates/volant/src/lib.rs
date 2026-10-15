@@ -20,6 +20,8 @@ pub(crate) mod roles;
 pub mod splitter;
 pub(crate) mod stats;
 pub mod template;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod transport;
 pub mod union_cache;
 pub mod vars;

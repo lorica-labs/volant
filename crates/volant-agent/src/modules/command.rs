@@ -461,18 +461,8 @@ fn program_name(cmd: &Value) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::testing::{args, done, scratch};
     use serde_json::json;
-
-    fn args(v: Value) -> Map<String, Value> {
-        v.as_object().unwrap().clone()
-    }
-
-    fn done(run: Run) -> TaskResult {
-        match run {
-            Run::Done(r) => r,
-            Run::Cancelled => panic!("unexpected cancellation"),
-        }
-    }
 
     /// `stdin_add_newline` decides whether the value written to the child ends in a newline, and
     /// its default is to add one. Measured on ansible-core 2.19.12 with `od -c`: the newline is
@@ -656,7 +646,8 @@ mod tests {
     /// own directory instead of from `chdir`, which finds nothing there and lets the command run.
     #[test]
     fn a_relative_creates_resolves_under_chdir() {
-        let dir = std::env::temp_dir().join(format!("volant-guard-chdir-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("marker"), b"").unwrap();
         let r = done(execute(
@@ -672,7 +663,6 @@ mod tests {
         assert_eq!(r.0["msg"], "Did not run command since 'marker' exists");
         assert_eq!(r.0["stdout"], "skipped, since marker exists");
         assert!(!r.changed());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Measurement (o) for the other guard: `removes` resolves under `chdir` too, so a cleanup
@@ -682,7 +672,8 @@ mod tests {
     /// not exist, so `!matches_any` holds and the cleanup is skipped with the play still green.
     #[test]
     fn a_relative_removes_resolves_under_chdir() {
-        let dir = std::env::temp_dir().join(format!("volant-guard-removes-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("cache"), b"").unwrap();
         let r = done(execute(
@@ -700,7 +691,6 @@ mod tests {
             "the cleanup did not run although 'cache' is there"
         );
         assert_eq!(r.0["stdout"], "ran");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A `chdir` that cannot be entered fails the task, the way the reference's own
@@ -738,7 +728,8 @@ mod tests {
     /// other door.
     #[test]
     fn a_chdir_that_is_not_a_directory_fails_before_the_guards() {
-        let dir = std::env::temp_dir().join(format!("volant-chdir-file-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("config.yml");
         std::fs::write(&file, "").unwrap();
@@ -752,7 +743,6 @@ mod tests {
             &Context::default(),
             &|| false,
         ));
-        std::fs::remove_dir_all(&dir).unwrap();
         assert!(r.failed(), "a file as chdir was read as a guard decision");
         // The `rc` and `msg` a bad `chdir` reports are a separate, measured divergence from the
         // reference, which answers `rc: null` and `Unable to change directory before execution.`
@@ -767,7 +757,8 @@ mod tests {
     /// `creates: "{{ marker | default('') }}"` with `marker` undefined would skip the task.
     #[test]
     fn an_empty_creates_applies_no_guard() {
-        let dir = std::env::temp_dir().join(format!("volant-guard-empty-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let r = done(execute(
             &args(json!({
@@ -781,7 +772,6 @@ mod tests {
         ));
         assert!(r.changed(), "an empty creates was read as a guard");
         assert_eq!(r.0["stdout"], "ran");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Measurement (p): a glob in `creates` expands inside a directory component too, still
@@ -791,7 +781,8 @@ mod tests {
     /// instead of one directory entry at a time, which never reaches `sub/marker` through `s*`.
     #[test]
     fn a_glob_creates_resolves_under_chdir() {
-        let dir = std::env::temp_dir().join(format!("volant-guard-glob-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub").join("marker"), b"").unwrap();
         let r = done(execute(
@@ -807,7 +798,6 @@ mod tests {
         assert_eq!(r.0["msg"], "Did not run command since 's*/marker' exists");
         assert_eq!(r.0["stdout"], "skipped, since s*/marker exists");
         assert!(!r.changed());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Measurement (m): an absolute glob is expanded regardless of `chdir`, and the message
@@ -820,11 +810,12 @@ mod tests {
     /// have been skipped.
     #[test]
     fn an_absolute_glob_creates_ignores_chdir() {
-        let dir = std::env::temp_dir().join(format!("volant-guard-abs-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("x-1"), b"").unwrap();
-        let elsewhere =
-            std::env::temp_dir().join(format!("volant-guard-elsewhere-{}", std::process::id()));
+        let elsewhere_guard = scratch();
+        let elsewhere = elsewhere_guard.path().to_path_buf();
         std::fs::create_dir_all(&elsewhere).unwrap();
         let pattern = format!("{}/x-*", dir.display());
         let r = done(execute(
@@ -842,13 +833,12 @@ mod tests {
             format!("Did not run command since '{pattern}' exists")
         );
         assert!(!r.changed());
-        std::fs::remove_dir_all(&dir).unwrap();
-        std::fs::remove_dir_all(&elsewhere).unwrap();
     }
 
     #[test]
     fn chdir_changes_the_working_directory() {
-        let dir = std::env::temp_dir().join(format!("volant-chdir-{}", std::process::id()));
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("marker"), b"").unwrap();
         let r = done(execute(
@@ -858,7 +848,6 @@ mod tests {
             &|| false,
         ));
         assert_eq!(r.0["stdout"], "marker");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

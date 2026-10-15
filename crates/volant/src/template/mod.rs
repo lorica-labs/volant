@@ -921,6 +921,7 @@ fn convert_error(err: minijinja::Error) -> TemplateError {
 #[cfg(test)]
 mod unit {
     use super::*;
+    use crate::testing::templar;
     use serde_json::json;
 
     fn vars(v: Value) -> Map<String, Value> {
@@ -929,7 +930,7 @@ mod unit {
 
     #[test]
     fn a_single_expression_keeps_its_type_and_text_renders_to_a_string() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         assert_eq!(t.render("{{ 1 + 1 }}", &Map::new()).unwrap(), json!(2));
         assert_eq!(
             t.render("{{ flag }}", &vars(json!({"flag": true})))
@@ -955,7 +956,7 @@ mod unit {
 
     #[test]
     fn undefined_variables_are_errors_with_ansible_wording() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let err = t.render("{{ missing }}", &Map::new()).unwrap_err();
         assert!(
             err.0
@@ -970,7 +971,7 @@ mod unit {
 
     #[test]
     fn values_are_templated_recursively_but_keys_are_not() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let v = t
             .render_value(
                 &json!({"{{ k }}": ["{{ x }}", {"n": "{{ x + 1 }}"}], "lit": 3}),
@@ -982,7 +983,7 @@ mod unit {
 
     #[test]
     fn resolve_vars_chains_references_and_leaves_broken_ones_alone() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let resolved = t
             .resolve_vars_tainted(&vars(
                 json!({"a": "{{ b }}", "b": "{{ c }}!", "c": "x", "bad": "{{ missing }}"}),
@@ -1014,7 +1015,7 @@ mod unit {
 
     #[test]
     fn hostvars_reads_the_five_ways_a_playbook_reads_it() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let map = hostvars_map();
         for (text, want) in hostvars_cases() {
             assert_eq!(t.render(text, &map).unwrap(), want, "{text}");
@@ -1025,7 +1026,7 @@ mod unit {
     /// answer alike, because this is the substitution the render path makes.
     #[test]
     fn the_shared_view_answers_the_five_the_same_way() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let shared = Arc::new(vars(json!({"a": {"y": 1}, "b": {"y": 2}})));
         let empty = Map::new();
         for (text, want) in hostvars_cases() {
@@ -1096,7 +1097,7 @@ mod unit {
     /// the fact instead of the inventory.
     #[test]
     fn a_fact_does_not_shadow_an_inventory_wide_value() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let shared = Arc::new(vars(json!({"groups": {"web": ["h1"]}})));
         let fact = vars(json!({"groups": "a set_fact wrote this", "own": 1}));
         let vars = Vars {
@@ -1160,7 +1161,7 @@ mod unit {
     /// name.
     #[test]
     fn the_k3s_node_cidr_loop_extracts_each_host_s_address() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let loop_text = r"{{
           (
             groups[server_group] | default([])
@@ -1205,7 +1206,7 @@ mod unit {
     /// would skip the taint and evaluate a host's string here.
     #[test]
     fn extract_on_hostvars_taints_like_a_bare_read() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let view = Arc::new(vars(json!({"h2": {"x": "{{ 1 + 1 }}"}})));
         let empty = Map::new();
         let hosts = BTreeSet::from(["h2".to_string()]);
@@ -1237,7 +1238,7 @@ mod unit {
     /// the map: the fixtures above and every caller that passes a bare `&Map` depend on it.
     #[test]
     fn a_map_without_a_view_still_answers_from_the_map() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         assert_eq!(
             t.render("{{ hostvars['a'].y }}", &hostvars_map()).unwrap(),
             json!(1)
@@ -1246,7 +1247,7 @@ mod unit {
 
     #[test]
     fn conditions_need_a_boolean_and_accept_stray_braces() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         assert!(t.condition("x > 3", &vars(json!({"x": 5}))).unwrap());
         assert!(!t.condition("x > 3", &vars(json!({"x": 1}))).unwrap());
         assert!(t.condition("{{ x > 3 }}", &vars(json!({"x": 5}))).unwrap());
@@ -1271,7 +1272,7 @@ mod unit {
     /// host's untrusted variable or a lookup's text is compiled on the controller.
     #[test]
     fn a_delimited_condition_reads_an_author_string_again_and_never_a_host_one() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let map = vars(json!({
             "healthy": "true",
             "cond_s": "1 == 1",
@@ -1344,7 +1345,7 @@ mod unit {
     /// judges the undefined value.
     #[test]
     fn an_undefined_input_stays_undefined_through_a_filter_or_a_test() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let r = |text: String| t.render(&text, &Map::new());
         for filter in FILTERS.split("; ") {
             let err = r(format!("{{{{ nope | {filter} }}}}")).unwrap_err();
@@ -1372,7 +1373,7 @@ mod unit {
     /// message rather than as an undefined read. Red if the short-circuit above catches them.
     #[test]
     fn the_filters_and_tests_made_for_undefined_still_see_it() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         for (text, want) in [
             ("{{ nope | default('x') }}", json!("x")),
             ("{{ nope | d('x') }}", json!("x")),
@@ -1401,7 +1402,7 @@ mod unit {
     /// 'curl'] }}"}` storing `[null, "curl"]` would.
     #[test]
     fn a_value_holding_an_undefined_one_is_an_undefined_read() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let vars = vars(json!({"items_": [{"x": 1}, {"y": 2}], "items": [1]}));
         for text in [
             "{{ [nope | lower] }}",
@@ -1446,7 +1447,7 @@ mod unit {
     /// URLs, wrote a partial list and reported the task green.
     #[test]
     fn a_text_filter_over_a_container_holding_an_undefined_fails_the_read() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let vars = vars(json!({"hs": ["a", "b"], "hv": {"a": {"ip": "10.0.0.1"}, "b": {}}}));
         for text in [
             "{{ [1, nope] | join(',') }}",
@@ -1473,7 +1474,7 @@ mod unit {
     /// global `~` calls does not replace it.
     #[test]
     fn a_concatenation_with_a_container_holding_an_undefined_fails_the_read() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let none = Map::new();
         for text in [
             "{{ 'x' ~ [1, nope] }}",
@@ -1518,7 +1519,7 @@ mod unit {
     /// (`length`), or a test that exists to see undefined values catching them.
     #[test]
     fn the_idioms_around_undefined_values_answer_as_the_reference() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let omit = crate::vars::omit_token();
         let vars = vars(json!({
             "items_": [{"x": 1}, {"y": 2}], "item": {"y": 2}, "s": "a,b", "y": "3", "omit": omit,
@@ -1597,7 +1598,7 @@ mod unit {
     #[test]
     fn every_minijinja_builtin_goes_through_the_wrapper() {
         let bare = format!("{:?}", Environment::new());
-        let ours = format!("{:?}", Templar::new(std::env::temp_dir()).env);
+        let ours = format!("{:?}", templar().env);
         let names = |debug: &str, field: &str| -> Vec<String> {
             let start = debug.find(&format!("{field}: [")).expect(field) + field.len() + 3;
             let end = start + debug[start..].find(']').expect(field);
@@ -1623,6 +1624,7 @@ mod unit {
 #[cfg(test)]
 mod reference_parity {
     use super::*;
+    use crate::testing::templar;
     use serde_json::json;
 
     /// Measured on ansible-core 2.19.12: `x: "{{ {'a': {'x': 5}} }}"` sets a dict, although the
@@ -1630,7 +1632,7 @@ mod reference_parity {
     /// side by side still render to a string.
     #[test]
     fn a_nested_dict_literal_closing_on_three_braces_keeps_its_type() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let none = Map::new();
         assert_eq!(
             t.render("{{ {'a': {'x': 5}} }}", &none),
@@ -1654,7 +1656,7 @@ mod reference_parity {
     /// do not fit keeps its own error.
     #[test]
     fn arithmetic_on_an_undefined_filter_result_is_an_undefined_read() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         let none = Map::new();
         for text in [
             "{{ nope | int + 1 }}",
@@ -1673,7 +1675,7 @@ mod reference_parity {
     /// writes `<b> &`, never `&lt;b&gt;`. Ansible never turns auto-escape on by file name.
     #[test]
     fn a_template_named_html_or_xml_is_not_escaped() {
-        let t = Templar::new(std::env::temp_dir());
+        let t = templar();
         for name in ["index.html.j2", "server.xml", "a.htm.jinja2"] {
             let opts = FileRender {
                 name: Some(name.into()),

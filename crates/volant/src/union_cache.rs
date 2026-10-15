@@ -726,25 +726,7 @@ fn sweep(dir: &Path, now: SystemTime) {
 mod tests {
     use super::*;
     use crate::python::ModuleFacts;
-
-    struct TempDir(PathBuf);
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn tempdir() -> TempDir {
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "volant-union-cache-test-{}-{}",
-            std::process::id(),
-            COUNT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        TempDir(dir)
-    }
+    use crate::testing::scratch;
 
     /// A union of one module whose zip is `bytes`, and one answer of each kind for the
     /// collections, so the manifest is read back whole.
@@ -842,9 +824,9 @@ mod tests {
 
     #[test]
     fn a_second_run_with_nothing_changed_hits_the_cache() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
-        let stored = entry(&root.0, b"PK\x03\x04 zip");
+        let root = scratch();
+        let dir = root.path().join("unions");
+        let stored = entry(root.path(), b"PK\x03\x04 zip");
         store(&dir, &some_key(), &stored).unwrap();
         let loaded = load(&dir, &some_key()).expect("nothing changed");
         assert_eq!(loaded, stored);
@@ -858,9 +840,9 @@ mod tests {
     /// its old `module_utils`, until a file happens to change length.
     #[test]
     fn a_source_changed_in_place_misses_the_cache() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
-        let stored = entry(&root.0, b"PK\x03\x04 zip");
+        let root = scratch();
+        let dir = root.path().join("unions");
+        let stored = entry(root.path(), b"PK\x03\x04 zip");
         store(&dir, &some_key(), &stored).unwrap();
         let core = &stored.sources[0].path;
         fs::write(core, "BASIC").unwrap();
@@ -873,9 +855,9 @@ mod tests {
     /// `FILES.json`, and the entry is rebuilt.
     #[test]
     fn a_collection_upgrade_misses_the_cache() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
-        let stored = entry(&root.0, b"PK\x03\x04 zip");
+        let root = scratch();
+        let dir = root.path().join("unions");
+        let stored = entry(root.path(), b"PK\x03\x04 zip");
         store(&dir, &some_key(), &stored).unwrap();
         let files = &stored.sources[1].path;
         fs::write(files, "{\"files\": [1]}").unwrap();
@@ -1023,8 +1005,8 @@ mod tests {
     /// the key, which the mtime in each file's stamp is there to catch.
     #[test]
     fn a_module_written_in_a_playbook_s_library_is_another_key() {
-        let root = tempdir();
-        let (play, role) = (root.0.join("play"), root.0.join("role"));
+        let root = scratch();
+        let (play, role) = (root.path().join("play"), root.path().join("role"));
         fs::create_dir_all(&play).unwrap();
         fs::create_dir_all(&role).unwrap();
         let both = [play.clone(), role.clone()];
@@ -1055,10 +1037,10 @@ mod tests {
     /// stamp of a file that can still change without moving its size or its mtime.
     #[test]
     fn a_plugin_file_too_recent_gives_no_key() {
-        let root = tempdir();
-        fs::create_dir_all(root.0.join("library")).unwrap();
-        fs::write(root.0.join("library").join("m.py"), "x").unwrap();
-        let dirs = [root.0.clone()];
+        let root = scratch();
+        fs::create_dir_all(root.path().join("library")).unwrap();
+        fs::write(root.path().join("library").join("m.py"), "x").unwrap();
+        let dirs = [root.path().to_path_buf()];
         assert!(plugin_files(&dirs, SystemTime::now()).is_none());
         assert!(plugin_files(&dirs, SystemTime::now() + Duration::from_secs(3)).is_some());
     }
@@ -1071,8 +1053,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn an_edit_behind_a_linked_directory_is_another_key() {
-        let root = tempdir();
-        let (role, shared) = (root.0.join("role"), root.0.join("shared"));
+        let root = scratch();
+        let (role, shared) = (root.path().join("role"), root.path().join("shared"));
         written(&shared.join("m.py"), "one", 100);
         let utils = role.join("module_utils");
         fs::create_dir_all(&utils).unwrap();
@@ -1086,10 +1068,10 @@ mod tests {
     /// An entry that does not read whole is rebuilt, not trusted.
     #[test]
     fn a_corrupt_entry_is_rebuilt_not_trusted() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        let stored = entry(&root.0, b"PK\x03\x04 zip");
+        let stored = entry(root.path(), b"PK\x03\x04 zip");
         store(&dir, &key, &stored).unwrap();
         let zip = dir.join(format!("{}.zip", key.0));
         let bytes = fs::read(&zip).unwrap();
@@ -1120,10 +1102,10 @@ mod tests {
     /// What would make this red: the format left at 1 when `core` was added.
     #[test]
     fn an_entry_from_before_core_is_a_miss() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        let mut stored = entry(&root.0, b"PK zip");
+        let mut stored = entry(root.path(), b"PK zip");
         stored
             .union
             .modules
@@ -1167,10 +1149,10 @@ mod tests {
     /// key, the host), under which a union rebuilt in place would go up as the one before it.
     #[tokio::test]
     async fn the_frame_kept_for_a_union_is_found_by_its_content_alone() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let zip = long_zip();
-        let stored = entry(&root.0, &zip);
+        let stored = entry(root.path(), &zip);
         store(&dir, &some_key(), &stored).unwrap();
         let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
             .await
@@ -1197,10 +1179,10 @@ mod tests {
     /// that keeps the hash), or the hash read as optional (the format 3 case without one).
     #[test]
     fn a_format_two_entry_is_a_miss() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        let stored = entry(&root.0, &long_zip());
+        let stored = entry(root.path(), &long_zip());
         store(&dir, &key, &stored).unwrap();
         let manifest = dir.join(format!("{}.json", key.0));
         let text = fs::read_to_string(&manifest).unwrap();
@@ -1228,11 +1210,11 @@ mod tests {
     /// one taken for a miss, which rebuilds the whole union for a file the zip can give back.
     #[tokio::test]
     async fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
         let zip = long_zip();
-        let stored = entry(&root.0, &zip);
+        let stored = entry(root.path(), &zip);
         store(&dir, &key, &stored).unwrap();
         let path = dir.join(format!("{}.deflate", key.0));
         let good = fs::read(&path).unwrap();
@@ -1261,10 +1243,10 @@ mod tests {
     /// hosts a blob whose name says something else.
     #[test]
     fn a_zip_whose_hash_moved_is_never_loaded() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        store(&dir, &key, &entry(&root.0, b"PK\x03\x04 zip")).unwrap();
+        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
         let zip = dir.join(format!("{}.zip", key.0));
         let mut bytes = fs::read(&zip).unwrap();
         bytes[4] ^= 1;
@@ -1278,10 +1260,10 @@ mod tests {
     #[test]
     fn the_cache_is_private_to_this_user() {
         use std::os::unix::fs::PermissionsExt;
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        store(&dir, &key, &entry(&root.0, b"PK\x03\x04 zip")).unwrap();
+        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
         let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(mode(&dir.join(format!("{}.zip", key.0))), 0o600);
@@ -1294,10 +1276,10 @@ mod tests {
     /// named stays in the user's home for good.
     #[test]
     fn an_entry_left_alone_for_a_month_is_swept() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        store(&dir, &key, &entry(&root.0, b"PK\x03\x04 zip")).unwrap();
+        store(&dir, &key, &entry(root.path(), b"PK\x03\x04 zip")).unwrap();
         sweep(&dir, SystemTime::now() + STALE - Duration::from_secs(60));
         assert!(load(&dir, &key).is_some(), "a recent entry is kept");
         sweep(&dir, SystemTime::now() + STALE + Duration::from_secs(60));
@@ -1308,11 +1290,11 @@ mod tests {
     /// named by the path it was found at.
     #[test]
     fn the_interpreter_is_found_without_running_it() {
-        let root = tempdir();
-        let python = root.0.join("venv/bin/python");
+        let root = scratch();
+        let python = root.path().join("venv/bin/python");
         fs::create_dir_all(python.parent().unwrap()).unwrap();
         fs::write(&python, "not a python").unwrap();
-        let venv = root.0.join("venv").display().to_string();
+        let venv = root.path().join("venv").display().to_string();
         let found = interpreter_without_running(None, Some(&venv)).unwrap();
         assert_eq!(found.path, python);
         assert_eq!(found.len, 12);
@@ -1335,8 +1317,8 @@ mod tests {
     /// union is served.
     #[test]
     fn a_shim_interpreter_is_never_a_key() {
-        let root = tempdir();
-        let shim = root.0.join("shims/python3");
+        let root = scratch();
+        let shim = root.path().join("shims/python3");
         fs::create_dir_all(shim.parent().unwrap()).unwrap();
         fs::write(
             &shim,
@@ -1351,9 +1333,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_interpreter_names_where_its_link_leads() {
-        let root = tempdir();
-        let real = root.0.join("store/python3");
-        let link = root.0.join("profile/python3");
+        let root = scratch();
+        let real = root.path().join("store/python3");
+        let link = root.path().join("profile/python3");
         fs::create_dir_all(real.parent().unwrap()).unwrap();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         fs::write(&real, "ELF").unwrap();
@@ -1370,10 +1352,10 @@ mod tests {
     /// tracked file stays where it was.
     #[test]
     fn an_ansible_config_directory_is_read_for_the_key() {
-        let root = tempdir();
-        let cfg = root.0.join("ansible.cfg");
+        let root = scratch();
+        let cfg = root.path().join("ansible.cfg");
         let key_now = || {
-            let found = configs(Some(root.0.as_os_str()), None);
+            let found = configs(Some(root.path().as_os_str()), None);
             key_from(
                 None,
                 &interpreter(),
@@ -1390,10 +1372,13 @@ mod tests {
         assert_ne!(key_now(), before);
         // A file named directly, and one that is not there, are both what they are.
         assert_eq!(configs(Some(cfg.as_os_str()), None)[0].0, cfg);
-        let home = root.0.join("home");
+        let home = root.path().join("home");
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join(".ansible.cfg"), "[defaults]\n").unwrap();
-        let fell_through = configs(Some(root.0.join("absent.cfg").as_os_str()), Some(&home));
+        let fell_through = configs(
+            Some(root.path().join("absent.cfg").as_os_str()),
+            Some(&home),
+        );
         assert!(
             fell_through
                 .iter()
@@ -1423,8 +1408,8 @@ mod tests {
         assert_eq!(expanded("$NOPE/${NOPE}/$", home, var), "$NOPE/${NOPE}/$");
         assert_eq!(expanded("~other/a", home, var), "~other/a");
 
-        let root = tempdir();
-        let cfg = root.0.join("proj/ansible.cfg");
+        let root = scratch();
+        let cfg = root.path().join("proj/ansible.cfg");
         fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         fs::write(
             &cfg,
@@ -1432,7 +1417,7 @@ mod tests {
 ",
         )
         .unwrap();
-        let found = configs(Some("~/proj/ansible.cfg".as_ref()), Some(&root.0));
+        let found = configs(Some("~/proj/ansible.cfg".as_ref()), Some(root.path()));
         assert!(found.iter().any(|(path, _)| *path == cfg), "{found:?}");
     }
 
@@ -1445,21 +1430,21 @@ mod tests {
     #[test]
     fn a_linked_or_shared_cache_directory_is_refused() {
         use std::os::unix::fs::PermissionsExt;
-        let root = tempdir();
-        let target = root.0.join("dot-ssh");
+        let root = scratch();
+        let target = root.path().join("dot-ssh");
         fs::create_dir_all(&target).unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
-        let volant = root.0.join("volant");
+        let volant = root.path().join("volant");
         fs::create_dir_all(&volant).unwrap();
         let dir = volant.join("unions");
         std::os::unix::fs::symlink(&target, &dir).unwrap();
         let key = some_key();
-        assert!(store(&dir, &key, &entry(&root.0, b"PK")).is_err());
+        assert!(store(&dir, &key, &entry(root.path(), b"PK")).is_err());
         assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
         assert_eq!(load(&dir, &key), None);
 
         fs::remove_file(&dir).unwrap();
-        store(&dir, &key, &entry(&root.0, b"PK")).unwrap();
+        store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
         fs::set_permissions(&volant, fs::Permissions::from_mode(0o777)).unwrap();
         assert_eq!(load(&dir, &key), None);
         fs::set_permissions(&volant, fs::Permissions::from_mode(0o775)).unwrap();
@@ -1475,10 +1460,10 @@ mod tests {
     /// directory, and whatever a link in it leads to.
     #[test]
     fn the_sweep_removes_only_its_own_files() {
-        let root = tempdir();
-        let dir = root.0.join("unions");
+        let root = scratch();
+        let dir = root.path().join("unions");
         let key = some_key();
-        store(&dir, &key, &entry(&root.0, b"PK")).unwrap();
+        store(&dir, &key, &entry(root.path(), b"PK")).unwrap();
         let hex = "a".repeat(64);
         for name in [
             "id_ed25519".to_string(),

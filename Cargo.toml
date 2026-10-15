@@ -52,12 +52,14 @@ minijinja-contrib = { version = "2.24", default-features = false, features = [
   "pycompat",
 ] }
 regex = "1"
+rstest = "0.27"
 saphyr = "0.2.0"
 saphyr-parser = "0.2.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1_smol = "1.0"
 shlex = "2"
+tempfile = "3"
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",

@@ -1175,6 +1175,7 @@ pub(crate) fn module_facts(name: &str, value: &Value) -> anyhow::Result<ModuleFa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::scratch;
     use std::io::Cursor;
 
     /// Two modules with one short name stay two modules: a collection's module is built under its
@@ -1398,8 +1399,8 @@ mod tests {
             Ok(python) => python,
             Err(why) => return skip_or_fail(&format!("{why:#}")),
         };
-        let root = std::env::temp_dir().join(format!("volant-local-tmp-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         std::fs::create_dir_all(&root).unwrap();
         let local = root.display().to_string();
         let mut builder =
@@ -1408,7 +1409,6 @@ mod tests {
         let during = std::fs::read_dir(&root).unwrap().count();
         drop(builder);
         let after = std::fs::read_dir(&root).unwrap().count();
-        std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(during, 1, "the helper made its ansible-local directory");
         assert_eq!(after, 0, "the directory outlived the helper");
     }
@@ -1428,8 +1428,8 @@ mod tests {
             Ok(python) => python,
             Err(why) => return skip_or_fail(&format!("{why:#}")),
         };
-        let root = std::env::temp_dir().join(format!("volant-library-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         fixture_collection(&root);
         let library = root.join("library");
         std::fs::create_dir_all(&library).unwrap();
@@ -1451,7 +1451,6 @@ mod tests {
             .union(&["stat".to_string(), "ping".to_string()])
             .unwrap()
             .0;
-        std::fs::remove_dir_all(&root).unwrap();
         // Measured on ansible-core 2.19.12: the wrapper names it `ansible.legacy.stat`, which
         // an agent looking natives up by `ansible.modules.<name>` does not match either. `core`
         // is the controller's own word on it, whatever the wrapper's naming does next.
@@ -1492,8 +1491,8 @@ mod tests {
             Ok(python) => python,
             Err(why) => return skip_or_fail(&format!("{why:#}")),
         };
-        let root = std::env::temp_dir().join(format!("volant-fixture-coll-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         fixture_collection(&root);
         let path = root.display().to_string();
         let start = || PythonBuilder::under_with(&python, &[("ANSIBLE_COLLECTIONS_PATH", &path)]);
@@ -1595,7 +1594,6 @@ mod tests {
             let err = union_from(start, &modules, &named, None, &mut |_| {}).unwrap_err();
             assert!(format!("{err:#}").contains(says), "{module}: {err:#}");
         }
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The version of `ansible.posix` the collection tests are written against, the one
@@ -2035,8 +2033,8 @@ mod tests {
     /// out, which is then never resolved and fails by name on a host that does reach it.
     #[test]
     fn the_union_holds_what_a_dynamic_include_may_read() {
-        let dir = std::env::temp_dir().join(format!("volant-union-reach-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir_guard = scratch();
+        let dir = dir_guard.path().to_path_buf();
         let tasks = dir.join("roles/r/tasks");
         std::fs::create_dir_all(tasks.join("sub")).unwrap();
         std::fs::create_dir_all(dir.join("roles/r/handlers")).unwrap();
@@ -2097,7 +2095,6 @@ mod tests {
         write("roles/r/tasks/broken.yml", "- apt: [\n");
         let err = union_of(&dir, "- hosts: all\n  roles: [r]\n").unwrap_err();
         assert!(format!("{err:#}").contains("broken.yml"), "{err:#}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A run that names no Python module builds nothing, so a controller without ansible-core
@@ -2308,13 +2305,6 @@ mod tests {
         .to_string()
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     /// A valid entry starts no helper, not even the `import ansible` probe; a stale one starts
     /// one and is written again.
     ///
@@ -2323,7 +2313,8 @@ mod tests {
     /// unwritten, which rebuilds on every run after the first change.
     #[test]
     fn a_valid_cache_starts_nothing_and_a_stale_one_is_rebuilt_once() {
-        let root = scratch("union-cached");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         let place = fresh_place(&root);
@@ -2353,7 +2344,6 @@ mod tests {
         assert_eq!(third.hash, blake3::hash(b"PK third").to_hex().to_string());
         let kept = crate::union_cache::load(&place.dir, &place.key).expect("written again");
         assert_eq!(kept.union, third);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A union the helper could not trace back to its files is never kept.
@@ -2362,7 +2352,8 @@ mod tests {
     /// valid forever and serves the same zip through every upgrade.
     #[test]
     fn a_union_without_its_sources_is_not_kept() {
-        let root = scratch("union-untraced");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let place = fresh_place(&root);
         let modules = std::collections::BTreeSet::from(["ping".to_string()]);
         let answer = canned(b"PK untraced", None);
@@ -2373,13 +2364,13 @@ mod tests {
             !std::fs::read_dir(&place.dir).is_ok_and(|mut files| files.next().is_some()),
             "an entry was written"
         );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A cache directory that cannot be written costs one warning and nothing else.
     #[test]
     fn an_unwritable_cache_warns_and_the_run_goes_on() {
-        let root = scratch("union-unwritable");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         std::fs::write(root.join("unions"), "a file where the directory goes").unwrap();
@@ -2401,7 +2392,6 @@ mod tests {
             "{}",
             warnings[0]
         );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A kept answer refuses a task of this run as a fresh one would.
@@ -2411,7 +2401,8 @@ mod tests {
     /// earlier run found that name only in a role file.
     #[test]
     fn a_cache_hit_still_refuses_what_a_task_cannot_run() {
-        let root = scratch("union-refuses");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         let place = fresh_place(&root);
@@ -2440,7 +2431,6 @@ mod tests {
             format!("{err:#}").contains("needs an action plugin"),
             "{err:#}"
         );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A union built under another interpreter than the one the key names is not kept.
@@ -2450,7 +2440,8 @@ mod tests {
     /// files the entry lists, and the next run would serve the other interpreter's union.
     #[test]
     fn an_entry_is_filed_only_under_the_interpreter_that_built_it() {
-        let root = scratch("union-other-python");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         let place = crate::union_cache::Place {
@@ -2462,7 +2453,6 @@ mod tests {
         let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
         union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
         assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A union is not kept when the executable that answered is not the one the key's real path
@@ -2473,7 +2463,8 @@ mod tests {
     /// key, every 3.11 source is still on disk unchanged, and the old union is served.
     #[test]
     fn an_entry_is_filed_only_under_the_executable_that_answered() {
-        let root = scratch("union-multiplexer");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         let place = fresh_place(&root);
@@ -2482,7 +2473,6 @@ mod tests {
         let start = || PythonBuilder::spawn("python3", &["-c", CANNED, &answer], &[]);
         union_from(start, &modules, &[], Some(&place), &mut |w| panic!("{w}")).unwrap();
         assert_eq!(crate::union_cache::load(&place.dir, &place.key), None);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A cache file someone else could have written is warned about and never read.
@@ -2494,7 +2484,8 @@ mod tests {
     #[test]
     fn a_cache_file_others_could_write_is_warned_about_and_not_read() {
         use std::os::unix::fs::PermissionsExt;
-        let root = scratch("union-foreign-file");
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
         std::fs::write(&source, "ping").unwrap();
         let place = fresh_place(&root);
@@ -2525,7 +2516,6 @@ mod tests {
             "{}",
             warnings[0]
         );
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The helper names the files a union came from: each module and `module_utils` it copied,

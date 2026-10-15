@@ -548,6 +548,7 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<V
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::testing::scratch;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
@@ -567,7 +568,8 @@ mod tests {
     /// file below would show through the clone.
     #[test]
     fn an_agent_file_is_read_and_hashed_once_per_source() {
-        let dir = std::env::temp_dir().join(format!("volant-agent-read-{}", std::process::id()));
+        let tmp = scratch();
+        let dir = tmp.path().to_path_buf();
         let path = agent_in(&dir, "volant-agent-x");
         let source = AgentSource::ordered(Some(dir.clone()), None, None);
         let first = source.read(&path).unwrap();
@@ -576,7 +578,6 @@ mod tests {
         std::fs::write(&path, b"rebuilt").unwrap();
         let again = source.clone().read(&path).unwrap();
         assert!(Arc::ptr_eq(&first, &again), "{:?}", again.bytes);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// `VOLANT_AGENT_DIR` comes first, then the agents built into the controller, then the
@@ -589,9 +590,12 @@ mod tests {
     /// left next to an upgraded controller wins over the one built with it.
     #[test]
     fn agents_are_looked_up_in_the_environment_then_the_controller_then_beside_it() {
-        let root = embedded::tests::tempdir();
-        let (env_dir, exe_dir, cache) =
-            (root.0.join("env"), root.0.join("exe"), root.0.join("cache"));
+        let root = scratch();
+        let (env_dir, exe_dir, cache) = (
+            root.path().join("env"),
+            root.path().join("exe"),
+            root.path().join("cache"),
+        );
         let from_env = agent_in(&env_dir, "volant-agent");
         agent_in(&exe_dir, "volant-agent");
         let riscv = agent_in(&exe_dir, "volant-agent-riscv64gc-unknown-linux-musl");
@@ -623,10 +627,10 @@ mod tests {
     /// in (the operator reads "no agent" with no hint that the cache is the problem).
     #[test]
     fn an_agent_that_cannot_be_extracted_falls_through_and_says_why() {
-        let root = embedded::tests::tempdir();
-        let exe_dir = root.0.join("exe");
+        let root = scratch();
+        let exe_dir = root.path().join("exe");
         // A cache anyone can write, which extraction refuses.
-        let cache = root.0.join("cache");
+        let cache = root.path().join("cache");
         std::fs::create_dir(&cache).unwrap();
         std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o777)).unwrap();
         let source = || {
@@ -650,7 +654,8 @@ mod tests {
     /// directory on macOS, where a linked install would then find no agent.
     #[test]
     fn the_agents_are_looked_for_beside_the_linked_file() {
-        let root = std::env::temp_dir().join(format!("volant-beside-{}", std::process::id()));
+        let tmp = scratch();
+        let root = tmp.path();
         let release = root.join("release");
         let bin = root.join("bin");
         std::fs::create_dir_all(&release).unwrap();
@@ -661,7 +666,6 @@ mod tests {
         let found = beside_executable(bin.join("volant"));
 
         let expected = std::fs::canonicalize(&release).unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(found, Some(expected));
     }
 

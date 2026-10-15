@@ -4725,8 +4725,8 @@ fn a_draining_host_runs_the_rest_of_an_always_behind_an_include() {
     }
 }
 
-/// A block written inside an `always` a host is draining rescues its own failure, and the host goes
-/// on draining behind it - with an include between the failure and that rescue, so the list...
+/// A rescue inside an `always` a host is draining takes its own failure, an include between the
+/// two, and the host drains on behind it.
 #[test]
 fn a_rescue_inside_a_cleanup_leaves_the_rest_of_it_to_run() {
     let out = volant_within(
@@ -5387,8 +5387,8 @@ fn a_variable_named_by_a_result_is_never_evaluated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// And the half the previous test could be made to pass by giving up: a fact whose value came out
-/// of a managed host still cannot name the variable a `debug: var:` compiles.
+/// A fact whose value came from a managed host still cannot name the variable a `debug: var:`
+/// compiles.
 #[test]
 fn a_fact_carrying_a_result_cannot_name_a_variable() {
     let (dir, marker) = trust_dir("result-fact-name", "h1 ansible_connection=local\n");
@@ -5457,8 +5457,7 @@ fn fake_ssh_recording(name: &str, inventory: &str) -> (std::path::PathBuf, std::
     (dir, log)
 }
 
-/// The effect asserted directly, since an exit code alone cannot tell a refusal from a connection
-/// that failed for some other reason: whatever reaches the fake `ssh`'s recorded command...
+/// A `remote_tmp` substitution never reaches the command line the fake `ssh` records.
 #[test]
 fn a_remote_tmp_substitution_never_reaches_the_recorded_ssh_command_line() {
     let (dir, log) = fake_ssh_recording(

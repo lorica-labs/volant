@@ -421,11 +421,11 @@ pub(crate) fn check_built(
 }
 
 /// Why a `pause` that would wait for an answer is refused on a terminal.
-pub(crate) const PROMPT_REFUSED: &str = "pause cannot prompt on a terminal because Volant does not read the answer and would carry on without waiting for one. Give the pause seconds or minutes and no prompt, or redirect standard input.";
+pub(crate) const PROMPT_REFUSED: &str = "pause cannot wait for a prompt and a duration together on a terminal because Volant would have to read the answer while the time runs. Give the pause a prompt or seconds or minutes, not both, or redirect standard input.";
 
-/// A `pause` that would wait for an answer, refused before the first connection when standard
+/// A `pause` with a `prompt` and a duration, refused before the first connection when standard
 /// input is a terminal and the step runs whatever happens. The shape is written in the playbook
-/// (a `prompt`, or neither `seconds` nor `minutes`), and the terminal is this process's; refused
+/// (a `prompt` next to `seconds` or `minutes`), and the terminal is this process's; refused
 /// at the task instead, it would stop the run after earlier tasks changed the hosts.
 ///
 /// Only a step that is sure to run is refused here. A `when` on it or on a block around it
@@ -444,7 +444,7 @@ fn check_pause(
         return Ok(());
     }
     let has = |key: &str| task.args.contains_key(key);
-    if has("prompt") || !(has("seconds") || has("minutes")) {
+    if has("prompt") && (has("seconds") || has("minutes")) {
         bail!("task '{}': {PROMPT_REFUSED}", task.name);
     }
     Ok(())
@@ -601,7 +601,7 @@ mod tests {
     use crate::stats::error_code;
     use rstest::rstest;
 
-    /// A `pause` that would wait for an answer on a terminal is refused before anything connects
+    /// A `pause` with a prompt and a duration on a terminal is refused before anything connects
     /// when the step is sure to run, and left to the run when something may leave it out.
     #[test]
     fn a_pause_that_would_prompt_on_a_terminal_is_refused_only_when_sure_to_run() {
@@ -625,7 +625,7 @@ mod tests {
         };
         let verdict =
             |tasks: &str, interactive: bool| verdict_under(tasks, interactive, Vec::new());
-        for pause in ["{prompt: Go?}", "{}", "{prompt: Go?, seconds: 1}"] {
+        for pause in ["{prompt: Go?, seconds: 1}", "{prompt: Go?, minutes: 1}"] {
             let tasks = format!("    - name: Wait\n      pause: {pause}\n");
             assert_eq!(
                 verdict(&tasks, true),
@@ -649,7 +649,7 @@ mod tests {
         // A `never` task that `--tags never` selects is in the compiled steps and runs.
         assert!(
             verdict_under(
-                "    - name: Wait\n      pause: {prompt: Go?}\n      tags: [never]\n",
+                "    - name: Wait\n      pause: {prompt: Go?, seconds: 1}\n      tags: [never]\n",
                 true,
                 vec!["never".into()],
             )

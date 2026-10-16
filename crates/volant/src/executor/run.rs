@@ -128,7 +128,14 @@ pub(super) async fn run_local(
     stop: &mut watch::Receiver<bool>,
 ) -> Option<TaskResult> {
     let mut result = if short_name(&task.module) == "pause" {
-        pause(&task.module, item, std::io::stdin().is_terminal(), stop).await?
+        pause(
+            &task.module,
+            &task.name,
+            item,
+            std::io::stdin().is_terminal(),
+            stop,
+        )
+        .await?
     } else {
         local_result(task, item, step, templar, store, verbosity)
     };
@@ -572,11 +579,13 @@ pub(super) fn pause_lines(module: &str, item: &Item) -> Vec<String> {
 /// unless `seconds` was the argument. A pause that asks for an answer, through `prompt` or by
 /// having no duration at all, warns and goes on at once when standard input is not a terminal.
 ///
-/// On a terminal it is refused: nothing here reads the answer, and showing the prompt and going
-/// on would accept the task and not do it. `interactive` is passed in so that both sides of that
-/// can be tested. `None` is the run's interruption, which ends the wait early.
+/// On a terminal a pause with no duration asks, as the reference does (`[name]`, the prompt,
+/// the answer in `user_input`). One that has a duration and a `prompt` is refused: nothing here
+/// waits for the answer and the time at once. `interactive` is passed in so that both sides of
+/// that can be tested. `None` is the run's interruption, which ends the wait early.
 async fn pause(
     module: &str,
+    name: &str,
     item: &Item,
     interactive: bool,
     stop: &mut watch::Receiver<bool>,
@@ -585,19 +594,49 @@ async fn pause(
         Ok(asked) => asked,
         Err(refused) => return Some(refused),
     };
-    let prompting = asked.is_none() || item.args.contains_key("prompt");
-    if prompting && interactive {
+    if interactive && asked.is_some() && item.args.contains_key("prompt") {
         return Some(TaskResult::failed_with(PROMPT_REFUSED));
     }
+    let echo = item
+        .args
+        .get("echo")
+        .and_then(volant_protocol::modules::arg_bool)
+        .unwrap_or(true);
     let mut r = Map::new();
     r.insert("start".into(), json!(timestamp()));
     let began = std::time::Instant::now();
+    let mut user_input = String::new();
     match asked {
         Some((seconds, _)) => {
             let wait = Duration::from_secs(seconds.max(1).unsigned_abs());
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
                 () = interrupted(stop) => return None,
+            }
+        }
+        None if interactive => {
+            let prompt = match item.args.get("prompt") {
+                Some(p) if !python_falsy(p) => {
+                    p.as_str().map_or_else(|| p.to_string(), str::to_string)
+                }
+                _ => "Press enter to continue, Ctrl+C to interrupt".to_string(),
+            };
+            let hidden = if echo { "" } else { " (output is hidden)" };
+            let message = format!(
+                "[{}]
+{prompt}{hidden}:",
+                name.trim()
+            );
+            let read =
+                tokio::task::spawn_blocking(move || crate::prompt::at_terminal(&message, !echo));
+            let answer = tokio::select! {
+                answer = read => answer,
+                () = interrupted(stop) => return None,
+            };
+            match answer {
+                Ok(Ok(line)) => user_input = line,
+                Ok(Err(e)) => return Some(TaskResult::failed_with(format!("{e:#}"))),
+                Err(e) => return Some(TaskResult::failed_with(format!("reading the answer: {e}"))),
             }
         }
         None => {
@@ -619,20 +658,12 @@ async fn pause(
     };
     r.insert("changed".into(), json!(false));
     r.insert("delta".into(), json!(waited.as_secs()));
-    r.insert(
-        "echo".into(),
-        json!(
-            item.args
-                .get("echo")
-                .and_then(volant_protocol::modules::arg_bool)
-                .unwrap_or(true)
-        ),
-    );
+    r.insert("echo".into(), json!(echo));
     r.insert("rc".into(), json!(0));
     r.insert("stderr".into(), json!(""));
     r.insert("stdout".into(), json!(format!("Paused for {shown} {unit}")));
     r.insert("stop".into(), json!(timestamp()));
-    r.insert("user_input".into(), json!(""));
+    r.insert("user_input".into(), json!(user_input));
     Some(TaskResult(r))
 }
 
@@ -4199,7 +4230,7 @@ mod tests {
     #[tokio::test]
     async fn a_prompt_without_a_terminal_warns_and_goes_on() {
         let item = local_item(json!({"prompt": "Continue?"}));
-        let r = pause("pause", &item, false, &mut watch::channel(false).1)
+        let r = pause("pause", "pause", &item, false, &mut watch::channel(false).1)
             .await
             .expect("nothing stops this run");
         assert!(!r.failed(), "{:?}", r.0);
@@ -4212,16 +4243,15 @@ mod tests {
         );
     }
 
-    /// On a terminal a prompt is a person waiting to answer, and this release cannot read the
-    /// answer.
+    /// On a terminal a prompt next to a duration is refused: this release cannot wait for both.
     #[tokio::test]
     async fn a_prompt_on_a_terminal_is_refused() {
         for args in [
-            json!({"prompt": "Continue?"}),
-            json!({}),
             json!({"prompt": "Go?", "seconds": 1}),
+            json!({"prompt": "Go?", "minutes": 1}),
         ] {
             let r = pause(
+                "pause",
                 "pause",
                 &local_item(args.clone()),
                 true,
@@ -4245,7 +4275,7 @@ mod tests {
         let (r, ()) = tokio::join!(
             tokio::time::timeout(
                 Duration::from_secs(5),
-                pause("pause", &item, false, &mut stop)
+                pause("pause", "pause", &item, false, &mut stop)
             ),
             async {
                 tokio::time::sleep(Duration::from_millis(50)).await;

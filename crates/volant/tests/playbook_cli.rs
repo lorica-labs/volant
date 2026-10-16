@@ -219,6 +219,63 @@ fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
     assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
+/// On a terminal a `pause` without a duration shows `[name]` and its prompt, reads the answer and
+/// reports it in `user_input`, a hidden one included. The run is killed at the deadline.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pause_on_a_terminal_reads_its_answer() {
+    use std::io::Write as _;
+    let command = format!(
+        "'{}' playbook '{}'",
+        env!("CARGO_BIN_EXE_volant"),
+        fixture("controller/pause-answer.yml")
+    );
+    let mut child = Command::new("script")
+        .args(["-qec", &command, "/dev/null"])
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("this test needs util-linux `script` to give the run a terminal");
+    // Held open until the run is over: `script` would end the terminal's input when it closes.
+    let mut input = child.stdin.take().expect("script's stdin");
+    input
+        .write_all(
+            b"alice
+s3cret
+",
+        )
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("script is waitable").is_none() {
+        if started.elapsed() >= PROBE_DEADLINE {
+            let _ = child.kill();
+            panic!("volant under script did not finish within {PROBE_DEADLINE:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    drop(input);
+    let out = child.wait_with_output().expect("script output");
+    let text = String::from_utf8_lossy(&out.stdout).replace('\r', "");
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "[pause]
+Enter name:"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "[pause]
+Secret (output is hidden):"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("alice s3cret False"), "{text}");
+}
+
 /// `retries` is rendered per item, on the agent path, the controller-side one and an action
 /// plugin's.
 #[test]

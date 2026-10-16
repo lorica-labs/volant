@@ -1,0 +1,2 @@
+# A notify rendering to a number looks for the handler called by its text and finds the string name wanting.
+args: [-i, inv.ini, play.yml]

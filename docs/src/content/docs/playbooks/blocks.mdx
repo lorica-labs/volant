@@ -46,8 +46,14 @@ A failure inside an `always` ends that section: the rest of it is skipped, and t
 ## What is never rescued
 
 - A host that never entered a rescue skips every step inside it, including a flush point and the handlers behind it.
-- A host that cannot be reached leaves the play. There is nothing left to run a rescue on.
+- A host that cannot be reached leaves the play, unless `ignore_unreachable` covers the task. There is nothing left to run a rescue on.
 - When a `run_once` task fails, the hosts that were waiting on it leave the play, even if a rescue keeps the host that ran it.
+
+## Failing more than one host
+
+- `any_errors_fatal`, on a play, a block or a task: when a task fails on one host or cannot reach it, every host of the batch fails at that task once all of them have run it. A `rescue` around the task runs on every host. Only the host that failed is counted `rescued` in the recap.
+- `max_fail_percentage`, on a play: after each task, if more than that share of the batch has failed, the run stops. `NO MORE HOSTS LEFT` prints twice, as Ansible prints it, and no later play runs. A batch that loses exactly that share carries on.
+- `ignore_unreachable`, on a play, a block or a task: a host that cannot be reached prints its error and `...ignoring`, stays in the play and is counted `ok` and `ignored`. A play's `ignore_errors` covers failures and does not cover an unreachable host.
 
 ## Differences from Ansible
 

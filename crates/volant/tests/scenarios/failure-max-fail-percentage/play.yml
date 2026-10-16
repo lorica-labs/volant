@@ -1,0 +1,12 @@
+- hosts: all
+  serial: "{{ size }}"
+  max_fail_percentage: "{{ pct }}"
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname in fail_on
+    - debug: msg=second
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=nextplay

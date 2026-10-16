@@ -241,6 +241,7 @@ pub async fn run_play(
     };
     let batches =
         crate::compile::batches(&hosts, play.serial.as_ref(), &state.templar, &play_vars)?;
+    let max_fail = max_fail_percentage(play, &state.templar, &play_vars)?;
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let playbook_dir = state
         .vars
@@ -254,6 +255,9 @@ pub async fn run_play(
         if *options.stop.borrow() {
             break;
         }
+        // The reference divides by the batch as the inventory cut it, hosts that failed in an
+        // earlier play included, and counts only the failures of this batch.
+        let batch_size = batch.len();
         let live: Vec<Host> = batch
             .into_iter()
             .filter(|h| !state.failed_hosts.contains(&h.name))
@@ -295,6 +299,7 @@ pub async fn run_play(
             &live,
             &all,
             &vars_files,
+            max_fail.map(|limit| (limit, batch_size)),
             agents,
             options,
             state,
@@ -313,6 +318,37 @@ pub async fn run_play(
         }
     }
     Ok(PlayEnd { stop_run: false })
+}
+
+/// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a
+/// larger share of its hosts than this ends the run. A value that is no number is refused here,
+/// before the play's banner, like a `serial` that does not render.
+fn max_fail_percentage(
+    play: &Play,
+    templar: &Templar,
+    vars: &Map<String, Value>,
+) -> anyhow::Result<Option<f64>> {
+    let Some(raw) = &play.max_fail_percentage else {
+        return Ok(None);
+    };
+    let refuse = |why: String| {
+        crate::stats::Refusal::at(
+            4,
+            format!("Error processing keyword 'max_fail_percentage': {why}"),
+        )
+    };
+    let rendered = templar
+        .render_value(raw, vars)
+        .map_err(|err| refuse(err.0))?;
+    let number = match &rendered {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    };
+    number
+        .filter(|n| n.is_finite())
+        .map(Some)
+        .ok_or_else(|| refuse(format!("The value {rendered} is not a number.")))
 }
 
 /// A variable's boolean, whether the inventory typed it as one or spelled it the way Ansible
@@ -469,7 +505,48 @@ fn python_type(value: &Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
+
+    /// A number, a number written as text and a template that renders to one all read; anything
+    /// else is refused by the keyword's name.
+    #[rstest]
+    #[case::integer("25", Ok(Some(25.0)))]
+    #[case::float("12.5", Ok(Some(12.5)))]
+    #[case::text("\"50\"", Ok(Some(50.0)))]
+    #[case::template("\"{{ pct }}\"", Ok(Some(30.0)))]
+    #[case::none("null", Ok(None))]
+    #[case::words("most", Err("is not a number"))]
+    #[case::list("[1]", Err("is not a number"))]
+    #[case::undefined("\"{{ nope }}\"", Err("max_fail_percentage"))]
+    fn max_fail_percentage_reads_a_number(
+        #[case] written: &str,
+        #[case] want: Result<Option<f64>, &'static str>,
+    ) {
+        let play = crate::playbook::parse(
+            &format!(
+                "- hosts: all
+  max_fail_percentage: {written}
+  tasks: []
+"
+            ),
+            "x.yml",
+        )
+        .expect("the play loads")
+        .plays
+        .remove(0);
+        let templar = Templar::new(PathBuf::from("."));
+        let vars = Map::from_iter([("pct".to_string(), Value::from(30))]);
+        let got = max_fail_percentage(&play, &templar, &vars);
+        match want {
+            Ok(limit) => assert_eq!(got.expect("the keyword reads"), limit),
+            Err(needle) => {
+                let err = got.expect_err("the keyword is refused");
+                assert!(format!("{err:#}").contains(needle), "{err:#}");
+            }
+        }
+    }
 
     /// An interruption that arrives first keeps the run an interrupted one: a reason raised after
     /// it is dropped, so the run exits 99 and not 1.

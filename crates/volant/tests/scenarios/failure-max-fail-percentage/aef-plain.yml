@@ -1,0 +1,12 @@
+- hosts: all
+  any_errors_fatal: true
+  max_fail_percentage: 50
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+    - debug: msg=second
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=nextplay

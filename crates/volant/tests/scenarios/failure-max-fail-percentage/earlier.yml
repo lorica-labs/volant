@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h1'
+- hosts: all
+  max_fail_percentage: "{{ pct }}"
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+    - debug: msg=second
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=nextplay

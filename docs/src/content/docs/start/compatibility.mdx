@@ -40,8 +40,8 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 
 | Area | Runs today | Not yet |
 |---|---|---|
-| Plays | `pre_tasks`, roles, `tasks`, `post_tasks`, handlers, `serial`, `strategy: linear` | `any_errors_fatal`, `max_fail_percentage`, `order`, `throttle` |
-| Tasks | `when`, `loop`, `with_items`, `with_first_found`, `with_fileglob`, `register`, `until`, `retries`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, `timeout`, `tags` | `async`, other `with_*` lookups, `check_mode: true`, `diff` |
+| Plays | `pre_tasks`, roles, `tasks`, `post_tasks`, handlers, `serial`, `strategy: linear`, `any_errors_fatal`, `max_fail_percentage`, `ignore_errors`, `ignore_unreachable` | `order`, `throttle` |
+| Tasks | `when`, `loop`, `with_items`, `with_first_found`, `with_fileglob`, `register`, `until`, `retries`, `changed_when`, `failed_when`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `no_log`, `environment`, `timeout`, `tags` | `async`, other `with_*` lookups, `check_mode: true`, `diff` |
 | Blocks | `block`, `rescue`, `always` | |
 | Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | `include_vars: dir` |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |

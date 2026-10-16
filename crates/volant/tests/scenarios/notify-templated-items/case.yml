@@ -1,0 +1,2 @@
+# A notify list of templates notifies each rendered name.
+args: [-i, inv.ini, play.yml]

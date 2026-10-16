@@ -1,0 +1,2 @@
+# A plain unknown name on a task that stays ok is never looked up.
+args: [-i, inv.ini, play.yml]

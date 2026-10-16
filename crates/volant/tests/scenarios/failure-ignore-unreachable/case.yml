@@ -1,0 +1,10 @@
+# An unreachable host the keyword covers stays in the play, and the play's ignore_errors does not cover it.
+runs:
+  - args: [-i, inv.ini, none.yml]
+  - args: [-i, inv.ini, task.yml]
+  - args: [-i, inv.ini, block.yml]
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, rescue.yml]
+  - args: [-i, inv.ini, ignore-errors-play.yml]
+  - args: [-i, inv.ini, register.yml]
+  - args: [-i, inv.ini, rescue-block.yml]

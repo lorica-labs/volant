@@ -1224,35 +1224,80 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
     Value::Object(out)
 }
 
-/// Files the handlers one finished task asked for, if it changed anything and did not fail.
+/// The handlers one finished task asks for, if it changed anything and did not fail, and the
+/// warnings looking them up gave.
 ///
 /// Measured on ansible-core 2.19.12 and each half worth stating: a task that came back `ok`
 /// notifies nothing, a name notified twice runs its handler once, and for a loop it is the
-/// **aggregate** that decides - one changed item is a changed task. A failed task notifies
-/// nothing, `ignore_errors` or not: the reference files a notification from the ok branch of
-/// `_process_pending_results` alone, the same rule as [`unresolved_notify`]. Notifications live in the
-/// driver and nowhere else: they are one host's business, and the flush the coordinator opens is
-/// the same flush whether this host has anything to run in it or not.
-pub(super) fn notify(
+/// **aggregate** that decides - one changed item is a changed task, and then every item's
+/// rendered names are notified, the unchanged ones' included. A failed task notifies nothing,
+/// `ignore_errors` or not: the reference files a notification from the ok branch of
+/// `_process_pending_results` alone. Notifications live in the driver and nowhere else: they are
+/// one host's business, and the flush the coordinator opens is the same flush whether this host
+/// has anything to run in it or not.
+///
+/// The names come from [`Item::notify`], rendered before the task ran. A handler's `name` may be
+/// a template too, rendered here against the first item's variables; `listen` never is. One that
+/// does not render answers to nothing by name and warns, as the reference does, unless it
+/// listens for a topic. What a host's variables render to is only ever compared with the handler
+/// names, never templated again. A name no handler answers to is the `Err`: the reference raises
+/// it from its strategy (`ERROR_ON_MISSING_HANDLER`, on by default), so it ends the run rather
+/// than failing the task - no `ignore_errors` and no `rescue` can take it, and it is measured to
+/// come after the notifying task's banner and before its result line.
+pub(super) fn notified_handlers(
     compiled: &Compiled,
     task: &PlayTask,
+    items: &[Item],
+    templar: &Templar,
     results: &[(Option<Value>, TaskResult)],
-    notified: &mut Vec<usize>,
-) {
+) -> Result<(Vec<usize>, Vec<String>), String> {
+    let none = (Vec::new(), Vec::new());
+    let Some(vars) = items.first().map(|i| &i.vars) else {
+        return Ok(none);
+    };
     if task.notify.is_empty()
         || results.iter().any(|(_, r)| r.failed())
         || !results.iter().any(|(_, r)| r.changed())
     {
-        return;
+        return Ok(none);
     }
-    for name in &task.notify {
+    let mut warnings = Vec::new();
+    let names: Vec<Option<String>> = compiled
+        .handlers
+        .iter()
+        .map(|h| {
+            let name = &h.task.name;
+            if !Templar::is_template(name) {
+                return Some(name.clone());
+            }
+            match templar.render(name, vars) {
+                Ok(Value::String(rendered)) => Some(rendered),
+                Ok(other) => Some(display(&other)),
+                Err(e) => {
+                    if h.listen.is_empty() {
+                        warnings.push(format!(
+                            "Handler '{name}' is unusable because it has no listen topics and the name could not be templated (host-specific variables are not supported in handler names). The error: {}",
+                            e.0
+                        ));
+                    }
+                    None
+                }
+            }
+        })
+        .collect();
+    let mut notified = Vec::new();
+    for name in items.iter().flat_map(|i| &i.notify) {
+        let found = crate::compile::resolve_notify(compiled, name, &names);
+        if found.is_empty() {
+            return Err(format!(
+                "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
+            ));
+        }
         // Not deduplicated here, deliberately: what makes a handler run once is the driver
-        // taking **every** copy of its index off this list when it runs it, and a guard here
-        // that cannot fail because of that would read as if it were what did the work. Proved
-        // by deletion - removing this guard reddened nothing, removing that one reddens the
-        // order-and-count test.
-        notified.extend(crate::compile::resolve_notify(compiled, name));
+        // taking **every** copy of its index off the list when it runs it.
+        notified.extend(found);
     }
+    Ok((notified, warnings))
 }
 
 /// Takes the `warnings` off every result of a task, in item order, for the driver to show as
@@ -1299,35 +1344,6 @@ fn warning_text(warning: &Value) -> String {
         };
     }
     message
-}
-
-/// The reason to end the run when a task that changed notifies a handler the play does not
-/// have, in the sentence the pre-flight uses for the same name in the play itself.
-///
-/// Only a task spliced in by a dynamic include can get here: the pre-flight checks every other
-/// `notify` before the first connection, and the handlers an included file may name are the
-/// play's, which are only in hand here. The reference raises it from its strategy
-/// (`ERROR_ON_MISSING_HANDLER`, on by default), so it ends the run rather than failing the task:
-/// no `ignore_errors` and no `rescue` can take it. A task that changed nothing notifies nothing.
-pub(super) fn unresolved_notify(
-    compiled: &Compiled,
-    task: &PlayTask,
-    results: &[(Option<Value>, TaskResult)],
-) -> Option<String> {
-    // Only a result that changed and did not fail notifies: the reference looks for the handler
-    // in the ok branch of `_process_pending_results` alone, so a failed task - `ignore_errors`
-    // or not, a loop whose aggregate failed as well - never reaches the lookup. These are the
-    // verdicts `failed_when` has already had its say on.
-    if results.iter().any(|(_, r)| r.failed()) || !results.iter().any(|(_, r)| r.changed()) {
-        return None;
-    }
-    let name = task
-        .notify
-        .iter()
-        .find(|name| crate::compile::resolve_notify(compiled, name).is_empty())?;
-    Some(format!(
-        "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
-    ))
 }
 
 /// What `until`, `retries` and `delay` ask of one task, rendered against its own variables.
@@ -3344,6 +3360,7 @@ mod tests {
                 ignore_errors: None,
                 skipped: None,
                 set_fact_names: std::sync::OnceLock::new(),
+                notify: Vec::new(),
             };
             // Arguments are deliberately empty: what is asserted is that the name is known, not
             // that the module does its work. A module that needs an argument says so in its own
@@ -3379,6 +3396,7 @@ mod tests {
             ignore_errors: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            notify: Vec::new(),
         }
     }
 
@@ -3900,6 +3918,7 @@ mod tests {
                 ignore_errors: None,
                 skipped: None,
                 set_fact_names: std::sync::OnceLock::new(),
+                notify: Vec::new(),
             };
             validate_argument_spec(&item)
         };
@@ -4046,6 +4065,7 @@ mod tests {
             ignore_errors: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            notify: Vec::new(),
         };
         let failed = |r: Value| {
             let r = apply_conditions(&t, &item, result(r), &templar);
@@ -4091,6 +4111,7 @@ mod tests {
             ignore_errors: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            notify: Vec::new(),
         };
         let plain = task("command");
         let mut quiet = task("command");
@@ -4144,6 +4165,7 @@ mod tests {
             ignore_errors: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            notify: Vec::new(),
         };
         let r = apply_conditions(
             &t,
@@ -7044,6 +7066,7 @@ mod tests {
             ignore_errors: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            notify: Vec::new(),
         }
     }
 

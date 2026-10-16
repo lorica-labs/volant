@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 25 | 1 | 15 | 0 |
-| keyword (block) | 23 | 1 | 7 | 0 |
-| keyword (task) | 55 | 1 | 10 | 0 |
+| keyword (play) | 29 | 1 | 11 | 0 |
+| keyword (block) | 25 | 1 | 5 | 0 |
+| keyword (task) | 57 | 1 | 8 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
@@ -41,7 +41,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
+| `any_errors_fatal` | <span class="kw kw-runs">runs</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
 | `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
 | `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
@@ -60,9 +60,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `gather_timeout` | <span class="kw kw-notyet">not yet</span> |  |
 | `handlers` | <span class="kw kw-runs">runs</span> |  |
 | `hosts` | <span class="kw kw-runs">runs</span> |  |
-| `ignore_errors` | <span class="kw kw-notyet">not yet</span> |  |
-| `ignore_unreachable` | <span class="kw kw-notyet">not yet</span> |  |
-| `max_fail_percentage` | <span class="kw kw-notyet">not yet</span> |  |
+| `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
+| `ignore_unreachable` | <span class="kw kw-runs">runs</span> |  |
+| `max_fail_percentage` | <span class="kw kw-runs">runs</span> |  |
 | `module_defaults` | <span class="kw kw-runs">runs</span> |  |
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
@@ -88,7 +88,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `always` | <span class="kw kw-runs">runs</span> |  |
-| `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
+| `any_errors_fatal` | <span class="kw kw-runs">runs</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
 | `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
 | `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
@@ -104,7 +104,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
-| `ignore_unreachable` | <span class="kw kw-notyet">not yet</span> |  |
+| `ignore_unreachable` | <span class="kw kw-runs">runs</span> |  |
 | `module_defaults` | <span class="kw kw-runs">runs</span> |  |
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
@@ -124,7 +124,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `action` | <span class="kw kw-runs">runs</span> |  |
-| `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
+| `any_errors_fatal` | <span class="kw kw-runs">runs</span> |  |
 | `args` | <span class="kw kw-runs">runs</span> |  |
 | `async` | <span class="kw kw-notyet">not yet</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
@@ -144,7 +144,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `failed_when` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
-| `ignore_unreachable` | <span class="kw kw-notyet">not yet</span> |  |
+| `ignore_unreachable` | <span class="kw kw-runs">runs</span> |  |
 | `local_action` | <span class="kw kw-runs">runs</span> |  |
 | `loop` | <span class="kw kw-runs">runs</span> |  |
 | `loop_control` | <span class="kw kw-runs">runs</span> |  |

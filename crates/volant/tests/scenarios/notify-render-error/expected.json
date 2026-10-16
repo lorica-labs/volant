@@ -1,0 +1,4 @@
+{
+  "code": 2,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\n[ERROR]: Task failed: Error processing keyword 'notify': 'undef_var' is undefined\n\nTask failed.\nOrigin: <golden-tmp>/play.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - debug: msg=chg\n        ^ column 7\n\n<<< caused by >>>\n\nError processing keyword 'notify': 'undef_var' is undefined\nOrigin: <golden-tmp>/play.yml:6:15\n\n4     - debug: msg=chg\n5       changed_when: true\n6       notify: \"{{ undef_var }}\"\n                ^ column 15\n\nfatal: [h1]: FAILED! => {\"msg\": \"Task failed: Error processing keyword 'notify': 'undef_var' is undefined\"}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+}

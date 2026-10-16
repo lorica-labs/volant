@@ -105,13 +105,9 @@ pub(crate) fn check_steps(
             check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
         }
         check_pause(compiled, step, prompts).map_err(|e| Refusal::or(CODE, e))?;
-        check_notify(compiled, &step.task)?;
     }
     for handler in &compiled.handlers {
         check_task(&handler.task).map_err(|e| Refusal::or(CODE, e))?;
-        // A handler notifying another handler is ordinary - measured, the second one runs in the
-        // same flush when it is defined behind the first - so its names are resolved here too.
-        check_notify(compiled, &handler.task)?;
     }
     Ok(())
 }
@@ -137,70 +133,21 @@ pub(crate) fn check_steps(
 /// whole run. Letting the tasks in front of the refused one run first is the half-run the
 /// pre-flight exists to prevent, one level down.
 ///
-/// Of [`check_notify`], only the template-shape half runs here. The expansion is compiled on its
-/// own, so the handler list it carries is not the play's, and a task notifying a handler the play
-/// defines would be refused here for a name that resolves perfectly once grafted; a name nothing
-/// answers to is caught by the driver when the task notifies, and ends the run as the reference
-/// ends it. Nor does the pre-flight's `pause` check run here: a `pause` an include brings in is
-/// refused by `pause()` when it is reached.
+/// No `notify` is looked up here or in the passes above: a name may be a template, and the
+/// reference itself finds a name nothing answers to only when the task changes something. The
+/// driver does it then, against the play's handlers. Nor does the pre-flight's `pause` check run
+/// here: a `pause` an include brings in is refused by `pause()` when it is reached.
 pub(crate) fn check_spliced(expanded: &crate::compile::Compiled) -> anyhow::Result<()> {
     for step in &expanded.steps {
         // As in `check_steps`: a flush point the compiler put in itself carries no task to judge.
         if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task)?;
         }
-        check_notify_shape(&step.task)?;
     }
     // An `include_role` hands its role's handlers to the running play, where they wait for a
     // flush. Nothing else looks at them either.
     for handler in &expanded.handlers {
         check_task(&handler.task)?;
-        check_notify_shape(&handler.task)?;
-    }
-    Ok(())
-}
-
-/// Every `notify` on a step or a handler names a handler this play has.
-///
-/// Measured on ansible-core 2.19.12: a name nothing answers to stops the run with this sentence
-/// and exit **1**, after the notifying task's banner and with no recap. This refuses before the
-/// first connection instead, so nothing has run when the operator reads it - the same code, one
-/// moment earlier, and the divergence is deliberate.
-///
-/// A templated name is the one shape this cannot resolve here, and it is refused rather than left
-/// to a run. Measured: the reference renders it and finds the handler, so this is a divergence -
-/// but resolving it would mean rendering the name per host and per loop item, and a name that
-/// then answers to nothing would have to fail a task that has already printed its result line.
-/// Refusing it by its own name is the smaller thing to be wrong about.
-fn check_notify(c: &crate::compile::Compiled, task: &PlayTask) -> anyhow::Result<()> {
-    check_notify_shape(task)?;
-    for name in &task.notify {
-        if crate::compile::resolve_notify(c, name).is_empty() {
-            return Err(Refusal::at(
-                1,
-                format!(
-                    "The requested handler '{name}' was not found in either the main handlers list nor in the listening handlers list"
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The half of [`check_notify`] that needs no handler list: a templated name, refused by name.
-fn check_notify_shape(task: &PlayTask) -> anyhow::Result<()> {
-    if task
-        .notify
-        .iter()
-        .any(|name| crate::template::Templar::is_template(name))
-    {
-        return Err(Refusal::at(
-            CODE,
-            format!(
-                "task '{}': a templated 'notify' is not supported yet",
-                task.name
-            ),
-        ));
     }
     Ok(())
 }
@@ -679,9 +626,7 @@ mod tests {
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
     #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
     #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
-    #[case::play_any_errors_fatal("- hosts: all\n  any_errors_fatal: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'any_errors_fatal' is not supported yet"])]
     #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
-    #[case::play_max_fail_percentage("- hosts: all\n  max_fail_percentage: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'max_fail_percentage' is not supported yet"])]
     #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
     #[case::parked_in_a_block_body(
         "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
@@ -1038,7 +983,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            32,
+            24,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

@@ -1,0 +1,2 @@
+# A task a when leaves out renders no notify.
+args: [-i, inv.ini, play.yml]

@@ -1724,10 +1724,6 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
             "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      throttle: probe\n",
         ),
         (
-            "any_errors_fatal",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      any_errors_fatal: probe\n",
-        ),
-        (
             "order",
             "- hosts: localhost\n  gather_facts: false\n  order: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
         ),
@@ -1789,9 +1785,10 @@ fn a_refused_escalation_hands_its_fork_back_before_waiting() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A `notify` naming nothing stops the run with the reference's own sentence and exit 1.
+/// A `notify` naming nothing stops the run with the reference's own sentence and exit 1, once
+/// the task has changed something.
 #[test]
-fn an_unknown_handler_is_refused_with_exit_1() {
+fn an_unknown_handler_ends_the_run_with_exit_1() {
     let out = volant_within(
         &["playbook", &fixture("handlers/unknown.yml")],
         std::time::Duration::from_secs(20),
@@ -1805,7 +1802,7 @@ fn an_unknown_handler_is_refused_with_exit_1() {
         ),
         "{err}"
     );
-    assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
+    assert!(!text.contains("PLAY RECAP"), "{text}");
 }
 
 /// A `notify` in an included file naming no handler ends the run at exit 1, whatever
@@ -1838,10 +1835,9 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
     }
 }
 
-/// A templated `notify` in an included file is refused by name, as it is in the play, rather than
-/// looked up as a handler called `restart {{ svc }}`: the statement fails for the host that...
+/// A templated `notify` in an included file is rendered for the host and finds the play's handler.
 #[test]
-fn a_templated_notify_in_an_include_is_refused_by_name() {
+fn a_templated_notify_in_an_include_finds_its_handler() {
     let out = volant_within(
         &[
             "playbook",
@@ -1855,13 +1851,8 @@ fn a_templated_notify_in_an_include_is_refused_by_name() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     let errors = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}{errors}");
-    assert!(
-        text.contains("a templated 'notify' is not supported yet"),
-        "{text}{errors}"
-    );
-    assert!(!text.contains("TASK [notifies a templated name]"), "{text}");
-    assert!(!text.contains("restarted"), "{text}");
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert!(text.contains("restarted"), "{text}{errors}");
 }
 
 /// A local failure that steps over an include, with fewer forks than hosts.
@@ -2250,6 +2241,75 @@ const BRIDGED_LOOPS: &[&str] = &[
 /// naming the account, which is a `become_user` that reached it intact, and dropping either
 /// escalation keyword lets the task run as the invoking user and succeed.
 const RUNS_PROBES: &[RunsProbe] = &[
+    // A failure on one host fails every host of the batch: h1 skipped the failing task and never
+    // runs the one behind it, so its recap shows no `ok`. Without the keyword h1 runs it.
+    runs(
+        "task",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n      any_errors_fatal: true\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    runs(
+        "play",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  any_errors_fatal: true\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    runs(
+        "block",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          fail:\n          when: inventory_hostname == 'h2'\n      any_errors_fatal: true\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    // An unreachable host stays in the play: the line says `...ignoring` and the run exits 0.
+    runs(
+        "task",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      ignore_unreachable: true\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    runs(
+        "play",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  ignore_unreachable: true\n  tasks:\n    - name: Probe task\n      command: \"true\"\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    runs(
+        "block",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: \"true\"\n      ignore_unreachable: true\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    // The play's `ignore_errors` covers a failing task like the task's own.
+    runs(
+        "play",
+        "ignore_errors",
+        "- hosts: localhost\n  gather_facts: false\n  ignore_errors: true\n  tasks:\n    - name: Probe task\n      command: nosuchbinary-volant-probe\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    // More failures than the percentage allows end the run, and the reference says so.
+    runs(
+        "play",
+        "max_fail_percentage",
+        "- hosts: all\n  gather_facts: false\n  max_fail_percentage: 0\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n    - debug: msg=second\n",
+        &[],
+        2,
+        "NO MORE HOSTS LEFT",
+    ),
     runs(
         "task",
         "remote_user",
@@ -3495,11 +3555,25 @@ name = vol
         let inventory = dir.join("serial.inv.ini").display().to_string();
         if matches!(
             probe.kw,
-            "serial" | "run_once" | "delegate_to" | "delegate_facts"
+            "serial"
+                | "run_once"
+                | "delegate_to"
+                | "delegate_facts"
+                | "any_errors_fatal"
+                | "max_fail_percentage"
         ) {
             std::fs::write(
                 &inventory,
                 "h1 ansible_connection=local\nh2 ansible_connection=local\n",
+            )
+            .expect("the probe's inventory is written");
+            args.extend(["-i", inventory.as_str()]);
+        }
+        // Nothing listens on port 1: the second host is the unreachable one, and refuses at once.
+        if probe.kw == "ignore_unreachable" {
+            std::fs::write(
+                &inventory,
+                "h1 ansible_connection=local\nh2 ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1\n",
             )
             .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);

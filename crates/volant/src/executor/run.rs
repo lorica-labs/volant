@@ -3402,6 +3402,65 @@ pub(super) fn record_facts(
     removed
 }
 
+/// The key `set_stats` answers under: not a host setting, so not read through `host_setting`.
+const STATS_KEY: &str = "ansible_stats";
+
+/// Applies what `add_host`, `group_by` and `set_stats` answered for `host`, once the task is
+/// judged: the inventory gains the host or the group, the custom stats gain the data.
+///
+/// Keyed on the action's name and never on the keys alone: a managed host's module result can
+/// carry any key, and `add_host` among them is a restricted one that is taken out of its facts.
+/// A failed task, or one of its loop items, applies nothing, as in the reference.
+pub(super) fn record_inventory_results(
+    vars: &mut VarStore,
+    task: &PlayTask,
+    host: &str,
+    results: &[(Option<Value>, TaskResult)],
+) {
+    let kind = short_name(&task.module);
+    if !["add_host", "group_by", "set_stats"].contains(&kind)
+        || results.iter().any(|(_, r)| r.failed())
+    {
+        return;
+    }
+    let names = |value: Option<&Value>| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    for (_, result) in results.iter().filter(|(_, r)| !r.skipped()) {
+        match kind {
+            "add_host" => {
+                let Some(added) = result.0.get("add_host").and_then(Value::as_object) else {
+                    continue;
+                };
+                let Some(name) = added.get("host_name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let host_vars = added
+                    .get("host_vars")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                vars.add_host(name, &names(added.get("groups")), &host_vars);
+            }
+            "group_by" => {
+                if let Some(group) = result.0.get("add_group").and_then(Value::as_str) {
+                    vars.add_to_group(host, group, &names(result.0.get("parent_groups")));
+                }
+            }
+            _ => {
+                if let Some(stats) = result.0.get(STATS_KEY) {
+                    vars.record_custom_stats(host, stats);
+                }
+            }
+        }
+    }
+}
+
 /// Writes the facts a controller-side `set_fact` or `include_vars` answered, once `failed_when`
 /// has judged the task. A failed task writes none, `ignore_errors` or not, and a loop is judged
 /// whole, as [`record_facts`] judges a host's: measured on ansible-core 2.19.12, a `set_fact` or
@@ -8810,5 +8869,51 @@ mod tests {
             link.shutdown().await;
         }
         answered.expect("the link h2 got is alive, not the one the reboot killed");
+    }
+
+    /// The three results land where the reference puts them, a failed task lands nowhere, and a
+    /// module that is not the action never moves the inventory whatever key its result carries.
+    #[test]
+    fn inventory_and_stats_results_are_applied_by_the_action_alone() {
+        let tmp = scratch();
+        let inv = crate::inventory::Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let ok = |value: Value| vec![(None, TaskResult(value.as_object().unwrap().clone()))];
+        let added =
+            json!({"add_host": {"host_name": "n1", "groups": ["g1"], "host_vars": {"x": 1}}});
+        record_inventory_results(&mut store, &task("command"), "h1", &ok(added.clone()));
+        assert!(store.take_inventory_changes().is_none());
+        let mut failed = added.clone();
+        failed["failed"] = json!(true);
+        record_inventory_results(&mut store, &task("add_host"), "h1", &ok(failed));
+        assert!(store.take_inventory_changes().is_none());
+        record_inventory_results(
+            &mut store,
+            &task("ansible.builtin.add_host"),
+            "h1",
+            &ok(added),
+        );
+        record_inventory_results(
+            &mut store,
+            &task("group_by"),
+            "h1",
+            &ok(json!({"add_group": "role_web", "parent_groups": ["all_roles"]})),
+        );
+        record_inventory_results(
+            &mut store,
+            &task("set_stats"),
+            "h1",
+            &ok(json!({"ansible_stats": {"data": {"n": 1}, "per_host": true, "aggregate": true}})),
+        );
+        let grown = store.take_inventory_changes().expect("grown");
+        let groups = grown.groups();
+        assert_eq!(groups["g1"], ["n1"]);
+        assert_eq!(groups["all_roles"], ["h1"]);
+        assert_eq!(store.custom_stats().hosts()["h1"]["n"], json!(1));
     }
 }

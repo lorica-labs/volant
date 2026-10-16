@@ -150,6 +150,7 @@ async fn run_all(
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
     let config = Config::load()?;
+    let show_custom_stats = config.show_custom_stats;
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
     // exits 2 for `-f abc` or `-f -1` (clap's own default for a bad argument), so a refused `0`
@@ -577,6 +578,16 @@ async fn run_all(
                 if let Some(fresh) = state.refreshed.take() {
                     inventory = fresh;
                 }
+                // `add_host` and `group_by` grew the inventory: the plays behind this one run on
+                // what they added. Taken after the refresh, which the store already folded in.
+                if let Some(grown) = state
+                    .vars
+                    .lock()
+                    .expect("vars lock")
+                    .take_inventory_changes()
+                {
+                    inventory = grown;
+                }
                 // A batch that lost every live host it had ends the whole run, measured: no
                 // further play, and the recap prints straight away. The recap below belongs to
                 // the playbook loop this leaves, so `stopped` carries it past the `break`.
@@ -591,7 +602,7 @@ async fn run_all(
             if *stop_rx.borrow() {
                 break 'plays;
             }
-            out.recap(&stats);
+            recap(out, &stats, &state, show_custom_stats);
         }
         Ok(())
     }
@@ -604,11 +615,11 @@ async fn run_all(
     plays?;
     if *stop_rx.borrow() {
         eprintln!("[ERROR]: User interrupted execution");
-        out.recap(&stats);
+        recap(out, &stats, &state, show_custom_stats);
         return Ok(99);
     }
     if stopped {
-        out.recap(&stats);
+        recap(out, &stats, &state, show_custom_stats);
     }
     // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))
@@ -785,6 +796,14 @@ fn spawn_signal_watcher(stop: Arc<Abort>) {
         }
         stop.interrupt();
     });
+}
+
+/// The recap, then what `set_stats` collected when the run asks to see it.
+fn recap(out: &mut Renderer, stats: &Stats, state: &RunState, show_custom: bool) {
+    out.recap(stats);
+    if show_custom {
+        out.custom_stats(state.vars.lock().expect("vars lock").custom_stats());
+    }
 }
 
 #[cfg(test)]

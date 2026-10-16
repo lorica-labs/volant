@@ -10,6 +10,7 @@ use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
 use crate::inventory::{Inventory, is_localhost};
+use crate::stats::CustomStats;
 use crate::template::{Templar, Vars};
 use crate::yaml;
 
@@ -204,6 +205,13 @@ pub struct VarStore {
     shared: Option<(SharedKey, Arc<Map<String, Value>>)>,
     /// See [`VarStore::templated_facts`]. Never goes back to `false`: the fact outlives the play.
     templated_facts: bool,
+    /// The inventory as `add_host`, `group_by` and a refresh left it: the one the plays behind
+    /// the current one resolve their hosts against.
+    dynamic: Inventory,
+    /// Whether `dynamic` moved since the command line last took it.
+    inventory_changed: bool,
+    /// What `set_stats` collected, printed after the recap when the run asks for it.
+    custom_stats: CustomStats,
 }
 
 /// Whether any string in `value`, at any depth, is a template.
@@ -524,6 +532,9 @@ impl VarStore {
             untrusted_hosts: None,
             shared: None,
             templated_facts: false,
+            dynamic: inventory.clone(),
+            inventory_changed: false,
+            custom_stats: CustomStats::default(),
         })
     }
 
@@ -556,8 +567,60 @@ impl VarStore {
             self.host_line_vars,
             self.group_names,
         ) = inventory_maps(inventory);
+        self.dynamic = inventory.clone();
+        self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
+    }
+
+    /// `add_host`: the host joins the inventory with `vars` on its line and the groups named,
+    /// or, when it is already there, gains them. Visible to `hostvars` and `groups` at once;
+    /// the hosts of the play being run are not changed by it.
+    pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) {
+        let vars = vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        self.dynamic.add_host(name, vars);
+        for group in groups.iter().filter(|g| *g != "all") {
+            self.dynamic.add_member(name, group);
+        }
+        self.inventory_moved();
+    }
+
+    /// `group_by`: `host` joins `group`, which is made a child of each of `parents`.
+    pub fn add_to_group(&mut self, host: &str, group: &str, parents: &[String]) {
+        if group != "all" {
+            for parent in parents.iter().filter(|p| *p != "all") {
+                self.dynamic.add_child(parent, group);
+            }
+            self.dynamic.add_member(host, group);
+        }
+        self.inventory_moved();
+    }
+
+    fn inventory_moved(&mut self) {
+        (
+            self.groups,
+            self.inventory_vars,
+            self.host_line_vars,
+            self.group_names,
+        ) = inventory_maps(&self.dynamic);
+        self.inventory_changed = true;
+        self.forget_hostvars();
+        self.shared = None;
+    }
+
+    /// The inventory after the additions of the play that just ended, once; `None` when nothing
+    /// was added since it was last taken.
+    pub fn take_inventory_changes(&mut self) -> Option<Inventory> {
+        std::mem::take(&mut self.inventory_changed).then(|| self.dynamic.clone())
+    }
+
+    /// Records one `set_stats` result of `host`.
+    pub fn record_custom_stats(&mut self, host: &str, stats: &Value) {
+        self.custom_stats.record(host, stats);
+    }
+
+    pub fn custom_stats(&self) -> &CustomStats {
+        &self.custom_stats
     }
 
     /// Forgets the facts modules gathered for `hosts`, which is what `meta: clear_facts` clears.
@@ -2241,5 +2304,49 @@ h2
         );
         assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1", "h2"]));
         assert!(store.hostvars_shared("h1").contains_key("h2"));
+    }
+
+    /// A host and a group added mid-run show in `groups` and `hostvars` at once, an existing
+    /// host keeps its groups and gains the new ones, and the grown inventory is taken once.
+    #[test]
+    fn added_hosts_and_groups_are_visible_at_once_and_handed_over_once() {
+        let tmp = scratch();
+        let inv = Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let at = scope(&["h1"]);
+        assert!(store.hostvars_shared("h1").contains_key("h1"));
+        assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1"]));
+
+        let vars = json!({"foo": "bar"});
+        store.add_host("n1", &["g1".into(), "g2".into()], vars.as_object().unwrap());
+        store.add_host(
+            "n1",
+            &["g3".into()],
+            json!({"foo": "baz"}).as_object().unwrap(),
+        );
+        let groups = store.shared_values(&at)["groups"].clone();
+        assert_eq!(groups["g1"], json!(["n1"]));
+        assert_eq!(groups["all"], json!(["h1", "n1"]));
+        let view = store.hostvars_shared("h1");
+        assert_eq!(view["n1"]["foo"], "baz");
+        assert_eq!(groups["g3"], json!(["n1"]));
+
+        store.add_to_group("h1", "web", &["roles".into()]);
+        let groups = store.shared_values(&at)["groups"].clone();
+        assert_eq!(groups["web"], json!(["h1"]));
+        assert_eq!(
+            groups["roles"],
+            json!(["h1"]),
+            "a parent holds its children's hosts"
+        );
+
+        let grown = store.take_inventory_changes().expect("the inventory grew");
+        assert_eq!(grown.groups()["all"], ["h1", "n1"]);
+        assert!(store.take_inventory_changes().is_none());
     }
 }

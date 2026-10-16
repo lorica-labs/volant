@@ -7,7 +7,7 @@ use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
 use volant_protocol::TaskResult;
 
-use crate::stats::{Outcome, Stats};
+use crate::stats::{CustomStats, Outcome, Stats};
 
 /// How a task's result lines are cleaned before they are shown. Whether a body goes on the line
 /// at verbosity 0 is the result's own [`VERBOSE_ALWAYS`], not the task's.
@@ -757,6 +757,27 @@ impl Renderer {
         let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
     }
 
+    /// What `set_stats` collected, after the recap: each host that asked for `per_host`, sorted,
+    /// then the run's own after a blank line. Nothing at all when nothing was collected.
+    pub fn custom_stats(&mut self, stats: &CustomStats) {
+        if stats.is_empty() {
+            return;
+        }
+        let dump = |map: &serde_json::Map<String, serde_json::Value>| {
+            dumps_indented(&serde_json::Value::Object(map.clone()), 0, 1).replace('\n', "")
+        };
+        self.banner("CUSTOM STATS:");
+        let run = stats.run();
+        for (host, data) in stats.hosts() {
+            let _ = writeln!(self.out, "	{host}: {}", dump(data));
+        }
+        if !run.is_empty() {
+            let _ = writeln!(self.out);
+            let _ = writeln!(self.out, "	RUN: {}", dump(run));
+        }
+        let _ = writeln!(self.out);
+    }
+
     pub fn recap(&mut self, stats: &Stats) {
         self.banner("PLAY RECAP");
         for (host, h) in stats.hosts() {
@@ -831,7 +852,12 @@ pub(crate) fn ansible_json(value: &serde_json::Value) -> String {
 /// `json.dumps(value, indent=4, sort_keys=True, ensure_ascii=False)`: one key or item per line,
 /// `,` at the end of each but the last, an empty mapping or list kept as `{}` or `[]`.
 pub(crate) fn ansible_json_indented(value: &serde_json::Value, depth: usize) -> String {
-    let pad = |depth: usize| " ".repeat(4 * depth);
+    dumps_indented(value, depth, 4)
+}
+
+/// [`ansible_json_indented`] with `step` spaces per level.
+fn dumps_indented(value: &serde_json::Value, depth: usize, step: usize) -> String {
+    let pad = |depth: usize| " ".repeat(step * depth);
     match value {
         serde_json::Value::Object(map) if !map.is_empty() => {
             let mut keys: Vec<&String> = map.keys().collect();
@@ -843,7 +869,7 @@ pub(crate) fn ansible_json_indented(value: &serde_json::Value, depth: usize) -> 
                         "{}{}: {}",
                         pad(depth + 1),
                         serde_json::to_string(k).unwrap_or_default(),
-                        ansible_json_indented(&map[k], depth + 1)
+                        dumps_indented(&map[k], depth + 1, step)
                     )
                 })
                 .collect();
@@ -852,7 +878,7 @@ pub(crate) fn ansible_json_indented(value: &serde_json::Value, depth: usize) -> 
         serde_json::Value::Array(items) if !items.is_empty() => {
             let items: Vec<String> = items
                 .iter()
-                .map(|v| format!("{}{}", pad(depth + 1), ansible_json_indented(v, depth + 1)))
+                .map(|v| format!("{}{}", pad(depth + 1), dumps_indented(v, depth + 1, step)))
                 .collect();
             format!("[\n{}\n{}]", items.join(",\n"), pad(depth))
         }
@@ -1136,5 +1162,38 @@ mod tests {
                 assert!(coloured.contains(line), "{outcome:?}: {line:?} rewritten");
             }
         }
+    }
+
+    /// The `set_stats` sequence of the scout case, on four hosts, prints the reference's block.
+    #[test]
+    fn custom_stats_print_per_host_lines_then_the_run_aggregate() {
+        let mut stats = CustomStats::default();
+        let sets = [
+            json!({"data": {"total": 1, "flag": true}, "per_host": false, "aggregate": true}),
+            json!({"data": {"cnt": 2}, "per_host": true, "aggregate": true}),
+            json!({"data": {"cnt": 5}, "per_host": false, "aggregate": true}),
+            json!({"data": {"cnt": 5}, "per_host": false, "aggregate": false}),
+        ];
+        for set in &sets {
+            for host in ["a", "b", "c", "d"] {
+                stats.record(host, set);
+            }
+        }
+        let text = capture(|r| r.custom_stats(&stats));
+        let want = format!(
+            "
+CUSTOM STATS: {}
+	a: {{ \"cnt\": 2}}
+	b: {{ \"cnt\": 2}}
+	c: {{ \"cnt\": 2}}
+	d: {{ \"cnt\": 2}}
+
+	RUN: {{ \"cnt\": 5, \"flag\": 4, \"total\": 4}}
+
+",
+            "*".repeat(66)
+        );
+        assert_eq!(text, want);
+        assert_eq!(capture(|r| r.custom_stats(&CustomStats::default())), "");
     }
 }

@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use serde_json::{Map, Value};
+
 /// How one task went on one host, from the renderer's point of view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -103,6 +105,90 @@ impl Stats {
 
     pub fn hosts(&self) -> impl Iterator<Item = (&str, &HostStats)> {
         self.hosts.iter().map(|(n, s)| (n.as_str(), s))
+    }
+}
+
+/// What `set_stats` collected: one map per host that asked for `per_host`, and one for the run.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct CustomStats {
+    hosts: BTreeMap<String, Map<String, Value>>,
+    run: Map<String, Value>,
+}
+
+impl CustomStats {
+    /// One `set_stats` result's `ansible_stats` for `host`: `data` under the host's own name when
+    /// `per_host`, under the run's otherwise, summed with what is there when `aggregate` and
+    /// replacing it when not. A malformed `ansible_stats` adds nothing.
+    pub fn record(&mut self, host: &str, stats: &Value) {
+        let Some(data) = stats.get("data").and_then(Value::as_object) else {
+            return;
+        };
+        let flag = |name: &str| stats.get(name).and_then(Value::as_bool).unwrap_or(false);
+        let (per_host, aggregate) = (flag("per_host"), flag("aggregate"));
+        let into = if per_host {
+            self.hosts.entry(host.to_string()).or_default()
+        } else {
+            &mut self.run
+        };
+        for (key, value) in data {
+            match into.get_mut(key) {
+                Some(held) if aggregate => {
+                    if let Some(sum) = aggregated(held, value) {
+                        *held = sum;
+                    }
+                }
+                _ => {
+                    into.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty() && self.run.is_empty()
+    }
+
+    /// The hosts that asked for `per_host`, sorted.
+    pub fn hosts(&self) -> &BTreeMap<String, Map<String, Value>> {
+        &self.hosts
+    }
+
+    /// The data kept for the run as a whole.
+    pub fn run(&self) -> &Map<String, Value> {
+        &self.run
+    }
+}
+
+/// `held + new` as `AggregateStats.update_custom_stats` adds them: a value of another type than
+/// the one held is ignored (`None`), mappings merge deeply, lists and strings join, numbers add.
+/// A boolean counts as the integer it is in Python, so `true` four times reads 4.
+fn aggregated(held: &Value, new: &Value) -> Option<Value> {
+    match (held, new) {
+        (Value::Object(a), Value::Object(b)) => {
+            let mut merged = a.clone();
+            for (key, value) in b {
+                let next = match merged.get(key) {
+                    Some(Value::Object(_)) if value.is_object() => aggregated(&merged[key], value),
+                    _ => Some(value.clone()),
+                };
+                merged.insert(key.clone(), next?);
+            }
+            Some(Value::Object(merged))
+        }
+        (Value::Array(a), Value::Array(b)) => Some(Value::Array([a.clone(), b.clone()].concat())),
+        (Value::String(a), Value::String(b)) => Some(Value::String(format!("{a}{b}"))),
+        (Value::Bool(a), Value::Bool(b)) => Some(Value::from(i64::from(*a) + i64::from(*b))),
+        // `isinstance(what, type(held))`: an integer or a boolean may join an integer.
+        (Value::Number(a), Value::Number(b)) if a.is_f64() && b.is_f64() => {
+            Some(Value::from(a.as_f64()? + b.as_f64()?))
+        }
+        (Value::Number(a), Value::Number(b)) if !a.is_f64() && !b.is_f64() => {
+            Some(Value::from(a.as_i64()?.checked_add(b.as_i64()?)?))
+        }
+        (Value::Number(a), Value::Bool(b)) if !a.is_f64() => {
+            Some(Value::from(a.as_i64()?.checked_add(i64::from(*b))?))
+        }
+        _ => None,
     }
 }
 

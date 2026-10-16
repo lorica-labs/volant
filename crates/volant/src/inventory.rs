@@ -15,7 +15,7 @@ pub struct Host {
     pub vars: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Group {
     name: String,
     hosts: Vec<String>,
@@ -23,7 +23,7 @@ struct Group {
     vars: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Inventory {
     hosts: Vec<Host>,
     groups: Vec<Group>,
@@ -272,7 +272,28 @@ impl Inventory {
         Vec::new()
     }
 
-    fn add_host(&mut self, name: &str, vars: BTreeMap<String, Value>) {
+    /// Adds `host` to `group`, creating the group: what `add_host` and `group_by` do mid-run.
+    pub fn add_member(&mut self, host: &str, group: &str) {
+        let group = self.group_mut(group);
+        if !group.hosts.iter().any(|h| h == host) {
+            group.hosts.push(host.to_string());
+        }
+    }
+
+    /// Makes `child` a child group of `parent`, creating both. A group is never its own child.
+    pub fn add_child(&mut self, parent: &str, child: &str) {
+        if parent == child {
+            return;
+        }
+        self.group_mut(child);
+        let parent = self.group_mut(parent);
+        if !parent.children.iter().any(|c| c == child) {
+            parent.children.push(child.to_string());
+        }
+    }
+
+    /// Adds a host, or merges `vars` into the one of that name.
+    pub fn add_host(&mut self, name: &str, vars: BTreeMap<String, Value>) {
         match self.hosts.iter_mut().find(|h| h.name == name) {
             Some(host) => host.vars.extend(vars),
             None => self.hosts.push(Host {

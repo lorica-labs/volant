@@ -35,9 +35,9 @@ use super::run::{
     RetryLine, any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
     discovery_warning, fact_targets, failed_task_value, finish, judge_attempt, local_timed_out,
     notified_handlers, pause_lines, poll_job, polls, python_for, raw_params_refusal, record_facts,
-    record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
-    run_agent_batch, run_local, run_plugin_attempts, running_host_vars, silent_discovery,
-    stamp_discovery, step_tasks, take_warnings, wait_or_stop,
+    record_inventory_results, record_local_facts, record_registered, requested_interpreter,
+    retry_plans, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
+    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1504,6 +1504,7 @@ pub(super) async fn drive_host(
                             &results,
                             &templar,
                         );
+                        record_inventory_results(&mut vars, task, &name, &results);
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // Whether a body shows at verbosity 0 is each result's own: see

@@ -35,6 +35,9 @@ pub struct Config {
     /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
     /// to the recap.
     pub force_handlers: bool,
+    /// `[defaults] show_custom_stats` or `ANSIBLE_SHOW_CUSTOM_STATS`: print what `set_stats`
+    /// collected after the recap. Off by default, as in the reference.
+    pub show_custom_stats: bool,
     /// Where a role is looked for once the directory beside the playbook has been tried.
     /// Measured on ansible-core 2.19.12: a `roles_path` **replaces** the three default
     /// directories rather than adding to them, and it never displaces `<playbook_dir>/roles`,
@@ -90,6 +93,7 @@ impl Default for Config {
             become_exe: None,
             become_flags: None,
             force_handlers: false,
+            show_custom_stats: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
             tags_run: Vec::new(),
@@ -228,6 +232,11 @@ impl Config {
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {
             config.force_handlers = on;
+        }
+        if let Ok(flag) = std::env::var("ANSIBLE_SHOW_CUSTOM_STATS")
+            && let Some(on) = crate::yaml::bool_from_str(flag.trim())
+        {
+            config.show_custom_stats = on;
         }
         if let Ok(value) = std::env::var("VOLANT_BATCHING")
             && let Some(on) = switch(&value)
@@ -506,6 +515,11 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             "force_handlers" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.force_handlers = on;
+                }
+            }
+            "show_custom_stats" => {
+                if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
+                    config.show_custom_stats = on;
                 }
             }
             "remote_tmp" => {

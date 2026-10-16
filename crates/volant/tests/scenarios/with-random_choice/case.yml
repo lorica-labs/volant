@@ -1,0 +1,3 @@
+# with_random_choice picks one of a single choice.
+args: [play.yml]
+needs: ["ansible-core"]

@@ -1,0 +1,3 @@
+# with_list walks a list as written.
+args: [play.yml]
+needs: ["ansible-core"]

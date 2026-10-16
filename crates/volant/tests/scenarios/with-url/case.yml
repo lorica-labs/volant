@@ -1,0 +1,3 @@
+# with_url reads a file URL.
+args: [play.yml]
+needs: ["ansible-core"]

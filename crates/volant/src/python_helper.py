@@ -543,6 +543,7 @@ def plain(value):
 def call(request):
     """One filter, test or lookup, run through ansible-core's own Jinja environment so its
     argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
+    from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar, trust_as_template
 
     loaders()
@@ -562,7 +563,13 @@ def call(request):
         return {"error": {"kind": "plugin", "message": "a %s needs the value it is given" % kind}}
     expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
     try:
-        templar = Templar(variables=request.get("vars") or {})
+        variables = request.get("vars") or {}
+        # The loader file lookups resolve a relative path through: the playbook's directory
+        # when the controller sent it, as the reference's does.
+        loader = DataLoader()
+        if isinstance(variables.get("playbook_dir"), str):
+            loader.set_basedir(variables["playbook_dir"])
+        templar = Templar(loader=loader, variables=variables)
         # The environment resolves a plugin on `in`, which may raise the not-found error or the
         # load error of a broken plugin file: both are answered below like a failed call.
         # The engine's environment, not `templar.environment`: ansible-core 2.19 warns on every

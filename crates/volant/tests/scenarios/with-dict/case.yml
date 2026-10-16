@@ -1,0 +1,3 @@
+# with_dict walks a mapping.
+args: [play.yml]
+needs: ["ansible-core"]

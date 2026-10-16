@@ -1,0 +1,3 @@
+# A line a command prints that holds braces is an item, not a template.
+args: [play.yml]
+needs: ["ansible-core"]

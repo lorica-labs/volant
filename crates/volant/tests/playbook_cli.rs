@@ -2155,17 +2155,6 @@ const fn runs(
     }
 }
 
-/// One proof per `Runs` row, every one of them a real run of this binary. Each body is written
-/// so that deleting the keyword's handling changes the run: the task stops failing, the loop
-/// stops looping, the refusal stops coming.
-///
-/// Nothing here is proved by naming a test somewhere else. Three escalation rows used to be,
-/// and the name was inert text: no compiler and no assertion checked that the named test still
-/// existed, those tests are `#[ignore]`d so an ordinary run proved none of the three, and the
-/// same hatch would have marked any future row `Runs` with no proof at all. Escalating to an
-/// account that does not exist needs no privileged host and no second suite: `sudo` refuses by
-/// naming the account, which is a `become_user` that reached it intact, and dropping either
-/// escalation keyword lets the task run as the invoking user and succeed.
 /// The `with_*` rows whose lookup runs in the controller's Python helper.
 const BRIDGED_LOOPS: &[&str] = &[
     "with_config",
@@ -2184,6 +2173,17 @@ const BRIDGED_LOOPS: &[&str] = &[
     "with_url",
 ];
 
+/// One proof per `Runs` row, every one of them a real run of this binary. Each body is written
+/// so that deleting the keyword's handling changes the run: the task stops failing, the loop
+/// stops looping, the refusal stops coming.
+///
+/// Nothing here is proved by naming a test somewhere else. Three escalation rows used to be,
+/// and the name was inert text: no compiler and no assertion checked that the named test still
+/// existed, those tests are `#[ignore]`d so an ordinary run proved none of the three, and the
+/// same hatch would have marked any future row `Runs` with no proof at all. Escalating to an
+/// account that does not exist needs no privileged host and no second suite: `sudo` refuses by
+/// naming the account, which is a `become_user` that reached it intact, and dropping either
+/// escalation keyword lets the task run as the invoking user and succeed.
 const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "task",
@@ -3196,6 +3196,10 @@ fn every_runs_keyword_changes_something_observable() {
     // Every probe runs before anything is asserted, so one failing run reports every row that
     // broke rather than only the first: a change that touches several keywords is read once.
     let python = python::reference_python().map(|p| p.display().to_string());
+    assert!(
+        python.is_some() || std::env::var_os("VOLANT_PYTHON").is_none(),
+        "VOLANT_PYTHON is set but names no ansible-core: the bridged loop probes cannot run"
+    );
     let mut failures = Vec::new();
     for probe in RUNS_PROBES {
         let body = probe.body;

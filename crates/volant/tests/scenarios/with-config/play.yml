@@ -4,4 +4,4 @@
     - name: Walk
       debug:
         msg: "{{ item }}"
-      with_config: [DEFAULT_FORKS]
+      with_config: [DEFAULT_TIMEOUT]

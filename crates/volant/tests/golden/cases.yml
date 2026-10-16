@@ -378,7 +378,7 @@
 - {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.network_in_usable('192.168.0.5') }}"}
 - {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.next_nth_usable(2) }}"}
 - {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.nthhost(5) }}"}
-- {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.previous_nth_usable(2) }}"}
+- {bridge: true, template: "{{ '192.168.0.10/24' | ansible.utils.previous_nth_usable(2) }}"}
 - {bridge: true, template: "{{ ['192.168.0.1', '10.0.0.1'] | ansible.utils.reduce_on_network('192.168.0.0/24') }}"}
 - {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | ansible.utils.remove_keys(target=['a']) }}"}
 - {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | ansible.utils.replace_keys(target=[{'before': 'a', 'after': 'z'}]) }}"}
@@ -447,7 +447,7 @@
 - {bridge: true, template: "{{ 'abc' | community.general.unicode_normalize('NFC') | length }}"}
 - {bridge: true, template: "{{ ['1.10', '1.2', '1.9'] | community.general.version_sort }}"}
 - {bridge: true, template: "{{ 'ansible.builtin.copy' is community.general.a_module }}"}
-- {bridge: true, template: "{{ [1, 2] is community.general.ansible_type('list') }}"}
+- {bridge: true, template: "{{ [1, 2] is community.general.ansible_type('list[int]') }}"}
 - {bridge: true, template: "{{ lookup('community.general.binary_file', '/var/tmp/volant-golden-fs/a.txt') }}"}
 - {bridge: true, template: "{{ lookup('community.general.cartesian', [1, 2], ['a', 'b'], wantlist=True) }}"}
 - {bridge: true, template: "{{ lookup('community.general.collection_version', 'community.general') }}"}
@@ -459,3 +459,33 @@
 - {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: false}}}
 - {bridge: true, template: "{{ r is unreachable }}", vars: {r: {unreachable: true}}}
 - {bridge: true, template: "{{ r is timedout }}", vars: {r: {timedout: {period: 5}}}}
+- {bridge: true, template: "{{ '8.8.8.8' is ansible.utils.private }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.public }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv4 }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv6 }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.loopback }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.multicast }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.reserved }}"}
+- {bridge: true, template: "{{ 'zz' is ansible.utils.mac }}"}
+- {bridge: true, template: "{{ '1.2.3.4' is ansible.utils.unspecified }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_network('192.168.0.0/24') }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_any_network(['192.168.0.0/24']) }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_one_network(['192.168.0.0/24']) }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' is ansible.utils.subnet_of('10.0.0.0/8') }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' is ansible.utils.supernet_of('10.0.0.0/8') }}"}
+- {bridge: true, template: "{{ '255.0.255.0' is ansible.utils.ipv4_netmask }}"}
+- {bridge: true, template: "{{ '255.255.255.0' is ansible.utils.ipv4_hostmask }}"}
+- {bridge: true, template: "{{ 'nope' is ansible.utils.ip }}"}
+- {bridge: true, template: "{{ 'nope' is ansible.utils.ip_address }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv4_address }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv6_address }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_ipv4_mapped }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_sixtofour }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_teredo }}"}
+- {bridge: true, template: "{{ [1, 2] is community.general.ansible_type('dict') }}"}
+- {bridge: true, template: "{{ 'nosuch.module' is community.general.a_module }}"}
+- {bridge: true, template: "{{ r is finished }}", vars: {r: {finished: 0}}}
+- {bridge: true, template: "{{ r is started }}", vars: {r: {started: 0}}}
+- {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: true}}}
+- {bridge: true, template: "{{ r is unreachable }}", vars: {r: {unreachable: false}}}
+- {bridge: true, template: "{{ r is timedout }}", vars: {r: {timedout: false}}}

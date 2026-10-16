@@ -37,7 +37,27 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
             return super::bridged::lookup(state, bridge, &name, &terms, &kwargs);
         }
         let wantlist = kwargs.get::<Option<bool>>("wantlist")?.unwrap_or(false);
-        let results = lookup(state, &name, &terms, kwargs, &base_dir, bridge.as_ref())?;
+        // As `_invoke_lookup` does: `warn` and `ignore` turn a failed lookup into `None` (`[]`
+        // with `wantlist`); any other value, `strict` included, raises.
+        let errors = kwargs.get::<Option<String>>("errors")?;
+        let results = match lookup(state, &name, &terms, kwargs, &base_dir, bridge.as_ref()) {
+            Ok(results) => results,
+            Err(err) if matches!(errors.as_deref(), Some("warn" | "ignore")) => {
+                if errors.as_deref() == Some("warn") {
+                    eprintln!(
+                        "[WARNING]: An error occurred while running the lookup plugin '{name}'. \
+                         Error was {}",
+                        err.detail().unwrap_or_default()
+                    );
+                }
+                return Ok(if wantlist {
+                    Value::from(Vec::<Value>::new())
+                } else {
+                    Value::from(())
+                });
+            }
+            Err(err) => return Err(err),
+        };
         Ok(if wantlist {
             Value::from(results)
         } else {

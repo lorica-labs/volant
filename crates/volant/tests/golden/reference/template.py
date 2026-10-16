@@ -27,7 +27,16 @@ def write_fixtures():
 
 
 def record():
+    with open(os.path.join(GOLDEN, "bridge_fs.json"), encoding="utf-8") as f:
+        fixtures = json.load(f)["dir"]
     write_fixtures()
+    try:
+        _record()
+    finally:
+        shutil.rmtree(fixtures, ignore_errors=True)
+
+
+def _record():
     with open(os.path.join(GOLDEN, "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
     tasks = []

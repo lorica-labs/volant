@@ -774,11 +774,22 @@ fn every_bridge_case_matches_the_reference() {
     use volant::bridge::Bridge;
     use volant::template::{Templar, Vars};
 
+    // Panics under `VOLANT_PYTHON` when that interpreter cannot reproduce the recording.
     let Some(python) = python::reference_python() else {
         return;
     };
     let fs: Value = serde_json::from_str(include_str!("golden/bridge_fs.json")).unwrap();
     let dir = std::path::PathBuf::from(fs["dir"].as_str().unwrap());
+    // The directory is the same for every run on this machine: one run at a time lays it out,
+    // and it goes away when the test ends, a panic included.
+    struct Removed(std::path::PathBuf);
+    impl Drop for Removed {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _lock = native_lock();
+    let _removed = Removed(dir.clone());
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for name in fs["dirs"].as_array().unwrap() {
@@ -797,7 +808,7 @@ fn every_bridge_case_matches_the_reference() {
         serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses");
     let mut failures = Vec::new();
     let mut ran = 0;
-    for entry in entries.iter().filter(|e| e["case"].get("bridge").is_some()) {
+    for entry in entries.iter().filter(|e| e["case"]["bridge"] == true) {
         ran += 1;
         let case = &entry["case"];
         let vars: Map<String, Value> = case
@@ -815,8 +826,14 @@ fn every_bridge_case_matches_the_reference() {
         };
         let text = case["template"].as_str().expect("template is a string");
         let ours = templar.render(text, vars).map_err(|e| e.to_string());
+        // A failure holds the reference's `The <kind> plugin '<name>' failed` sentence.
         let right = match (&ours, entry.get("error"), entry.get("result")) {
-            (Err(_), Some(_), _) => true,
+            (Err(text), Some(want), _) => {
+                let want = want.as_str().unwrap_or_default();
+                let start = want.find("The ").unwrap_or(0);
+                let sentence = want[start..].split(" failed").next().unwrap_or_default();
+                text.contains(&format!("{sentence} failed"))
+            }
             (Ok(v), None, Some(want)) => same(v, want),
             _ => false,
         };
@@ -829,7 +846,6 @@ fn every_bridge_case_matches_the_reference() {
             ));
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(ran >= 80, "{ran} bridge cases: cases.yml lost some");
     assert!(
         failures.is_empty(),

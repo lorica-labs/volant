@@ -2144,5 +2144,68 @@
       "template": "{{ lookup('dict', 'nope') }}"
     },
     "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, got 'nope' of type <class 'str'>)"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('password', '/dev/null length=12') | length }}"
+    },
+    "result": 12
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('password', '/dev/null length=8 chars=digits') is match('^[0-9]{8}$') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('lines', 'echo hi') }}"
+    },
+    "result": "hi"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ini', 'k section=s file=/var/tmp/volant-golden-fs/x.ini') }}"
+    },
+    "result": "v1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ini', 'nope section=s file=/var/tmp/volant-golden-fs/x.ini default=d') }}"
+    },
+    "result": "d"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('csvfile', 'r file=/var/tmp/volant-golden-fs/x.csv delimiter=, col=1') }}"
+    },
+    "result": "val"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore') }}"
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore', wantlist=true) }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"
+    },
+    "result": null
   }
 ]

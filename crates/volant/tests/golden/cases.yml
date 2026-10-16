@@ -347,3 +347,12 @@
 - {bridge: true, template: "{{ lookup('random_choice', 'only') }}"}
 - {bridge: true, template: "{{ lookup('dict', 'nope', errors='ignore') }}"}
 - {bridge: true, template: "{{ lookup('dict', 'nope') }}"}
+- {bridge: true, template: "{{ lookup('password', '/dev/null length=12') | length }}"}
+- {bridge: true, template: "{{ lookup('password', '/dev/null length=8 chars=digits') is match('^[0-9]{8}$') }}"}
+- {bridge: true, template: "{{ lookup('lines', 'echo hi') }}"}
+- {bridge: true, template: "{{ lookup('ini', 'k section=s file=/var/tmp/volant-golden-fs/x.ini') }}"}
+- {bridge: true, template: "{{ lookup('ini', 'nope section=s file=/var/tmp/volant-golden-fs/x.ini default=d') }}"}
+- {bridge: true, template: "{{ lookup('csvfile', 'r file=/var/tmp/volant-golden-fs/x.csv delimiter=, col=1') }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore') }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore', wantlist=true) }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"}

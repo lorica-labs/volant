@@ -68,7 +68,7 @@ fn every_golden_case_matches_the_reference() {
     for entry in expected() {
         let case = &entry["case"];
         // Answered by the Python helper, which `reference_modules.rs` runs.
-        if case.get("bridge").is_some() {
+        if case["bridge"] == true {
             bridged += 1;
             continue;
         }

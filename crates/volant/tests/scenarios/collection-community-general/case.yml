@@ -1,0 +1,3 @@
+# Every filter, test and lookup of community.general that runs offline, one task each.
+args: [play.yml]
+needs: ["ansible-core"]

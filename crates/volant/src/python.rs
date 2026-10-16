@@ -890,7 +890,8 @@ pub struct PythonBuilder {
     child: Child,
     /// `None` only once [`Drop`] has closed it.
     stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    /// `None` only once an [`ActionHelper`] reads it on a thread of its own.
+    stdout: Option<BufReader<ChildStdout>>,
     /// The interpreter it runs under, as it was started.
     python: String,
 }
@@ -934,7 +935,7 @@ impl PythonBuilder {
         Ok(PythonBuilder {
             child,
             stdin: Some(stdin),
-            stdout,
+            stdout: Some(stdout),
             python: python.to_string(),
         })
     }
@@ -949,7 +950,11 @@ impl PythonBuilder {
         modules: &[String],
     ) -> anyhow::Result<(Union, Option<crate::union_cache::Traced>)> {
         let stdin = self.stdin.as_mut().expect("stdin is open until drop");
-        exchange(stdin, &mut self.stdout, modules)
+        exchange(
+            stdin,
+            self.stdout.as_mut().expect("stdout is read here"),
+            modules,
+        )
     }
 
     /// Adds each directory's plugin directories to the helper's loaders, as ansible-playbook
@@ -960,7 +965,7 @@ impl PythonBuilder {
             let stdin = self.stdin.as_mut().expect("stdin is open until drop");
             ask(
                 stdin,
-                &mut self.stdout,
+                self.stdout.as_mut().expect("stdout is read here"),
                 &serde_json::json!({ "plugin_dirs": dirs }),
                 "add the plugin directories",
             )?;
@@ -973,7 +978,7 @@ impl PythonBuilder {
     pub(crate) fn round_trip(&mut self, request: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
         let stdin = self.stdin.as_mut().expect("stdin is open until drop");
         write_frame(stdin, request)?;
-        read_frame(&mut self.stdout)
+        read_frame(self.stdout.as_mut().expect("stdout is read here"))
     }
 
     /// Ends the helper and says how it went, for the message of a call that found it gone.
@@ -988,7 +993,11 @@ impl PythonBuilder {
     /// What the controller's ansible-core makes of each name, one answer per name asked.
     pub fn resolve(&mut self, modules: &[String]) -> anyhow::Result<BTreeMap<String, Resolved>> {
         let stdin = self.stdin.as_mut().expect("stdin is open until drop");
-        resolve_exchange(stdin, &mut self.stdout, modules)
+        resolve_exchange(
+            stdin,
+            self.stdout.as_mut().expect("stdout is read here"),
+            modules,
+        )
     }
 }
 
@@ -1011,6 +1020,74 @@ impl Drop for PythonBuilder {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// What the thread reading an [`ActionHelper`]'s output hands over: a frame, `None` once the
+/// helper closed its output, or why the read failed.
+pub(crate) type Frame = std::io::Result<Option<Vec<u8>>>;
+
+/// A helper that runs action plugins. Its frames are read on a thread of their own, so the wait
+/// for the next one ends at the task's deadline even when the plugin never answers.
+pub(crate) struct ActionHelper {
+    helper: PythonBuilder,
+    frames: std::sync::mpsc::Receiver<Frame>,
+}
+
+/// Why no frame came from an [`ActionHelper`].
+pub(crate) enum Silence {
+    /// The deadline passed first.
+    Expired,
+    /// The reading thread is gone, which happens only once the helper's output has ended.
+    Gone,
+}
+
+impl ActionHelper {
+    pub(crate) fn new(mut helper: PythonBuilder) -> ActionHelper {
+        let mut stdout = helper
+            .stdout
+            .take()
+            .expect("a new helper's output is unread");
+        let (send, frames) = std::sync::mpsc::channel();
+        // The thread ends with the helper's output: at its exit, or once it is killed or dropped.
+        std::thread::spawn(move || {
+            loop {
+                let frame = read_frame(&mut stdout);
+                let last = !matches!(frame, Ok(Some(_)));
+                if send.send(frame).is_err() || last {
+                    return;
+                }
+            }
+        });
+        ActionHelper { helper, frames }
+    }
+
+    pub(crate) fn send(&mut self, frame: &[u8]) -> std::io::Result<()> {
+        let stdin = self
+            .helper
+            .stdin
+            .as_mut()
+            .expect("stdin is open until drop");
+        write_frame(stdin, frame)
+    }
+
+    /// The next frame, waiting no later than `deadline`.
+    pub(crate) fn next(&self, deadline: Option<std::time::Instant>) -> Result<Frame, Silence> {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        let Some(deadline) = deadline else {
+            return self.frames.recv().map_err(|_| Silence::Gone);
+        };
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        self.frames.recv_timeout(left).map_err(|err| match err {
+            RecvTimeoutError::Timeout => Silence::Expired,
+            RecvTimeoutError::Disconnected => Silence::Gone,
+        })
+    }
+
+    /// Ends the helper and says how it went.
+    pub(crate) fn end(&mut self) -> String {
+        self.helper.end()
     }
 }
 

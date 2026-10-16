@@ -24,6 +24,7 @@ import os
 import re
 import struct
 import sys
+import threading
 import time
 import zipfile
 
@@ -686,6 +687,277 @@ def call(request):
         return {"error": {"kind": "plugin", "message": str(failure)}}
 
 
+# The pipes `main` reads requests from and writes frames to: an action plugin's questions to the
+# controller travel over them while its request is in hand.
+PIPES = {}
+# One question at a time: a plugin that asks from two threads would interleave the frames.
+ASKING = threading.Lock()
+
+
+def ask(ident, op, **fields):
+    """One question to the controller while action `ident` runs, and its answer: `{"value": …}`
+    or `{"error": text}`. The controller does what is asked over the host's own link."""
+    fields["op"] = op
+    with ASKING:
+        write_frame(PIPES["frames"], {"id": ident, "ask": fields})
+        reply = read_frame(PIPES["requests"])
+    if reply is None:
+        # The controller closed the pipe: nothing the plugin asks for can be answered any more.
+        raise SystemExit(1)
+    if reply.get("id") != ident or not isinstance(reply.get("reply"), dict):
+        raise SystemExit(
+            "the controller answered %r to a question of action %s" % (reply.get("id"), ident)
+        )
+    return reply["reply"]
+
+
+SHIM = {}
+
+
+def shim():
+    """The stand-in connection an action plugin is given, and `ActionBase` turned toward it, made
+    once ansible-core is imported. What a plugin asks of the host goes to the controller, which
+    runs it over the host's own link; a member the corpus's plugins do not use is refused by name.
+    """
+    if SHIM:
+        return SHIM
+    from ansible.errors import AnsibleConnectionFailure, AnsibleError
+    from ansible.plugins.action import ActionBase
+    from ansible.utils.display import Display
+
+    class Unsupported(AnsibleError, AttributeError):
+        """A member the stand-in lacks. An AttributeError as well, so that a probe such as
+        `getattr(connection, name, default)` answers as it would for a real connection without
+        that member, while a plain read names it."""
+
+    def answered(reply):
+        if "error" in reply:
+            raise AnsibleConnectionFailure(str(reply["error"]))
+        return reply.get("value")
+
+    def text(value, what):
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                raise Unsupported("%s that is not UTF-8 is not supported yet" % what)
+        return value
+
+    class Link:
+        become = None
+        has_native_async = False
+        always_pipeline_modules = False
+        allow_executable = True
+        module_implementation_preferences = (".py", "")
+        _remote_is_local = False
+
+        def __init__(self, ident, shell, play_context):
+            self._ident = ident
+            self._shell = shell
+            self._play_context = play_context
+            self.transport = play_context.connection
+            self.ansible_name = "ansible.builtin.%s" % play_context.connection
+            self.cwd = None
+            self._options = {
+                "remote_addr": play_context.remote_addr,
+                "remote_user": play_context.remote_user,
+            }
+
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            raise Unsupported("Connection.%s is not supported yet" % name)
+
+        def _ask(self, op, **fields):
+            return ask(self._ident, op, **fields)
+
+        def get_option(self, option, hostvars=None):
+            if option not in self._options:
+                raise Unsupported("the connection option %s is not supported yet" % option)
+            return self._options[option]
+
+        def is_pipelining_enabled(self, wrap_async=False):
+            # Modules never travel through `exec_command` here: `_execute_module` asks the
+            # controller, which runs them its own way.
+            return False
+
+        def exec_command(self, cmd, in_data=None, sudoable=True):
+            value = answered(self._ask(
+                "command",
+                cmd=text(cmd, "a command"),
+                in_data=text(in_data, "Connection.exec_command input"),
+                sudoable=bool(sudoable),
+            ))
+            if not (
+                isinstance(value, dict)
+                and isinstance(value.get("rc"), int)
+                and isinstance(value.get("stdout"), str)
+                and isinstance(value.get("stderr"), str)
+            ):
+                raise AnsibleConnectionFailure(
+                    "the controller answered a command in a shape it should not"
+                )
+            return value["rc"], value["stdout"].encode(), value["stderr"].encode()
+
+        def put_file(self, in_path, out_path):
+            answered(self._ask("put_file", local=in_path, remote=out_path, mode=None))
+
+        def fetch_file(self, in_path, out_path):
+            answered(self._ask("fetch_file", remote=in_path, local=out_path))
+
+    def execute_module(self, module_name=None, module_args=None, tmp=None, task_vars=None,
+                       persist_files=False, delete_remote_tmp=None, wrap_async=False,
+                       ignore_unknown_opts=False):
+        # `tmp` and `delete_remote_tmp` are ignored as ansible-core ignores them; `persist_files`
+        # and `task_vars` shape the module's upload and interpreter, which the controller owns.
+        if wrap_async:
+            raise Unsupported("ActionBase._execute_module with wrap_async is not supported yet")
+        if ignore_unknown_opts:
+            raise Unsupported(
+                "ActionBase._execute_module with ignore_unknown_opts is not supported yet"
+            )
+        name = self._task.action if module_name is None else module_name
+        args = self._task.args if module_args is None else module_args
+        result = answered(self._connection._ask("module", name=name, args=plain(args), files=[]))
+        if not isinstance(result, dict):
+            raise AnsibleError("the controller answered the module %s with %r" % (name, result))
+        return result
+
+    def make_tmp_path(self, remote_user=None):
+        path = answered(self._connection._ask("tmp", action="make", remote_user=remote_user))
+        if not isinstance(path, str) or path.strip("/") == "":
+            raise AnsibleError(
+                "failed to resolve remote temporary directory: the controller answered %r" % path
+            )
+        self._cleanup_remote_tmp = True
+        self._connection._shell.tmpdir = path
+        return path
+
+    def remove_tmp_path(self, tmp_path, force=False):
+        if tmp_path is None and self._connection._shell.tmpdir:
+            tmp_path = self._connection._shell.tmpdir
+        if tmp_path is None or not (force or self._should_remove_tmp_path(tmp_path)):
+            return
+        reply = self._connection._ask("tmp", action="remove", path=tmp_path)
+        if "error" in reply:
+            Display().warning("Error deleting remote temporary files (%s)" % reply["error"])
+        else:
+            self._connection._shell.tmpdir = None
+
+    ActionBase._execute_module = execute_module
+    ActionBase._make_tmp_path = make_tmp_path
+    ActionBase._remove_tmp_path = remove_tmp_path
+    SHIM.update(Link=Link, Unsupported=Unsupported)
+    return SHIM
+
+
+class LazyHostVars(collections.abc.Mapping):
+    """`hostvars` for an action plugin: the hosts the controller sent, and any other one asked
+    of the controller the first time a plugin reads it."""
+
+    def __init__(self, ident, known, names):
+        self._ident = ident
+        self._known = dict(known)
+        self._names = list(dict.fromkeys(list(self._known) + list(names)))
+
+    def __getitem__(self, host):
+        if host not in self._known:
+            reply = ask(self._ident, "hostvar", host=host)
+            if "error" in reply:
+                from ansible.errors import AnsibleError
+
+                raise AnsibleError(str(reply["error"]))
+            if reply.get("value") is None:
+                raise KeyError(host)
+            self._known[host] = reply["value"]
+        return self._known[host]
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __len__(self):
+        return len(self._names)
+
+
+def run_action(ident, request):
+    """One task's action plugin, run as ansible-core's `TaskExecutor` runs it: the plugin
+    `action_loader` finds for `name`, given the task, the play context and the stand-in
+    connection, then `run(task_vars=…)` and `cleanup()`. A failure of the plugin is its task's
+    failed result, shaped by ansible-core; only a request it cannot even start is an error."""
+    from ansible._internal._errors import _error_utils
+    from ansible.errors import AnsibleError
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.playbook.block import Block
+    from ansible.playbook.play import Play
+    from ansible.playbook.play_context import PlayContext
+    from ansible.playbook.task import Task
+    from ansible.plugins import loader as plugin_loader
+    from ansible.template import Templar
+
+    loaders()
+    parts = shim()
+    name = request["name"]
+    fields = dict(request.get("task") or {})
+    # The action is `name`, and the controller has merged the module defaults into the arguments.
+    for keyword in ("action", "local_action", "module_defaults"):
+        if keyword in fields:
+            message = "the task keyword %s is not supported for an action plugin yet" % keyword
+            return {"error": {"kind": "plugin", "message": message}}
+    if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
+        return {"error": {"kind": "not_found", "message": "the handler '%s' was not found" % name}}
+    task_vars = dict(request.get("task_vars") or {})
+    try:
+        context = PlayContext()
+        for key, value in (request.get("play_context") or {}).items():
+            if key not in PlayContext.fattributes:
+                raise AnsibleError("the play context field %s is not supported yet" % key)
+            setattr(context, key, value)
+        shell_type = task_vars.get("ansible_shell_type") or "sh"
+        shell = plugin_loader.shell_loader.get(shell_type)
+        if shell is None:
+            raise AnsibleError("the shell plugin %s is not supported yet" % shell_type)
+        shell.set_options(var_options=task_vars)
+        groups = task_vars.get("groups")
+        names = groups.get("all", []) if isinstance(groups, dict) else []
+        known = task_vars.get("hostvars")
+        task_vars["hostvars"] = LazyHostVars(ident, known if isinstance(known, dict) else {}, names)
+        loader = DataLoader()
+        anchor = task_vars.get("playbook_dir")
+        if isinstance(anchor, str) and anchor:
+            loader.set_basedir(anchor)
+        templar = Templar(loader=loader, variables=task_vars)
+        fields["action"] = name
+        # A play of its own: `post_validate` reads the play's action groups, which hold nothing
+        # here since no module_defaults reach the plugin.
+        task = Task.load(fields, block=Block(play=Play()), loader=loader)
+        task.post_validate(templar=templar._engine)
+        action = plugin_loader.action_loader.get(
+            name,
+            task=task,
+            connection=parts["Link"](ident, shell, context),
+            play_context=context,
+            loader=loader,
+            templar=templar,
+            shared_loader_obj=plugin_loader,
+        )
+        if action is None:
+            raise AnsibleError("the handler '%s' was not found" % name)
+        try:
+            result = action.run(task_vars=task_vars)
+        finally:
+            action.cleanup()
+    except Exception as failure:
+        result = _error_utils.result_dict_from_exception(failure)
+        if not isinstance(failure, AnsibleError):
+            result.update(msg="Unexpected failure during task execution: %s" % result["msg"])
+        # The summary object carries the traceback text only when ansible-core is set to keep it.
+        summary = result.pop("exception", None)
+        traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
+        if traceback:
+            result["exception"] = traceback
+    return {"value": plain(result)}
+
+
 def read_frame(stream):
     header = stream.read(4)
     if len(header) < 4:
@@ -722,13 +994,17 @@ def main():
     # never does: an `ansible` directory where the run starts is not the ansible-core to build
     # with, and the working directory is no file a kept union should depend on.
     sys.path[:] = [entry for entry in sys.path if entry]
+    PIPES.update(requests=requests, frames=frames)
     while True:
         request = read_frame(requests)
         if request is None:
             return
-        if "call" in request:
+        if "call" in request or "action" in request:
             try:
-                answer = call(request["call"])
+                if "action" in request:
+                    answer = run_action(request.get("id"), request["action"])
+                else:
+                    answer = call(request["call"])
             except Exception as failure:
                 answer = {"error": {"kind": "plugin", "message": str(failure)}}
             answer["id"] = request.get("id")

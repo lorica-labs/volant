@@ -858,3 +858,103 @@ fn every_bridge_case_matches_the_reference() {
         )
     );
 }
+
+/// A local action plugin that asks the controller for each thing a plugin may ask of the host,
+/// once, and one that reads a connection member the stand-in connection does not have.
+const ACTION_PLUGINS: [(&str, &str); 2] = [
+    (
+        "every_ask.py",
+        r#"from ansible.plugins.action import ActionBase
+
+
+class ActionModule(ActionBase):
+    def run(self, tmp=None, task_vars=None):
+        result = super().run(tmp, task_vars)
+        made = self._make_tmp_path()
+        command = self._low_level_execute_command("echo hi", sudoable=False)
+        self._connection.put_file("/local/in", made + "/in")
+        self._connection.fetch_file(made + "/in", "/local/out")
+        module = self._execute_module(module_name="ansible.builtin.ping", module_args={"data": "x"}, task_vars=task_vars)
+        other = task_vars["hostvars"]["other"]["v"]
+        self._remove_tmp_path(made)
+        result.update(rc=command["rc"], stdout=command["stdout"], module=module, other=other, args=self._task.args)
+        return result
+"#,
+    ),
+    (
+        "refused.py",
+        r#"from ansible.plugins.action import ActionBase
+
+
+class ActionModule(ActionBase):
+    def run(self, tmp=None, task_vars=None):
+        return {"path": self._connection.socket_path}
+"#,
+    ),
+];
+
+/// Action plugins run in the Python helper as ansible-core runs them: each question reaches the
+/// controller once, the arguments stay data, and the result or failure is ansible-core's.
+#[rstest]
+#[case::collection_plugin("ansible.utils.update_fact", serde_json::json!({"updates": [{"path": "a.b", "value": 2}]}), &[], Ok(serde_json::json!({"changed": true, "a": {"b": 2}})))]
+#[case::every_ask("every_ask", serde_json::json!({"k": "{{ a }}"}), &[
+    "Tmp(Make { remote_user: None })",
+    "Command { cmd: \"/bin/sh -c 'echo hi && sleep 0'\", stdin: None, sudoable: false }",
+    "PutFile { local: \"/local/in\", remote: \"/tmp/ansible-tmp-1/in\", mode: None }",
+    "FetchFile { remote: \"/tmp/ansible-tmp-1/in\", local: \"/local/out\" }",
+    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\")}, files: [] }",
+    "HostVar { host: \"other\" }",
+    "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
+], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]
+#[case::member_not_supported("refused", serde_json::json!({}), &[], Ok(serde_json::json!({"failed": true, "msg": "Connection.socket_path is not supported yet"})))]
+#[case::unknown_plugin("my.col.nosuch", serde_json::json!({}), &[], Err("the handler 'my.col.nosuch' was not found"))]
+fn the_bridge_runs_action_plugins(
+    #[case] name: &str,
+    #[case] args: Value,
+    #[case] want_asks: &[&str],
+    #[case] ends: Result<Value, &str>,
+) {
+    use volant::bridge::{Ask, Bridge, BridgeError, Reply, TmpOp};
+
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let work = std::env::temp_dir().join(format!("volant-action-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(work.join("action_plugins")).unwrap();
+    for (file, text) in ACTION_PLUGINS {
+        std::fs::write(work.join("action_plugins").join(file), text).unwrap();
+    }
+    let bridge = Bridge::under(python, vec![work.clone()]);
+    let mut asked = Vec::new();
+    let deadline = std::time::Instant::now() + DEADLINE;
+    let got = bridge.run_action(
+        name,
+        &serde_json::json!({ "args": args }),
+        &serde_json::json!({"a": {"b": 1}, "groups": {"all": ["h", "other"]}}),
+        &serde_json::json!({"connection": "ssh", "remote_addr": "h", "remote_user": "u"}),
+        Some(deadline),
+        &mut |ask| {
+            let reply = match &ask {
+                Ask::Tmp(TmpOp::Make { .. }) => serde_json::json!("/tmp/ansible-tmp-1"),
+                Ask::Command { .. } => serde_json::json!({"rc": 0, "stdout": "hi\n", "stderr": ""}),
+                Ask::Module { .. } => serde_json::json!({"ping": "x"}),
+                Ask::HostVar { .. } => serde_json::json!({"v": 7}),
+                _ => Value::Null,
+            };
+            asked.push(format!("{ask:?}"));
+            Reply::Value(reply)
+        },
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    assert_eq!(asked, want_asks);
+    match (got, ends) {
+        (Ok(got), Ok(want)) => {
+            for (key, value) in want.as_object().unwrap() {
+                assert_eq!(got.get(key), Some(value), "{key} in {got}");
+            }
+        }
+        (Err(BridgeError::NotFound(text)), Err(want)) => assert_eq!(text, want),
+        (got, want) => panic!("{got:?} is not {want:?}"),
+    }
+}

@@ -75,6 +75,17 @@ fn is_boundary(c: &Compiled, pos: usize, strict: bool) -> bool {
     c.crosses.len() != c.steps.len() || c.crosses[pos]
 }
 
+/// Whether the hosts of the play meet in front of step `pos`. Under `free` and `host_pinned` they
+/// meet only where a step is one by its keywords - a `run_once`, a `pause`, an
+/// `any_errors_fatal` - and not where its text reads another host or batching is off.
+fn meets(plan: &PlayPlan, c: &Compiled, pos: usize, strict: bool) -> bool {
+    if plan.strategy.free() {
+        c.steps[pos].task.barrier()
+    } else {
+        is_boundary(c, pos, strict)
+    }
+}
+
 /// Whether the hosts meet in front of every step: `[volant] batching` is off, or a fact the
 /// playbook wrote while the run went is still a template (see [`VarStore::templated_facts`]).
 /// Asked again at every step, because the second half can turn on at any of them.
@@ -482,6 +493,23 @@ pub(super) async fn drive_host(
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
     let mut permit: Option<OwnedSemaphorePermit> = None;
+    // `host_pinned`: the fork is taken before the first step and kept to the last, so the worker
+    // that starts a host is the one that finishes it. Every release below is skipped for it.
+    let mut turn = Turn {
+        gate: &plan.turn,
+        mine: plan
+            .queue
+            .iter()
+            .position(|h| h == &name)
+            .unwrap_or_default(),
+        passed: !plan.strategy.pinned(),
+    };
+    if plan.strategy.pinned() {
+        if driver.wait_turn(turn.mine).await.is_some() {
+            permit = driver.acquire(Arc::clone(&forks)).await;
+        }
+        turn.pass();
+    }
     // Set when the host leaves the run without finishing: the message the recap shows, and
     // whether the task it happened under censors its output.
     let mut unreachable: Option<String> = None;
@@ -567,7 +595,9 @@ pub(super) async fn drive_host(
         // at a splice point. So this is where an escalated link stops being worth its process on
         // the target.
         if failed_at.is_some() || failed_index.is_some() {
-            permit = None;
+            if !plan.strategy.pinned() {
+                permit = None;
+            }
             for key in escalated_links(&links) {
                 if let Some(link) = links.remove(&key) {
                     tokio::spawn(link.shutdown());
@@ -721,8 +751,13 @@ pub(super) async fn drive_host(
             // holds at most one of them at a time.
             if batch.is_empty()
                 && permit.is_some()
-                && (is_boundary(&c, pos, strict(options.batching, &store) || plan.lockstep)
-                    || crate::compile::is_splice_point(&step.kind)
+                && !plan.strategy.pinned()
+                && (meets(
+                    &plan,
+                    &c,
+                    pos,
+                    strict(options.batching, &store) || plan.lockstep,
+                ) || crate::compile::is_splice_point(&step.kind)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
                 permit = None;
@@ -758,7 +793,13 @@ pub(super) async fn drive_host(
             // because a host that walked into one of those without stopping here would report a
             // step the others have not reached, and every wait in this file opens on the
             // coordinator's frontier.
-            if is_boundary(&c, pos, strict(options.batching, &store) || plan.lockstep) && pos > 0 {
+            if meets(
+                &plan,
+                &c,
+                pos,
+                strict(options.batching, &store) || plan.lockstep,
+            ) && pos > 0
+            {
                 if !batch.is_empty() {
                     break;
                 }
@@ -877,8 +918,13 @@ pub(super) async fn drive_host(
                 }
                 driver.task_done(pos).await;
                 // `n` is the length of the list this host is walking, read before the word it
-                // just sent could let the coordinator grow it. See `wait_for_splice`.
-                if driver.wait_for_splice(pos, n).await.is_none() {
+                // just sent could let the coordinator grow it. See `wait_for_splice`. Under
+                // `free` a flush no handler can run behind is passed without waiting: the
+                // splice would add nothing, and a host kept by its fork must not wait for one
+                // that has not started.
+                if !driver.nothing_to_splice(&c, pos)
+                    && driver.wait_for_splice(pos, n).await.is_none()
+                {
                     break 'run;
                 }
                 // A host the flush's own mask leaves out reports the step and waits for the
@@ -1316,6 +1362,12 @@ pub(super) async fn drive_host(
                     if !batch.is_empty() {
                         break;
                     }
+                    // Held for the task's items and given back before the host waits for anyone:
+                    // a verdict it is about to wait for may depend on a host this one is holding
+                    // up.
+                    let Some(gate) = driver.throttled(pos, task.throttle).await else {
+                        break 'run;
+                    };
                     // A controller-side module runs here whatever `delegate_to` says - measured
                     // on ansible-core 2.19.12, a delegated `set_fact` and a delegated `debug`
                     // both run on the controller - so the delegate decides two things and no
@@ -1408,6 +1460,7 @@ pub(super) async fn drive_host(
                             break;
                         }
                     }
+                    drop(gate);
                     let to_notify = match notified_handlers(&c, task, &items, &templar, &results) {
                         Ok((found, notes)) => {
                             for message in notes {
@@ -1620,7 +1673,8 @@ pub(super) async fn drive_host(
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
                     // A task an action plugin backs does the same, one trip per sub-task.
-                    if (retried || action.is_some() || task.ignores_unreachable())
+                    let throttled = task.throttle.is_some_and(|limit| limit > 0);
+                    if (retried || action.is_some() || task.ignores_unreachable() || throttled)
                         && !batch.is_empty()
                     {
                         break;
@@ -1649,7 +1703,8 @@ pub(super) async fn drive_host(
                         || !task.failed_when.is_empty()
                         || batch_retry.is_some()
                         || batch_action.is_some()
-                        || task.ignores_unreachable();
+                        || task.ignores_unreachable()
+                        || throttled;
                     if let Some(module) = payload {
                         // Off the same variables the connection was resolved from, which is the
                         // point: the module runs where the link goes, so its interpreter has to
@@ -1699,6 +1754,23 @@ pub(super) async fn drive_host(
             unreachable_origin = c.steps[batch[0].0].task.origin.clone();
             unreachable_delegate = batch_delegate.clone();
             unreachable_index = Some(batch[0].0);
+            // A throttled task is alone in its batch. The host takes its turn before it takes a
+            // fork, so one waiting for its turn holds none of the forks the others need - unless
+            // `host_pinned` keeps it, which holds the fork whatever it waits for.
+            if c.steps[batch[0].0]
+                .task
+                .throttle
+                .is_some_and(|limit| limit > 0)
+                && !plan.strategy.pinned()
+            {
+                permit = None;
+            }
+            let Some(gate) = driver
+                .throttled(batch[0].0, c.steps[batch[0].0].task.throttle)
+                .await
+            else {
+                break 'run;
+            };
             if permit.is_none() {
                 if let Ok(p) = Arc::clone(&forks).acquire_owned().await {
                     permit = Some(p);
@@ -1805,12 +1877,19 @@ pub(super) async fn drive_host(
                     // held across a wait is one the hosts that have to reach that same point
                     // cannot have. With `-f` under the number of live hosts, none of them ever
                     // would.
-                    permit = None;
+                    if !plan.strategy.pinned() {
+                        permit = None;
+                    }
                     continue 'run;
                 }
                 Err(err) => {
                     if c.steps[batch[0].0].task.ignores_unreachable() {
-                        permit = None;
+                        // The turn goes back before the host waits for anyone: `advance` can
+                        // wait for a verdict that depends on a host this gate is holding up.
+                        drop(gate);
+                        if !plan.strategy.pinned() {
+                            permit = None;
+                        }
                         if !ignore_the_batch(
                             &mut driver,
                             &tx,
@@ -2497,9 +2576,10 @@ pub(super) async fn drive_host(
             // gives. The three ways out of here each close the escalated ones on their own: a
             // failure through the arm at the top of this loop, the end of the play through
             // `keep_links`.
+            drop(gate);
             let carries_on =
                 failed_at.is_none() && deferred_error.is_none() && undecided.is_none() && pos < n;
-            if !carries_on {
+            if !carries_on && !plan.strategy.pinned() {
                 permit = None;
             }
             match ended {
@@ -3086,8 +3166,75 @@ impl Driver<'_> {
             },
             None => after(compiled, pos),
         };
-        (pos + 1..next.min(compiled.steps.len()))
-            .any(|i| crate::compile::is_splice_point(&compiled.steps[i].kind))
+        (pos + 1..next.min(compiled.steps.len())).any(|i| self.splices(compiled, i))
+    }
+
+    /// Whether the step at `i` is a flush point a free host passes without waiting: no handler
+    /// exists for the splice to put behind it.
+    fn nothing_to_splice(&self, compiled: &Compiled, i: usize) -> bool {
+        self.plan.strategy.free()
+            && matches!(compiled.steps[i].kind, StepKind::Flush { explicit: false })
+            && compiled.handlers.is_empty()
+    }
+
+    /// Whether the step at `i` is a splice point this host has to wait at.
+    fn splices(&self, compiled: &Compiled, i: usize) -> bool {
+        crate::compile::is_splice_point(&compiled.steps[i].kind)
+            && !self.nothing_to_splice(compiled, i)
+    }
+
+    /// Waits until the hosts in front of this one in a `host_pinned` batch have queued for their
+    /// forks. `None` when the run is interrupted.
+    async fn wait_turn(&mut self, mine: usize) -> Option<()> {
+        let mut turn = self.plan.turn.subscribe();
+        tokio::select! {
+            reached = turn.wait_for(|reached| *reached >= mine) => reached.ok().map(|_| ()),
+            () = async {
+                if self.stop.wait_for(|stopped| *stopped).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            } => None,
+        }
+    }
+
+    /// A permit of `gate`, or `None` when the run is interrupted before one is free.
+    async fn acquire(&mut self, gate: Arc<Semaphore>) -> Option<OwnedSemaphorePermit> {
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            tokio::select! {
+                permit = Arc::clone(&gate).acquire_owned() => return permit.ok(),
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The permit that keeps step `at` to its `throttle` hosts at a time; `Some(None)` for a step
+    /// with none, and `None` when the run is interrupted while the host waits for its turn.
+    async fn throttled(
+        &mut self,
+        at: usize,
+        limit: Option<u64>,
+    ) -> Option<Option<OwnedSemaphorePermit>> {
+        let Some(limit) = limit.filter(|limit| *limit > 0) else {
+            return Some(None);
+        };
+        let gate =
+            {
+                let mut gates = self.plan.throttles.lock().expect("throttle lock");
+                let permits = usize::try_from(limit).unwrap_or(usize::MAX);
+                Arc::clone(gates.entry(at).or_insert_with(|| {
+                    Arc::new(Semaphore::new(permits.min(Semaphore::MAX_PERMITS)))
+                }))
+            };
+        self.acquire(gate).await.map(Some)
     }
 
     /// The step this host moves to after finishing `pos`, past the sections it has no reason to
@@ -3143,8 +3290,8 @@ impl Driver<'_> {
         loop {
             let compiled = self.plan.steps();
             let end = range.end + grown;
-            let splice = (from..end.min(compiled.steps.len()))
-                .find(|&i| crate::compile::is_splice_point(&compiled.steps[i].kind));
+            let splice =
+                (from..end.min(compiled.steps.len())).find(|&i| self.splices(&compiled, i));
             let Some(at) = splice else {
                 self.skipped(from..end).await;
                 return Some(grown);
@@ -3246,6 +3393,30 @@ impl Driver<'_> {
         for index in range {
             self.task_done(index).await;
         }
+    }
+}
+
+/// A `host_pinned` host's place in the queue for forks. Dropping it hands the place to the next
+/// host, so a host that leaves before it queued - interrupted, or panicked - holds nobody up.
+struct Turn<'a> {
+    gate: &'a watch::Sender<usize>,
+    mine: usize,
+    passed: bool,
+}
+
+impl Turn<'_> {
+    fn pass(&mut self) {
+        if !std::mem::replace(&mut self.passed, true) {
+            let next = self.mine + 1;
+            self.gate
+                .send_modify(|reached| *reached = (*reached).max(next));
+        }
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.pass();
     }
 }
 

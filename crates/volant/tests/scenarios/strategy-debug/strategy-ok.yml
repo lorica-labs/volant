@@ -1,0 +1,5 @@
+- hosts: g
+  strategy: debug
+  gather_facts: false
+  tasks:
+    - debug: msg=fine

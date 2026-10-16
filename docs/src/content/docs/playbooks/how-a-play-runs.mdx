@@ -54,6 +54,16 @@ sequenceDiagram
 
 [Cross-host batching](/hosts/batching/) is an opt-in setting that lets each host run ahead through tasks that do not depend on the others.
 
+### Other strategies
+
+`strategy: free` lets every host walk the play at its own pace. A banner is printed whenever the task changes from the one the last line belonged to, so the output follows the hosts, not the task list. Hosts still meet where a step is shared by its keywords (`run_once`, `pause`, `any_errors_fatal`) and at handlers and dynamic includes.
+
+`strategy: host_pinned` is `free` with a host held by one fork from its first task to its last, so `-f 1` runs the hosts one after the other. With fewer forks than hosts it refuses a play that has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal`, because a host holding a fork cannot wait for one that has not started. `free` and `host_pinned` also refuse `max_fail_percentage`.
+
+`strategy: debug` is `linear` with the debugger prompt after a failed task. So is the `debugger` keyword, on a play, a block or a task: `always`, `never`, `on_failed`, `on_unreachable` or `on_skipped`. The prompt takes `c` (continue) and `q` (quit) from a terminal. When standard input is not a terminal there is nobody to answer, so the prompt reads the end of input and the run ends with exit code 99, as it does in ansible-core.
+
+`order` sets the order a play's hosts run in: `inventory`, `reverse_inventory`, `sorted`, `reverse_sorted` or `shuffle`. `throttle` limits a task to that many hosts at a time, and a play's `timeout` is the default `timeout` of its tasks.
+
 ## Where the work happens
 
 Templating happens on the controller. Each host renders its own copy of a task with its own variables, and the rendered task goes to that host's agent over a connection that stays open for the whole run. The agent runs it and streams the result back. The controller then applies `register`, `changed_when`, `failed_when` and `notify`, and prints the result line.

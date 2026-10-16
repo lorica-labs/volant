@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Runs one play on its hosts with the `linear` strategy: consecutive remote tasks are grouped
-//! into batches, `set_fact` and `debug` run on the controller, and output is shown task by task,
-//! once every live host has reported that task. This file holds what the modules share - the
+//! Runs one play on its hosts, `linear` unless the play says `free`, `host_pinned` or `debug`:
+//! consecutive remote tasks are grouped into batches, `set_fact` and `debug` run on the
+//! controller, and output is shown task by task, once every live host has reported that task -
+//! under `free` and `host_pinned`, as each line arrives. This file holds what the modules share - the
 //! run's settings, the connections kept between plays, and the entry point the command line
 //! calls.
 
 mod coordinator;
+mod debugger;
 mod driver;
 mod include;
 mod prepare;
@@ -21,7 +23,7 @@ use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::agent::{AgentLink, AgentSource};
-use crate::compile::Compiled;
+use crate::compile::{Compiled, StepKind};
 use crate::inventory::{Host, Inventory};
 use crate::playbook::Play;
 use crate::render::Renderer;
@@ -397,6 +399,31 @@ pub async fn run_play(
         }
     }
     Ok(PlayEnd { stop_run: false })
+}
+
+/// What `host_pinned` cannot do yet, said before the first play starts. A host kept by its fork
+/// cannot wait at a point the hosts behind it have to reach, so `host_pinned` with fewer forks
+/// than hosts refuses the steps that make hosts meet: handlers, dynamic includes, `run_once`,
+/// `pause` and `any_errors_fatal`. `hosts` is the play's whole list, so a `serial` play is held
+/// to the same bound as one without.
+pub fn refuse_unsafe_pinning(
+    play: &Play,
+    compiled: &Compiled,
+    hosts: usize,
+    forks: usize,
+) -> anyhow::Result<()> {
+    let meets = compiled.steps.iter().any(|s| match s.kind {
+        StepKind::Include(_) => true,
+        StepKind::Flush { explicit } => explicit || !compiled.handlers.is_empty(),
+        _ => s.task.barrier(),
+    });
+    if play.strategy.as_deref() == Some("host_pinned") && forks < hosts && meets {
+        return Err(crate::stats::Refusal::at(
+            4,
+            "strategy 'host_pinned' with fewer forks than hosts is not supported yet for a play with handlers, includes, run_once, pause or any_errors_fatal",
+        ));
+    }
+    Ok(())
 }
 
 /// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a

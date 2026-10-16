@@ -1,0 +1,2 @@
+# One fork: each host runs the whole play before the next one starts.
+args: [-i, inv.ini, pinned.yml]

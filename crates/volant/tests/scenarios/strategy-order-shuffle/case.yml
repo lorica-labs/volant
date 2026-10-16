@@ -1,0 +1,5 @@
+# `shuffle` is random: the hosts are compared as a set.
+args: [-i, inv.ini, shuffle.yml]
+forks: 5
+unordered:
+  - '^ok: \[h.\] => \{$'

@@ -29,10 +29,10 @@ use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
 use crate::stats::Refusal;
 
-/// The strategy this engine implements. A play asking for another one is refused by its name
-/// rather than run under this one: `free` and `host_pinned` order tasks across hosts
-/// differently, and a play written for one of them is not the same play under `linear`.
-pub const STRATEGY: &str = "linear";
+/// The strategies this engine implements: the reference's four. A play asking for another one is
+/// refused by its name rather than run under `linear`, which orders tasks across hosts
+/// differently.
+pub const STRATEGIES: [&str; 4] = ["linear", "free", "host_pinned", "debug"];
 
 /// Exit 4 for the refusals raised here: the reference exits 4 for a playbook it cannot load,
 /// and a playbook this release cannot run is the same event from the operator's chair, refused
@@ -59,9 +59,17 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
         bail!("play keyword 'check_mode' is not supported yet with 'true'");
     }
     if let Some(strategy) = &play.strategy
-        && strategy != STRATEGY
+        && !STRATEGIES.contains(&strategy.as_str())
     {
         bail!("strategy '{strategy}' is not supported yet");
+    }
+    // `max_fail_percentage` decides after each step whether the batch goes on, which hosts that
+    // do not wait for each other have no step to decide at.
+    if let Some(strategy) = play.strategy.as_deref()
+        && matches!(strategy, "free" | "host_pinned")
+        && play.max_fail_percentage.is_some()
+    {
+        bail!("strategy '{strategy}' with 'max_fail_percentage' is not supported yet");
     }
     for entry in &play.roles {
         if let Some(kw) = entry.keywords.unsupported.first() {
@@ -668,19 +676,17 @@ mod tests {
     #[case::async_on_raw(task_play("      raw: echo hi\n      async: 5\n"), &["keyword 'async' is not supported yet on 'raw'"])]
     #[case::async_on_an_include(task_play("      include_tasks: inc.yml\n      async: 5\n"), &["keyword 'async' is not supported yet on 'include_tasks'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
-    #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
-    #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
     #[case::parked_in_a_block_body(
-        "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
-        &["task 'Deep': keyword 'throttle' is not supported yet"]
+        "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          diff: probe\n".to_string(),
+        &["task 'Deep': keyword 'diff' is not supported yet"]
     )]
     #[case::parked_in_a_rescue(
-        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      rescue:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
-        &["task 'Deep': keyword 'throttle' is not supported yet"]
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      rescue:\n        - name: Deep\n          command: echo hi\n          diff: probe\n".to_string(),
+        &["task 'Deep': keyword 'diff' is not supported yet"]
     )]
     #[case::parked_in_an_always(
-        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      always:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
-        &["task 'Deep': keyword 'throttle' is not supported yet"]
+        "- hosts: all\n  tasks:\n    - block:\n        - command: echo hi\n      always:\n        - name: Deep\n          command: echo hi\n          diff: probe\n".to_string(),
+        &["task 'Deep': keyword 'diff' is not supported yet"]
     )]
     #[case::until_on_include_tasks(task_play("      include_tasks: inc.yml\n      until: false\n"), &["keyword 'until' is not supported yet on 'include_tasks'"])]
     #[case::retries_on_include_tasks(task_play("      include_tasks: inc.yml\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_tasks'"])]
@@ -694,7 +700,7 @@ mod tests {
     #[case::shell_true(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: true\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::shell_false(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
-    #[case::strategy_free("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'free' is not supported yet"])]
+    #[case::strategy_unknown("- hosts: all\n  strategy: mitogen_free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'mitogen_free' is not supported yet"])]
     #[case::with_unvault(task_play("      debug: msg=hi\n      with_unvault: [x]\n"), &["keyword 'with_unvault' is not supported yet"])]
     #[case::action_plugin_assemble(task_play("      assemble: src=a dest=b\n"), &["module 'assemble' needs an action plugin"])]
     #[case::action_plugin_script(task_play("      script: src=a dest=b\n"), &["module 'script' needs an action plugin"])]
@@ -721,6 +727,9 @@ mod tests {
     ))]
     #[case::retry_on_include_vars(task_play("      include_vars: v.yml\n      retries: 2\n"))]
     #[case::linear("- hosts: all\n  strategy: linear\n  tasks:\n    - command: echo hi\n".to_string())]
+    #[case::free("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n".to_string())]
+    #[case::host_pinned("- hosts: all\n  strategy: host_pinned\n  tasks:\n    - command: echo hi\n".to_string())]
+    #[case::debug("- hosts: all\n  strategy: debug\n  tasks:\n    - command: echo hi\n".to_string())]
     #[case::unknown_argument_is_the_agents(task_play(
         "      command: /bin/true\n      args:\n        no_such_arg: 1\n"
     ))]
@@ -1025,7 +1034,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            12,
+            4,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

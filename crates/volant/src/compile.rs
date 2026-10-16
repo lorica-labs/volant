@@ -1180,6 +1180,9 @@ pub(crate) fn compile(
         collections: play.collections.clone(),
         check_mode: play.check_mode,
         run_once: play.run_once,
+        timeout: play.timeout,
+        throttle: play.throttle,
+        debugger: play.debugger,
         any_errors_fatal: play.any_errors_fatal,
         ignore_errors: play.ignore_errors.clone(),
         ignore_unreachable: play.ignore_unreachable,
@@ -1650,6 +1653,8 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .clone()
         .or_else(|| outer.ignore_errors.clone());
     task.timeout = inner.timeout.or(outer.timeout);
+    task.throttle = inner.throttle.or(outer.throttle);
+    task.debugger = inner.debugger.or(outer.debugger);
     // Both three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.
     task.no_log = inner.no_log.or(outer.no_log);

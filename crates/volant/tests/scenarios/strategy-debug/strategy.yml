@@ -1,0 +1,7 @@
+- hosts: g
+  strategy: debug
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+    - debug: msg=after

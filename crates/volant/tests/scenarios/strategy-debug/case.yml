@@ -1,0 +1,8 @@
+# The debugger prompt reads an empty standard input as the end of input: the run ends there.
+runs:
+  - args: [-i, inv.ini, on-failed-task.yml]
+  - args: [-i, inv.ini, on-failed-play.yml]
+  - args: [-i, inv.ini, always.yml]
+  - args: [-i, inv.ini, on-unreachable.yml]
+  - args: [-i, inv.ini, strategy.yml]
+  - args: [-i, inv.ini, strategy-ok.yml]

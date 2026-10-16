@@ -232,7 +232,7 @@ async fn run_all(
                 // Resolved even for `--list-tasks`, which never prints a host: the reference
                 // warns about a pattern nothing matches whichever listing was asked for, and
                 // that warning is the only sign an operator gets of a typo in `hosts:`.
-                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, false)?;
                 plays.push(listing::PlayEntry {
                     play,
                     compiled,
@@ -526,6 +526,16 @@ async fn run_all(
     // block whose result is read afterwards rather than a stretch of `?`. `AgentLink::drop`
     // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
     // so a `?` returning past the shutdown would pay that for every live link in series.
+    // Before the first play starts: a play that cannot run is not found out after the ones in
+    // front of it have.
+    for (pb, steps) in playbooks.iter().zip(&compiled) {
+        for (play, compiled) in pb.plays.iter().zip(steps) {
+            if play.strategy.as_deref() == Some("host_pinned") {
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, false)?;
+                executor::refuse_unsafe_pinning(play, compiled, hosts.len(), options.forks)?;
+            }
+        }
+    }
     let plays: anyhow::Result<()> = async {
         'plays: for (pb, steps) in playbooks.iter().zip(&compiled) {
             for (play, compiled) in pb.plays.iter().zip(steps) {
@@ -553,7 +563,7 @@ async fn run_all(
                     &mut prompt_warned,
                 )?;
                 let play = &*prompted;
-                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, true)?;
                 if !local_agent_checked && hosts.iter().any(&is_local) {
                     agents.local()?;
                     local_agent_checked = true;
@@ -684,7 +694,8 @@ fn play_hosts(
     limit: Option<&HashSet<String>>,
     out: &mut Renderer,
     warned: &mut HashSet<String>,
-) -> Vec<Host> {
+    ordered: bool,
+) -> anyhow::Result<Vec<Host>> {
     let resolution = inventory.resolve(&play.hosts);
     for warning in &resolution.warnings {
         if warned.insert(warning.clone()) {
@@ -697,13 +708,49 @@ fn play_hosts(
             false,
         );
     }
-    match limit {
+    let mut hosts: Vec<Host> = match limit {
         Some(allowed) => resolution
             .hosts
             .into_iter()
             .filter(|h| allowed.contains(&h.name))
             .collect(),
         None => resolution.hosts,
+    };
+    if ordered {
+        order_hosts(&mut hosts, play.order.as_deref())?;
+    }
+    Ok(hosts)
+}
+
+/// The play's `order`: the order its hosts run in, `inventory` when it says nothing. Exit 5 for
+/// a value the reference does not know, which is its own code, measured, and it speaks before
+/// the play's banner.
+fn order_hosts(hosts: &mut [Host], order: Option<&str>) -> anyhow::Result<()> {
+    match order.unwrap_or("inventory") {
+        "inventory" => {}
+        "reverse_inventory" => hosts.reverse(),
+        "sorted" => hosts.sort_by(|a, b| a.name.cmp(&b.name)),
+        "reverse_sorted" => hosts.sort_by(|a, b| b.name.cmp(&a.name)),
+        "shuffle" => shuffle(hosts),
+        other => {
+            return Err(Refusal::at(
+                5,
+                format!("Invalid 'order' specified for inventory hosts: {other}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A Fisher-Yates shuffle, unseeded like the reference's `random.shuffle`: the seed is the one
+/// `RandomState` draws from the system for every hash map of the process.
+fn shuffle<T>(items: &mut [T]) {
+    use std::hash::{BuildHasher, Hasher};
+    let state = std::collections::hash_map::RandomState::new();
+    for i in (1..items.len()).rev() {
+        let mut hasher = state.build_hasher();
+        hasher.write_usize(i);
+        items.swap(i, (hasher.finish() % (i as u64 + 1)) as usize);
     }
 }
 
@@ -880,5 +927,53 @@ mod tests {
             Some(r#"{"natives":{}}"#),
             "{written}"
         );
+    }
+
+    /// `order` arranges a play's hosts, `shuffle` keeps every one of them, and a value the
+    /// reference does not know is refused with its own exit code.
+    #[rstest::rstest]
+    #[case::inventory(None, Ok(vec!["hc", "ha", "hb"]))]
+    #[case::inventory_named(Some("inventory"), Ok(vec!["hc", "ha", "hb"]))]
+    #[case::reverse_inventory(Some("reverse_inventory"), Ok(vec!["hb", "ha", "hc"]))]
+    #[case::sorted(Some("sorted"), Ok(vec!["ha", "hb", "hc"]))]
+    #[case::reverse_sorted(Some("reverse_sorted"), Ok(vec!["hc", "hb", "ha"]))]
+    #[case::bogus(
+        Some("bogus"),
+        Err("Invalid 'order' specified for inventory hosts: bogus")
+    )]
+    fn order_arranges_the_hosts(
+        #[case] order: Option<&str>,
+        #[case] want: Result<Vec<&str>, &str>,
+    ) {
+        let mut hosts: Vec<Host> = ["hc", "ha", "hb"]
+            .iter()
+            .map(|name| Host {
+                name: (*name).to_string(),
+                vars: std::collections::BTreeMap::new(),
+            })
+            .collect();
+        let got = order_hosts(&mut hosts, order);
+        match want {
+            Ok(names) => {
+                got.expect("the order is known");
+                assert_eq!(
+                    hosts.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+                    names
+                );
+            }
+            Err(message) => {
+                let err = got.expect_err("the order is refused");
+                assert_eq!(error_code(&err), 5);
+                assert!(format!("{err:#}").contains(message), "{err:#}");
+            }
+        }
+    }
+
+    #[test]
+    fn shuffle_keeps_every_host() {
+        let mut hosts: Vec<u32> = (0..50).collect();
+        shuffle(&mut hosts);
+        hosts.sort_unstable();
+        assert_eq!(hosts, (0..50).collect::<Vec<_>>());
     }
 }

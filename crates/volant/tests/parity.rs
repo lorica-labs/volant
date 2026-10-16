@@ -366,7 +366,9 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             "become",
             (|n: &str| volant::playbook::BECOME_METHODS.contains(&n)) as fn(&str) -> bool,
         ),
-        ("strategy", |n: &str| n == volant::preflight::STRATEGY),
+        ("strategy", |n: &str| {
+            volant::preflight::STRATEGIES.contains(&n)
+        }),
         ("inventory", |n: &str| n == "ini"),
         ("shell", |n: &str| n == "sh"),
         ("vars", |n: &str| n == "host_group_vars"),
@@ -385,6 +387,21 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                 (true, _) => (Status::Runs, String::new()),
                 (false, Some(why)) => (Status::Later, why.to_string()),
                 (false, None) => (Status::NotYet, String::new()),
+            };
+            // The strategies the engine runs with something refused by name.
+            let (s, note) = match (category, n.as_str(), s) {
+                ("strategy", "free", Status::Runs) => {
+                    (Status::Partial, "refused with `max_fail_percentage`".to_string())
+                }
+                ("strategy", "host_pinned", Status::Runs) => (
+                    Status::Partial,
+                    "refused with `max_fail_percentage`, and with fewer forks than hosts when the play has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal`".to_string(),
+                ),
+                ("strategy", "debug", Status::Runs) => (
+                    Status::Partial,
+                    "the prompt takes `c` and `q` only".to_string(),
+                ),
+                _ => (s, note),
             };
             rows.push(row(category, &n, s, &note));
         }

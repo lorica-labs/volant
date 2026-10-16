@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 use volant_protocol::TaskResult;
 
 use crate::action_plugins::Kind;
@@ -45,6 +45,17 @@ pub(super) struct PlayPlan {
     /// after each task whether the batch goes on, and a host that ran ahead would run a task the
     /// reference never starts.
     pub(super) lockstep: bool,
+    /// How the hosts of the play move through it relative to one another.
+    pub(super) strategy: Strategy,
+    /// One gate per step carrying a `throttle`, made by the first host to reach it. A step's
+    /// index names it for as long as the play runs: a splice only moves the steps behind a point
+    /// no host has passed, so no gate is made for an index before the list has settled there.
+    pub(super) throttles: Mutex<HashMap<usize, Arc<Semaphore>>>,
+    /// `host_pinned`: the hosts of the batch in the order they take a fork, and how many of them
+    /// have had their turn. A host queues for the fork only when the one before it has, so the
+    /// forks go out in the batch's order and not in the order the scheduler starts the drivers.
+    pub(super) queue: Vec<String>,
+    pub(super) turn: watch::Sender<usize>,
     pub(super) play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
     pub(super) vars_files: HashMap<String, Vec<Map<String, Value>>>,
@@ -56,6 +67,38 @@ pub(super) struct PlayPlan {
     /// The module payloads this run sends, built once before the first connection. Shared rather
     /// than copied: it is the base64 of a 631 KB zip and every host of every batch reads it.
     pub(super) python: Option<Arc<crate::python::Union>>,
+}
+
+/// The play's `strategy`. `Debug` walks as `Linear` does and opens the debugger prompt on a
+/// failed task; `Free` lets every host walk its steps without waiting for the others; and
+/// `HostPinned` is `Free` with a host kept by one fork from its first step to its last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Strategy {
+    Linear,
+    Free,
+    HostPinned,
+    Debug,
+}
+
+impl Strategy {
+    /// The strategy a play names. The pre-flight has refused every other name by now.
+    pub(super) fn named(name: Option<&str>) -> Self {
+        match name {
+            Some("free") => Self::Free,
+            Some("host_pinned") => Self::HostPinned,
+            Some("debug") => Self::Debug,
+            _ => Self::Linear,
+        }
+    }
+
+    /// Whether the hosts walk the play without meeting at every step.
+    pub(super) fn free(self) -> bool {
+        matches!(self, Self::Free | Self::HostPinned)
+    }
+
+    pub(super) fn pinned(self) -> bool {
+        self == Self::HostPinned
+    }
 }
 
 impl PlayPlan {
@@ -1954,6 +1997,10 @@ mod tests {
             plan: watch::channel(Arc::new(Compiled::default())).1,
             force_handlers: false,
             lockstep: false,
+            strategy: Strategy::Linear,
+            throttles: Mutex::default(),
+            queue: Vec::new(),
+            turn: watch::channel(0).0,
             play_vars: Map::new(),
             vars_files: HashMap::new(),
             all_play_hosts: Vec::new(),

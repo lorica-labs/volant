@@ -58,9 +58,17 @@ pub struct Play {
     pub become_user: Option<String>,
     /// `remote_user`, `port` and `connection`, folded into every task at compile time.
     pub connect: Connect,
-    /// The execution strategy the play asked for, as written. Only `linear` exists here; the
-    /// pre-flight refuses the others by name.
+    /// The execution strategy the play asked for, as written. The pre-flight refuses a name the
+    /// engine has no strategy of.
     pub strategy: Option<String>,
+    /// `order`, as written: the order the play's hosts run in. Checked when the hosts are
+    /// resolved, where the reference checks it.
+    pub order: Option<String>,
+    /// The play's `timeout`, `throttle` and `debugger`: task keywords a play may carry, folded
+    /// into every task as the outermost layer like `no_log`.
+    pub timeout: Option<u64>,
+    pub throttle: Option<u64>,
+    pub debugger: Option<Debugger>,
     /// `serial`, as written: a number, a percentage string, a list of either, or a template over
     /// the play's variables. Kept raw because it is rendered when the play starts, which is where
     /// the reference renders it - see `compile::batches`.
@@ -238,6 +246,10 @@ pub struct PlayTask {
     /// `poll`: seconds between two looks at the job, 0 for a task that only starts it. Unset is
     /// the reference's default of 15.
     pub poll: Option<u64>,
+    /// `throttle`: the most hosts that run this task at the same time. Zero is no limit.
+    pub throttle: Option<u64>,
+    /// `debugger`: when a result of this task opens the debugger prompt.
+    pub debugger: Option<Debugger>,
     pub vars: Map<String, Value>,
     /// Conditions that must all hold, as Jinja2 expressions.
     pub when: Vec<String>,
@@ -356,6 +368,8 @@ impl PlayTask {
             timeout: None,
             async_val: 0,
             poll: None,
+            throttle: None,
+            debugger: None,
             vars: Map::new(),
             when: Vec::new(),
             loop_items: None,
@@ -1048,6 +1062,12 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
         Some(other) => bail!("'strategy' must be a name, found {other:?}"),
     };
+    let order = match field(yaml, "order") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(Yaml::Value(Scalar::Integer(i))) => Some(i.to_string()),
+        Some(other) => bail!("'order' must be a name, found {other:?}"),
+    };
     // Kept as it was written, template included: the reference renders it when the play starts,
     // against the play's own variables and the run's extra variables.
     let serial = match field(yaml, "serial") {
@@ -1074,6 +1094,10 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         become_user,
         connect: connect_keywords(yaml, "")?,
         strategy,
+        order,
+        timeout: timeout(yaml, "")?,
+        throttle: throttle(yaml, "")?,
+        debugger: debugger(yaml, "")?,
         serial,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, "")?,
@@ -1270,6 +1294,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             tags: tags(yaml, &context)?,
             ignore_errors: flag(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
+            throttle: throttle(yaml, &context)?,
+            debugger: debugger(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
             when: conditions(yaml, "when", &context)?,
             r#become,
@@ -1445,6 +1471,8 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             tags: tags(yaml, &context)?,
             ignore_errors: flag(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
+            throttle: throttle(yaml, &context)?,
+            debugger: debugger(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
             when: conditions(yaml, "when", &context)?,
             r#become,
@@ -1641,6 +1669,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let timeout = timeout(yaml, &context)?;
     let async_val = seconds(yaml, "async", &context)?.unwrap_or(0);
     let poll = seconds(yaml, "poll", &context)?;
+    let throttle = throttle(yaml, &context)?;
+    let debugger = debugger(yaml, &context)?;
     let vars = mapping(yaml, "vars", &context)?;
     let when = conditions(yaml, "when", &context)?;
     let changed_when = conditions(yaml, "changed_when", &context)?;
@@ -1717,6 +1747,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         timeout,
         async_val,
         poll,
+        throttle,
+        debugger,
         vars,
         when,
         loop_items,
@@ -1815,6 +1847,48 @@ fn seconds(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Option<u64>>
         Some(other) => {
             bail!("{context}'{key}' must be a non-negative integer, found {other:?}")
         }
+    }
+}
+
+/// `throttle`, wherever it is written. A negative number is no limit, as it is in the reference.
+fn throttle(yaml: &Yaml, context: &str) -> anyhow::Result<Option<u64>> {
+    match field(yaml, "throttle") {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+        Some(Yaml::Value(Scalar::Integer(i))) => Ok(Some((*i).max(0) as u64)),
+        // Rendered by the reference when the task runs; this release reads a number only.
+        Some(Yaml::Value(Scalar::String(_))) => {
+            bail!("{context}'throttle' written as a string or a template is not supported yet")
+        }
+        Some(other) => bail!("{context}'throttle' must be an integer, found {other:?}"),
+    }
+}
+
+/// What a `debugger` keyword says, which is when a result opens the debugger prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Debugger {
+    Always,
+    Never,
+    OnFailed,
+    OnUnreachable,
+    OnSkipped,
+}
+
+/// `debugger`, wherever it is written, with the reference's own words for a value it does not
+/// know.
+fn debugger(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Debugger>> {
+    match field(yaml, "debugger") {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+        Some(Yaml::Value(Scalar::String(s))) => Ok(Some(match &**s {
+            "always" => Debugger::Always,
+            "never" => Debugger::Never,
+            "on_failed" => Debugger::OnFailed,
+            "on_unreachable" => Debugger::OnUnreachable,
+            "on_skipped" => Debugger::OnSkipped,
+            other => bail!(
+                "{context}Error processing keyword 'debugger': '{other}' is not a valid value for debugger. Must be one of never, on_unreachable, on_failed, always, on_skipped"
+            ),
+        })),
+        Some(other) => bail!("{context}'debugger' must be a name, found {other:?}"),
     }
 }
 
@@ -2242,6 +2316,14 @@ mod tests {
         "- hosts: all\n  tasks:\n    - always:\n        - command: echo hi\n",
         &["'always' keyword cannot be used without 'block'"]
     )]
+    #[case::debugger_value(
+        "- hosts: all\n  debugger: bogus\n  tasks:\n    - command: echo hi\n",
+        &["'bogus' is not a valid value for debugger. Must be one of never, on_unreachable, on_failed, always, on_skipped"]
+    )]
+    #[case::throttle_word(
+        "- hosts: all\n  tasks:\n    - command: echo hi\n      throttle: abc\n",
+        &["'throttle' written as a string or a template is not supported yet"]
+    )]
     #[case::notify_element(
         "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      notify: [3]\n",
         &["task 't': 'notify' must be a name or a list of names"]
@@ -2268,7 +2350,6 @@ mod tests {
 
     /// Keywords the reference has and this release cannot run are parked for the pre-flight.
     #[rstest]
-    #[case::throttle("throttle")]
     #[case::diff("diff")]
     fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
         let pb = parse(

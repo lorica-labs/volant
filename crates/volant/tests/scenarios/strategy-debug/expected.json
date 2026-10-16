@@ -1,0 +1,26 @@
+[
+  {
+    "code": 99,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [command] *****************************************************************\n[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <golden-tmp>/on-failed-task.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - command: \"false\"\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": true, \"cmd\": [\"false\"], \"delta\": \"0:00:00.006237\", \"end\": \"2026-10-16 17:03:44.223508\", \"msg\": \"non-zero return code\", \"rc\": 1, \"start\": \"2026-10-16 17:03:44.217271\", \"stderr\": \"\", \"stderr_lines\": [], \"stdout\": \"\", \"stdout_lines\": []}\n[h1] TASK: command (debug)> User interrupted execution\n"
+  },
+  {
+    "code": 99,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [command] *****************************************************************\n[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <golden-tmp>/on-failed-play.yml:5:7\n\n3   debugger: on_failed\n4   tasks:\n5     - command: \"false\"\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": true, \"cmd\": [\"false\"], \"delta\": \"0:00:00.006186\", \"end\": \"2026-10-16 17:03:45.534841\", \"msg\": \"non-zero return code\", \"rc\": 1, \"start\": \"2026-10-16 17:03:45.528655\", \"stderr\": \"\", \"stderr_lines\": [], \"stdout\": \"\", \"stdout_lines\": []}\n...ignoring\n\nTASK [fail] ********************************************************************\n[ERROR]: Task failed: Action failed: boom\nOrigin: <golden-tmp>/on-failed-play.yml:7:7\n\n5     - command: \"false\"\n6       ignore_errors: true\n7     - fail: msg=boom\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": false, \"msg\": \"boom\"}\n[h1] TASK: fail (debug)> User interrupted execution\n"
+  },
+  {
+    "code": 99,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"hi\"\n}\n[h1] TASK: debug (debug)> User interrupted execution\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"hi\"\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"two\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 99,
+    "stdout": "\nPLAY [g] ***********************************************************************\n\nTASK [fail] ********************************************************************\nskipping: [h1]\n[ERROR]: Task failed: Action failed: Failed as requested from task\nOrigin: <golden-tmp>/strategy.yml:5:7\n\n3   gather_facts: false\n4   tasks:\n5     - fail:\n        ^ column 7\n\nfatal: [h2]: FAILED! => {\"changed\": false, \"msg\": \"Failed as requested from task\"}\n[h2] TASK: fail (debug)> User interrupted execution\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [g] ***********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"fine\"\n}\nok: [h2] => {\n    \"msg\": \"fine\"\n}\nok: [h3] => {\n    \"msg\": \"fine\"\n}\nok: [h4] => {\n    \"msg\": \"fine\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh4                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

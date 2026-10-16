@@ -819,6 +819,42 @@ fn ssh_an_async_job_outlives_the_run_that_started_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// ansible-core's own `script` plugin, run in the controller's helper: the script is put on the
+/// host through the agent, run there, and its temporary directory removed.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_a_bridged_plugin_puts_its_file_and_runs_it() {
+    let dir = tmp("bridgedscript");
+    let inv = inventory(&dir, &[("box", "")]);
+    let tmps = home_of(&user()).join(".ansible/tmp");
+    let made = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&tmps)
+            .map(|d| {
+                d.filter_map(Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let before = made();
+    let out = volant_within(
+        &["playbook", "-i", &inv, &fixture("ssh/script.yml")],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("changed: [box]"), "{text}");
+    assert!(text.contains("\"hi arg1\""), "{text}");
+    assert_eq!(
+        made(),
+        before,
+        "the temporary directory stayed on the host: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The unit `ssh/actions.yml` asks to be started. Present and running wherever systemd is the
 /// init system, which the CI runner and the development machine both are, so the task changes
 /// nothing on either.

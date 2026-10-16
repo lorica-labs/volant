@@ -254,18 +254,6 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             task.module
         );
     }
-    // Before the two sentences below, because a module the reference runs through an action
-    // plugin is not a module waiting on this release to write it: the behaviour a playbook asks
-    // for lives in the plugin, on the controller, and shipping the module alone would run
-    // something else. `template` renders before the task is sent, `copy` reads its source on the
-    // controller, and neither is what the payload holds.
-    if action_plugins::is_action_backed(&task.module) {
-        bail!(
-            "task '{}': module '{}' needs an action plugin, which this release does not run yet",
-            task.name,
-            task.module
-        );
-    }
     // A plugin this release runs. `until`, `retries` and `delay` run on it: each attempt replays
     // the plugin's whole sequence of sub-tasks and `until` reads the result it ended with, as a
     // module's retry does - `k3s_server` retries a `remote_src` copy three times.
@@ -507,7 +495,6 @@ fn refuse_async(task: &PlayTask) -> anyhow::Result<()> {
         || include_module(module).is_some()
         || is_meta(task)
         || action_plugins::kind(module).is_some()
-        || action_plugins::is_action_backed(module)
         || volant_protocol::modules::native(module)
             .is_some_and(|spec| matches!(spec.name, "raw" | "async_status"));
     if refused {
@@ -702,9 +689,6 @@ mod tests {
     #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::strategy_unknown("- hosts: all\n  strategy: mitogen_free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'mitogen_free' is not supported yet"])]
     #[case::with_unvault(task_play("      debug: msg=hi\n      with_unvault: [x]\n"), &["keyword 'with_unvault' is not supported yet"])]
-    #[case::action_plugin_assemble(task_play("      assemble: src=a dest=b\n"), &["module 'assemble' needs an action plugin"])]
-    #[case::action_plugin_script(task_play("      script: src=a dest=b\n"), &["module 'script' needs an action plugin"])]
-    #[case::action_plugin_builtin_script(task_play("      ansible.builtin.script: src=a dest=b\n"), &["module 'ansible.builtin.script' needs an action plugin"])]
     #[case::collection_splat(task_play("      ns.coll.mod: \"{{ d }}\"\n"), &["task 'T': module 'ns.coll.mod' takes its arguments from one template"])]
     #[case::builtin_splat(task_play("      ping: \"{{ d }}\"\n"), &["task 'T': module 'ping' takes its arguments from one template"])]
     #[case::builtin_no_collection_can_supply(task_play("      ansible.builtin.nosuch: x=1\n"), &["couldn't resolve module/action 'ansible.builtin.nosuch'"])]

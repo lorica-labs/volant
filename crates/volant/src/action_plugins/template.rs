@@ -259,6 +259,9 @@ mod tests {
             origin: &origin,
             playbook_dir: dir,
             warnings: &mut warnings,
+
+            environment: None,
+            timeout: None,
         })
     }
 

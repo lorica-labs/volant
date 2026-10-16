@@ -18,8 +18,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
-| module | 63 | 0 | 8 | 0 |
-| action plugin | 20 | 0 | 8 | 0 |
+| module | 71 | 0 | 0 | 0 |
+| action plugin | 28 | 0 | 0 | 0 |
 | filter | 120 | 0 | 2 | 0 |
 | test | 80 | 0 | 2 | 0 |
 | lookup | 24 | 0 | 1 | 0 |
@@ -271,11 +271,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `add_host` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `add_host` | <span class="kw kw-runs">runs</span> | action plugin |
 | `apt` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
 | `apt_key` | <span class="kw kw-runs">runs</span> | Python |
 | `apt_repository` | <span class="kw kw-runs">runs</span> | Python |
-| `assemble` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `assemble` | <span class="kw kw-runs">runs</span> | action plugin |
 | `assert` | <span class="kw kw-runs">runs</span> | controller |
 | `async_status` | <span class="kw kw-runs">runs</span> | agent |
 | `blockinfile` | <span class="kw kw-runs">runs</span> | Python |
@@ -293,12 +293,12 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `fetch` | <span class="kw kw-runs">runs</span> | action plugin |
 | `file` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
 | `find` | <span class="kw kw-runs">runs</span> | Python |
-| `gather_facts` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `gather_facts` | <span class="kw kw-runs">runs</span> | action plugin |
 | `get_url` | <span class="kw kw-runs">runs</span> | Python |
 | `getent` | <span class="kw kw-runs">runs</span> | Python |
 | `git` | <span class="kw kw-runs">runs</span> | Python |
 | `group` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
-| `group_by` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `group_by` | <span class="kw kw-runs">runs</span> | action plugin |
 | `hostname` | <span class="kw kw-runs">runs</span> | Python |
 | `import_playbook` | <span class="kw kw-runs">runs</span> | statement |
 | `import_role` | <span class="kw kw-runs">runs</span> | statement |
@@ -320,11 +320,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `reboot` | <span class="kw kw-runs">runs</span> | action plugin |
 | `replace` | <span class="kw kw-runs">runs</span> | Python |
 | `rpm_key` | <span class="kw kw-runs">runs</span> | Python |
-| `script` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `script` | <span class="kw kw-runs">runs</span> | action plugin |
 | `service` | <span class="kw kw-runs">runs</span> | action plugin |
 | `service_facts` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
 | `set_fact` | <span class="kw kw-runs">runs</span> | controller |
-| `set_stats` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `set_stats` | <span class="kw kw-runs">runs</span> | action plugin |
 | `setup` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
 | `shell` | <span class="kw kw-runs">runs</span> | agent |
 | `slurp` | <span class="kw kw-runs">runs</span> | Python |
@@ -336,19 +336,19 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `tempfile` | <span class="kw kw-runs">runs</span> | Python |
 | `template` | <span class="kw kw-runs">runs</span> | action plugin |
 | `unarchive` | <span class="kw kw-runs">runs</span> | action plugin |
-| `uri` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `uri` | <span class="kw kw-runs">runs</span> | action plugin |
 | `user` | <span class="kw kw-runs">runs</span> | agent, Python fallback |
 | `validate_argument_spec` | <span class="kw kw-runs">runs</span> | controller |
 | `wait_for` | <span class="kw kw-runs">runs</span> | Python |
-| `wait_for_connection` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `wait_for_connection` | <span class="kw kw-runs">runs</span> | action plugin |
 | `yum_repository` | <span class="kw kw-runs">runs</span> | Python |
 
 ## action plugin
 
 | Name | Status | Note |
 |---|---|---|
-| `add_host` | <span class="kw kw-notyet">not yet</span> |  |
-| `assemble` | <span class="kw kw-notyet">not yet</span> |  |
+| `add_host` | <span class="kw kw-runs">runs</span> |  |
+| `assemble` | <span class="kw kw-runs">runs</span> |  |
 | `assert` | <span class="kw kw-runs">runs</span> |  |
 | `async_status` | <span class="kw kw-runs">runs</span> |  |
 | `command` | <span class="kw kw-runs">runs</span> |  |
@@ -357,24 +357,24 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `dnf` | <span class="kw kw-runs">runs</span> |  |
 | `fail` | <span class="kw kw-runs">runs</span> |  |
 | `fetch` | <span class="kw kw-runs">runs</span> |  |
-| `gather_facts` | <span class="kw kw-notyet">not yet</span> |  |
-| `group_by` | <span class="kw kw-notyet">not yet</span> |  |
+| `gather_facts` | <span class="kw kw-runs">runs</span> |  |
+| `group_by` | <span class="kw kw-runs">runs</span> |  |
 | `include_vars` | <span class="kw kw-runs">runs</span> |  |
 | `normal` | <span class="kw kw-runs">runs</span> |  |
 | `package` | <span class="kw kw-runs">runs</span> |  |
 | `pause` | <span class="kw kw-runs">runs</span> |  |
 | `raw` | <span class="kw kw-runs">runs</span> |  |
 | `reboot` | <span class="kw kw-runs">runs</span> |  |
-| `script` | <span class="kw kw-notyet">not yet</span> |  |
+| `script` | <span class="kw kw-runs">runs</span> |  |
 | `service` | <span class="kw kw-runs">runs</span> |  |
 | `set_fact` | <span class="kw kw-runs">runs</span> |  |
-| `set_stats` | <span class="kw kw-notyet">not yet</span> |  |
+| `set_stats` | <span class="kw kw-runs">runs</span> |  |
 | `shell` | <span class="kw kw-runs">runs</span> |  |
 | `template` | <span class="kw kw-runs">runs</span> |  |
 | `unarchive` | <span class="kw kw-runs">runs</span> |  |
-| `uri` | <span class="kw kw-notyet">not yet</span> |  |
+| `uri` | <span class="kw kw-runs">runs</span> |  |
 | `validate_argument_spec` | <span class="kw kw-runs">runs</span> |  |
-| `wait_for_connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `wait_for_connection` | <span class="kw kw-runs">runs</span> |  |
 
 ## filter
 

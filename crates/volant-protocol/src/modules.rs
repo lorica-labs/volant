@@ -517,8 +517,6 @@ pub enum Route {
     NativeOrPython,
     /// Python module on the warm path.
     Python,
-    /// One of [`BUILTIN_ACTION_PLUGINS`]: refused until its plugin exists.
-    NeedsActionPlugin,
 }
 
 /// Where a builtin module runs, or `None` when `module` is not a builtin.
@@ -535,8 +533,6 @@ pub fn builtin_route(module: &str) -> Option<Route> {
         Route::Statement
     } else if ACTION_PLUGINS.iter().any(|(p, _)| *p == m) {
         Route::ActionPlugin
-    } else if BUILTIN_ACTION_PLUGINS.contains(&m) {
-        Route::NeedsActionPlugin
     } else if NATIVE_ENABLED.contains(&m) {
         Route::NativeOrPython
     } else {
@@ -544,29 +540,21 @@ pub fn builtin_route(module: &str) -> Option<Route> {
     })
 }
 
-/// The builtin modules the reference runs through an action plugin this release does not have.
+/// The action plugins this release runs on the controller, with what each does.
 ///
 /// Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
-/// 27 names in both, and each of these waits on the plugin of its own name. The names this release
-/// already implements are **not** here, whether natively (`async_status`, `command`, `shell`,
-/// `raw`), on the
-/// controller (`assert`, `debug`, `fail`, `include_vars`, `pause`, `set_fact`,
-/// `validate_argument_spec`) or through a plugin of its own ([`ACTION_PLUGINS`]). `normal` is not
-/// here either: it is the only action plugin with no module of the same name, so no playbook can
-/// name it.
-pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
-    "add_host",
-    "assemble",
-    "gather_facts",
-    "group_by",
-    "script",
-    "set_stats",
-    "uri",
-    "wait_for_connection",
-];
-
-/// The action plugins this release runs on the controller, with what each does.
+/// 27 names in both. The ones not here are run natively (`async_status`, `command`, `shell`,
+/// `raw`) or on the controller (`assert`, `debug`, `fail`, `include_vars`, `pause`, `set_fact`,
+/// `validate_argument_spec`). `normal` has no module of its own name, so no playbook names it.
 pub const ACTION_PLUGINS: &[(&str, &str)] = &[
+    (
+        "add_host",
+        "Add a host, or groups to a host, in the running play's inventory.",
+    ),
+    (
+        "assemble",
+        "Join the fragments of a directory into one file on the host.",
+    ),
     (
         "copy",
         "Copy a file from the controller, or `content:`, to the host.",
@@ -579,6 +567,11 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
         "fetch",
         "Copy a file from the host to the controller, under `dest` and nowhere else.",
     ),
+    ("gather_facts", "Gather the host's facts as a task."),
+    (
+        "group_by",
+        "Put the host in a group named from its variables.",
+    ),
     (
         "package",
         "Install or remove packages with the host's own package manager.",
@@ -588,9 +581,14 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
         "Reboot the host and wait until it has booted again.",
     ),
     (
+        "script",
+        "Copy a script from the controller to the host and run it there.",
+    ),
+    (
         "service",
         "Manage a service with the host's own init system.",
     ),
+    ("set_stats", "Record custom statistics for the recap."),
     (
         "template",
         "Render a template on the controller and copy the result to the host.",
@@ -599,6 +597,8 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
         "unarchive",
         "Extract an archive read on the controller, or one already on the host.",
     ),
+    ("uri", "Send an HTTP request from the host."),
+    ("wait_for_connection", "Wait until the host answers again."),
 ];
 
 /// The Markdown table published in the documentation, generated so it cannot drift.
@@ -684,9 +684,6 @@ The exceptions are the modules ansible-core runs through an action plugin that V
     );
     for m in BUILTIN_MODULES {
         let how = match builtin_route(m) {
-            Some(Route::NeedsActionPlugin) => {
-                format!("not supported yet: needs the `{m}` action plugin")
-            }
             Some(Route::NativeOrPython) => {
                 "natively in the agent when its arguments allow it, as a Python module otherwise"
                     .to_string()
@@ -964,24 +961,18 @@ mod tests {
         }
     }
 
-    /// The two plugin lists are builtins, sorted, apart from each other and from what this release
-    /// runs natively or on the controller.
+    /// The plugin list is builtins, sorted, apart from what this release runs natively or on the
+    /// controller: the 27 names in both lists, less the 11 run that way.
     #[test]
-    fn the_plugin_lists_are_disjoint_builtins() {
+    fn the_plugin_list_is_sorted_builtins() {
         let implemented: Vec<&str> = ACTION_PLUGINS.iter().map(|(m, _)| *m).collect();
-        for list in [BUILTIN_ACTION_PLUGINS, &implemented[..]] {
-            let mut sorted = list.to_vec();
-            sorted.sort_unstable();
-            assert_eq!(sorted, list, "the list is kept sorted");
-            for m in list {
-                assert!(is_builtin(m) && !is_known(m), "{m}");
-            }
-        }
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 8);
-        assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
+        let mut sorted = implemented.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, implemented, "the list is kept sorted");
         for m in &implemented {
-            assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");
+            assert!(is_builtin(m) && !is_known(m), "{m}");
         }
+        assert_eq!(implemented.len(), 16);
     }
 
     /// The page and the parity matrix read one function, so they cannot disagree about a module.
@@ -993,9 +984,6 @@ mod tests {
             let row = page.lines().find(|l| l.starts_with(&format!("| `{m}` |")));
             match route {
                 Route::Statement => assert!(row.is_none(), "{m}"),
-                Route::NeedsActionPlugin => {
-                    assert!(row.unwrap().contains("not supported yet"), "{m}");
-                }
                 Route::NativeOrPython => assert!(row.unwrap().contains("natively"), "{m}"),
                 Route::Python => assert!(row.unwrap().ends_with("| Python module |"), "{m}"),
                 Route::Agent | Route::Controller | Route::ActionPlugin => {
@@ -1006,7 +994,7 @@ mod tests {
         assert_eq!(builtin_route("community.general.ufw"), None);
         assert_eq!(
             builtin_route("ansible.builtin.uri"),
-            Some(Route::NeedsActionPlugin)
+            Some(Route::ActionPlugin)
         );
     }
 

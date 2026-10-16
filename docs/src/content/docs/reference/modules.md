@@ -52,11 +52,9 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 
 | Module | How it runs |
 |---|---|
-| `add_host` | not supported yet: needs the `add_host` action plugin |
 | `apt` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `apt_key` | Python module |
 | `apt_repository` | Python module |
-| `assemble` | not supported yet: needs the `assemble` action plugin |
 | `blockinfile` | Python module |
 | `cron` | Python module |
 | `deb822_repository` | Python module |
@@ -66,12 +64,10 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `expect` | Python module |
 | `file` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `find` | Python module |
-| `gather_facts` | not supported yet: needs the `gather_facts` action plugin |
 | `get_url` | Python module |
 | `getent` | Python module |
 | `git` | Python module |
 | `group` | natively in the agent when its arguments allow it, as a Python module otherwise |
-| `group_by` | not supported yet: needs the `group_by` action plugin |
 | `hostname` | Python module |
 | `iptables` | Python module |
 | `known_hosts` | Python module |
@@ -82,9 +78,7 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `pip` | Python module |
 | `replace` | Python module |
 | `rpm_key` | Python module |
-| `script` | not supported yet: needs the `script` action plugin |
 | `service_facts` | natively in the agent when its arguments allow it, as a Python module otherwise |
-| `set_stats` | not supported yet: needs the `set_stats` action plugin |
 | `setup` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `slurp` | Python module |
 | `stat` | natively in the agent when its arguments allow it, as a Python module otherwise |
@@ -93,10 +87,8 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `systemd_service` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `sysvinit` | Python module |
 | `tempfile` | Python module |
-| `uri` | not supported yet: needs the `uri` action plugin |
 | `user` | natively in the agent when its arguments allow it, as a Python module otherwise |
 | `wait_for` | Python module |
-| `wait_for_connection` | not supported yet: needs the `wait_for_connection` action plugin |
 | `yum_repository` | Python module |
 
 ## Through an action plugin
@@ -105,11 +97,19 @@ The controller runs these as the reference's action plugins do: it picks or rend
 
 | Module | What it does |
 |---|---|
+| `add_host` | Add a host, or groups to a host, in the running play's inventory. |
+| `assemble` | Join the fragments of a directory into one file on the host. |
 | `copy` | Copy a file from the controller, or `content:`, to the host. |
 | `dnf` | Install or remove packages with `dnf` or `dnf5`, whichever the host runs. |
 | `fetch` | Copy a file from the host to the controller, under `dest` and nowhere else. |
+| `gather_facts` | Gather the host's facts as a task. |
+| `group_by` | Put the host in a group named from its variables. |
 | `package` | Install or remove packages with the host's own package manager. |
 | `reboot` | Reboot the host and wait until it has booted again. |
+| `script` | Copy a script from the controller to the host and run it there. |
 | `service` | Manage a service with the host's own init system. |
+| `set_stats` | Record custom statistics for the recap. |
 | `template` | Render a template on the controller and copy the result to the host. |
 | `unarchive` | Extract an archive read on the controller, or one already on the host. |
+| `uri` | Send an HTTP request from the host. |
+| `wait_for_connection` | Wait until the host answers again. |

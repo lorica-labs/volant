@@ -63,6 +63,14 @@ struct Unarchive {
     state: State,
 }
 
+/// Whether `dest` or `creates` starts with `~`, which this plugin does not expand and
+/// ansible-core's does on the host.
+pub(super) fn unwritten(ctx: &Context<'_>) -> bool {
+    ["dest", "creates"]
+        .iter()
+        .any(|arg| text(ctx.args, arg).is_some_and(|path| path.starts_with('~')))
+}
+
 impl Unarchive {
     fn new(ctx: &Context<'_>) -> Result<Self, String> {
         let mut args = ctx.args.clone();
@@ -261,6 +269,9 @@ mod tests {
             origin: &origin,
             playbook_dir: dir,
             warnings: &mut warnings,
+
+            environment: None,
+            timeout: None,
         })
     }
 

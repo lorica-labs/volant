@@ -432,8 +432,10 @@ impl PlayTask {
     /// differ is `register`, which `run_once` writes for every host: see `fact_targets`. A `meta`
     /// action the reference runs through its first host is the third such task: see
     /// [`PlayTask::meta_once`].
+    /// `add_host`'s plugin bypasses the host loop as `pause`'s does: measured, its line is the
+    /// batch's first host's alone.
     pub fn bypasses_host_loop(&self) -> bool {
-        self.runs_once() || self.pauses() || self.meta_once()
+        self.runs_once() || self.pauses() || self.meta_once() || self.adds_host()
     }
 
     /// Whether this is a `meta` action the reference runs once for the whole batch, through its
@@ -454,6 +456,11 @@ impl PlayTask {
         short_name(&self.module) == "pause"
     }
 
+    fn adds_host(&self) -> bool {
+        crate::action_plugins::kind(&self.module)
+            == Some(crate::action_plugins::Kind::Bridged("add_host"))
+    }
+
     /// Whether the hosts of the batch meet in front of this task before any of them runs it,
     /// because of a keyword written on it, or because it is a `pause`. The play waits out a
     /// pause as a whole, and a host that walked into one with a fork permit kept from the batch
@@ -471,6 +478,7 @@ impl PlayTask {
     pub fn barrier(&self) -> bool {
         (self.runs_once() && crate::keywords::is_barrier("run_once"))
             || self.pauses()
+            || self.adds_host()
             || self.fails_all()
             || self.meta_once()
     }

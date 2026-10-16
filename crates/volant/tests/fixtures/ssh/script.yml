@@ -1,0 +1,10 @@
+- name: ansible-core's script plugin over a real ssh
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The script is put on the host and run there
+      script: hello.sh arg1
+      register: s
+    - name: Show it
+      debug:
+        msg: "{{ s.stdout_lines }}"

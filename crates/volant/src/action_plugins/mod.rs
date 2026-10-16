@@ -3,11 +3,11 @@
 //! module, and the plugins this release runs itself.
 //!
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
-//! 27 names in both. A module whose plugin is not written here cannot be run by sending its
-//! payload to the agent: the action plugin is where its real behaviour lives. `script` reads its
-//! file on the controller, `wait_for_connection` waits there for the host. Sending the module
-//! alone would run something that is not what the playbook asked for, so those names are refused
-//! before the first connection.
+//! 27 names in both. A module with a plugin cannot be run by sending its payload to the agent:
+//! the action plugin is where its real behaviour lives. `script` reads its file on the
+//! controller, `wait_for_connection` waits there for the host. A plugin not written here runs as
+//! ansible-core's own, in the controller's Python helper ([`bridged`]), and so does a written one
+//! given a shape it does not take, before it has asked the host anything.
 //!
 //! A plugin that is written here runs on the controller as a small state machine: asked for the
 //! next sub-task, handed the result of the last one, until it hands back the task's result. Each
@@ -15,6 +15,7 @@
 //! already has. The result the plugin ends with goes down the one road every remote result takes,
 //! so no host value reaches the variables by a way of its own.
 
+mod bridged;
 pub(crate) mod copy;
 mod dnf;
 mod fetch;
@@ -25,13 +26,14 @@ mod service;
 mod template;
 mod unarchive;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
-use volant_protocol::modules::{ACTION_PLUGINS, BUILTIN_ACTION_PLUGINS, short_name};
+use volant_protocol::modules::{ACTION_PLUGINS, short_name};
 
 use crate::template::Templar;
 use crate::vars::HostVars;
@@ -42,14 +44,6 @@ fn builtin_spelling(module: &str) -> bool {
     !module.contains('.')
         || module.starts_with("ansible.builtin.")
         || module.starts_with("ansible.legacy.")
-}
-
-/// Whether a playbook's module name is one of [`BUILTIN_ACTION_PLUGINS`].
-///
-/// Read the same way the builtin registry reads one: `ansible.builtin.` and `ansible.legacy.`
-/// name the same modules as the bare name, and any other collection is somebody else's module.
-pub fn is_action_backed(module: &str) -> bool {
-    builtin_spelling(module) && BUILTIN_ACTION_PLUGINS.contains(&short_name(module))
 }
 
 /// An action plugin this release runs.
@@ -63,6 +57,8 @@ pub(crate) enum Kind {
     Service,
     Template,
     Unarchive,
+    /// ansible-core's own plugin of that name, run in the Python helper.
+    Bridged(&'static str),
 }
 
 /// The plugin this release runs for a module name, read as the builtin registry reads one.
@@ -71,9 +67,10 @@ pub(crate) enum Kind {
 /// knows and the page does not is never run.
 pub(crate) fn kind(module: &str) -> Option<Kind> {
     let short = short_name(module);
-    if !builtin_spelling(module) || !ACTION_PLUGINS.iter().any(|(name, _)| *name == short) {
+    if !builtin_spelling(module) {
         return None;
     }
+    let (name, _) = ACTION_PLUGINS.iter().find(|(name, _)| *name == short)?;
     match short {
         "copy" => Some(Kind::Copy),
         "dnf" => Some(Kind::Dnf),
@@ -83,7 +80,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
         "service" => Some(Kind::Service),
         "template" => Some(Kind::Template),
         "unarchive" => Some(Kind::Unarchive),
-        _ => None,
+        _ => Some(Kind::Bridged(name)),
     }
 }
 
@@ -103,6 +100,13 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
         Kind::Reboot => &["setup", "find"],
         Kind::Service => &["setup", "systemd", "systemd_service", "sysvinit", "service"],
         Kind::Unarchive => &["stat", "unarchive"],
+        // What each plugin's `_execute_module` names in ansible-core 2.19.12. The others only
+        // run commands and put files, which need no payload.
+        Kind::Bridged("assemble") => &["assemble", "copy", "file", "stat"],
+        Kind::Bridged("gather_facts") => &["setup"],
+        Kind::Bridged("uri") => &["uri"],
+        Kind::Bridged("wait_for_connection") => &["ping"],
+        Kind::Bridged(_) => &[],
     }
 }
 
@@ -156,6 +160,16 @@ pub(crate) enum Step {
         timeout: Duration,
         attempt: Option<Duration>,
     },
+    /// `bytes` put at the absolute path `remote` of the host, with `mode` (0600 when `None`).
+    /// The next call is handed `changed`, or the failure naming why the file is not there.
+    PutFile {
+        bytes: Vec<u8>,
+        remote: String,
+        mode: Option<u32>,
+    },
+    /// Nothing to run yet: the next call comes once `ready` is notified, or the item's time is
+    /// up, and is handed nothing.
+    Wait(Arc<tokio::sync::Notify>),
     /// The task's result for this item.
     Done(TaskResult),
 }
@@ -175,6 +189,12 @@ fn is_gone(result: &TaskResult) -> bool {
 /// A plugin, item by item: asked for the next sub-task, handed the result of the last.
 pub(crate) trait Plugin: Send {
     fn next(&mut self, last: Option<TaskResult>) -> Step;
+
+    /// What to run on the host, whatever it answers, when the item ends on its timeout before
+    /// the plugin did: the temporary directories it made and has not removed.
+    fn abandoned(&mut self) -> Vec<Sub> {
+        Vec::new()
+    }
 }
 
 /// What a plugin reads of the task and the host, all of it already rendered.
@@ -199,9 +219,29 @@ pub(crate) struct Context<'a> {
     pub playbook_dir: &'a Path,
     /// Lines to show as `[WARNING]:` under this task.
     pub warnings: &'a mut Vec<String>,
+    /// The item's rendered `environment`, and the task's `timeout` keyword, for a plugin run in
+    /// the Python helper.
+    pub environment: Option<&'a BTreeMap<String, String>>,
+    pub timeout: Option<u64>,
 }
 
+/// The plugin for `kind`. A written one given a shape it does not take hands the item to
+/// ansible-core's own before anything reaches the host; `src` named by a host value never does,
+/// so the written plugin's refusal of it stands.
 pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
+    let unwritten = match kind {
+        Kind::Copy => copy::unwritten(&ctx),
+        Kind::Unarchive => unarchive::unwritten(&ctx),
+        _ => false,
+    };
+    if unwritten && !ctx.args_untrusted.contains("src") {
+        let name = if kind == Kind::Copy {
+            "copy"
+        } else {
+            "unarchive"
+        };
+        return bridged::start(name, modules_for(kind), ctx);
+    }
     match kind {
         Kind::Copy => copy::start(ctx),
         Kind::Dnf => Box::new(dnf::Dnf::new(ctx)),
@@ -211,6 +251,7 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
         Kind::Service => Box::new(service::Service::new(ctx)),
         Kind::Template => template::start(ctx),
         Kind::Unarchive => unarchive::start(ctx),
+        Kind::Bridged(name) => bridged::start(name, modules_for(kind), ctx),
     }
 }
 
@@ -272,48 +313,23 @@ mod tests {
         let facts: Map<String, Value> =
             serde_json::from_str(r#"{"ansible_facts": {"pkg_mgr": "apt"}}"#).unwrap();
         let vars = HostVars {
-            facts: std::sync::Arc::new(facts),
+            facts: Arc::new(facts),
             ..HostVars::default()
         };
         assert_eq!(fact(&vars, "pkg_mgr"), Some("apt"));
-    }
-
-    /// The list holds what the reference runs through an action plugin and nothing this release
-    /// already runs itself.
-    #[test]
-    fn the_list_names_only_what_this_release_cannot_run() {
-        for absent in [
-            "setup",
-            "command",
-            "shell",
-            "raw",
-            "debug",
-            "set_fact",
-            "include_vars",
-            "assert",
-            "fail",
-            "pause",
-            "package",
-            "service",
-            "dnf",
-            "copy",
-            "template",
-            "unarchive",
-            "fetch",
-            "reboot",
-        ] {
-            assert!(!is_action_backed(absent), "{absent} is not action-backed");
-        }
-        assert!(is_action_backed("script"), "script is action-backed");
     }
 
     /// The two prefixes that name the same modules are read as such, and another collection's
     /// module of the same name is not this one.
     #[test]
     fn the_builtin_prefixes_name_the_same_modules() {
-        assert!(is_action_backed("ansible.builtin.script"));
-        assert!(is_action_backed("ansible.legacy.script"));
-        assert!(!is_action_backed("community.general.script"));
+        assert_eq!(
+            kind("ansible.builtin.script"),
+            Some(Kind::Bridged("script"))
+        );
+        assert_eq!(kind("ansible.legacy.uri"), Some(Kind::Bridged("uri")));
+        assert_eq!(kind("community.general.script"), None);
+        assert_eq!(kind("setup"), None);
         assert_eq!(kind("ansible.builtin.package"), Some(Kind::Package));
         assert_eq!(kind("ansible.legacy.service"), Some(Kind::Service));
         assert_eq!(kind("community.general.package"), None);
@@ -328,7 +344,6 @@ mod tests {
         assert_eq!(kind("community.general.fetch"), None);
         assert_eq!(kind("ansible.builtin.reboot"), Some(Kind::Reboot));
         assert_eq!(kind("community.general.reboot"), None);
-        assert_eq!(kind("script"), None);
     }
 
     /// Every plugin the modules page lists is one this release dispatches.
@@ -352,6 +367,10 @@ mod tests {
             Kind::Service,
             Kind::Template,
             Kind::Unarchive,
+            Kind::Bridged("assemble"),
+            Kind::Bridged("gather_facts"),
+            Kind::Bridged("uri"),
+            Kind::Bridged("wait_for_connection"),
         ] {
             for module in modules_for(kind) {
                 assert!(volant_protocol::modules::is_builtin(module), "{module}");

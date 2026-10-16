@@ -107,7 +107,7 @@ fn the_builtin_modules_are_the_references() {
         );
     }
     let actions = names(&r, &["builtin", "action"]);
-    for m in modules::BUILTIN_ACTION_PLUGINS {
+    for (m, _) in modules::ACTION_PLUGINS {
         assert!(
             actions.contains(&m.to_string()),
             "'{m}' has no action plugin in the reference"
@@ -318,7 +318,6 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         let (s, note) = match modules::builtin_route(&m)
             .expect("checked by the_builtin_modules_are_the_references")
         {
-            modules::Route::NeedsActionPlugin => (Status::NotYet, "needs its action plugin"),
             modules::Route::Agent => (Status::Runs, "agent"),
             modules::Route::Controller => (Status::Runs, "controller"),
             modules::Route::Statement => (Status::Runs, "statement"),
@@ -328,12 +327,9 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         };
         rows.push(row("module", &m, s, note));
     }
+    // Every one runs: `normal` has no module, it is the plain module run.
     for a in names(&r, &["builtin", "action"]) {
-        let s = match modules::builtin_route(&a) {
-            Some(modules::Route::NeedsActionPlugin) => Status::NotYet,
-            _ => Status::Runs, // `normal` has no module: it is the plain module run
-        };
-        rows.push(row("action plugin", &a, s, ""));
+        rows.push(row("action plugin", &a, Status::Runs, ""));
     }
     for f in names(&r, &["builtin", "filter"]) {
         let fqcn = format!("ansible.builtin.{f}");
@@ -670,7 +666,6 @@ fn every_builtin_action_plugin_is_implemented_or_refused() {
                     modules::Route::Agent
                         | modules::Route::Controller
                         | modules::Route::ActionPlugin
-                        | modules::Route::NeedsActionPlugin
                 )
             ),
             "action plugin '{a}' is neither implemented nor refused"

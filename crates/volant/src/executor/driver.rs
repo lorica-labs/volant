@@ -2525,6 +2525,9 @@ pub(super) async fn drive_host(
                     // registered a result without holding the facts that came in it.
                     let mut vars = store.lock().expect("vars lock");
                     record_registered(&mut vars, task, &targets, &results, &warnings);
+                    // `add_host`, `group_by` and `set_stats` run in the Python helper, and their
+                    // answers come down this road like any action's.
+                    record_inventory_results(&mut vars, task, &name, &results);
                     // Only here, and never on the `run_local` path above: this is where a
                     // managed host's own words arrive, and `set_fact` writes its own facts with
                     // the trust each of them earned. Under `delegate_facts` they are the

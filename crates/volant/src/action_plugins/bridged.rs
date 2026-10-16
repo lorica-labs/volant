@@ -62,8 +62,6 @@ pub(super) struct Bridged {
     stale: bool,
     /// The `connect_timeout` argument of `wait_for_connection`, for a fresh link.
     connect_timeout: Duration,
-    /// Whether the task's link is the escalated one.
-    escalated: bool,
 }
 
 /// ansible-core's plugin `name`, which may run `modules` and no other module.
@@ -162,7 +160,6 @@ pub(super) fn start(
                 .and_then(Value::as_u64)
                 .unwrap_or(5),
         ),
-        escalated: ctx.escalated,
     })
 }
 
@@ -269,14 +266,9 @@ impl Bridged {
                 Ok((step, Pending::Module))
             }
             // The command goes over the task's link, which is the escalated one when the task
-            // escalates; there is no unescalated link here to send a `sudoable=False` one to.
-            Ask::Command { cmd, stdin, sudoable } => {
-                if !sudoable && self.escalated {
-                    return Err(Reply::Error(
-                        "a command that must not be escalated, in a task that escalates, is not supported yet"
-                            .into(),
-                    ));
-                }
+            // escalates. A `sudoable=False` command (the plugin's housekeeping) also goes over
+            // it: there is no unescalated link inside the plugin loop.
+            Ask::Command { cmd, stdin, .. } => {
                 if stdin.is_some() {
                     return Err(Reply::Error(
                         "Connection.exec_command with input is not supported yet".into(),
@@ -576,7 +568,6 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(600),
             stale: false,
             connect_timeout: Duration::from_secs(5),
-            escalated: false,
         };
         to_plugin.send(FromHelper::Ask(ping())).unwrap();
         assert!(matches!(plugin.next(None), Step::RunDropping(_)));
@@ -598,17 +589,9 @@ mod tests {
         assert!(matches!(step, Step::RunDropping(_)), "{step:?}");
     }
 
-    /// A command the plugin marks as not to escalate is refused in a task that escalates, and
-    /// runs as any other in one that does not.
-    #[rstest::rstest]
-    #[case::escalated_and_sudoable(true, true, true)]
-    #[case::plain_and_not_sudoable(false, false, true)]
-    #[case::escalated_and_not_sudoable(true, false, false)]
-    fn a_command_that_must_not_escalate_is_not_run_escalated(
-        #[case] escalated: bool,
-        #[case] sudoable: bool,
-        #[case] runs: bool,
-    ) {
+    /// A command the plugin marks as not to escalate still runs, over the task link (the escalated one under `become`).
+    #[test]
+    fn a_command_that_must_not_escalate_runs_over_the_task_link() {
         let (_, asks) = channel();
         let (replies, _) = channel();
         let mut plugin = Bridged {
@@ -625,13 +608,12 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(600),
             stale: false,
             connect_timeout: Duration::from_secs(5),
-            escalated,
         };
         let ask = Ask::Command {
             cmd: "true".into(),
             stdin: None,
-            sudoable,
+            sudoable: false,
         };
-        assert_eq!(plugin.step_for(ask).is_ok(), runs);
+        assert!(plugin.step_for(ask).is_ok());
     }
 }

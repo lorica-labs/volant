@@ -10,6 +10,9 @@
       copy: {src: tree, dest: "{{ out }}"}
     - name: Assemble
       assemble: {src: parts, dest: "{{ out }}/all", remote_src: false}
+    - name: Assemble as root
+      assemble: {src: parts, dest: "{{ out }}/all2", remote_src: false}
+      become: true
     - name: Read it
       command: cat {{ out }}/all {{ out }}/tree/b.txt
       register: r

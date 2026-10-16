@@ -1,0 +1,10 @@
+# `throttle` keeps a task to that many hosts at a time; a throttled task still times out.
+runs:
+  - args: [-i, inv.ini, throttle-1.yml]
+  - args: [-i, inv.ini, throttle-big.yml]
+  - args: [-i, inv.ini, throttle-none.yml]
+  - args: [-i, inv.ini, throttle-timeout.yml]
+forks: 5
+unordered:
+  - '^ok: \[h\d\]$'
+  - '^fatal: \[h\d\]: FAILED!.*$'

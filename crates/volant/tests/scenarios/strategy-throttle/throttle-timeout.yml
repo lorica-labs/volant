@@ -1,0 +1,6 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - shell: sleep 5
+      throttle: 1
+      timeout: 1

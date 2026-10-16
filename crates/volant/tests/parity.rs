@@ -366,7 +366,9 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             "become",
             (|n: &str| volant::playbook::BECOME_METHODS.contains(&n)) as fn(&str) -> bool,
         ),
-        ("strategy", |n: &str| n == volant::preflight::STRATEGY),
+        ("strategy", |n: &str| {
+            volant::preflight::STRATEGIES.contains(&n)
+        }),
         ("inventory", |n: &str| n == "ini"),
         ("shell", |n: &str| n == "sh"),
         ("vars", |n: &str| n == "host_group_vars"),

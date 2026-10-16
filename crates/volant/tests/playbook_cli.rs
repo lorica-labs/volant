@@ -78,6 +78,8 @@ fn volant_within_full(
         "path and replace_path both set: replace_path silently wins, dropping path's fixture"
     );
     let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    // Nobody types at a prompt a test opens: standard input is empty unless the test feeds it.
+    command.stdin(std::process::Stdio::null());
     command
         .args(args)
         .env("NO_COLOR", "1")
@@ -492,7 +494,7 @@ fn a_playbook_that_does_not_parse_exits_4() {
         ("yaml.yml", "- hosts: all\n  tasks: [unclosed\n"),
         (
             "keyword.yml",
-            "- hosts: all\n  strategy: free\n  tasks: []\n",
+            "- hosts: all\n  strategy: mitogen_free\n  tasks: []\n",
         ),
         ("not-a-list.yml", "hosts: all\n"),
     ];
@@ -1868,12 +1870,12 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
     let probes = [
         (
-            "throttle",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      throttle: probe\n",
+            "diff",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      diff: true\n",
         ),
         (
-            "order",
-            "- hosts: localhost\n  gather_facts: false\n  order: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+            "fact_path",
+            "- hosts: localhost\n  gather_facts: false\n  fact_path: /nowhere\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
         ),
     ];
     for (kw, body) in probes {
@@ -3098,10 +3100,78 @@ ok: [localhost] => (item=one) => {
     runs(
         "play",
         "strategy",
-        "- hosts: localhost\n  gather_facts: false\n  strategy: free\n  tasks:\n    - command: echo hi\n",
+        "- hosts: localhost\n  gather_facts: false\n  strategy: debug\n  tasks:\n    - name: Probe task\n      fail:\n",
         &[],
-        4,
-        "strategy 'free' is not supported yet",
+        99,
+        "[localhost] TASK: Probe task (debug)> User interrupted execution",
+    ),
+    // Standard input is empty, which the prompt reads as the end of input: the run ends there
+    // with 99. Without the keyword the task passes and nothing is asked.
+    runs(
+        "task",
+        "debugger",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      debugger: always\n",
+        &[],
+        99,
+        "[localhost] TASK: Probe task (debug)> User interrupted execution",
+    ),
+    runs(
+        "block",
+        "debugger",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          debug:\n            msg: probe\n      debugger: always\n",
+        &[],
+        99,
+        "[localhost] TASK: Probe task (debug)> User interrupted execution",
+    ),
+    runs(
+        "play",
+        "debugger",
+        "- hosts: localhost\n  gather_facts: false\n  debugger: always\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n",
+        &[],
+        99,
+        "[localhost] TASK: Probe task (debug)> User interrupted execution",
+    ),
+    // Two hosts make a directory, wait and remove it. Together one of them finds it there and
+    // fails; one after the other both pass, which is what `throttle: 1` asks for.
+    runs(
+        "task",
+        "throttle",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      shell: mkdir {{ playbook_dir }}/task-throttle.lock && sleep 1 && rmdir {{ playbook_dir }}/task-throttle.lock\n      throttle: 1\n",
+        &[],
+        0,
+        "h2                         : ok=1    changed=1",
+    ),
+    runs(
+        "block",
+        "throttle",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          shell: mkdir {{ playbook_dir }}/block-throttle.lock && sleep 1 && rmdir {{ playbook_dir }}/block-throttle.lock\n      throttle: 1\n",
+        &[],
+        0,
+        "h2                         : ok=1    changed=1",
+    ),
+    runs(
+        "play",
+        "throttle",
+        "- hosts: all\n  gather_facts: false\n  throttle: 1\n  tasks:\n    - name: Probe task\n      shell: mkdir {{ playbook_dir }}/play-throttle.lock && sleep 1 && rmdir {{ playbook_dir }}/play-throttle.lock\n",
+        &[],
+        0,
+        "h2                         : ok=1    changed=1",
+    ),
+    runs(
+        "play",
+        "order",
+        "- hosts: all\n  gather_facts: false\n  order: reverse_inventory\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n",
+        &[],
+        0,
+        "ok: [h2] => {\n    \"msg\": \"probe\"\n}\nok: [h1]",
+    ),
+    runs(
+        "play",
+        "timeout",
+        "- hosts: localhost\n  gather_facts: false\n  timeout: 1\n  tasks:\n    - name: Probe task\n      command: sleep 5\n",
+        &[],
+        2,
+        "Timed out after 1 second(s).",
     ),
     runs(
         "play",
@@ -3644,7 +3714,7 @@ fn every_answered_keyword_has_a_proof_and_every_proof_has_a_row() {
 
 /// Each `Runs` proof, run. The bodies are written so that deleting the keyword's handling
 /// changes what comes out: `when: false` stops skipping, `timeout: 1` stops killing `sleep`,
-/// `register` stops carrying the output to the next task, `strategy: free` stops being refused,
+/// `register` stops carrying the output to the next task, `strategy: debug` stops opening the prompt,
 /// `become_user` stops naming an account `sudo` cannot find.
 /// A fake `sudo` for the three escalation rows in `RUNS_PROBES` (`task.become`,
 /// `task.become_user`, `play.become_user`): it resolves `-u <user>` itself, the way a
@@ -3754,6 +3824,8 @@ name = vol
         if matches!(
             probe.kw,
             "serial"
+                | "throttle"
+                | "order"
                 | "run_once"
                 | "delegate_to"
                 | "delegate_facts"
@@ -4102,11 +4174,7 @@ fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
             "check_mode: true",
             "keyword 'check_mode' is not supported yet with 'true'",
         ),
-        (
-            "throttle",
-            "throttle: 1",
-            "keyword 'throttle' is not supported yet",
-        ),
+        ("diff", "diff: true", "keyword 'diff' is not supported yet"),
     ] {
         let dir = probe_dir(&format!("spliced-{kind}"));
         let marker = dir.join("marker");
@@ -5542,4 +5610,183 @@ fn a_raw_argument_on_a_core_module_fails_only_that_task() {
     );
     assert!(!text.contains("never"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two local hosts, `h1` and `h2`, for the strategy probes below.
+fn two_hosts(dir: &Path) -> String {
+    let inventory = dir.join("hosts.ini");
+    std::fs::write(
+        &inventory,
+        "h1 ansible_connection=local\nh2 ansible_connection=local\nh3 ansible_connection=local\n",
+    )
+    .expect("the probe's inventory is written");
+    inventory.display().to_string()
+}
+
+/// Under `free` `h2`'s first task can wait for a file `h1`'s second task writes; under `linear`
+/// the wait times out, since `h1` cannot get that far first.
+#[test]
+fn free_hosts_do_not_wait_for_each_other() {
+    let dir = probe_dir("free-no-barrier");
+    let inventory = two_hosts(&dir);
+    for (strategy, code, expect) in [
+        ("free", 0, "h2                         : ok=1"),
+        ("linear", 2, "h2                         : ok=0"),
+    ] {
+        let file = dir.join("go");
+        let _ = std::fs::remove_file(&file);
+        let play = dir.join(format!("{strategy}.yml"));
+        std::fs::write(
+            &play,
+            format!(
+                "- hosts: h1,h2\n  strategy: {strategy}\n  gather_facts: false\n  tasks:\n    - name: Wait for the file\n      shell: for i in $(seq 1 60); do [ -e {file} ] && exit 0; sleep 0.1; done; exit 1\n      when: inventory_hostname == 'h2'\n    - name: Write the file\n      shell: touch {file}\n      when: inventory_hostname == 'h1'\n",
+                file = file.display()
+            ),
+        )
+        .expect("the probe is written");
+        let out = volant_within(
+            &["playbook", "-i", &inventory, &play.display().to_string()],
+            PROBE_DEADLINE,
+        );
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        assert_eq!(out.status.code(), Some(code), "{strategy}: {text}");
+        assert!(text.contains(expect), "{strategy}: {text}");
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// `run_once` and `throttle` under `free` and fewer forks than hosts end, and every host reaches
+/// the last task: a host waiting at a point another has stopped short of would hang the run.
+#[test]
+fn free_with_run_once_and_throttle_terminates() {
+    let dir = probe_dir("free-run-once-throttle");
+    let inventory = two_hosts(&dir);
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  strategy: free\n  gather_facts: false\n  tasks:\n    - debug: msg=once\n      run_once: true\n    - shell: \"true\"\n      throttle: 1\n    - debug: msg=done\n      run_once: true\n    - debug: msg=last\n",
+    )
+    .expect("the probe is written");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inventory,
+            "-f",
+            "2",
+            &play.display().to_string(),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(text.matches("\"msg\": \"last\"").count(), 3, "{text}");
+    assert!(text.contains("failed=0"), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// `host_pinned` with fewer forks than hosts and a point where hosts must meet is refused by
+/// name, and so is `free` with `max_fail_percentage`: neither has anything to wait at.
+#[test]
+fn a_strategy_that_cannot_wait_is_refused_by_name() {
+    let dir = probe_dir("strategy-refusals");
+    let inventory = two_hosts(&dir);
+    for (name, play, sentence) in [
+        (
+            "pinned-run-once",
+            "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  tasks:\n    - debug: msg=once\n      run_once: true\n",
+            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
+        ),
+        (
+            "pinned-handler",
+            "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  handlers:\n    - name: later\n      debug: msg=later\n  tasks:\n    - debug: msg=now\n      changed_when: true\n      notify: later\n",
+            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
+        ),
+        (
+            "free-max-fail",
+            "- hosts: all\n  strategy: free\n  max_fail_percentage: 30\n  gather_facts: false\n  tasks:\n    - debug: msg=now\n",
+            "strategy 'free' with 'max_fail_percentage' is not supported yet",
+        ),
+    ] {
+        let file = dir.join(format!("{name}.yml"));
+        std::fs::write(&file, play).expect("the probe is written");
+        let out = volant_within(
+            &[
+                "playbook",
+                "-i",
+                &inventory,
+                "-f",
+                "1",
+                &file.display().to_string(),
+            ],
+            PROBE_DEADLINE,
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(4), "{name}: {text}");
+        assert!(text.contains(sentence), "{name}: {text}");
+        assert!(!text.contains("TASK ["), "{name}: nothing ran: {text}");
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// Two forks over three `host_pinned` hosts: every host runs its whole play, and a host that
+/// finishes hands its fork to the one behind it.
+#[test]
+fn host_pinned_with_two_forks_runs_every_host_to_the_end() {
+    let dir = probe_dir("pinned-two-forks");
+    let inventory = two_hosts(&dir);
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  tasks:\n    - shell: \"true\"\n    - debug: msg=second\n",
+    )
+    .expect("the probe is written");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inventory,
+            "-f",
+            "2",
+            &play.display().to_string(),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for host in ["h1", "h2", "h3"] {
+        assert!(
+            text.contains(&format!(
+                "{host}                         : ok=2    changed=1"
+            )),
+            "{host}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A `throttle` of one over three hosts runs them one at a time whatever the forks: each makes a
+/// directory, waits and removes it, and a second host inside finds it there.
+#[test]
+fn a_throttled_task_under_free_never_overlaps() {
+    let dir = probe_dir("free-throttle");
+    let inventory = two_hosts(&dir);
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  strategy: free\n  gather_facts: false\n  tasks:\n    - shell: mkdir {{ playbook_dir }}/gate.lock && sleep 0.3 && rmdir {{ playbook_dir }}/gate.lock\n      throttle: 1\n",
+    )
+    .expect("the probe is written");
+    let out = volant_within(
+        &["playbook", "-i", &inventory, &play.display().to_string()],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(text.matches("changed: [h").count(), 3, "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }

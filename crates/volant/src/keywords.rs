@@ -134,7 +134,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Preflight),
+    kw("debugger", Runs),
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
@@ -157,7 +157,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("retries", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    kw("throttle", Preflight),
+    kw("throttle", Runs),
     kw("timeout", Runs),
     kw("until", Runs),
     kw("vars", Runs),
@@ -199,8 +199,8 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 /// module, built on the controller and run on the host through the payload path, and what it
 /// returns lands under `ansible_facts` and flat, as the host's own words. `gather_subset` and
 /// `gather_timeout` stay refused, so the full set is what a play gets. `strategy`
-/// counts as `Runs`: `linear` is what the engine does, and any other strategy is refused by its
-/// own name.
+/// counts as `Runs`: `linear`, `free`, `host_pinned` and `debug` are what the engine does, and
+/// any other strategy is refused by its own name.
 ///
 /// `roles`, `pre_tasks` and `post_tasks` run: the compiler reads each role from disk and splices
 /// its tasks, its dependencies and its argument-spec check into the step list, in the section
@@ -230,7 +230,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Preflight),
+    kw("debugger", Runs),
     kw("diff", Preflight),
     kw("environment", Runs),
     kw("fact_path", Preflight),
@@ -246,7 +246,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("module_defaults", Runs),
     kw("name", Runs),
     kw("no_log", Runs),
-    kw("order", Preflight),
+    kw("order", Runs),
     kw("port", Runs),
     kw("post_tasks", Runs),
     kw("pre_tasks", Runs),
@@ -257,8 +257,8 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("strategy", Runs),
     kw("tags", Runs),
     kw("tasks", Runs),
-    kw("throttle", Preflight),
-    kw("timeout", Preflight),
+    kw("throttle", Runs),
+    kw("timeout", Runs),
     kw("vars", Runs),
     kw("vars_files", Runs),
     kw("vars_prompt", Preflight),
@@ -303,7 +303,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Preflight),
+    kw("debugger", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
     kw("diff", Preflight),
@@ -319,7 +319,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("rescue", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    kw("throttle", Preflight),
+    kw("throttle", Runs),
     kw("timeout", Runs),
     kw("vars", Runs),
     kw("when", Runs),

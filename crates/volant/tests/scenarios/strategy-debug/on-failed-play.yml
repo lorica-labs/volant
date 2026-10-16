@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  debugger: on_failed
+  tasks:
+    - command: "false"
+      ignore_errors: true
+    - fail: msg=boom
+    - debug: msg=after

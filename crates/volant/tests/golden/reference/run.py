@@ -45,6 +45,8 @@ def run(argv, cwd=None, config=EMPTY_CONFIG, extra_env=None, deadline=DEADLINE):
         argv,
         cwd=cwd,
         env=environment(config, extra_env),
+        # Nobody answers a prompt: the debugger reads the end of input and stops the run.
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

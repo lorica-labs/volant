@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 31 | 1 | 9 | 0 |
-| keyword (block) | 27 | 1 | 3 | 0 |
-| keyword (task) | 59 | 1 | 6 | 0 |
+| keyword (play) | 35 | 1 | 5 | 0 |
+| keyword (block) | 29 | 1 | 1 | 0 |
+| keyword (task) | 61 | 1 | 4 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
@@ -24,7 +24,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | test | 80 | 0 | 2 | 0 |
 | lookup | 24 | 0 | 1 | 0 |
 | become | 2 | 0 | 0 | 1 |
-| strategy | 1 | 0 | 3 | 0 |
+| strategy | 4 | 0 | 0 | 0 |
 | inventory | 1 | 0 | 8 | 0 |
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
@@ -50,7 +50,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-notyet">not yet</span> |  |
+| `debugger` | <span class="kw kw-runs">runs</span> |  |
 | `diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `fact_path` | <span class="kw kw-notyet">not yet</span> |  |
@@ -66,7 +66,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `module_defaults` | <span class="kw kw-runs">runs</span> |  |
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
-| `order` | <span class="kw kw-notyet">not yet</span> |  |
+| `order` | <span class="kw kw-runs">runs</span> |  |
 | `port` | <span class="kw kw-runs">runs</span> |  |
 | `post_tasks` | <span class="kw kw-runs">runs</span> |  |
 | `pre_tasks` | <span class="kw kw-runs">runs</span> |  |
@@ -77,8 +77,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `strategy` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
 | `tasks` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-notyet">not yet</span> |  |
-| `timeout` | <span class="kw kw-notyet">not yet</span> |  |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
+| `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `vars_files` | <span class="kw kw-runs">runs</span> |  |
 | `vars_prompt` | <span class="kw kw-notyet">not yet</span> |  |
@@ -98,7 +98,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-notyet">not yet</span> |  |
+| `debugger` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
 | `diff` | <span class="kw kw-notyet">not yet</span> |  |
@@ -114,7 +114,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `rescue` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-notyet">not yet</span> |  |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
 | `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `when` | <span class="kw kw-runs">runs</span> |  |
@@ -136,7 +136,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-notyet">not yet</span> |  |
+| `debugger` | <span class="kw kw-runs">runs</span> |  |
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
@@ -159,7 +159,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `retries` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-notyet">not yet</span> |  |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
 | `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `until` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
@@ -657,9 +657,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `debug` | <span class="kw kw-notyet">not yet</span> |  |
-| `free` | <span class="kw kw-notyet">not yet</span> |  |
-| `host_pinned` | <span class="kw kw-notyet">not yet</span> |  |
+| `debug` | <span class="kw kw-runs">runs</span> |  |
+| `free` | <span class="kw kw-runs">runs</span> |  |
+| `host_pinned` | <span class="kw kw-runs">runs</span> |  |
 | `linear` | <span class="kw kw-runs">runs</span> |  |
 
 ## shell

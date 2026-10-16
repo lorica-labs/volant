@@ -1,0 +1,10 @@
+[
+  {
+    "code": 2,
+    "stdout": "\nPLAY [g] ***********************************************************************\n\nTASK [shell] *******************************************************************\nchanged: [h2]\nchanged: [h1]\n\nTASK [shell] *******************************************************************\n[ERROR]: Task failed: Timed out after 1 second(s).\nOrigin: <golden-tmp>/timeout.yml:6:7\n\n4   tasks:\n5     - shell: sleep 0.2\n6     - shell: sleep 5\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}\nfatal: [h2]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \nh2                         : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [g] ***********************************************************************\n\nTASK [shell] *******************************************************************\nchanged: [h1]\nchanged: [h2]\n\nTASK [shell] *******************************************************************\nchanged: [h1]\nchanged: [h2]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"after\"\n}\nok: [h2] => {\n    \"msg\": \"after\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

@@ -1,0 +1,7 @@
+# The order a play's hosts run in, and a value the reference refuses before the play starts.
+runs:
+  - args: [-i, inv.ini, order-inventory.yml]
+  - args: [-i, inv.ini, order-reverse-inventory.yml]
+  - args: [-i, inv.ini, order-sorted.yml]
+  - args: [-i, inv.ini, order-reverse-sorted.yml]
+  - args: [-i, inv.ini, order-bogus.yml]

@@ -1,0 +1,8 @@
+# The play's `timeout` is every task's default.
+runs:
+  - args: [-i, inv.ini, timeout.yml]
+  - args: [-i, inv.ini, timeout-ok.yml]
+forks: 5
+unordered:
+  - '^changed: \[h\d\]$'
+  - '^fatal: \[h\d\]: FAILED!.*$'

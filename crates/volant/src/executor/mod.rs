@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Runs one play on its hosts with the `linear` strategy: consecutive remote tasks are grouped
-//! into batches, `set_fact` and `debug` run on the controller, and output is shown task by task,
-//! once every live host has reported that task. This file holds what the modules share - the
+//! Runs one play on its hosts, `linear` unless the play says `free`, `host_pinned` or `debug`:
+//! consecutive remote tasks are grouped into batches, `set_fact` and `debug` run on the
+//! controller, and output is shown task by task, once every live host has reported that task -
+//! under `free` and `host_pinned`, as each line arrives. This file holds what the modules share - the
 //! run's settings, the connections kept between plays, and the entry point the command line
 //! calls.
 
 mod coordinator;
+mod debugger;
 mod driver;
 mod include;
 mod prepare;
@@ -21,7 +23,7 @@ use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::agent::{AgentLink, AgentSource};
-use crate::compile::Compiled;
+use crate::compile::{Compiled, StepKind};
 use crate::inventory::{Host, Inventory};
 use crate::playbook::Play;
 use crate::render::Renderer;
@@ -280,6 +282,7 @@ pub async fn run_play(
             out.play(&play.name);
             continue;
         }
+        refuse_unsafe_pinning(play, compiled, live.len(), max_fail.is_some(), options)?;
         // Read here, once per batch about to run and not once for the whole play: see
         // `load_play_vars_files`. `play_hosts` is the play's still-live hosts computed from
         // `state.failed_hosts` as it stands right before this batch starts (this batch and every
@@ -396,6 +399,40 @@ pub async fn run_play(
         }
     }
     Ok(PlayEnd { stop_run: false })
+}
+
+/// What `free` and `host_pinned` cannot do yet, said before the batch starts. `max_fail_percentage`
+/// decides after each step whether the batch goes on, which hosts that do not wait for each other
+/// have no step to decide at. A host kept by its fork cannot wait at a point the hosts behind it
+/// have to reach, so `host_pinned` with fewer forks than hosts refuses the steps that make hosts
+/// meet: handlers, dynamic includes, `run_once`, `pause` and `any_errors_fatal`.
+fn refuse_unsafe_pinning(
+    play: &Play,
+    compiled: &Compiled,
+    hosts: usize,
+    max_fail: bool,
+    options: &RunOptions,
+) -> anyhow::Result<()> {
+    let strategy = prepare::Strategy::named(play.strategy.as_deref());
+    let name = play.strategy.as_deref().unwrap_or_default();
+    if strategy.free() && max_fail {
+        return Err(crate::stats::Refusal::at(
+            4,
+            format!("strategy '{name}' with 'max_fail_percentage' is not supported yet"),
+        ));
+    }
+    let meets = compiled.steps.iter().any(|s| match s.kind {
+        StepKind::Include(_) => true,
+        StepKind::Flush { explicit } => explicit || !compiled.handlers.is_empty(),
+        _ => s.task.barrier(),
+    });
+    if strategy.pinned() && options.forks < hosts && meets {
+        return Err(crate::stats::Refusal::at(
+            4,
+            "strategy 'host_pinned' with fewer forks than hosts is not supported yet for a play with handlers, includes, run_once, pause or any_errors_fatal",
+        ));
+    }
+    Ok(())
 }
 
 /// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a

@@ -19,9 +19,10 @@ use crate::stats::{Outcome, Stats};
 use crate::template::Templar;
 use crate::vars::VarStore;
 
+use super::debugger;
 use super::driver::{Definitions, drive_host, mark_boundaries};
 use super::include::IncludeGroup;
-use super::prepare::{PlayPlan, host_vars};
+use super::prepare::{PlayPlan, Strategy, host_vars};
 use super::{LinkKey, RunOptions, RunState};
 
 /// What the coordinator knows about the batch's shared progress and every host driver may wait
@@ -371,6 +372,14 @@ pub(super) async fn run_batch(
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
         lockstep: max_fail.is_some(),
+        strategy: Strategy::named(play.strategy.as_deref()),
+        throttles: Mutex::default(),
+        queue: if play.strategy.as_deref() == Some("host_pinned") {
+            play_hosts.clone()
+        } else {
+            Vec::new()
+        },
+        turn: watch::channel(0).0,
         play_vars: play.vars.clone(),
         vars_files: vars_files.clone(),
         all_play_hosts: all.to_vec(),
@@ -498,6 +507,10 @@ pub(super) async fn run_batch(
     }
     drop(tx);
 
+    // Under `free` and `host_pinned` a line is written as it arrives, and a banner goes in front
+    // of it whenever the step differs from the one the last line belonged to.
+    let free = plan.strategy.free();
+    let mut last_banner: Option<usize> = None;
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
     let mut gone: HashSet<String> = HashSet::new();
     // The templated names the drivers rendered at their own step, by host and step.
@@ -541,7 +554,22 @@ pub(super) async fn run_batch(
                             );
                             header_shown = true;
                         }
+                        let asks = debug_kind(&event);
                         report_result(event, stats, out);
+                        if let Some(kind) = asks {
+                            debugging(
+                                kind,
+                                host,
+                                index,
+                                &plan,
+                                &progress_tx,
+                                state,
+                                &names,
+                                out,
+                                options,
+                            )
+                            .await;
+                        }
                     }
                     break;
                 }
@@ -558,6 +586,18 @@ pub(super) async fn run_batch(
                             header_shown = true;
                         }
                         blame.show(host, out);
+                        debugging(
+                            debugger::Kind::Unreachable,
+                            host,
+                            key.1,
+                            &plan,
+                            &progress_tx,
+                            state,
+                            &names,
+                            out,
+                            options,
+                        )
+                        .await;
                     }
                     break;
                 }
@@ -616,7 +656,35 @@ pub(super) async fn run_batch(
                         if lost || announced || fatal {
                             coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                         }
-                        pending.entry(key).or_default().push(event);
+                        if free {
+                            let asks = debug_kind(&event);
+                            show_now(
+                                event,
+                                &mut last_banner,
+                                &plan,
+                                &progress_tx,
+                                state,
+                                &names,
+                                stats,
+                                out,
+                            );
+                            if let Some(kind) = asks {
+                                debugging(
+                                    kind,
+                                    &key.0,
+                                    key.1,
+                                    &plan,
+                                    &progress_tx,
+                                    state,
+                                    &names,
+                                    out,
+                                    options,
+                                )
+                                .await;
+                            }
+                        } else {
+                            pending.entry(key).or_default().push(event);
+                        }
                     }
                     // Queued behind the same key as a result, rather than printed on arrival,
                     // so a host racing ahead cannot put its banner above the step before it.
@@ -637,7 +705,20 @@ pub(super) async fn run_batch(
                             }
                             _ => unreachable!(),
                         };
-                        pending.entry((host, index)).or_default().push(event);
+                        if free {
+                            show_now(
+                                event,
+                                &mut last_banner,
+                                &plan,
+                                &progress_tx,
+                                state,
+                                &names,
+                                stats,
+                                out,
+                            );
+                        } else {
+                            pending.entry((host, index)).or_default().push(event);
+                        }
                     }
                     Some(Event::Include {
                         host,
@@ -727,8 +808,36 @@ pub(super) async fn run_batch(
                             delegate,
                             origin,
                         };
-                        if let Some(at) = at {
+                        if let Some(at) = at
+                            && !free
+                        {
                             unreached.insert((host.clone(), at), blame);
+                        } else if free {
+                            switch_header(
+                                &mut last_banner,
+                                at.unwrap_or(index),
+                                &host,
+                                &plan,
+                                &progress_tx,
+                                state,
+                                &names,
+                                out,
+                            );
+                            blame.show(&host, out);
+                            if let Some(at) = at {
+                                debugging(
+                                    debugger::Kind::Unreachable,
+                                    &host,
+                                    at,
+                                    &plan,
+                                    &progress_tx,
+                                    state,
+                                    &names,
+                                    out,
+                                    options,
+                                )
+                                .await;
+                            }
                         } else {
                             if !header_shown {
                                 let live = progress_tx.borrow().clone();
@@ -820,7 +929,19 @@ pub(super) async fn run_batch(
                     // The banner goes in front of the first line this step shows, and for an
                     // include that is often this one: every host resolved its file, so none
                     // of them printed a result.
-                    if !header_shown {
+                    if free {
+                        let against = hosts.first().map(String::as_str).unwrap_or_default();
+                        switch_header(
+                            &mut last_banner,
+                            index,
+                            against,
+                            &plan,
+                            &progress_tx,
+                            state,
+                            &names,
+                            out,
+                        );
+                    } else if !header_shown {
                         let live = progress_tx.borrow().clone();
                         let against = hosts.first().map(String::as_str).unwrap_or_default();
                         let spoken = names.get(&(against.to_string(), index));
@@ -1220,6 +1341,114 @@ fn header(step: &Step, name: &str, out: &mut Renderer) {
         StepKind::Handler(_) => out.handler(name),
         _ => out.task(name),
     }
+}
+
+/// The banner of step `index`, unless the last line printed already belonged to it: under `free`
+/// and `host_pinned` a banner marks a switch from one task to another, and a run of lines for the
+/// same task share the one.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a banner reads: the step, the host it is named against, the batch and the terminal"
+)]
+fn switch_header(
+    last: &mut Option<usize>,
+    index: usize,
+    host: &str,
+    plan: &PlayPlan,
+    progress_tx: &watch::Sender<Progress>,
+    state: &RunState,
+    names: &HashMap<(String, usize), String>,
+    out: &mut Renderer,
+) {
+    if *last == Some(index) {
+        return;
+    }
+    *last = Some(index);
+    let compiled = plan.steps();
+    let Some(step) = compiled.steps.get(index) else {
+        return;
+    };
+    let live = progress_tx.borrow().clone();
+    let spoken = names.get(&(host.to_string(), index));
+    header(
+        step,
+        &task_name(step, host, plan, &live, state, spoken),
+        out,
+    );
+}
+
+/// Writes one event the moment it arrives, behind the banner its task needs.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a banner and a line read: the batch, the books and the terminal"
+)]
+fn show_now(
+    event: Event,
+    last: &mut Option<usize>,
+    plan: &PlayPlan,
+    progress_tx: &watch::Sender<Progress>,
+    state: &RunState,
+    names: &HashMap<(String, usize), String>,
+    stats: &mut Stats,
+    out: &mut Renderer,
+) {
+    let at = match &event {
+        Event::Result { host, index, .. }
+        | Event::Retrying { host, index, .. }
+        | Event::Display { host, index, .. }
+        | Event::UnreachableIgnored { host, index, .. }
+        | Event::Banner { host, index } => Some((host.clone(), *index)),
+        _ => None,
+    };
+    if let Some((host, index)) = at
+        && shows_a_line(&event)
+    {
+        switch_header(last, index, &host, plan, progress_tx, state, names, out);
+    }
+    report_result(event, stats, out);
+}
+
+/// What an event says to the debugger: the result of a whole task, loop items left out.
+fn debug_kind(event: &Event) -> Option<debugger::Kind> {
+    match event {
+        Event::Result {
+            outcome,
+            counts: true,
+            ..
+        } => Some(debugger::Kind::of(*outcome)),
+        _ => None,
+    }
+}
+
+/// Opens the debugger prompt behind a result of step `index` on `host`, when the step's
+/// `debugger` or the play's strategy says to. The coordinator is the one that waits, which is
+/// what the reference does too: nothing else is written while the prompt is open.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a prompt reads: the step, the batch, the books and the terminal"
+)]
+async fn debugging(
+    kind: debugger::Kind,
+    host: &str,
+    index: usize,
+    plan: &PlayPlan,
+    progress_tx: &watch::Sender<Progress>,
+    state: &RunState,
+    names: &HashMap<(String, usize), String>,
+    out: &mut Renderer,
+    options: &RunOptions,
+) {
+    let compiled = plan.steps();
+    let Some(step) = compiled.steps.get(index) else {
+        return;
+    };
+    if !debugger::opens(step.task.debugger, plan.strategy == Strategy::Debug, kind) {
+        return;
+    }
+    let live = progress_tx.borrow().clone();
+    let spoken = names.get(&(host.to_string(), index));
+    let name = task_name(step, host, plan, &live, state, spoken);
+    debugger::ask(host, &name, out, &options.abort, &mut options.stop.clone()).await;
 }
 
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is

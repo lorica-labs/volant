@@ -1,0 +1,5 @@
+- hosts: g
+  order: bogus
+  gather_facts: false
+  tasks:
+    - debug: msg=x

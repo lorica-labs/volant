@@ -465,6 +465,18 @@ impl Renderer {
         let _ = writeln!(anstream::stderr(), "{}", self.paint(WARNING, &line));
     }
 
+    /// A prompt, left open: no newline follows it, so whatever comes next is written on its line.
+    pub fn prompt(&mut self, text: &str) {
+        let _ = write!(self.out, "{text}");
+        let _ = self.out.flush();
+    }
+
+    /// Writes nothing more to stdout. A run that ends at the debugger's `quit` leaves the
+    /// prompt's line as the last one, and the hosts still being drained say nothing after it.
+    pub fn silence(&mut self) {
+        self.out = Box::new(std::io::sink());
+    }
+
     /// A line an action writes on stdout as it runs, as it wrote it.
     pub fn display(&mut self, line: &str) {
         let _ = writeln!(self.out, "{line}");

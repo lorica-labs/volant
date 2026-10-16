@@ -1,0 +1,5 @@
+# A throttle above the forks is held to the forks.
+args: [-i, inv.ini, throttle-3.yml]
+forks: 2
+unordered:
+  - '^ok: \[h\d\]$'
